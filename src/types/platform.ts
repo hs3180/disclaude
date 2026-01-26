@@ -7,15 +7,3 @@ export interface ConversationHistory {
 export interface SessionStorage {
   [chatId: string]: string;
 }
-
-// Bot state interface
-export interface BotState {
-  conversationHistory: ConversationHistory;
-  isReady: boolean;
-}
-
-// Command handler type
-export type CommandHandler = (
-  interaction: unknown,
-  args?: string[]
-) => Promise<void>;

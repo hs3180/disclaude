@@ -1,99 +1,138 @@
 /**
- * Claude Agent SDK compatible wrapper using @anthropic-ai/sdk.
+ * Claude Agent SDK client wrapper.
+ * Uses the official @anthropic-ai/claude-agent-sdk for full tool support.
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { promises as fs } from 'fs';
-import type { IAgentClient, AgentMessage, AgentOptions } from '../types/agent.js';
+import { extractTextFromSDKMessage, getNodeBinDir } from '../utils/sdk.js';
+import type {
+  AgentMessage,
+  AgentOptions,
+  SessionInfo,
+} from '../types/agent.js';
 
 /**
- * Simple message class for SDK compatibility.
+ * Agent SDK client with full tool support.
  */
-class AgentMessageImpl implements AgentMessage {
-  content: string;
-  role: 'user' | 'assistant' = 'assistant';
-
-  constructor(content: string) {
-    this.content = content;
-  }
-}
-
-/**
- * Wrapper for Claude API with GLM support (SDK-compatible interface).
- */
-export class AgentClient implements IAgentClient {
+export class AgentClient {
   readonly apiKey: string;
   readonly model: string;
   readonly apiBaseUrl: string | undefined;
-  readonly allowedTools: string[];
   readonly workspace: string;
+  readonly permissionMode: AgentOptions['permissionMode'];
+  readonly bypassPermissions: boolean | undefined;
 
-  private readonly client: Anthropic;
+  // Session tracking for conversation continuity
+  private currentSessionId?: string;
 
   constructor(options: AgentOptions) {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.apiBaseUrl = options.apiBaseUrl;
-    this.allowedTools = options.allowedTools || [];
     this.workspace = options.workspace;
-
-    // Initialize anthropic client with custom base URL if provided
-    if (this.apiBaseUrl) {
-      this.client = new Anthropic({
-        apiKey: this.apiKey,
-        baseURL: this.apiBaseUrl,
-      });
-    } else {
-      this.client = new Anthropic({ apiKey: this.apiKey });
-    }
+    this.permissionMode = options.permissionMode;
+    this.bypassPermissions = options.bypassPermissions;
   }
 
   /**
-   * Create agent options (for SDK compatibility).
+   * Create SDK options from agent configuration.
    */
-  createOptions(resume?: string, env?: Record<string, string>): Record<string, unknown> {
-    const options: Record<string, unknown> = {
-      model: this.model,
-      api_key: this.apiKey,
-      workspace: this.workspace,
+  private createSdkOptions(resume?: string) {
+    // Get node bin directory for PATH - needed for SDK subprocess spawning
+    const nodeBinDir = getNodeBinDir();
+    const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
+
+    const sdkOptions: Record<string, unknown> = {
+      cwd: this.workspace,
+      permissionMode: this.permissionMode || 'default',
     };
 
+    // Set API key via environment
+    if (this.apiKey) {
+      sdkOptions.env = {
+        ANTHROPIC_API_KEY: this.apiKey,
+        PATH: newPath, // Ensure subprocess can find node
+      };
+    } else {
+      // Always set PATH even without API key
+      sdkOptions.env = {
+        PATH: newPath,
+      };
+    }
+
+    // Set model
+    if (this.model) {
+      sdkOptions.model = this.model;
+    }
+
+    // Set base URL if using custom endpoint (e.g., GLM)
     if (this.apiBaseUrl) {
-      options.api_base_url = this.apiBaseUrl;
+      sdkOptions.env = {
+        ...(sdkOptions.env as Record<string, string> | undefined),
+        ANTHROPIC_BASE_URL: this.apiBaseUrl,
+      };
     }
 
+    // Resume session if provided
     if (resume) {
-      options.resume = resume;
+      sdkOptions.resume = resume;
+    } else if (this.currentSessionId) {
+      sdkOptions.resume = this.currentSessionId;
     }
 
-    if (env) {
-      options.env = env;
-    }
+    // Use Claude Code system prompt for best agentic behavior
+    sdkOptions.systemPrompt = {
+      type: 'preset',
+      preset: 'claude_code',
+    };
 
-    return options;
+    return sdkOptions;
   }
 
   /**
-   * Stream agent response.
-   * For simplicity, this uses non-streaming and yields a single message.
+   * Stream agent response using Agent SDK.
    */
-  async *queryStream(prompt: string, _sessionId?: string): AsyncIterable<AgentMessage> {
+  async *queryStream(prompt: string, sessionId?: string): AsyncIterable<AgentMessage> {
     try {
-      // Call Claude API (non-streaming for simplicity)
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 4096,
-        messages: [{ role: 'user', content: prompt }],
+      const sdkOptions = this.createSdkOptions(sessionId);
+
+      // Create query using Agent SDK
+      const queryResult = query({
+        prompt,
+        options: sdkOptions,
       });
 
-      // Extract response text
-      const text = this.extractTextFromContent(response.content);
+      // Process messages from SDK
+      for await (const message of queryResult) {
+        const text = extractTextFromSDKMessage(message);
+        if (text) {
+          // Update session ID from SDK messages
+          if ('session_id' in message && message.session_id) {
+            this.currentSessionId = message.session_id;
+          }
 
-      // Yield as message object
-      yield new AgentMessageImpl(text);
+          // Yield partial updates for streaming
+          yield { content: text, role: 'assistant' };
+        }
+      }
+
     } catch (error) {
       // Yield error message
-      yield new AgentMessageImpl(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      yield {
+        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        role: 'assistant'
+      };
     }
+  }
+
+  /**
+   * Get session info for resuming conversations.
+   */
+  getSessionInfo(): SessionInfo {
+    return {
+      sessionId: this.currentSessionId,
+      resume: this.currentSessionId,
+    };
   }
 
   /**
@@ -137,29 +176,11 @@ export class AgentClient implements IAgentClient {
   }
 
   /**
-   * Extract text from Anthropic content blocks.
-   */
-  private extractTextFromContent(content: Anthropic.ContentBlock[]): string {
-    const parts: string[] = [];
-    for (const block of content) {
-      if (block.type === 'text' && 'text' in block) {
-        parts.push(block.text);
-      }
-    }
-    return parts.join('');
-  }
-
-  /**
    * Ensure workspace directory exists.
    */
   async ensureWorkspace(): Promise<void> {
-    try {
-      await fs.mkdir(this.workspace, { recursive: true });
-    } catch (error) {
+    await fs.mkdir(this.workspace, { recursive: true }).catch(() => {
       // Ignore if already exists
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error;
-      }
-    }
+    });
   }
 }

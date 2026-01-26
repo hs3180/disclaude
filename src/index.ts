@@ -1,11 +1,12 @@
 /**
  * Main entry point for Disclaude.
- * Supports Discord or Feishu/Lark (one platform at a time).
+ * Supports Discord, Feishu/Lark, or CLI mode.
  */
-import { Config } from './config/index.js';
 import { AgentClient } from './agent/client.js';
+import { Config } from './config/index.js';
 import { DiscordBot } from './discord/bot.js';
 import { FeishuBot, SessionManager } from './feishu/index.js';
+import { runCli } from './cli/index.js';
 
 /**
  * Run Discord bot.
@@ -23,6 +24,7 @@ async function runDiscord(): Promise<void> {
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
     workspace: Config.AGENT_WORKSPACE,
+    permissionMode: 'bypassPermissions', // Auto-approve actions for bot
   });
   await agent.ensureWorkspace();
   console.log('Agent client initialized!');
@@ -51,6 +53,7 @@ async function runFeishu(): Promise<void> {
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
     workspace: Config.AGENT_WORKSPACE,
+    permissionMode: 'bypassPermissions', // Auto-approve actions for bot
   });
   await agent.ensureWorkspace();
   console.log('Agent client initialized!');
@@ -69,6 +72,17 @@ async function runFeishu(): Promise<void> {
  * Run the selected platform.
  */
 async function main(): Promise<void> {
+  // Check if CLI mode is requested (command line arguments provided)
+  const cliArgs = process.argv.slice(2);
+  const isCliMode = cliArgs.length > 0;
+
+  if (isCliMode) {
+    // CLI mode: skip platform info and validation, run directly
+    await runCli(cliArgs);
+    return;
+  }
+
+  // Bot mode: show header and validate configuration
   console.log('='.repeat(50));
   console.log('  Disclaude - Agent Bot');
   console.log('='.repeat(50));

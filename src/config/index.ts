@@ -11,7 +11,7 @@ dotenv.config();
  * Application configuration class with static properties.
  */
 export class Config {
-  // Platform selection (one of: discord, feishu)
+  // Platform selection (one of: discord, feishu, cli)
   static readonly PLATFORM: Platform = (
     process.env.PLATFORM || 'discord'
   ).toLowerCase() as Platform;
@@ -80,8 +80,8 @@ export class Config {
     const errors: string[] = [];
 
     // Validate platform
-    if (this.PLATFORM !== 'discord' && this.PLATFORM !== 'feishu') {
-      errors.push(`PLATFORM must be 'discord' or 'feishu', got: ${this.PLATFORM}`);
+    if (this.PLATFORM !== 'discord' && this.PLATFORM !== 'feishu' && this.PLATFORM !== 'cli') {
+      errors.push(`PLATFORM must be 'discord', 'feishu', or 'cli', got: ${this.PLATFORM}`);
     }
 
     // Validate platform-specific configuration
@@ -119,8 +119,10 @@ export class Config {
 
     if (this.PLATFORM === 'discord') {
       return `Discord bot with ${model}`;
-    } else {
+    } else if (this.PLATFORM === 'feishu') {
       return `Feishu/Lark bot with ${model}`;
+    } else {
+      return `Interactive CLI with ${model}`;
     }
   }
 }

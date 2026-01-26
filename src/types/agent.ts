@@ -9,7 +9,7 @@ export interface ContentBlock {
   [key: string]: unknown;
 }
 
-// Agent message interface
+// Agent message interface (wraps SDK message)
 export interface AgentMessage {
   content: string | ContentBlock[];
   role?: 'user' | 'assistant';
@@ -17,30 +17,19 @@ export interface AgentMessage {
   stop_sequence?: string | null;
 }
 
-// Stream response chunk
-export interface StreamChunk {
-  delta?: {
-    type?: string;
-    text?: string;
-    stop_reason?: string;
-  };
-  type?: string;
-  index?: number;
-  [key: string]: unknown;
-}
-
-// Agent client interface
-export interface IAgentClient {
-  queryStream(prompt: string, sessionId?: string): AsyncIterable<AgentMessage>;
-  getEnvDict(): Record<string, string>;
-  extractText(message: AgentMessage): string;
-}
-
-// Agent options
+// Agent options (compatible with Agent SDK)
 export interface AgentOptions {
   apiKey: string;
   model: string;
   apiBaseUrl?: string;
-  allowedTools?: string[];
   workspace: string;
+  // Agent SDK specific options
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+  bypassPermissions?: boolean;
+}
+
+// Session info for resuming conversations
+export interface SessionInfo {
+  sessionId?: string;
+  resume?: string;
 }

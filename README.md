@@ -14,10 +14,11 @@ A multi-platform agent bot that connects to Claude Agent SDK - supporting Discor
 
 Choose ONE platform at a time via `PLATFORM` environment variable:
 
-| Platform | Status | Commands | Mention |
-|----------|--------|----------|---------|
+| Platform | Status | Commands | Usage |
+|----------|--------|----------|-------|
 | Discord | ✅ | `/ask`, `/reset`, `/ping`, `/info` | `@BotName` |
 | Feishu/Lark | ✅ | `/reset`, `/status`, `/help` | Direct message |
+| CLI | ✅ | `--prompt "<query>"` | Command line |
 
 ## Supported Models
 
@@ -103,6 +104,9 @@ PLATFORM=discord npm run dev
 
 # Feishu/Lark
 PLATFORM=feishu npm run dev
+
+# CLI (one-shot query)
+npm start -- --prompt "your question"
 ```
 
 ### Discord Commands
@@ -123,7 +127,15 @@ PLATFORM=feishu npm run dev
 /help              - Show help
 ```
 
-Or just send a message directly!
+### CLI Mode
+
+```bash
+# Direct usage
+npm start -- --prompt "your question"
+
+# Or with arguments
+npm start -- your question here
+```
 
 ## Model Configuration
 
@@ -150,11 +162,13 @@ GLM_API_BASE_URL=https://open.bigmodel.cn/api/anthropic
 disclaude/
 ├── src/
 │   ├── index.ts              # Entry point
-│   ├── config/               # Configuration & validation
-│   ├── agent/                # Claude Agent SDK wrapper (GLM support)
+│   ├── cli/                  # CLI mode
+│   ├── config/               # Configuration
+│   ├── agent/                # Claude Agent SDK wrapper
 │   ├── discord/              # Discord bot implementation
 │   ├── feishu/               # Feishu/Lark WebSocket bot
-│   └── types/                # TypeScript type definitions
+│   ├── types/                # TypeScript type definitions
+│   └── utils/                # Utility functions
 ├── package.json              # Dependencies
 ├── tsconfig.json             # TypeScript config
 ├── .env.example              # Environment template
@@ -233,10 +247,26 @@ disclaude/
 
 ### Customizing Agent Behavior
 
-Edit `src/agent/client.ts` to:
-- Change allowed tools
-- Adjust workspace
-- Customize SDK options
+Edit `src/agent/client.ts` to customize SDK options:
+- `permissionMode`: Control permission behavior (`default`, `acceptEdits`, `bypassPermissions`, `plan`)
+- `systemPrompt`: Change the system prompt preset
+- Adjust workspace and other settings
+
+### CLI Mode
+
+Run the agent directly from command line:
+
+```bash
+npm start -- --prompt "your question here"
+```
+
+## Milestones
+
+- [ ] 实现聊天驱动的自我迭代
+- [ ] 完成一小时的长任务（自动测试）
+- [ ] 完成一天的长任务（多个 commit）
+- [ ] 完成一周的长任务（人类延迟反馈）
+- [ ] 与 Claude Code 解耦（工作量≈一周）
 
 ## License
 
