@@ -2,7 +2,6 @@
  * Configuration management for Disclaude.
  */
 import dotenv from 'dotenv';
-import type { Platform, AgentProvider } from '../types/config.js';
 
 // Load environment variables
 dotenv.config();
@@ -11,15 +10,6 @@ dotenv.config();
  * Application configuration class with static properties.
  */
 export class Config {
-  // Platform selection (one of: discord, feishu, cli)
-  static readonly PLATFORM: Platform = (
-    process.env.PLATFORM || 'discord'
-  ).toLowerCase() as Platform;
-
-  // Discord configuration
-  static readonly DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-  static readonly DISCORD_COMMAND_PREFIX = process.env.DISCORD_COMMAND_PREFIX || '!';
-
   // Feishu/Lark configuration
   static readonly FEISHU_APP_ID = process.env.FEISHU_APP_ID;
   static readonly FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
@@ -64,65 +54,5 @@ export class Config {
     }
 
     throw new Error('No API key configured. Set GLM_API_KEY or ANTHROPIC_API_KEY');
-  }
-
-  /**
-   * Get the agent provider type.
-   */
-  static getAgentProvider(): AgentProvider {
-    return this.GLM_API_KEY ? 'glm' : 'anthropic';
-  }
-
-  /**
-   * Validate required configuration.
-   */
-  static validate(): boolean {
-    const errors: string[] = [];
-
-    // Validate platform
-    if (this.PLATFORM !== 'discord' && this.PLATFORM !== 'feishu' && this.PLATFORM !== 'cli') {
-      errors.push(`PLATFORM must be 'discord', 'feishu', or 'cli', got: ${this.PLATFORM}`);
-    }
-
-    // Validate platform-specific configuration
-    if (this.PLATFORM === 'discord') {
-      if (!this.DISCORD_BOT_TOKEN) {
-        errors.push("DISCORD_BOT_TOKEN is required when PLATFORM=discord");
-      }
-    } else if (this.PLATFORM === 'feishu') {
-      if (!this.FEISHU_APP_ID) {
-        errors.push("FEISHU_APP_ID is required when PLATFORM=feishu");
-      }
-      if (!this.FEISHU_APP_SECRET) {
-        errors.push("FEISHU_APP_SECRET is required when PLATFORM=feishu");
-      }
-    }
-
-    // Validate agent configuration
-    if (!this.GLM_API_KEY && !this.ANTHROPIC_API_KEY) {
-      errors.push('At least one API key is required: GLM_API_KEY or ANTHROPIC_API_KEY');
-    }
-
-    if (errors.length > 0) {
-      throw new Error('Configuration errors:\n' + errors.map((e) => `  - ${e}`).join('\n'));
-    }
-
-    return true;
-  }
-
-  /**
-   * Get platform info for display.
-   */
-  static getPlatformInfo(): string {
-    const agentConfig = this.getAgentConfig();
-    const model = agentConfig.model;
-
-    if (this.PLATFORM === 'discord') {
-      return `Discord bot with ${model}`;
-    } else if (this.PLATFORM === 'feishu') {
-      return `Feishu/Lark bot with ${model}`;
-    } else {
-      return `Interactive CLI with ${model}`;
-    }
   }
 }

@@ -1,23 +1,22 @@
 # Disclaude 🤖
 
-A multi-platform agent bot that connects to Claude Agent SDK - supporting Discord or Feishu/Lark (one at a time). Written in TypeScript.
+A multi-platform agent bot that connects to Claude Agent SDK - supporting Feishu/Lark and CLI modes. Written in TypeScript.
 
 ## Features
 
-- 💬 Chat with AI agent via Discord or Feishu/Lark
+- 💬 Chat with AI agent via Feishu/Lark
 - 🤖 Uses Claude Agent SDK with streaming responses
 - 🔄 Persistent conversations (per-user sessions)
 - 🎯 Easy commands for interaction
 - 🌐 Support for both Anthropic Claude and GLM (Zhipu AI)
+- ✅ Message deduplication to prevent duplicate responses
+- 📝 Proper text formatting with newline support
 
 ## Supported Platforms
 
-Choose ONE platform at a time via `PLATFORM` environment variable:
-
 | Platform | Status | Commands | Usage |
 |----------|--------|----------|-------|
-| Discord | ✅ | `/ask`, `/reset`, `/ping`, `/info` | `@BotName` |
-| Feishu/Lark | ✅ | `/reset`, `/status`, `/help` | Direct message |
+| Feishu/Lark | ✅ | `/reset`, `/status`, `/help` | Direct message via WebSocket |
 | CLI | ✅ | `--prompt "<query>"` | Command line |
 
 ## Supported Models
@@ -39,13 +38,7 @@ npm install
 Copy `.env.example` to `.env` and configure:
 
 ```env
-# Choose platform (discord or feishu)
-PLATFORM=feishu
-
-# Discord (if PLATFORM=discord)
-DISCORD_BOT_TOKEN=your_token_here
-
-# Feishu/Lark (if PLATFORM=feishu)
+# Feishu/Lark
 FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_secret
 
@@ -76,15 +69,12 @@ npm run build
 npm start
 ```
 
+**Using the CLI:**
+```bash
+disclaude --prompt "your question"
+```
+
 ## Platform Setup
-
-### Discord Setup
-
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create application → Bot → Add Bot
-3. Copy token to `.env`
-4. **Enable "Message Content Intent"**
-5. Invite bot to server via OAuth2 URL Generator
 
 ### Feishu/Lark Setup
 
@@ -99,24 +89,14 @@ npm start
 ### Starting the Bot
 
 ```bash
-# Discord
-PLATFORM=discord npm run dev
-
 # Feishu/Lark
-PLATFORM=feishu npm run dev
+npm run dev
+
+# Or after build
+disclaude feishu
 
 # CLI (one-shot query)
-npm start -- --prompt "your question"
-```
-
-### Discord Commands
-
-```
-/ask <question>    - Ask the agent
-/reset             - Clear conversation
-/ping              - Check latency
-/info              - Bot info
-@BotName <msg>     - Direct mention
+disclaude --prompt "your question"
 ```
 
 ### Feishu/Lark Commands
@@ -130,11 +110,11 @@ npm start -- --prompt "your question"
 ### CLI Mode
 
 ```bash
-# Direct usage
-npm start -- --prompt "your question"
+# Using the CLI command
+disclaude --prompt "your question"
 
-# Or with arguments
-npm start -- your question here
+# Or via npm
+npm start -- --prompt "your question"
 ```
 
 ## Model Configuration
@@ -162,10 +142,10 @@ GLM_API_BASE_URL=https://open.bigmodel.cn/api/anthropic
 disclaude/
 ├── src/
 │   ├── index.ts              # Entry point
+│   ├── cli-entry.ts          # CLI entry point
 │   ├── cli/                  # CLI mode
 │   ├── config/               # Configuration
 │   ├── agent/                # Claude Agent SDK wrapper
-│   ├── discord/              # Discord bot implementation
 │   ├── feishu/               # Feishu/Lark WebSocket bot
 │   ├── types/                # TypeScript type definitions
 │   └── utils/                # Utility functions
@@ -185,13 +165,11 @@ disclaude/
             │
     ┌───────┴────────┐
     │                │
-┌───▼────┐     ┌────▼──────┐
-│ Discord│     │ Feishu/Lark│
-│  Bot   │     │  Bot       │
-└────────┘     └───────────┘
+┌───▼──────┐   ┌────▼──────┐
+│Feishu/Lark│  │   CLI     │
+│   Bot    │   │  Mode     │
+└──────────┘   └───────────┘
 ```
-
-**Single Platform**: Only one platform runs at a time (set via `PLATFORM`).
 
 ## Configuration
 
@@ -199,8 +177,6 @@ disclaude/
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PLATFORM` | Yes | `discord` or `feishu` |
-| `DISCORD_BOT_TOKEN` | Discord | Discord bot token |
 | `FEISHU_APP_ID` | Feishu | Feishu app ID |
 | `FEISHU_APP_SECRET` | Feishu | Feishu app secret |
 | `ANTHROPIC_API_KEY` | Claude | Anthropic API key |
@@ -208,16 +184,9 @@ disclaude/
 | `GLM_API_KEY` | GLM | Zhipu AI API key |
 | `GLM_MODEL` | GLM | GLM model name |
 | `GLM_API_BASE_URL` | GLM | GLM API endpoint |
-| `AGENT_WORKSPACE` | No | Workspace directory |
+| `AGENT_WORKSPACE` | No | Workspace directory (default: ./workspace) |
 
 ## Troubleshooting
-
-### Discord Issues
-
-**Bot doesn't respond:**
-- Check "Message Content Intent" is enabled
-- Verify bot is in the server
-- Check console for errors
 
 ### Feishu/Lark Issues
 
@@ -241,9 +210,7 @@ disclaude/
 
 ### Adding Commands
 
-**Discord**: Edit `src/discord/commands.ts` and add new command handlers.
-
-**Feishu**: Edit `src/feishu/bot.ts` in `handleCommand` method.
+Edit `src/feishu/bot.ts` in `handleCommand` method.
 
 ### Customizing Agent Behavior
 
@@ -251,14 +218,6 @@ Edit `src/agent/client.ts` to customize SDK options:
 - `permissionMode`: Control permission behavior (`default`, `acceptEdits`, `bypassPermissions`, `plan`)
 - `systemPrompt`: Change the system prompt preset
 - Adjust workspace and other settings
-
-### CLI Mode
-
-Run the agent directly from command line:
-
-```bash
-npm start -- --prompt "your question here"
-```
 
 ## Milestones
 

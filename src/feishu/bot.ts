@@ -9,14 +9,8 @@ import type { SessionManager } from './session.js';
 
 /**
  * Escape text for Lark JSON content format.
+ * We use JSON.stringify which handles all escaping correctly.
  */
-function escapeLarkText(text: string): string {
-  return text
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r');
-}
 
 /**
  * Feishu/Lark bot using WebSocket.
@@ -31,6 +25,10 @@ export class FeishuBot extends EventEmitter {
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
   private running = false;
+
+  // Track processed message IDs to prevent duplicate processing
+  private processedMessageIds = new Set<string>();
+  private readonly MAX_PROCESSED_IDS = 1000;
 
   constructor(
     agentClient: AgentClient,
@@ -60,10 +58,10 @@ export class FeishuBot extends EventEmitter {
 
   /**
    * Send a message to Feishu.
+   * JSON.stringify handles all necessary escaping.
    */
   async sendMessage(chatId: string, text: string): Promise<void> {
     const client = this.getClient();
-    const escapedText = escapeLarkText(text);
 
     try {
       await client.im.message.create({
@@ -73,7 +71,7 @@ export class FeishuBot extends EventEmitter {
         data: {
           receive_id: chatId,
           msg_type: 'text',
-          content: JSON.stringify({ text: escapedText }),
+          content: JSON.stringify({ text }),
         },
       });
       console.log(`[Sent] chat_id: ${chatId}`);
@@ -156,9 +154,36 @@ export class FeishuBot extends EventEmitter {
     const { message } = data;
     if (!message) return;
 
-    const { chat_id, content, message_type } = message;
+    const { message_id, chat_id, content, message_type, sender, create_time } = message;
 
-    console.log(`[Received] chat_id: ${chat_id}, type: ${message_type}`);
+    // Debug: log full message structure
+    console.log(`[Debug] message keys:`, Object.keys(message));
+    console.log(`[Debug] message_id: ${message_id}, create_time: ${create_time}`);
+
+    // Deduplication: skip already processed messages
+    if (message_id) {
+      if (this.processedMessageIds.has(message_id)) {
+        console.log(`[Skipped duplicate] message_id: ${message_id}`);
+        return;
+      }
+      this.processedMessageIds.add(message_id);
+
+      // Prevent memory leak - remove old entries when limit is reached
+      if (this.processedMessageIds.size > this.MAX_PROCESSED_IDS) {
+        const first = this.processedMessageIds.values().next().value;
+        this.processedMessageIds.delete(first);
+      }
+    }
+
+    // CRITICAL: Ignore messages sent by the bot itself
+    // When bot sends a message, Feishu may trigger an event for it
+    // We must skip these to prevent infinite loops
+    if (sender?.sender_type === 'app') {
+      console.log(`[Skipped bot message] sender_type: ${sender.sender_type}`);
+      return;
+    }
+
+    console.log(`[Received] message_id: ${message_id}, chat_id: ${chat_id}, type: ${message_type}`);
 
     // Only handle text messages
     if (message_type !== 'text') return;

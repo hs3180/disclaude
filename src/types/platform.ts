@@ -1,4 +1,4 @@
-// Conversation history storage (in-memory for Discord)
+// Conversation history storage (in-memory)
 export interface ConversationHistory {
   [userId: string]: string;
 }
