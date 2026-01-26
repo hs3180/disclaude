@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "mcp__playwright__browser_navigate",
-      "Bash(npm run type-check:*)",
-      "Bash(npm run build:*)"
-    ]
-  }
-}
