@@ -2,6 +2,21 @@
 
 A multi-platform agent bot that connects to Claude Agent SDK - supporting Feishu/Lark and CLI modes. Written in TypeScript.
 
+## Version
+
+**v0.0.1** - Initial Release ✅
+
+### Implementation Status
+
+- ✅ **Feishu-only development** - Full development workflow supported via Feishu/Lark interface
+  - Code reading, editing, and writing through chat interface
+  - Command execution (Bash) with real-time feedback
+  - File system operations (glob, grep) for code navigation
+  - Browser automation via Playwright MCP tools
+  - Custom skills execution (e.g., `implement-feature`, `internet-research`)
+  - Session management for persistent conversations
+  - Message deduplication and proper error handling
+
 ## Features
 
 - 💬 Chat with AI agent via Feishu/Lark
@@ -371,11 +386,21 @@ To add a new platform:
 
 ## Milestones
 
-- [ ] 实现聊天驱动的自我迭代
-- [ ] 完成一小时的长任务（自动测试）
-- [ ] 完成一天的长任务（多个 commit）
+### ✅ v0.0.1 (Completed)
+- [x] 实现聊天驱动的自我迭代
+- [x] 完成一小时的长任务（自动测试）
+- [x] 完成一天的长任务（多个 commit）
 - [ ] 完成一周的长任务（人类延迟反馈）
 - [ ] 与 Claude Code 解耦（工作量≈一周）
+
+**Achievements:**
+- Full Feishu/Lark integration with WebSocket
+- Claude Agent SDK integration with streaming
+- MCP tool support (Playwright browser automation)
+- Custom skills system (implement-feature, internet-research)
+- PM2 production deployment
+- Session management and message deduplication
+- Rich message parsing and formatting
 
 ## License
 
