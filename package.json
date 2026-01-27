@@ -33,6 +33,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.19",
     "@anthropic-ai/sdk": "^0.32.0",
     "@larksuiteoapi/node-sdk": "^1.34.0",
+    "@playwright/mcp": "^0.0.61",
     "dotenv": "^16.4.7"
   },
   "devDependencies": {

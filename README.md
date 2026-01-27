@@ -11,6 +11,9 @@ A multi-platform agent bot that connects to Claude Agent SDK - supporting Feishu
 - 🌐 Support for both Anthropic Claude and GLM (Zhipu AI)
 - ✅ Message deduplication to prevent duplicate responses
 - 📝 Proper text formatting with newline support
+- 🌐 **Browser automation** via Playwright MCP tools
+- 🎨 **Rich message types** with colored output (CLI) and smart throttling (Feishu)
+- 🛠️ **Extensible tool system** with MCP server support
 
 ## Supported Platforms
 
@@ -23,6 +26,33 @@ A multi-platform agent bot that connects to Claude Agent SDK - supporting Feishu
 
 - **Anthropic Claude**: `claude-3-5-sonnet-20241022`, etc.
 - **GLM (Zhipu AI)**: `glm-4.7`, `glm-4`, etc.
+
+## Available Tools
+
+### MCP (Model Context Protocol) Tools
+
+The agent supports extensible tools through MCP servers:
+
+**🌐 Playwright MCP** (Browser Automation)
+- `browser_navigate` - Navigate to URLs
+- `browser_click` - Click elements on pages
+- `browser_type` - Type text into inputs
+- `browser_snapshot` - Capture page structure
+- `browser_take_screenshot` - Take screenshots
+- `browser_evaluate` - Run JavaScript in pages
+- `browser_run_code` - Execute Playwright code
+- And 10+ more browser automation tools
+
+**🔧 Built-in Tools**
+- `Skill` - Execute custom skills from `.claude/skills/`
+- `Bash` - Execute shell commands
+- `Edit` - Edit files
+- `Read` - Read files
+- `Write` - Write files
+
+### Adding Custom Tools
+
+Create custom skills by adding files to `.claude/skills/` directory. See [Claude Code Skills documentation](https://docs.anthropic.com/en/docs/build-with-claude/claude-for-developers) for details.
 
 ## Quick Start
 
@@ -69,19 +99,11 @@ npm run build
 npm start
 ```
 
-**Background service with PM2:**
+**Background service with PM2 (recommended for production):**
 ```bash
-# Start the bot as a background service
-npm run pm2:start
-
-# Check status
-npm run pm2:status
-
-# View logs
-npm run pm2:logs
-
-# Stop the service
-npm run pm2:stop
+npm run pm2:start      # Start
+npm run pm2:restart    # Restart (after code changes)
+npm run pm2:logs       # View logs
 ```
 
 **Using the CLI:**
@@ -164,10 +186,16 @@ disclaude/
 │   ├── feishu/               # Feishu/Lark WebSocket bot
 │   ├── types/                # TypeScript type definitions
 │   └── utils/                # Utility functions
+│       ├── output-adapter.ts # Output abstraction layer
+│       └── sdk.ts            # SDK message parsing utilities
+├── .claude/                  # Claude Code configuration
+│   └── skills/               # Custom skills (optional)
 ├── logs/                     # PM2 log directory
+├── workspace/                # Agent working directory
 ├── package.json              # Dependencies
 ├── ecosystem.config.cjs      # PM2 configuration
 ├── tsconfig.json             # TypeScript config
+├── CLAUDE.md                 # Claude Code project guide
 ├── .env.example              # Environment template
 └── README.md                 # This file
 ```
@@ -175,22 +203,38 @@ disclaude/
 ## Architecture
 
 ```
-┌─────────────────────────┐
-│  Claude Agent SDK      │
-│  (or GLM API)          │
-└───────────┬───────────┘
-            │
-    ┌───────┴────────┐
-    │                │
-┌───▼──────┐   ┌────▼──────┐
-│Feishu/Lark│  │   CLI     │
-│   Bot    │   │  Mode     │
-└──────────┘   └───────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Claude Agent SDK                        │
+│  (Anthropic Claude or GLM with MCP Servers)                │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        │  Output Adapter Layer   │
+        │  (CLI / Feishu)         │
+        └────────────┬────────────┘
+                     │
+        ┌────────────┴────────────┐
+        │                         │
+┌───────▼──────┐         ┌────────▼────────┐
+│  Feishu/Lark │         │     CLI         │
+│  Bot (WS)     │         │   Mode          │
+│  + Throttling │         │  + Colors       │
+└──────────────┘         └─────────────────┘
 ```
 
 ## Running as a Background Service (PM2)
 
-For running the bot as a persistent background service with automatic restarts:
+For running the bot as a persistent background service with automatic restarts.
+
+### Quick Start
+
+```bash
+# First time: build and start
+npm run pm2:start
+
+# After code changes: restart
+npm run pm2:restart
+```
 
 ### PM2 Commands
 
@@ -198,19 +242,37 @@ For running the bot as a persistent background service with automatic restarts:
 |---------|-------------|
 | `npm run pm2:start` | Build and start the bot |
 | `npm run pm2:stop` | Stop the bot |
-| `npm run pm2:restart` | Restart the bot |
-| `npm run pm2:reload` | Zero-downtime reload |
-| `npm run pm2:logs` | View logs |
-| `npm run pm2:status` | Check status |
-| `npm run pm2:monit` | Real-time monitoring |
-| `npm run pm2:delete` | Remove from PM2 |
+| `npm run pm2:restart` | Restart the bot (use after code changes) |
+| `npm run pm2:reload` | Zero-downtime reload (graceful restart) |
+| `npm run pm2:logs` | View real-time logs |
+| `npm run pm2:status` | Check bot status |
+| `npm run pm2:monit` | Real-time monitoring dashboard |
+| `npm run pm2:delete` | Remove bot from PM2 |
+
+### Log Management
+
+```bash
+# View logs
+npm run pm2:logs
+
+# Clear logs
+pm2 flush
+
+# View specific log files
+cat ./logs/pm2-out.log    # Standard output
+cat ./logs/pm2-error.log  # Errors
+```
 
 ### PM2 Configuration
 
 Edit `ecosystem.config.cjs` to customize:
-- `max_memory_restart`: Memory limit before restart (default: 500M)
-- `error_file` / `out_file`: Log file paths
-- Environment variables
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_memory_restart` | `500M` | Restart if memory exceeds this |
+| `instances` | `1` | Number of instances to run |
+| `error_file` | `./logs/pm2-error.log` | Error log path |
+| `out_file` | `./logs/pm2-out.log` | Output log path |
 
 ## Configuration
 
@@ -225,7 +287,8 @@ Edit `ecosystem.config.cjs` to customize:
 | `GLM_API_KEY` | GLM | Zhipu AI API key |
 | `GLM_MODEL` | GLM | GLM model name |
 | `GLM_API_BASE_URL` | GLM | GLM API endpoint |
-| `AGENT_WORKSPACE` | No | Workspace directory (default: ./workspace) |
+
+**Note**: Workspace directory is automatically set to the current working directory.
 
 ## Troubleshooting
 
@@ -236,29 +299,63 @@ Edit `ecosystem.config.cjs` to customize:
 - Check bot has permissions
 - Ensure events are configured
 
+**Messages not sending:**
+- Check WebSocket connection status
+- Verify bot is not blocked by user
+- Check PM2 logs: `npm run pm2:logs`
+
 ### Agent Issues
 
 **Claude API errors:**
 - Verify ANTHROPIC_API_KEY
 - Check billing/credits
+- Ensure model name is correct
 
 **GLM API errors:**
 - Verify GLM_API_KEY
 - Check GLM_API_BASE_URL
 - Ensure API quota
 
+**MCP Tools not working:**
+- Ensure `@playwright/mcp` is installed: `npm install`
+- Check MCP server configuration in `src/agent/client.ts`
+- Verify tool is in `allowedTools` list
+
+**Permission errors:**
+- Check `permissionMode` setting in agent config
+- For development, use `bypassPermissions: true`
+- Ensure file system permissions are correct
+
 ## Development
 
 ### Adding Commands
 
-Edit `src/feishu/bot.ts` in `handleCommand` method.
+Edit `src/feishu/bot.ts` to add custom slash commands.
 
 ### Customizing Agent Behavior
 
 Edit `src/agent/client.ts` to customize SDK options:
 - `permissionMode`: Control permission behavior (`default`, `acceptEdits`, `bypassPermissions`, `plan`)
-- `systemPrompt`: Change the system prompt preset
-- Adjust workspace and other settings
+- `allowedTools`: Specify which tools the agent can use
+- `mcpServers`: Add or configure MCP servers
+
+### Adding Custom Skills
+
+1. Create `.claude/skills/` directory
+2. Add skill files (e.g., `my-skill.md`)
+3. Skills are automatically loaded via `settingSources: ['project']`
+
+### Output Adapters
+
+The project uses an **Output Adapter** pattern for unified message handling:
+
+- **CLIOutputAdapter**: Formats messages with ANSI colors for terminal
+- **FeishuOutputAdapter**: Sends messages via WebSocket with smart throttling
+
+To add a new platform:
+1. Implement the `OutputAdapter` interface
+2. Add platform-specific message formatting
+3. Integrate with your message handler
 
 ## Milestones
 

@@ -5,6 +5,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { EventEmitter } from 'events';
 import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
+import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import type { SessionManager } from './session.js';
 
 /**
@@ -82,66 +83,44 @@ export class FeishuBot extends EventEmitter {
 
   /**
    * Process agent message with streaming response.
+   * Each message is sent immediately without accumulation.
    */
   async processAgentMessage(chatId: string, prompt: string): Promise<void> {
     // Get previous session
     const sessionId = await this.sessionManager.getSessionId(chatId);
 
-    // Send "Processing..." immediately
-    await this.sendMessage(chatId, 'Processing...');
+    // Create output adapter for this chat
+    const adapter = new FeishuOutputAdapter({
+      sendMessage: this.sendMessage.bind(this),
+      chatId,
+    });
 
-    // Accumulate response text
-    let responseText = '';
+    // Clear throttle state for this chat
+    adapter.clearThrottleState();
 
     try {
-      // Stream agent response
+      // Stream agent response - send each message immediately
       for await (const message of this.agentClient.queryStream(
         prompt,
         sessionId ?? undefined
       )) {
-        // Extract text from message
-        const text = this.agentClient.extractText(message);
-        if (text) {
-          responseText += text;
-        }
-      }
+        const content = typeof message.content === 'string'
+          ? message.content
+          : this.agentClient.extractText(message);
 
-      // Send final response
-      if (responseText) {
-        await this.sendMessage(chatId, responseText);
+        if (!content) {
+          continue;
+        }
+
+        // Use adapter to write message
+        await adapter.write(content, message.messageType ?? 'text');
       }
     } catch (error) {
       console.error(`Agent error for chat ${chatId}:`, error);
       await this.sendMessage(
         chatId,
-        `Error: ${error instanceof Error ? error.message : String(error)}`
+        `❌ Error: ${error instanceof Error ? error.message : String(error)}`
       );
-    }
-  }
-
-  /**
-   * Handle slash commands.
-   */
-  async handleCommand(chatId: string, text: string): Promise<void> {
-    if (text === '/reset' || text === '/clear') {
-      await this.sessionManager.clearSession(chatId);
-      await this.sendMessage(chatId, 'Session cleared.');
-    } else if (text === '/status') {
-      const sessionId = await this.sessionManager.getSessionId(chatId);
-      const agentConfig = Config.getAgentConfig();
-      const status = `Model: ${agentConfig.model}\nSession: ${sessionId ? 'Active' : 'None'}`;
-      await this.sendMessage(chatId, status);
-    } else if (text === '/help') {
-      const helpText =
-        'Disclaude Bot\n\n' +
-        'Commands:\n' +
-        '/reset - Clear session\n' +
-        '/status - Show status\n' +
-        '/help - Show this help\n\n' +
-        'Just send a message to interact with agent.';
-      await this.sendMessage(chatId, helpText);
-    } else {
-      await this.sendMessage(chatId, `Unknown command: ${text}`);
     }
   }
 
@@ -171,7 +150,9 @@ export class FeishuBot extends EventEmitter {
       // Prevent memory leak - remove old entries when limit is reached
       if (this.processedMessageIds.size > this.MAX_PROCESSED_IDS) {
         const first = this.processedMessageIds.values().next().value;
-        this.processedMessageIds.delete(first);
+        if (first) {
+          this.processedMessageIds.delete(first);
+        }
       }
     }
 
@@ -200,12 +181,8 @@ export class FeishuBot extends EventEmitter {
 
     if (!text) return;
 
-    // Handle command or agent message
-    if (text.startsWith('/')) {
-      await this.handleCommand(chat_id, text);
-    } else {
-      await this.processAgentMessage(chat_id, text);
-    }
+    // All messages are processed by the agent (including slash commands for SDK skills)
+    await this.processAgentMessage(chat_id, text);
   }
 
   /**

@@ -5,7 +5,6 @@
 import { runFeishu } from './bots.js';
 import { runCli } from './cli/index.js';
 import { Config } from './config/index.js';
-import { promises as fs } from 'fs';
 
 /**
  * Main CLI entry point.
@@ -45,11 +44,6 @@ async function main(): Promise<void> {
     console.log('\nPlease create a .env file based on .env.example');
     process.exit(1);
   }
-
-  // Ensure workspace exists
-  await fs.mkdir(Config.AGENT_WORKSPACE, { recursive: true }).catch(() => {
-    // Ignore if already exists
-  });
 
   // Show header
   console.log('='.repeat(50));

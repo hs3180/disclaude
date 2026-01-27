@@ -5,7 +5,7 @@
 
 import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
-import { promises as fs } from 'fs';
+import { CLIOutputAdapter } from '../utils/output-adapter.js';
 
 /**
  * ANSI color codes for terminal output.
@@ -19,6 +19,7 @@ const colors = {
   yellow: '\x1b[33m',
   red: '\x1b[31m',
   cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
 };
 
 /**
@@ -37,21 +38,28 @@ async function executeOnce(prompt: string, agentConfig: ReturnType<typeof Config
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
-    workspace: Config.AGENT_WORKSPACE,
-    permissionMode: 'default',
+    permissionMode: 'bypassPermissions', // Auto-approve actions for CLI convenience
   });
-  await agent.ensureWorkspace();
+
+  // Create output adapter for CLI
+  const adapter = new CLIOutputAdapter();
 
   // Stream agent response
   for await (const message of agent.queryStream(prompt)) {
-    const text = agent.extractText(message);
-    if (text) {
-      process.stdout.write(text);
+    const content = typeof message.content === 'string'
+      ? message.content
+      : agent.extractText(message);
+
+    if (!content) {
+      continue;
     }
+
+    // Use adapter to write message
+    adapter.write(content, message.messageType ?? 'text');
   }
 
   // Ensure final newline
-  console.log('');
+  adapter.finalize();
 }
 
 /**
@@ -83,11 +91,6 @@ export async function runCli(args: string[]): Promise<void> {
 
   // Get agent configuration
   const agentConfig = Config.getAgentConfig();
-
-  // Ensure workspace exists
-  await fs.mkdir(Config.AGENT_WORKSPACE, { recursive: true }).catch(() => {
-    // Ignore if already exists
-  });
 
   // Display prompt info
   console.log('');

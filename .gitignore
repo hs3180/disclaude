@@ -22,4 +22,10 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code
 .claude/settings*
+.claude/sessions/
+
+# Playwright MCP
+.playwright-mcp/

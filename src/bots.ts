@@ -20,10 +20,8 @@ export async function runFeishu(): Promise<void> {
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
-    workspace: Config.AGENT_WORKSPACE,
     permissionMode: 'bypassPermissions', // Auto-approve actions for bot
   });
-  await agent.ensureWorkspace();
   console.log('Agent client initialized!');
 
   // Initialize session manager

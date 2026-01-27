@@ -3,8 +3,7 @@
  * Uses the official @anthropic-ai/claude-agent-sdk for full tool support.
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { promises as fs } from 'fs';
-import { extractTextFromSDKMessage, getNodeBinDir } from '../utils/sdk.js';
+import { parseSDKMessage, getNodeBinDir } from '../utils/sdk.js';
 import type {
   AgentMessage,
   AgentOptions,
@@ -18,7 +17,6 @@ export class AgentClient {
   readonly apiKey: string;
   readonly model: string;
   readonly apiBaseUrl: string | undefined;
-  readonly workspace: string;
   readonly permissionMode: AgentOptions['permissionMode'];
   readonly bypassPermissions: boolean | undefined;
 
@@ -29,7 +27,6 @@ export class AgentClient {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.apiBaseUrl = options.apiBaseUrl;
-    this.workspace = options.workspace;
     this.permissionMode = options.permissionMode;
     this.bypassPermissions = options.bypassPermissions;
   }
@@ -43,8 +40,41 @@ export class AgentClient {
     const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
 
     const sdkOptions: Record<string, unknown> = {
-      cwd: this.workspace,
+      cwd: process.cwd(),
       permissionMode: this.permissionMode || 'default',
+      // Load settings from .claude/ directory (skills, agents, etc.)
+      settingSources: ['project'],
+      // Enable Skill tool and Playwright MCP tools
+      allowedTools: [
+        'Skill',
+        'mcp__playwright__browser_navigate',
+        'mcp__playwright__browser_click',
+        'mcp__playwright__browser_snapshot',
+        'mcp__playwright__browser_run_code',
+        'mcp__playwright__browser_close',
+        'mcp__playwright__browser_type',
+        'mcp__playwright__browser_press_key',
+        'mcp__playwright__browser_hover',
+        'mcp__playwright__browser_tabs',
+        'mcp__playwright__browser_take_screenshot',
+        'mcp__playwright__browser_wait_for',
+        'mcp__playwright__browser_evaluate',
+        'mcp__playwright__browser_fill_form',
+        'mcp__playwright__browser_select_option',
+        'mcp__playwright__browser_drag',
+        'mcp__playwright__browser_handle_dialog',
+        'mcp__playwright__browser_network_requests',
+        'mcp__playwright__browser_console_messages',
+        'mcp__playwright__browser_install',
+      ],
+      // Configure Playwright MCP server
+      mcpServers: {
+        playwright: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['@playwright/mcp@latest'],
+        },
+      },
     };
 
     // Set API key via environment
@@ -80,11 +110,8 @@ export class AgentClient {
       sdkOptions.resume = this.currentSessionId;
     }
 
-    // Use Claude Code system prompt for best agentic behavior
-    sdkOptions.systemPrompt = {
-      type: 'preset',
-      preset: 'claude_code',
-    };
+    // Note: Not setting systemPrompt here so SDK uses project's CLAUDE.md
+    // If needed, you can set: systemPrompt: { type: 'preset', preset: 'claude_code' }
 
     return sdkOptions;
   }
@@ -104,23 +131,33 @@ export class AgentClient {
 
       // Process messages from SDK
       for await (const message of queryResult) {
-        const text = extractTextFromSDKMessage(message);
-        if (text) {
-          // Update session ID from SDK messages
-          if ('session_id' in message && message.session_id) {
-            this.currentSessionId = message.session_id;
-          }
+        const parsed = parseSDKMessage(message);
 
-          // Yield partial updates for streaming
-          yield { content: text, role: 'assistant' };
+        // Update session ID from parsed message
+        if (parsed.sessionId) {
+          this.currentSessionId = parsed.sessionId;
         }
+
+        // Skip empty content
+        if (!parsed.content) {
+          continue;
+        }
+
+        // Yield structured message with type and metadata
+        yield {
+          content: parsed.content,
+          role: 'assistant',
+          messageType: parsed.type,
+          metadata: parsed.metadata,
+        };
       }
 
     } catch (error) {
       // Yield error message
       yield {
-        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        role: 'assistant'
+        content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+        role: 'assistant',
+        messageType: 'error',
       };
     }
   }
@@ -142,7 +179,7 @@ export class AgentClient {
     const envDict: Record<string, string> = {
       ANTHROPIC_API_KEY: this.apiKey,
       ANTHROPIC_MODEL: this.model,
-      WORKSPACE_DIR: this.workspace,
+      WORKSPACE_DIR: process.cwd(),
     };
 
     if (this.apiBaseUrl) {
@@ -173,14 +210,5 @@ export class AgentClient {
     }
 
     return '';
-  }
-
-  /**
-   * Ensure workspace directory exists.
-   */
-  async ensureWorkspace(): Promise<void> {
-    await fs.mkdir(this.workspace, { recursive: true }).catch(() => {
-      // Ignore if already exists
-    });
   }
 }

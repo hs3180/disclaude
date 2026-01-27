@@ -24,9 +24,6 @@ export class Config {
   static readonly GLM_API_BASE_URL =
     process.env.GLM_API_BASE_URL || 'https://open.bigmodel.cn/api/anthropic';
 
-  // Agent configuration
-  static readonly AGENT_WORKSPACE = process.env.AGENT_WORKSPACE || './workspace';
-
   /**
    * Get agent configuration based on available API keys.
    * Prefers GLM if configured, otherwise falls back to Anthropic.
