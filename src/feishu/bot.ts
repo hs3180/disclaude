@@ -8,10 +8,41 @@ import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import type { SessionManager } from './session.js';
 
-/**
- * Escape text for Lark JSON content format.
- * We use JSON.stringify which handles all escaping correctly.
- */
+// Temporarily disabled: Markdown detection for rich text messages
+// TODO: Re-enable when rich text format is needed again
+// function containsMarkdown(text: string): boolean {
+//   // Common Markdown patterns in Lark:
+//   // Headers: # ## ###
+//   // Bold: **text**
+//   // Italic: *text* or _text_
+//   // Strikethrough: ~~text~~
+//   // Inline code: `code`
+//   // Code blocks: ```
+//   // Links: [text](url)
+//   // Images: ![alt](url)
+//   // Lists: - item, * item, 1. item
+//   // Quotes: > quote
+//   // Horizontal rules: --- or ***
+//   // Mentions: <at id=...>
+//   const markdownPatterns = [
+//     /^#{1,6}\s/m,           // Headers
+//     /\*\*[^*]+\*\*/,        // Bold
+//     /\*[^*]+\*/,            // Italic (single asterisk)
+//     /_[^_]+_/m,             // Italic (underscore) - word boundaries to avoid false positives
+//     /~~[^~]+~~/,            // Strikethrough
+//     /`[^`]+`/,              // Inline code
+//     /```/,                  // Code blocks
+//     /\[[^\]]+\]\([^)]+\)/,  // Links
+//     /!\[[^\]]+\]\([^)]+\)/, // Images
+//     /^\s*[-*]\s/m,          // Unordered lists
+//     /^\s*\d+\.\s/m,         // Ordered lists
+//     /^>\s/m,                // Quotes
+//     /^---|^\*{3}/m,         // Horizontal rules
+//     /<at[^>]*>/,            // Mentions
+//   ];
+//
+//   return markdownPatterns.some(pattern => pattern.test(text));
+// }
 
 /**
  * Feishu/Lark bot using WebSocket.
@@ -59,12 +90,13 @@ export class FeishuBot extends EventEmitter {
 
   /**
    * Send a message to Feishu.
-   * JSON.stringify handles all necessary escaping.
+   * Currently using plain text format only (rich text temporarily disabled).
    */
   async sendMessage(chatId: string, text: string): Promise<void> {
     const client = this.getClient();
 
     try {
+      // Always use plain text format
       await client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
@@ -75,7 +107,9 @@ export class FeishuBot extends EventEmitter {
           content: JSON.stringify({ text }),
         },
       });
-      console.log(`[Sent] chat_id: ${chatId}`);
+
+      const preview = text.length > 100 ? text.substring(0, 100) + '...' : text;
+      console.log(`[Sent] chat_id: ${chatId}, type: text, text: ${preview}`);
     } catch (error) {
       console.error(`Failed to send message to ${chatId}:`, error);
     }
@@ -164,8 +198,6 @@ export class FeishuBot extends EventEmitter {
       return;
     }
 
-    console.log(`[Received] message_id: ${message_id}, chat_id: ${chat_id}, type: ${message_type}`);
-
     // Only handle text messages
     if (message_type !== 'text') return;
 
@@ -180,6 +212,8 @@ export class FeishuBot extends EventEmitter {
     }
 
     if (!text) return;
+
+    console.log(`[Received] message_id: ${message_id}, chat_id: ${chat_id}, type: ${message_type}, text: ${text}`);
 
     // All messages are processed by the agent (including slash commands for SDK skills)
     await this.processAgentMessage(chat_id, text);
@@ -197,6 +231,13 @@ export class FeishuBot extends EventEmitter {
     this.eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: any) => {
         await this.handleMessageReceive(data);
+      },
+      // Suppress warnings for unhandled events
+      'im.message.message_read_v1': async () => {
+        // Silently ignore message read events
+      },
+      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {
+        // Silently ignore bot p2p chat entered events
       },
     });
 

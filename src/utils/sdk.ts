@@ -46,6 +46,59 @@ export function extractTextFromSDKMessage(message: SDKMessage): string {
 }
 
 /**
+ * Format tool input for display, showing intent rather than raw parameters.
+ */
+function formatToolInput(toolName: string, input: Record<string, unknown> | undefined): string {
+  if (!input) return '';
+
+  switch (toolName) {
+    case 'Bash':
+      const cmd = input.command as string | undefined;
+      return `Running: ${cmd || '<no command>'}`;
+
+    case 'Edit':
+      const editPath = input.filePath as string | undefined;
+      return `Editing: ${editPath || '<unknown file>'}`;
+
+    case 'Read':
+      const readPath = input.file_path as string | undefined;
+      return `Reading: ${readPath || '<unknown file>'}`;
+
+    case 'Write':
+      const writePath = input.file_path as string | undefined;
+      return `Writing: ${writePath || '<unknown file>'}`;
+
+    case 'Grep': {
+      const pattern = input.pattern as string | undefined;
+      const type = input.type as string | undefined;
+      if (pattern) {
+        return type ? `Searching for "${pattern}" in ${type} files` : `Searching for "${pattern}"`;
+      }
+      return `Searching: ${safeStringify(input, 60)}`;
+    }
+
+    case 'Glob':
+      const globPattern = input.pattern as string | undefined;
+      return `Finding files: ${globPattern || '<no pattern>'}`;
+
+    case 'WebSearch':
+      const query = input.query as string | undefined;
+      return `Searching web: "${query || '<no query>'}"`;
+
+    case 'WebFetch':
+      const url = input.url as string | undefined;
+      return `Fetching: ${url || '<no url>'}`;
+
+    case 'LSP':
+      const operation = input.operation as string | undefined;
+      return `LSP: ${operation || '<unknown operation>'}`;
+
+    default:
+      return safeStringify(input, 60);
+  }
+}
+
+/**
  * Parse SDK message into structured format with type and metadata.
  * Handles tool use, progress, results, and other message types.
  */
@@ -85,27 +138,13 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
             const toolName = block.name as string;
             const input = block.input as Record<string, unknown> | undefined;
 
-            // Build tool input preview
-            let inputPreview = '';
-            if (input) {
-              if (toolName === 'Bash' && 'command' in input) {
-                inputPreview = String(input.command);
-              } else if (toolName === 'Edit' && 'filePath' in input) {
-                inputPreview = String(input.filePath);
-              } else if (toolName === 'Read' && 'file_path' in input) {
-                inputPreview = String(input.file_path);
-              } else if (toolName === 'Write' && 'file_path' in input) {
-                inputPreview = String(input.file_path);
-              } else {
-                inputPreview = safeStringify(input, 60);
-              }
-            }
+            const intent = formatToolInput(toolName, input);
 
             result.type = 'tool_use';
-            result.content = `🔧 Using ${toolName}${inputPreview ? `: ${inputPreview}` : ''}`;
+            result.content = `🔧 ${intent}`;
             result.metadata = {
               toolName,
-              toolInput: inputPreview,
+              toolInput: intent,
             };
             return result;
           }
@@ -128,9 +167,10 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
     case 'tool_progress': {
       // Tool execution progress update
-      if ('name' in message && 'elapsed' in message) {
-        const toolName = message.name as string;
-        const elapsed = message.elapsed as number;
+      // SDKToolProgressMessage has tool_name and elapsed_time_seconds fields
+      if ('tool_name' in message && 'elapsed_time_seconds' in message) {
+        const toolName = message.tool_name as string;
+        const elapsed = message.elapsed_time_seconds as number;
         result.type = 'tool_progress';
         result.content = `⏳ Running ${toolName} (${elapsed.toFixed(1)}s)`;
         result.metadata = {
@@ -144,11 +184,11 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
     case 'tool_use_summary': {
       // Tool execution completed
-      if ('name' in message) {
-        const toolName = message.name as string;
+      // SDKToolUseSummaryMessage has summary field, not name
+      if ('summary' in message) {
+        const summary = message.summary as string;
         result.type = 'tool_result';
-        result.content = `✓ ${toolName} completed`;
-        result.metadata = { toolName };
+        result.content = `✓ ${summary}`;
         return result;
       }
       return { type: 'text', content: '' };

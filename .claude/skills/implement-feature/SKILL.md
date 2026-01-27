@@ -1,7 +1,7 @@
 ---
 name: implement-feature
-description: Structured feature implementation with 4-phase process: refine objectives → plan → develop → test. Use when implementing features, adding functionality, creating components, or requirements need clarification. Works autonomously without user interaction.
-version: 2.1.0
+description: Structured feature implementation with 5-phase process: refine objectives → plan → develop → static check → test. Use when implementing features, adding functionality, creating components, or requirements need clarification. Works autonomously without user interaction.
+version: 2.2.0
 argument-hint: [feature-description]
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, TaskOutput, KillShell, LSP, TodoWrite
@@ -18,13 +18,14 @@ This skill autonomously implements software features through a structured proces
 1. **Refine delivery objectives** - Analyze and clarify requirements from context
 2. **Create implementation plan** - Design the technical approach
 3. **Develop** - Write the code using Read, Write, Edit, Bash tools
-4. **Test and iterate** - Verify against delivery objectives
+4. **Static check** - Run linting, type checking, and format verification
+5. **Test and iterate** - Verify against delivery objectives
 
 ## Instructions
 
 Implementing feature: **$ARGUMENTS** (if provided)
 
-Follow this 4-phase structured process **autonomously**:
+Follow this 5-phase structured process **autonomously**:
 
 ### Phase 1: Refine Delivery Objectives
 
@@ -86,7 +87,28 @@ Write clean, maintainable code using only allowed tools:
 - Handle edge cases appropriately
 - Read before modifying existing code
 
-### Phase 4: Test and Iterate
+### Phase 4: Static Check
+
+Run static analysis to catch issues before testing:
+
+1. **Type Checking**
+   - Use `Bash` to run type checker (e.g., `npm run type-check`, `tsc --noEmit`)
+   - Fix any type errors found
+   - Ensure proper type annotations for new code
+
+2. **Linting**
+   - Use `Bash` to run linter (e.g., `npm run lint`, `eslint .`)
+   - Fix any linting warnings or errors
+   - Follow project's code style conventions
+
+3. **Format Verification**
+   - Check code formatting if formatter is configured
+   - Run format command if needed (e.g., `npm run format:check`)
+   - Fix formatting issues if detected
+
+**Output**: Report static check results and fix any issues found before proceeding to tests.
+
+### Phase 5: Test and Iterate
 
 Ensure implementation meets delivery objectives:
 
@@ -134,9 +156,13 @@ Implementation Plan:
 - Use `Read` to check existing code structure
 - Use `Write` to create new files
 - Use `Edit` to modify existing routes
-- Use `Bash` to run tests
 
 **Phase 4**:
+- Use `Bash` to run type checking (`npm run type-check`)
+- Use `Bash` to run linting (`npm run lint`)
+- Fix any static analysis issues found
+
+**Phase 5**:
 - Use `Bash` to run test suite
 - Use `Read` to verify integration
 - Fix any issues found
@@ -146,6 +172,7 @@ Implementation Plan:
 
 A feature is successfully implemented when:
 - ✅ All acceptance criteria are met
+- ✅ Code passes static checks (type checking, linting)
 - ✅ Code is tested (via Bash if tests exist)
 - ✅ Edge cases are handled
 - ✅ Existing functionality is not broken
@@ -157,7 +184,8 @@ A feature is successfully implemented when:
 1. **No User Questions** - Make decisions autonomously using best practices
 2. **No Web/Browser Tools** - Use only file system and Bash tools
 3. **Read First** - Understand existing code before modifying
-4. **Test Your Work** - Use Bash to verify implementations
+4. **Static Check** - Run type checking and linting before testing
+5. **Test Your Work** - Use Bash to verify implementations
 
 ## Common Patterns
 
@@ -165,19 +193,22 @@ A feature is successfully implemented when:
 1. Read similar existing features for patterns
 2. Follow the same structure and conventions
 3. Update imports and exports as needed
-4. Add tests if test framework exists
+4. Run static checks (type check, lint)
+5. Add tests if test framework exists
 
 ### Fixing a Bug
 1. Read the file containing the bug
 2. Understand the context by reading related files
 3. Use `Edit` to make precise fixes
-4. Use `Bash` to run tests and verify
+4. Run static checks to verify changes
+5. Use `Bash` to run tests and verify
 
 ### Refactoring Code
 1. Read the files to be refactored
 2. Plan the refactoring steps
 3. Make incremental changes
-4. Verify functionality after each change
+4. Run static checks after each change
+5. Verify functionality after each change
 
 ## Notes
 
