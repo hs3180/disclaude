@@ -7,12 +7,201 @@ import type {
 } from '../types/agent.js';
 
 /**
+ * Parameters for creating agent SDK options.
+ */
+export interface CreateAgentSdkOptionsParams {
+  /** API key for authentication */
+  apiKey: string;
+  /** Model identifier */
+  model: string;
+  /** Optional API base URL (e.g., for custom endpoints like GLM) */
+  apiBaseUrl?: string;
+  /** Working directory for the agent */
+  cwd?: string;
+  /** Permission mode for tool execution */
+  permissionMode?: 'default' | 'bypassPermissions';
+  /** Optional session ID to resume */
+  resume?: string;
+}
+
+/**
  * Get directory containing node executable.
  * This is needed for SDK subprocess spawning to find node.
  */
 export function getNodeBinDir(): string {
   const execPath = process.execPath;
   return execPath.substring(0, execPath.lastIndexOf('/'));
+}
+
+/**
+ * Create SDK options for agent execution.
+ * This shared function ensures consistent configuration across all agent instances.
+ *
+ * @param params - Configuration parameters
+ * @returns SDK options object compatible with @anthropic-ai/claude-agent-sdk query()
+ */
+export function createAgentSdkOptions(params: CreateAgentSdkOptionsParams): Record<string, unknown> {
+  const {
+    apiKey,
+    model,
+    apiBaseUrl,
+    cwd = process.cwd(),
+    permissionMode = 'bypassPermissions',
+    resume,
+  } = params;
+
+  // Get node bin directory for PATH - needed for SDK subprocess spawning
+  const nodeBinDir = getNodeBinDir();
+  const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
+
+  const sdkOptions: Record<string, unknown> = {
+    cwd,
+    permissionMode,
+    // Load settings from .claude/ directory (skills, agents, etc.)
+    settingSources: ['project'],
+    // Enable Skill tool, WebSearch, Task, and Playwright MCP tools
+    allowedTools: [
+      'Skill',
+      'WebSearch',
+      'Task',
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'mcp__playwright__browser_navigate',
+      'mcp__playwright__browser_click',
+      'mcp__playwright__browser_snapshot',
+      'mcp__playwright__browser_run_code',
+      'mcp__playwright__browser_close',
+      'mcp__playwright__browser_type',
+      'mcp__playwright__browser_press_key',
+      'mcp__playwright__browser_hover',
+      'mcp__playwright__browser_tabs',
+      'mcp__playwright__browser_take_screenshot',
+      'mcp__playwright__browser_wait_for',
+      'mcp__playwright__browser_evaluate',
+      'mcp__playwright__browser_fill_form',
+      'mcp__playwright__browser_select_option',
+      'mcp__playwright__browser_drag',
+      'mcp__playwright__browser_handle_dialog',
+      'mcp__playwright__browser_network_requests',
+      'mcp__playwright__browser_console_messages',
+      'mcp__playwright__browser_install',
+    ],
+    // Configure custom subagents for specialized tasks
+    agents: {
+      'web-extractor': {
+        description: 'Specialized subagent for extracting comprehensive information from specific websites using Playwright browser automation',
+        prompt: `You are a web extraction specialist. Your role is to navigate to URLs, explore website structure, and extract comprehensive data.
+
+## Extraction Process
+
+1. **Understand the Request**: Analyze what information to collect from the target URL/domain
+2. **Navigate and Explore**: Use Playwright browser tools to visit the site and understand its structure
+3. **Extract Core Content**: Collect articles, data, statistics, insights, and other relevant information
+4. **Follow Related Links**: Explore internal and external links (2-3 levels deep) for additional context
+5. **Structure Findings**: Return results in clear, structured markdown format
+
+## Output Format
+
+Always return findings in this format:
+
+# Web Extraction Results: [Domain/URL]
+
+## Overview
+- **Target**: [URL]
+- **Focus**: [Extraction objectives]
+- **Pages Explored**: [Number]
+
+## Key Findings
+
+### Articles/Content Discovered
+1. **[Title]** - URL
+   - Summary: [2-3 sentences]
+   - Key Points: [bullets]
+   - Date: [publication date]
+
+### Data & Statistics
+- **[Metric]**: [Value] - Source: [URL]
+
+### Important Insights
+- **[Insight]**: [Details] - Source: [URL]
+
+## Site Structure Notes
+- Main sections: [List]
+- Content organization: [Description]
+
+## Quality Assessment
+- Authority: [High/Medium/Low]
+- Currency: [Recent/Mixed/Dated]
+- Depth: [Comprehensive/Moderate/Superficial]
+
+## Best Practices
+
+- Be specific in data collection (exact values, dates, URLs)
+- Provide context for all extracted information
+- Always attribute sources with URLs
+- Prioritize quality over quantity
+- Handle dynamic content, paywalls, and errors gracefully
+- Complete extraction within 2-5 minutes per domain`,
+        tools: [
+          'mcp__playwright__browser_navigate',
+          'mcp__playwright__browser_click',
+          'mcp__playwright__browser_snapshot',
+          'mcp__playwright__browser_run_code',
+          'mcp__playwright__browser_close',
+          'mcp__playwright__browser_type',
+          'mcp__playwright__browser_press_key',
+          'mcp__playwright__browser_hover',
+          'mcp__playwright__browser_tabs',
+          'mcp__playwright__browser_take_screenshot',
+          'mcp__playwright__browser_wait_for',
+          'mcp__playwright__browser_evaluate',
+          'mcp__playwright__browser_fill_form',
+          'mcp__playwright__browser_select_option',
+          'mcp__playwright__browser_drag',
+          'mcp__playwright__browser_handle_dialog',
+          'mcp__playwright__browser_network_requests',
+          'mcp__playwright__browser_console_messages',
+        ],
+        model: 'opus',
+        maxTurns: 15,
+      },
+    },
+    // Configure Playwright MCP server
+    mcpServers: {
+      playwright: {
+        type: 'stdio',
+        command: 'npx',
+        args: ['@playwright/mcp@latest'],
+      },
+    },
+  };
+
+  // Set environment variables
+  sdkOptions.env = {
+    ANTHROPIC_API_KEY: apiKey,
+    PATH: newPath,
+  };
+
+  // Set model
+  if (model) {
+    sdkOptions.model = model;
+  }
+
+  // Set base URL if using custom endpoint (e.g., GLM)
+  if (apiBaseUrl) {
+    (sdkOptions.env as Record<string, string>).ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Resume session if provided
+  if (resume) {
+    sdkOptions.resume = resume;
+  }
+
+  return sdkOptions;
 }
 
 /**
@@ -57,7 +246,7 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
       return `Running: ${cmd || '<no command>'}`;
 
     case 'Edit':
-      const editPath = input.filePath as string | undefined;
+      const editPath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
       return `Editing: ${editPath || '<unknown file>'}`;
 
     case 'Read':
@@ -96,6 +285,94 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
     default:
       return safeStringify(input, 60);
   }
+}
+
+/**
+ * Format Edit tool use with rich details showing what will be changed.
+ * Uses ANSI colors for console output.
+ */
+function formatEditToolUse(input: Record<string, unknown>): string {
+  // SDK uses snake_case for Edit tool parameters
+  const filePath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
+  const oldString = (input.old_string as string | undefined) || (input.oldString as string | undefined);
+  const newString = (input.new_string as string | undefined) || (input.newString as string | undefined);
+
+  if (!filePath) {
+    return '🔧 Editing: <unknown file>';
+  }
+
+  // Build rich formatted output
+  const lines: string[] = [];
+
+  // Header with file path (cyan for file)
+  lines.push(`\x1b[36m📝 Editing:\x1b[0m \x1b[1;34m${filePath}\x1b[0m`);
+
+  // Show content preview if available
+  if (oldString !== undefined && newString !== undefined) {
+    // Truncate long strings for display
+    const maxPreview = 100;
+    const oldPreview = oldString.length > maxPreview
+      ? oldString.substring(0, maxPreview) + '...'
+      : oldString;
+    const newPreview = newString.length > maxPreview
+      ? newString.substring(0, maxPreview) + '...'
+      : newString;
+
+    // Before (dim for removal)
+    lines.push(`\x1b[90m  Before: ${oldPreview}\x1b[0m`);
+
+    // After (green for addition)
+    lines.push(`\x1b[92m  After:  ${newPreview}\x1b[0m`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format Edit tool use with markdown for rich text platforms (e.g., Feishu).
+ * Uses markdown code blocks and formatting instead of ANSI colors.
+ */
+export function formatEditToolUseMarkdown(input: Record<string, unknown>): string {
+  // SDK uses snake_case for Edit tool parameters
+  const filePath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
+  const oldString = (input.old_string as string | undefined) || (input.oldString as string | undefined);
+  const newString = (input.new_string as string | undefined) || (input.newString as string | undefined);
+
+  if (!filePath) {
+    return '🔧 Editing: <unknown file>';
+  }
+
+  // Build markdown formatted output
+  const lines: string[] = [];
+
+  // Header with file path
+  lines.push(`**📝 Editing:** ${filePath}`);
+
+  // Show content preview if available
+  if (oldString !== undefined && newString !== undefined) {
+    // Truncate long strings for display
+    const maxPreview = 100;
+    const oldPreview = oldString.length > maxPreview
+      ? oldString.substring(0, maxPreview) + '...'
+      : oldString;
+    const newPreview = newString.length > maxPreview
+      ? newString.substring(0, maxPreview) + '...'
+      : newString;
+
+    // Use code blocks for before/after content
+    lines.push('');
+    lines.push(`**Before:**`);
+    lines.push(`\`\`\``);
+    lines.push(oldPreview);
+    lines.push(`\`\`\``);
+    lines.push('');
+    lines.push(`**After:**`);
+    lines.push(`\`\`\``);
+    lines.push(newPreview);
+    lines.push(`\`\`\``);
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -138,14 +415,20 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
             const toolName = block.name as string;
             const input = block.input as Record<string, unknown> | undefined;
 
-            const intent = formatToolInput(toolName, input);
-
             result.type = 'tool_use';
-            result.content = `🔧 ${intent}`;
             result.metadata = {
               toolName,
-              toolInput: intent,
+              toolInput: formatToolInput(toolName, input),
+              toolInputRaw: input,  // Save raw input for processing (e.g., building diff cards)
             };
+
+            // Use rich formatting for Edit tool
+            if (toolName === 'Edit' && input) {
+              result.content = formatEditToolUse(input);
+            } else {
+              result.content = `🔧 ${formatToolInput(toolName, input)}`;
+            }
+
             return result;
           }
         }

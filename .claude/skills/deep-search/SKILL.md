@@ -8,15 +8,15 @@ allowed-tools: WebSearch,Task
 
 # Deep Search
 
-**Version:** 3.0.0
+**Version:** 4.0.0
 
 Advanced research capability that conducts systematic investigation using WebSearch API for discovery and web-extractor subagent for deep information collection from specific websites.
 
-**What's New in v3.0.0:**
-- ✅ **SIMPLIFIED:** Removed mandatory progress updates and stage completion checks
-- ✅ **FLEXIBLE:** No predefined research outline - search adaptively based on findings
-- ✅ **DIRECT:** Single comprehensive report output instead of two-step process
-- ✅ **FASTER:** Streamlined workflow reduces overhead while maintaining quality
+**What's New in v4.0.0:**
+- ✅ **ULTRA-SIMPLIFIED:** Iterative loop approach - search → read → search → read
+- ✅ **FLEXIBLE:** No rigid stages - research naturally evolves based on findings
+- ✅ **ADAPTIVE:** Continue looping until satisfaction criteria is met
+- ✅ **NATURAL:** Mimics how humans actually research - explore and refine
 
 **Expected Duration:** 5-20 minutes depending on topic complexity.
 
@@ -39,18 +39,47 @@ Research findings are presented directly in the conversation.
 
 ## Research Workflow
 
-### Step 1: Intelligent Discovery
+### The Iterative Loop: Search → Read → Search → Read ...
 
-Use WebSearch API to explore the topic from multiple angles:
+Research follows a natural, adaptive cycle:
 
-**Search Strategy:**
-1. **Initial broad searches** - 3-5 searches to understand the topic landscape
-2. **Targeted follow-up searches** - Based on initial findings, drill deeper into specific aspects
-3. **Identify authoritative sources** - Look for official documentation, research papers, expert articles
+```
+┌──────────┐
+│  Search  │  ← Use WebSearch API to discover relevant sources
+└────┬─────┘
+     │
+     ▼
+┌──────────┐
+│  Read    │  ← Use web-extractor subagent for high-value sources
+└────┬─────┘     OR read WebSearch results for simple content
+     │
+     ▼
+┌──────────┐
+│Evaluate  │  ← Satisfied? (Have we gathered enough?)
+└────┬─────┘
+     │
+  ┌──┴──┐
+  │     │
+ No    Yes
+  │     │
+  ▼     ▼
+Continue  Report
+(search  (synthesize
+based on  findings)
+findings)
+```
+
+### How the Loop Works
+
+**1. Search Phase**
+- Use WebSearch API to find relevant information
+- Start with broad queries, then refine based on what you discover
+- Follow interesting leads and citations
+- Adjust search terms as you learn more
 
 **Search Optimization:**
-- Use specific, targeted phrases: `"machine learning interpretability in healthcare"`
-- Include temporal markers: `recent`, `2024`, `latest`
+- Use specific phrases: `"machine learning interpretability in healthcare"`
+- Include temporal markers: `2024`, `latest`, `recent`
 - Add qualifiers: `review`, `analysis`, `study`, `research`
 - Vary perspectives: `advantages`, `challenges`, `comparison`, `best practices`
 - Use industry terminology for better results
@@ -62,28 +91,43 @@ Use WebSearch API to explore the topic from multiple angles:
 - **Currency**: Recently updated content
 - **Objectivity**: Balanced perspectives
 
-### Step 2: Deep Extraction (Optional)
+**2. Read Phase**
+- For high-value sources (official docs, research papers, comprehensive guides): Use web-extractor subagent
+- For simple content (blog posts, news): WebSearch results are sufficient
+- Extract key information, data points, quotes, and insights
+- Note conflicting information or gaps
 
-For high-value domains identified in Step 1, delegate to web-extractor subagent:
-
-**When to use subagent:**
+**When to use web-extractor subagent:**
 - Official documentation sites with detailed technical content
 - Research papers or academic publications
 - Comprehensive guides or tutorials
 - Sites requiring navigation beyond landing page
 
-**Delegation best practices:**
-- Be specific about what information to collect
-- Set appropriate depth (3-5 pages per domain typical)
-- Provide context about the research topic
-- Process results efficiently (extract key points)
-
 **When to skip subagent:**
-- Simple blog posts or news articles (WebSearch results are sufficient)
+- Simple blog posts or news articles
 - Paywalled or login-required content
 - Sites with minimal information
 
-### Step 3: Synthesize Report
+**3. Evaluate Phase**
+Ask yourself:
+- Do I have enough information to answer the user's question?
+- Are new searches returning redundant information?
+- Have I covered the key aspects of the topic?
+- Have I gathered 5-12 high-quality sources?
+
+**Continue the loop if:**
+- You discover gaps in your understanding
+- New questions emerge from your findings
+- You need to verify conflicting information
+- You want to explore a specific aspect in more depth
+
+**Stop the loop and report when:**
+- Sufficient information gathered (typically 5-12 high-quality sources)
+- New searches return redundant information without new insights
+- Key aspects are well-covered
+- Time invested is proportional to topic complexity (5-20 minutes typical)
+
+### Synthesize Report
 
 Present a comprehensive research report directly (no two-step process):
 
@@ -139,11 +183,13 @@ Present a comprehensive research report directly (no two-step process):
 
 ## Best Practices
 
-### Search Strategy
+### Iterative Research Approach
 - **Start broad, then narrow**: Begin with general searches, then drill down based on findings
-- **Follow the trail**: Use citations and references from initial results to find more sources
+- **Follow the trail**: Use citations and references from results to find more sources
+- **Adapt as you learn**: Let your findings guide your next search queries
 - **Cross-verify**: Look for multiple independent sources confirming critical information
 - **Prioritize quality**: Depth over breadth - better to have 5 excellent sources than 20 mediocre ones
+- **Embrace the loop**: Each cycle of search → read should refine your understanding
 
 ### Information Quality Assessment
 - **Primary sources** > Secondary sources > Tertiary sources
@@ -152,12 +198,56 @@ Present a comprehensive research report directly (no two-step process):
 - **Empirical evidence** > Expert opinion > Speculation
 - **Multiple independent confirmations** for critical claims
 
-### When to Stop Research
-Consider the research complete when:
-- Sufficient information gathered to answer the user's question (typically 5-10 high-quality sources)
-- New searches return redundant information without new insights
-- Key aspects of the topic are well-covered
-- Time invested is proportional to topic complexity (5-20 minutes typical)
+### Search-Read Loop Examples
+
+**Example 1: Research on AI in Healthcare**
+```
+Loop 1:
+  Search: "AI in healthcare 2024 trends"
+  Read: 3-5 high-level articles
+  Evaluate: Need more specific info on regulations
+
+Loop 2:
+  Search: "FDA AI medical device regulation 2024"
+  Read: Official FDA documentation (use web-extractor)
+  Evaluate: Need clinical trial data
+
+Loop 3:
+  Search: "AI clinical trials success rates 2024"
+  Read: Research papers and studies
+  Evaluate: Have enough info across key dimensions
+
+Loop 4:
+  Search: "AI healthcare challenges and limitations"
+  Read: Critical perspectives
+  Evaluate: Satisfied with breadth and depth → Report
+```
+
+**Example 2: Research on Renewable Energy**
+```
+Loop 1:
+  Search: "renewable energy storage technologies 2024"
+  Read: Industry reports and overview articles
+  Evaluate: Want to compare specific technologies
+
+Loop 2:
+  Search: "lithium-ion vs flow batteries comparison"
+  Read: Technical comparison studies
+  Evaluate: Need cost data
+
+Loop 3:
+  Search: "battery storage cost per kWh 2024"
+  Read: Market analysis and pricing data
+  Evaluate: Information complete → Report
+```
+
+### When to Stop the Loop
+Consider ending the research loop when:
+- ✅ Sufficient information to answer the user's question (5-12 high-quality sources)
+- ✅ New searches return redundant information without new insights
+- ✅ Key aspects of the topic are well-covered
+- ✅ Time invested is proportional to topic complexity (5-20 minutes typical)
+- ✅ Both broad coverage and specific details are obtained
 
 ## Usage
 
@@ -173,17 +263,33 @@ Activate by asking to:
 - `comprehensive investigation of remote work trends`
 - `thoroughly research renewable energy storage`
 
+**How it works:**
+1. You provide a research topic
+2. AI performs iterative search → read loops
+3. Each loop refines understanding based on findings
+4. Research continues naturally until satisfaction criteria met
+5. Comprehensive report synthesized from gathered information
+
 **Expected Timeline:**
-- Simple topics: 5-10 minutes (5-7 sources)
-- Medium topics: 10-15 minutes (7-10 sources)
-- Complex topics: 15-20 minutes (10-12 sources)
+- Simple topics: 5-10 minutes (5-7 sources, 2-3 loops)
+- Medium topics: 10-15 minutes (7-10 sources, 3-4 loops)
+- Complex topics: 15-20 minutes (10-12 sources, 4-5 loops)
 
 ## Success Criteria
 
 Research is successful when:
-- ✅ Comprehensive understanding of the topic across multiple dimensions
+- ✅ Iterative search-read loops executed until satisfaction criteria met
+- ✅ Comprehensive understanding across multiple dimensions (naturally discovered through loops)
 - ✅ Information from 5-12 high-quality, authoritative sources
 - ✅ Key findings clearly identified and well-supported
 - ✅ Sources properly cited with URLs
 - ✅ Conflicting perspectives or limitations acknowledged
 - ✅ Practical insights or recommendations provided
+- ✅ Research adapted based on findings (not following rigid plan)
+
+**Quality Indicators:**
+- Each search loop refined understanding or filled gaps
+- High-value sources explored deeply via web-extractor subagent
+- Multiple independent sources verify critical claims
+- Both breadth and depth achieved naturally
+- Time invested proportional to topic complexity

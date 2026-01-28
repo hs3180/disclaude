@@ -8,13 +8,9 @@ import { Config } from '../config/index.js';
 import { buildTextContent } from './content-builder.js';
 
 /**
- * Create a Feishu message sender function.
- * This allows CLI mode to send messages via Feishu API without WebSocket.
- *
- * @returns Async function that sends messages to Feishu
+ * Validate Feishu configuration and create client.
  */
-export function createFeishuSender(): (chatId: string, text: string) => Promise<void> {
-  // Validate Feishu configuration
+function createClient(): lark.Client {
   const appId = Config.FEISHU_APP_ID;
   const appSecret = Config.FEISHU_APP_SECRET;
 
@@ -22,13 +18,21 @@ export function createFeishuSender(): (chatId: string, text: string) => Promise<
     throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be set in environment variables');
   }
 
-  // Create HTTP client (reused across calls)
-  // Use Feishu domain for domestic services
-  const client = new lark.Client({
+  return new lark.Client({
     appId,
     appSecret,
     domain: lark.Domain.Feishu,
   });
+}
+
+/**
+ * Create a Feishu message sender function.
+ * This allows CLI mode to send messages via Feishu API without WebSocket.
+ *
+ * @returns Async function that sends messages to Feishu
+ */
+export function createFeishuSender(): (chatId: string, text: string) => Promise<void> {
+  const client = createClient();
 
   /**
    * Send a message to Feishu via REST API.
@@ -70,6 +74,43 @@ export function createFeishuSender(): (chatId: string, text: string) => Promise<
     } catch (error) {
       // Log error but don't crash
       console.error(`[Feishu Error] Failed to send message:`, error);
+      throw error; // Re-throw to let caller handle it
+    }
+  };
+}
+
+/**
+ * Create a Feishu card sender function for interactive cards.
+ * This allows CLI mode to send rich cards via Feishu API without WebSocket.
+ *
+ * @returns Async function that sends interactive cards to Feishu
+ */
+export function createFeishuCardSender(): (chatId: string, card: Record<string, unknown>) => Promise<void> {
+  const client = createClient();
+
+  /**
+   * Send an interactive card to Feishu via REST API.
+   *
+   * @param chatId - Target chat ID to send card to
+   * @param card - Card JSON structure
+   */
+  return async function sendCard(chatId: string, card: Record<string, unknown>): Promise<void> {
+    try {
+      await client.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      });
+
+      console.error(`[Feishu] Sent card to ${chatId}`);
+    } catch (error) {
+      // Log error but don't crash
+      console.error(`[Feishu Error] Failed to send card:`, error);
       throw error; // Re-throw to let caller handle it
     }
   };

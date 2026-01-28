@@ -64,6 +64,16 @@ export interface OutputAdapter {
 }
 
 /**
+ * Message metadata for advanced formatting.
+ */
+export interface MessageMetadata {
+  /** Tool name if this is a tool use message */
+  toolName?: string;
+  /** Raw tool input for building rich cards */
+  toolInputRaw?: Record<string, unknown>;
+}
+
+/**
  * CLI output adapter - writes to console with colors.
  */
 export class CLIOutputAdapter implements OutputAdapter {
@@ -105,13 +115,14 @@ export class CLIOutputAdapter implements OutputAdapter {
  */
 export interface FeishuOutputAdapterOptions {
   sendMessage: (chatId: string, text: string) => Promise<void>;
+  sendCard: (chatId: string, card: Record<string, unknown>) => Promise<void>;
   chatId: string;
   throttleIntervalMs?: number;
 }
 
 /**
  * Feishu output adapter - sends messages via WebSocket.
- * Handles throttling for progress messages.
+ * Handles throttling for progress messages and sends interactive cards for Edit tool use.
  */
 export class FeishuOutputAdapter implements OutputAdapter {
   private progressThrottleMap = new Map<string, number>();
@@ -147,7 +158,11 @@ export class FeishuOutputAdapter implements OutputAdapter {
     }
   }
 
-  async write(content: string, messageType: AgentMessageType = 'text'): Promise<void> {
+  async write(
+    content: string,
+    messageType: AgentMessageType = 'text',
+    metadata?: MessageMetadata
+  ): Promise<void> {
     // Throttle progress messages
     if (messageType === 'tool_progress') {
       // Extract tool name from content if possible
@@ -158,6 +173,50 @@ export class FeishuOutputAdapter implements OutputAdapter {
       }
     }
 
+    // Handle Edit tool use with unified diff card
+    if (messageType === 'tool_use' && metadata?.toolName === 'Edit' && metadata?.toolInputRaw) {
+      await this.sendEditDiffCard(metadata.toolInputRaw);
+      return;
+    }
+
     await this.options.sendMessage(this.options.chatId, content);
+  }
+
+  /**
+   * Send Edit tool use as a Unified Diff card.
+   * Dynamically import the diff card builder to avoid circular dependencies.
+   */
+  private async sendEditDiffCard(toolInput: Record<string, unknown>): Promise<void> {
+    console.log('[Debug Edit] toolInput keys:', Object.keys(toolInput));
+    console.log('[Debug Edit] toolInput:', JSON.stringify(toolInput, null, 2));
+
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { parseEditToolInput, buildUnifiedDiffCard } = await import('../feishu/diff-card-builder.js');
+
+      const codeChange = parseEditToolInput(toolInput);
+      console.log('[Debug Edit] parseEditToolInput result:', codeChange ? 'SUCCESS' : 'NULL');
+      if (!codeChange) {
+        console.log('[Debug Edit] filePath check:', {
+          file_path: toolInput.file_path,
+          filePath: toolInput.filePath,
+        });
+      }
+
+      if (codeChange) {
+        const card = buildUnifiedDiffCard([codeChange], '📝 代码编辑', 'blue');
+        console.log('[Debug Edit] Card built, sending...');
+        await this.options.sendCard(this.options.chatId, card);
+        console.log('[Debug Edit] Card sent successfully');
+        return;
+      }
+    } catch (error) {
+      console.error('[FeishuAdapter] Failed to send diff card, falling back to text:', error);
+    }
+
+    // Fallback: send as plain text
+    const filePath = (toolInput.file_path as string | undefined) || (toolInput.filePath as string | undefined) || '<unknown>';
+    console.log('[Debug Edit] Fallback to text, filePath:', filePath);
+    await this.options.sendMessage(this.options.chatId, `📝 Editing: ${filePath}`);
   }
 }

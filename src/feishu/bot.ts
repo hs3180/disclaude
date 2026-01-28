@@ -7,6 +7,7 @@ import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { TaskTracker } from '../utils/task-tracker.js';
+import { LongTaskManager } from '../long-task/index.js';
 import type { SessionManager } from './session.js';
 import { buildTextContent } from './content-builder.js';
 
@@ -70,6 +71,9 @@ export class FeishuBot extends EventEmitter {
   // Task tracker for persistent deduplication
   private taskTracker: TaskTracker;
 
+  // Active long task managers per chat (one per chat to avoid conflicts)
+  private longTaskManagers = new Map<string, LongTaskManager>();
+
   constructor(
     agentClient: AgentClient,
     appId: string,
@@ -128,6 +132,40 @@ export class FeishuBot extends EventEmitter {
   }
 
   /**
+   * Send an interactive card message to Feishu.
+   * Used for rich content like code diffs, formatted output, etc.
+   *
+   * @param chatId - Target chat ID
+   * @param card - Card JSON structure
+   * @param description - Optional description for logging
+   */
+  async sendCard(
+    chatId: string,
+    card: Record<string, unknown>,
+    description?: string
+  ): Promise<void> {
+    const client = this.getClient();
+
+    try {
+      await client.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      });
+
+      const desc = description ? ` (${description})` : '';
+      console.log(`[Sent] chat_id: ${chatId}, type: interactive${desc}`);
+    } catch (error) {
+      console.error(`Failed to send card to ${chatId}:`, error);
+    }
+  }
+
+  /**
    * Process agent message with streaming response.
    * Each message is sent immediately without accumulation.
    * Returns accumulated response content for task persistence.
@@ -141,9 +179,10 @@ export class FeishuBot extends EventEmitter {
     // Get previous session
     const sessionId = await this.sessionManager.getSessionId(chatId);
 
-    // Create output adapter for this chat
+    // Create output adapter for this chat with both sendMessage and sendCard
     const adapter = new FeishuOutputAdapter({
       sendMessage: this.sendMessage.bind(this),
+      sendCard: this.sendCard.bind(this),
       chatId,
     });
 
@@ -170,8 +209,11 @@ export class FeishuBot extends EventEmitter {
         // Accumulate content for task record
         responseChunks.push(content);
 
-        // Use adapter to write message
-        await adapter.write(content, message.messageType ?? 'text');
+        // Use adapter to write message with metadata
+        await adapter.write(content, message.messageType ?? 'text', {
+          toolName: message.metadata?.toolName as string | undefined,
+          toolInputRaw: message.metadata?.toolInputRaw as Record<string, unknown> | undefined,
+        });
       }
 
       // Return accumulated response
@@ -181,6 +223,74 @@ export class FeishuBot extends EventEmitter {
       console.error(`Agent error for chat ${chatId}:`, error);
       await this.sendMessage(chatId, errorMsg);
       return errorMsg;
+    }
+  }
+
+  /**
+   * Handle /long command - start long task workflow.
+   */
+  private async handleLongTask(
+    chatId: string,
+    userRequest: string,
+    _messageId?: string
+  ): Promise<void> {
+    try {
+      // Get agent configuration
+      const agentConfig = Config.getAgentConfig();
+
+      // Create or get long task manager for this chat
+      let taskManager = this.longTaskManagers.get(chatId);
+
+      if (taskManager) {
+        await this.sendMessage(
+          chatId,
+          '⚠️ A long task is already running in this chat. Please wait for it to complete or use /cancel to stop it.'
+        );
+        return;
+      }
+
+      // Create new long task manager
+      taskManager = new LongTaskManager(
+        agentConfig.apiKey,
+        agentConfig.model,
+        agentConfig.apiBaseUrl,
+        {
+          workspaceBaseDir: process.cwd(), // Use project root as base
+          sendMessage: this.sendMessage.bind(this),
+          sendCard: this.sendCard.bind(this),
+          chatId,
+          apiBaseUrl: agentConfig.apiBaseUrl,
+          // Add 30-minute timeout for long tasks
+          taskTimeoutMs: 30 * 60 * 1000,
+        }
+      );
+
+      // Set manager in map BEFORE starting to prevent race condition
+      this.longTaskManagers.set(chatId, taskManager);
+
+      // Start long task workflow (non-blocking)
+      taskManager.startLongTask(userRequest)
+        .then(() => {
+          console.log(`[LongTask] Completed for chat ${chatId}`);
+        })
+        .catch((error) => {
+          console.error(`[LongTask] Failed for chat ${chatId}:`, error);
+        })
+        .finally(() => {
+          // Clean up manager after completion (only if it's still the same manager)
+          const currentManager = this.longTaskManagers.get(chatId);
+          if (currentManager === taskManager) {
+            this.longTaskManagers.delete(chatId);
+          }
+        });
+
+    } catch (error) {
+      const errorMsg = `❌ Failed to start long task: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(`[LongTask] Error for chat ${chatId}:`, error);
+      await this.sendMessage(chatId, errorMsg);
+
+      // Clean up manager on error
+      this.longTaskManagers.delete(chatId);
     }
   }
 
@@ -360,22 +470,70 @@ export class FeishuBot extends EventEmitter {
       }
     }
 
-    // All messages are processed by the agent (including slash commands for SDK skills)
-    const response = await this.processAgentMessage(chat_id, text, message_id);
+    // Check for /long command to trigger long task workflow
+    if (text.trim().startsWith('/long ')) {
+      const longTaskText = text.trim().substring(6).trim(); // Remove '/long ' prefix
+      if (longTaskText) {
+        console.log(`[LongTask] Triggered for chat ${chat_id}: ${longTaskText}`);
+        await this.handleLongTask(chat_id, longTaskText, message_id);
+      } else {
+        await this.sendMessage(chat_id, '⚠️ Usage: `/long <your task description>`\n\nExample: `/long Analyze the codebase and create documentation`');
+      }
+      return; // Return early to avoid normal processing
+    }
 
-    // Update task record with actual response
-    if (message_id) {
-      await this.taskTracker.saveTaskRecord(
-        message_id,
-        {
-          chatId: chat_id,
-          senderType: sender?.sender_type,
-          senderId: sender?.sender_id,
-          text,
-          timestamp: create_time || new Date().toISOString(),
-        },
-        response
-      );
+    // Check for /cancel command to cancel running long task
+    if (text.trim() === '/cancel') {
+      const taskManager = this.longTaskManagers.get(chat_id);
+      if (taskManager) {
+        const cancelled = await taskManager.cancelTask(chat_id);
+        if (cancelled) {
+          // Clean up manager after cancellation
+          this.longTaskManagers.delete(chat_id);
+        }
+      } else {
+        await this.sendMessage(chat_id, '⚠️ No long task is currently running in this chat.');
+      }
+      return; // Return early to avoid normal processing
+    }
+
+    // Check for /status command to show running long task status
+    if (text.trim() === '/status') {
+      const taskManager = this.longTaskManagers.get(chat_id);
+      if (taskManager) {
+        const activeTasks = taskManager.getActiveTasks();
+        if (activeTasks.size > 0) {
+          const statusMsg = `📊 **Long Task Status**\n\nActive tasks: ${activeTasks.size}\n\n${Array.from(activeTasks.values()).map(state =>
+            `- **${state.plan.title}**\n  Status: ${state.status}\n  Step: ${state.currentStep}/${state.plan.totalSteps}`
+          ).join('\n\n')}`;
+          await this.sendMessage(chat_id, statusMsg);
+        } else {
+          await this.sendMessage(chat_id, '⚠️ No long task is currently running.');
+        }
+      } else {
+        await this.sendMessage(chat_id, '⚠️ No long task is currently running in this chat.');
+      }
+      return; // Return early to avoid normal processing
+    }
+
+    {
+      // All messages are processed by the agent (including slash commands for SDK skills)
+      const response = await this.processAgentMessage(chat_id, text, message_id);
+
+      // Update task record with actual response
+      if (message_id) {
+        await this.taskTracker.saveTaskRecord(
+          message_id,
+          {
+            chatId: chat_id,
+            senderType: sender?.sender_type,
+            senderId: sender?.sender_id,
+            text,
+            timestamp: create_time || new Date().toISOString(),
+          },
+          response
+        );
+      }
     }
   }
 

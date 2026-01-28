@@ -6,7 +6,7 @@
 import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, FeishuOutputAdapter } from '../utils/output-adapter.js';
-import { createFeishuSender } from '../feishu/sender.js';
+import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 
 /**
  * ANSI color codes for terminal output.
@@ -55,8 +55,10 @@ async function executeOnce(
   if (feishuChatId) {
     // Feishu mode: create sender and adapter
     const sendToFeishu = createFeishuSender();
+    const sendCardToFeishu = createFeishuCardSender();
     adapter = new FeishuOutputAdapter({
       sendMessage: sendToFeishu,
+      sendCard: sendCardToFeishu,
       chatId: feishuChatId,
       throttleIntervalMs: 2000,
     });

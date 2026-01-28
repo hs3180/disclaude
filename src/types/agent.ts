@@ -23,7 +23,8 @@ export interface ContentBlock {
 // Metadata for enhanced agent messages
 export interface AgentMessageMetadata {
   toolName?: string;
-  toolInput?: string;
+  toolInput?: string;  // Formatted tool input for display
+  toolInputRaw?: Record<string, unknown>;  // Raw tool input for processing (e.g., building diff cards)
   toolOutput?: string;
   elapsed?: number;
   cost?: number;
