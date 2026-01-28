@@ -5,20 +5,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Development
+# === Development ===
 npm run dev          # Start with auto-reload (tsx watch)
 npm run build        # Build to dist/
 npm run type-check   # TypeScript type checking
 npm run lint         # ESLint
+npm run lint:fix     # ESLint with auto-fix
 npm run test         # Run tests
 
-# Production (PM2)
+# === Production (PM2) ===
 npm run pm2:start    # Build and start PM2 service
-npm run pm2:restart  # Restart after code changes
+npm run pm2:restart  # Restart after code changes (manual only - not automatic)
+npm run pm2:reload   # Zero-downtime reload
 npm run pm2:logs     # View logs
+npm run pm2:status   # Check status
 npm run pm2:stop     # Stop service
+npm run pm2:delete   # Remove from PM2
 
-# CLI usage
+# === CLI usage ===
 disclaude feishu              # Start Feishu bot
 disclaude --prompt "<query>"  # Single prompt query
 ```
@@ -29,8 +33,8 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 
 ### Entry Points
 
-- **`cli-entry.ts`** - Primary entry, handles `disclaude feishu` and `disclaude --prompt`
-- **`index.ts`** - Legacy entry, shows usage hint
+- **`src/cli-entry.ts`** - Primary entry, handles `disclaude feishu` and `disclaude --prompt`
+- **`src/index.ts`** - Legacy entry, shows usage hint
 
 ### Core Components
 
@@ -62,46 +66,100 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
                               ▼
                  ┌──────────────────────────┐
                  │   Claude Agent SDK       │
+                 │   + MCP Servers          │
                  └──────────────────────────┘
 ```
 
 ### Key Modules
 
-**`src/config/`** - Static configuration from environment variables
-- GLM (Zhipu AI) takes precedence over Anthropic if both configured
-- `Config.getAgentConfig()` returns agent options (apiKey, model, permissionMode)
+#### `src/config/` - Environment Configuration
 
-**`src/agent/client.ts`** - Wrapper around `@anthropic-ai/claude-agent-sdk`
-- `queryStream()` - Returns AsyncIterable of AgentMessage
+Static configuration from environment variables:
+
+- **GLM (Zhipu AI)** takes precedence over Anthropic if both configured
+- `Config.getAgentConfig()` returns agent options:
+  - `apiKey` - API key for the configured provider
+  - `model` - Model identifier
+  - `permissionMode` - `bypassPermissions` for bot, `default` for CLI
+
+#### `src/agent/client.ts` - Agent SDK Wrapper
+
+Core wrapper around `@anthropic-ai/claude-agent-sdk`:
+
+```typescript
+// Main function
+queryStream(prompt: string, sessionId?: string): AsyncIterable<AgentMessage>
+
+// Key behaviors
 - Handles session persistence via SDK's `resume` option
 - Injects environment variables for subprocess execution
+- Configures allowed/disallowed tools
+- Sets up MCP server connections
+```
 
-**`src/feishu/bot.ts`** - WebSocket-based Feishu/Lark bot
-- Message deduplication via `processedMessageIds` Set (prevents infinite loops)
+**Tool Configuration**: Edit `allowedTools` in this file to enable/disable tools. Web tools (`WebSearch`, `WebFetch`) are disabled by default.
+
+#### `src/feishu/bot.ts` - WebSocket Bot
+
+Feishu/Lark WebSocket implementation:
+
+```typescript
+// Key components
+- processedMessageIds: Set<string>  // Message deduplication
+- commands: /reset, /status, /help
+- Message handler: handleMessageReceive()
+```
+
+**Critical behaviors**:
 - Ignores messages from bot itself (`sender.sender_type === 'app'`)
-- Commands: `/reset`, `/status`, `/help`
-- **Important**: Each SDK message is sent immediately (no accumulation)
+- Deduplicates via `message_id` to prevent infinite loops
+- **Each SDK message is sent immediately** (no accumulation/batching)
 
-**`src/feishu/session.ts`** - In-memory session storage per chatId
-- `getSessionId()` / `setSessionId()` / `clearSession()`
+#### `src/feishu/session.ts` - Session Storage
 
-**`src/utils/sdk.ts`** - SDK message utilities
-- `extractTextFromSDKMessage()` - Extracts text from SDK messages
-- `getNodeBinDir()` - Gets node binary path for subprocess PATH
+In-memory session management per chatId:
+
+```typescript
+getSessionId(chatId: string)    // Retrieve session ID
+setSessionId(chatId, sessionId) // Store session ID
+clearSession(chatId)            // Reset conversation
+```
+
+**Limitation**: Sessions are lost on restart (in-memory only).
+
+#### `src/utils/sdk.ts` - SDK Utilities
+
+Helper functions for SDK message handling:
+
+```typescript
+extractTextFromSDKMessage(message: AgentMessage): string
+getNodeBinDir(): string  // For subprocess PATH
+```
+
+#### `src/utils/output-adapter.ts` - Output Adapter
+
+Converts SDK messages to platform-specific formats:
+
+- **CLI mode**: Full colored console output
+- **Feishu mode**: Text messages with rate limiting/throttling
 
 ### Data Flow (Feishu Mode)
 
 ```
-WebSocket Event → handleMessageReceive() → Deduplication Check
-      ↓
-   Bot Self-Check? (skip if app)
-      ↓
-   Command? → handleCommand() → Send response
-      ↓
-   processAgentMessage()
-      ↓
-   For each SDK message:
-      extractText() → sendMessage() immediately
+WebSocket Event
+    ↓
+handleMessageReceive()
+    ↓
+Deduplication Check (processedMessageIds)
+    ↓
+Bot Self-Check? (skip if sender_type === 'app')
+    ↓
+Is Command? → handleCommand() → Send response
+    ↓
+processAgentMessage()
+    ↓
+For each SDK message:
+    extractText() → sendMessage() immediately
 ```
 
 ### Configuration Priority
@@ -111,23 +169,193 @@ WebSocket Event → handleMessageReceive() → Deduplication Check
 
 ### Permission Modes
 
-- **Bot mode**: `bypassPermissions` - Auto-approves actions
-- **CLI mode**: `default` - Normal permission handling
+| Mode | Setting | Behavior |
+|------|---------|----------|
+| **Bot** | `bypassPermissions` | Auto-approves all actions |
+| **CLI** | `default` | Asks user for permissions |
 
 ### WebSocket Bot Gotchas
 
 1. **Infinite loop prevention**: Bot must ignore its own messages (`sender.sender_type === 'app'`)
-2. **Duplicate events**: Use `processedMessageIds` Set to deduplicate by `message_id`
+2. **Duplicate events**: Feishu may send duplicate events - use `processedMessageIds` Set
 3. **Session storage**: Currently in-memory; sessions lost on restart
+4. **Message timing**: Each SDK message is sent immediately, don't accumulate
 
 ### Build Output
 
-- `tsup` builds to `dist/`
-- `dist/cli-entry.js` is the binary entry point
-- `dist/index.js` is legacy compatibility
+- **Builder**: `tsup` ( wraps esbuild)
+- **Output dir**: `dist/`
+- **Entry points**:
+  - `dist/cli-entry.js` - Main binary entry point
+  - `dist/index.js` - Legacy compatibility
 
 ### Testing
 
-- Uses Vitest
-- Test files: `**/*.test.ts`
-- Coverage: `@vitest/coverage-v8`
+- **Framework**: Vitest
+- **Test pattern**: `**/*.test.ts`
+- **Coverage**: `@vitest/coverage-v8`
+
+```bash
+npm run test               # Run tests
+npm run test -- --coverage # With coverage
+```
+
+## Development Workflow
+
+### PM2 Restart Policy
+
+**PM2 service will NOT restart automatically after code changes.**
+
+- Code changes require **explicit manual restart** via `npm run pm2:restart`
+- Always test changes with CLI mode before deploying
+- Only restart PM2 when **explicitly requested** by the user
+
+**Why?**
+- Prevents accidental deployment of untested code
+- Allows validation before production deployment
+- Gives control over deployment timing
+- Avoids surprising users with mid-conversation restarts
+
+### Testing New Features with CLI Mode
+
+**Recommended approach for rapid development:**
+
+```bash
+# 1. Make code changes
+vim src/agent/client.ts
+
+# 2. Build
+npm run build
+
+# 3. Test with CLI (instant feedback)
+disclaude --prompt "Read src/agent/client.ts and summarize it"
+disclaude --prompt "List all TypeScript files in src/"
+disclaude --prompt "Run npm run type-check"
+
+# 4. If working, deploy to Feishu (manual step)
+npm run pm2:restart
+```
+
+### CLI vs Feishu Mode Comparison
+
+| Aspect | CLI Mode (`--prompt`) | Feishu Mode (`feishu`) |
+|--------|----------------------|------------------------|
+| **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
+| **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
+| **Session** | ❌ One-shot | ✅ Persistent (in-memory) |
+| **Permissions** | 🔒 `default` (ask user) | ✅ `bypassPermissions` (auto-approve) |
+| **Best for** | 🔧 Development & testing | 🤖 Production & users |
+
+## Working Directory
+
+The agent uses `workspace/` as its working directory:
+- File operations default to this directory
+- Relative paths are resolved from here
+- Useful for isolating agent-generated content
+
+## Common Pitfalls
+
+### 1. Forgetting to Build
+
+After code changes, always run `npm run build` before:
+- Testing with CLI mode
+- Deploying to PM2
+
+### 2. WebSocket Event Duplication
+
+Feishu may send duplicate events. Always:
+- Use `processedMessageIds` Set for deduplication
+- Check `message_id` before processing
+
+### 3. Bot Messaging Itself
+
+When implementing new features:
+- Always check `sender.sender_type === 'app'`
+- Skip processing to prevent infinite loops
+
+### 4. Session Loss on Restart
+
+Current implementation uses in-memory sessions:
+- All conversations reset on PM2 restart
+- For persistence, consider implementing Redis/file-based storage
+
+### 5. Tool Configuration
+
+When adding new tools:
+- Add to `allowedTools` in `src/agent/client.ts`
+- Web tools are disabled by default for security
+
+## Debugging Tips
+
+### Enable Verbose Logging
+
+```typescript
+// In src/feishu/bot.ts or src/cli/
+console.log('[DEBUG]', { context });
+```
+
+### Check PM2 Logs
+
+```bash
+# All logs
+npm run pm2:logs
+
+# Errors only
+npm run pm2:logs --err
+
+# Last 100 lines
+pm2 logs disclaude-feishu --lines 100
+```
+
+### WebSocket Connection Issues
+
+1. Verify WebSocket mode is enabled in Feishu
+2. Check network connectivity
+3. Verify event subscriptions
+
+### Tool Not Working
+
+1. Check if tool is in `allowedTools` list
+2. Verify MCP server is configured
+3. Check SDK version compatibility
+
+## Error Handling Patterns
+
+```typescript
+// Wrap async operations
+try {
+  await riskyOperation();
+} catch (error) {
+  console.error('[Error]', error.message);
+  // Send user-friendly message
+}
+
+// Handle WebSocket disconnection
+ws.on('close', () => {
+  // Implement reconnection logic
+});
+```
+
+## Adding Custom Skills
+
+Create `.claude/skills/<skill-name>/SKILL.md`:
+
+```markdown
+# Skill: <skill-name>
+
+<skill instructions here>
+```
+
+The skill will be available to the agent automatically.
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FEISHU_APP_ID` | Bot mode | Feishu/Lark application ID |
+| `FEISHU_APP_SECRET` | Bot mode | Feishu/Lark application secret |
+| `ANTHROPIC_API_KEY` | One of | Anthropic Claude API key |
+| `GLM_API_KEY` | One of | Zhipu AI API key (takes precedence) |
+| `CLAUDE_MODEL` | Optional | Model identifier |
+| `GLM_MODEL` | Optional | GLM model identifier |
+| `GLM_API_BASE_URL` | Optional | GLM API endpoint |

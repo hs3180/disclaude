@@ -15,8 +15,8 @@ async function main(): Promise<void> {
   // Check if prompt mode is requested
   const promptIndex = args.indexOf('--prompt');
   if (promptIndex !== -1) {
-    const prompt = args[promptIndex + 1] || '';
-    await runCli(['--prompt', prompt]);
+    // Pass all args to runCli, not just --prompt
+    await runCli(args);
     return;
   }
 
@@ -32,6 +32,9 @@ async function main(): Promise<void> {
     console.log('Usage:');
     console.log('  disclaude feishu           Start Feishu/Lark bot');
     console.log('  disclaude --prompt <msg>   Execute single prompt');
+    console.log('');
+    console.log('Options:');
+    console.log('  --feishu-chat-id <id>     Send CLI output to Feishu chat');
     console.log('');
     process.exit(1);
   }

@@ -13,6 +13,7 @@ export class Config {
   // Feishu/Lark configuration
   static readonly FEISHU_APP_ID = process.env.FEISHU_APP_ID;
   static readonly FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET;
+  static readonly FEISHU_CLI_CHAT_ID = process.env.FEISHU_CLI_CHAT_ID;
 
   // Claude configuration
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;

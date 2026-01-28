@@ -44,9 +44,11 @@ export class AgentClient {
       permissionMode: this.permissionMode || 'default',
       // Load settings from .claude/ directory (skills, agents, etc.)
       settingSources: ['project'],
-      // Enable Skill tool and Playwright MCP tools
+      // Enable Skill tool, WebSearch, Task, and Playwright MCP tools
       allowedTools: [
         'Skill',
+        'WebSearch',
+        'Task',
         'mcp__playwright__browser_navigate',
         'mcp__playwright__browser_click',
         'mcp__playwright__browser_snapshot',
@@ -67,6 +69,86 @@ export class AgentClient {
         'mcp__playwright__browser_console_messages',
         'mcp__playwright__browser_install',
       ],
+      // Configure custom subagents for specialized tasks
+      agents: {
+        'web-extractor': {
+          description: 'Specialized subagent for extracting comprehensive information from specific websites using Playwright browser automation',
+          prompt: `You are a web extraction specialist. Your role is to navigate to URLs, explore website structure, and extract comprehensive data.
+
+## Extraction Process
+
+1. **Understand the Request**: Analyze what information to collect from the target URL/domain
+2. **Navigate and Explore**: Use Playwright browser tools to visit the site and understand its structure
+3. **Extract Core Content**: Collect articles, data, statistics, insights, and other relevant information
+4. **Follow Related Links**: Explore internal and external links (2-3 levels deep) for additional context
+5. **Structure Findings**: Return results in clear, structured markdown format
+
+## Output Format
+
+Always return findings in this format:
+
+# Web Extraction Results: [Domain/URL]
+
+## Overview
+- **Target**: [URL]
+- **Focus**: [Extraction objectives]
+- **Pages Explored**: [Number]
+
+## Key Findings
+
+### Articles/Content Discovered
+1. **[Title]** - URL
+   - Summary: [2-3 sentences]
+   - Key Points: [bullets]
+   - Date: [publication date]
+
+### Data & Statistics
+- **[Metric]**: [Value] - Source: [URL]
+
+### Important Insights
+- **[Insight]**: [Details] - Source: [URL]
+
+## Site Structure Notes
+- Main sections: [List]
+- Content organization: [Description]
+
+## Quality Assessment
+- Authority: [High/Medium/Low]
+- Currency: [Recent/Mixed/Dated]
+- Depth: [Comprehensive/Moderate/Superficial]
+
+## Best Practices
+
+- Be specific in data collection (exact values, dates, URLs)
+- Provide context for all extracted information
+- Always attribute sources with URLs
+- Prioritize quality over quantity
+- Handle dynamic content, paywalls, and errors gracefully
+- Complete extraction within 2-5 minutes per domain`,
+          tools: [
+            'mcp__playwright__browser_navigate',
+            'mcp__playwright__browser_click',
+            'mcp__playwright__browser_snapshot',
+            'mcp__playwright__browser_run_code',
+            'mcp__playwright__browser_close',
+            'mcp__playwright__browser_type',
+            'mcp__playwright__browser_press_key',
+            'mcp__playwright__browser_hover',
+            'mcp__playwright__browser_tabs',
+            'mcp__playwright__browser_take_screenshot',
+            'mcp__playwright__browser_wait_for',
+            'mcp__playwright__browser_evaluate',
+            'mcp__playwright__browser_fill_form',
+            'mcp__playwright__browser_select_option',
+            'mcp__playwright__browser_drag',
+            'mcp__playwright__browser_handle_dialog',
+            'mcp__playwright__browser_network_requests',
+            'mcp__playwright__browser_console_messages',
+          ],
+          model: 'opus',
+          maxTurns: 15,
+        },
+      },
       // Configure Playwright MCP server
       mcpServers: {
         playwright: {

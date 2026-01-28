@@ -1,411 +1,368 @@
-# Disclaude 🤖
+# Disclaude
 
-A multi-platform agent bot that connects to Claude Agent SDK - supporting Feishu/Lark and CLI modes. Written in TypeScript.
+[![npm version](https://badge.fury.io/js/disclaude.svg)](https://www.npmjs.com/package/disclaude)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/node/v/disclaude.svg)](https://nodejs.org)
 
-## Version
-
-**v0.0.1** - Initial Release ✅
-
-### Implementation Status
-
-- ✅ **Feishu-only development** - Full development workflow supported via Feishu/Lark interface
-  - Code reading, editing, and writing through chat interface
-  - Command execution (Bash) with real-time feedback
-  - File system operations (glob, grep) for code navigation
-  - Browser automation via Playwright MCP tools
-  - Custom skills execution (e.g., `implement-feature`, `internet-research`)
-  - Session management for persistent conversations
-  - Message deduplication and proper error handling
+A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark) with the Claude Agent SDK. Written in TypeScript, it enables chat-driven development, code editing, file operations, and browser automation through conversational interfaces.
 
 ## Features
 
-- 💬 Chat with AI agent via Feishu/Lark
-- 🤖 Uses Claude Agent SDK with streaming responses
-- 🔄 Persistent conversations (per-user sessions)
-- 🎯 Easy commands for interaction
-- 🌐 Support for both Anthropic Claude and GLM (Zhipu AI)
-- ✅ Message deduplication to prevent duplicate responses
-- 📝 Proper text formatting with newline support
-- 🌐 **Browser automation** via Playwright MCP tools
-- 🎨 **Rich message types** with colored output (CLI) and smart throttling (Feishu)
-- 🛠️ **Extensible tool system** with MCP server support
+- **Chat-driven development** - Read, edit, and write code through natural conversation
+- **Streaming responses** - Real-time output with smart throttling for messaging platforms
+- **Persistent conversations** - Per-user session management (in-memory)
+- **Slash commands** - `/reset`, `/status`, `/help` for quick actions
+- **Multi-model support** - Anthropic Claude or GLM (Zhipu AI)
+- **Browser automation** - Playwright MCP tools for web interaction
+- **Custom skills** - Extensible workflow system (`.claude/skills/`)
+- **Message deduplication** - Prevents duplicate responses in WebSocket mode
+- **PM2 production ready** - Background service with log management
 
-## Supported Platforms
+## Version
 
-| Platform | Status | Commands | Usage |
-|----------|--------|----------|-------|
-| Feishu/Lark | ✅ | `/reset`, `/status`, `/help` | Direct message via WebSocket |
-| CLI | ✅ | `--prompt "<query>"` | Command line |
+**v0.0.1** - Initial Feishu/Lark Release
 
-## Supported Models
+### Implementation Status
 
-- **Anthropic Claude**: `claude-3-5-sonnet-20241022`, etc.
-- **GLM (Zhipu AI)**: `glm-4.7`, `glm-4`, etc.
+| Capability | Status |
+|------------|--------|
+| Code reading/editing/writing | ✅ Full support via chat |
+| Bash command execution | ✅ Real-time feedback |
+| File system operations | ✅ Glob, grep, read, write |
+| Browser automation | ✅ Playwright MCP (15+ tools) |
+| Custom skills | ✅ `implement-feature`, `deep-search` |
+| Session management | ✅ In-memory per user |
+| Message deduplication | ✅ WebSocket event handling |
 
-## Available Tools
+## Requirements
 
-### MCP (Model Context Protocol) Tools
-
-The agent supports extensible tools through MCP servers:
-
-**🌐 Playwright MCP** (Browser Automation)
-- `browser_navigate` - Navigate to URLs
-- `browser_click` - Click elements on pages
-- `browser_type` - Type text into inputs
-- `browser_snapshot` - Capture page structure
-- `browser_take_screenshot` - Take screenshots
-- `browser_evaluate` - Run JavaScript in pages
-- `browser_run_code` - Execute Playwright code
-- And 10+ more browser automation tools
-
-**🔧 Built-in Tools**
-- `Skill` - Execute custom skills from `.claude/skills/`
-- `Bash` - Execute shell commands
-- `Edit` - Edit files
-- `Read` - Read files
-- `Write` - Write files
-
-### Available Custom Skills
-
-**🎯 implement-feature** - Structured feature implementation
-- Guides through: requirements → planning → development → testing
-- Ensures quality and thoroughness
-- Perfect for complex features or vague requirements
-
-**🌐 internet-research** - Web research assistant
-- 3-step research process with structured reporting
-- Uses Playwright browser automation
-- Cross-source verification and citation
-
-### Adding Custom Tools
-
-Create custom skills by adding files to `.claude/skills/<skill-name>/SKILL.md`. See [Claude Code Skills documentation](https://docs.anthropic.com/en/docs/build-with-claude/claude-for-developers) for details.
+- **Node.js** >= 18.0.0
+- **npm** or **yarn** or **pnpm**
 
 ## Quick Start
 
-### 1. Setup
+### 1. Install
 
 ```bash
+git clone <repo-url>
 cd disclaude
 npm install
 ```
 
 ### 2. Configure
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
 
 ```env
-# Feishu/Lark
+# === Feishu/Lark (required for bot mode) ===
 FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_secret
 
-# Claude Agent SDK (choose one)
+# === Claude Agent SDK (choose one) ===
 # Option 1: Anthropic Claude
-ANTHROPIC_API_KEY=your_anthropic_key
+ANTHROPIC_API_KEY=sk-ant-xxxxx
 CLAUDE_MODEL=claude-3-5-sonnet-20241022
 
-# Option 2: GLM (Zhipu AI)
+# Option 2: GLM (Zhipu AI) - takes precedence if both configured
 GLM_API_KEY=your_glm_key
 GLM_MODEL=glm-4.7
 GLM_API_BASE_URL=https://open.bigmodel.cn/api/anthropic
-
-# Agent workspace
-AGENT_WORKSPACE=./workspace
 ```
 
 ### 3. Run
 
-**Development mode (with auto-reload):**
 ```bash
+# Development with auto-reload
 npm run dev
-```
 
-**Production mode:**
-```bash
-npm run build
-npm start
-```
+# Production (after build)
+npm run build && npm start
 
-**Background service with PM2 (recommended for production):**
-```bash
-npm run pm2:start      # Start
-npm run pm2:restart    # Restart (after code changes)
-npm run pm2:logs       # View logs
-```
-
-**Using the CLI:**
-```bash
+# CLI mode (quick testing without Feishu)
 disclaude --prompt "your question"
 ```
 
 ## Platform Setup
 
-### Feishu/Lark Setup
+### Feishu/Lark Bot Configuration
 
-1. Go to [Feishu Open Platform](https://open.feishu.cn/) or [Lark Developer](https://open.larksuite.com/)
-2. Create app → Get App ID & App Secret
-3. Enable "Robot" → Create Bot
-4. **Enable WebSocket mode**: Events and Callbacks → Mode of event/callback subscription → Select "Receive events/callbacks through persistent connection"
-5. Configure events: `im.message.receive_v1`
+1. **Create App**
+   - Go to [Feishu Open Platform](https://open.feishu.cn/) or [Lark Developer](https://open.larksuite.com/)
+   - Create a new app → Get App ID & App Secret
+
+2. **Enable Bot**
+   - Navigate to "Robot" (机器人) in app settings
+   - Enable bot capabilities
+
+3. **Configure WebSocket** (Critical)
+   - Go to **Events and Callbacks** (事件与回调)
+   - **Mode** → Select "Receive events/callbacks through persistent connection" (通过长连接接收事件)
+   - This enables WebSocket mode (no public server needed)
+
+4. **Subscribe to Events**
+   - Add event: `im.message.receive_v1`
+   - This enables message receiving
+
+5. **Publish Bot**
+   - Add bot to a group or enable in organization
+   - Test by sending a message
+
+## Available Tools
+
+### Built-in SDK Tools
+
+| Category | Tools |
+|----------|-------|
+| **Planning** | `TodoWrite`, `Task`, `ExitPlanMode`, `AskUserQuestion` |
+| **File System** | `Read`, `Write`, `Edit`, `Glob`, `Grep` |
+| **Execution** | `Bash`, `KillShell`, `NotebookEdit` |
+| **Code** | `LSP` (Language Server Protocol) |
+| **MCP** | `ListMcpResources`, `ReadMcpResource` |
+
+> **Note**: Web tools (`WebSearch`, `WebFetch`) are disabled by default for security. To enable, modify `allowedTools` in `src/agent/client.ts`.
+
+### MCP Tools (Playwright)
+
+Browser automation capabilities:
+- Navigation: `browser_navigate`, `browser_navigate_back`
+- Interaction: `browser_click`, `browser_type`, `browser_fill_form`
+- Information: `browser_snapshot`, `browser_take_screenshot`
+- Advanced: `browser_evaluate`, `browser_drag`, `browser_wait_for`
+
+### Custom Skills
+
+Located in `.claude/skills/<name>/SKILL.md`:
+
+| Skill | Description |
+|-------|-------------|
+| **`implement-feature`** | Structured feature implementation workflow |
+| **`deep-search`** | Advanced multi-stage research |
+
+Create your own by adding a `SKILL.md` file in a new directory under `.claude/skills/`.
+
+## Running as a Background Service (PM2)
+
+### Important: Manual Restart Policy
+
+**PM2 will NOT restart automatically after code changes.** You must explicitly run `npm run pm2:restart` when ready to deploy.
+
+This prevents:
+- Accidental deployment of untested code
+- Disruption of active user sessions
+- Surprising users with mid-conversation restarts
+
+### Commands
+
+```bash
+npm run pm2:start    # Build and start service
+npm run pm2:restart  # Restart (manual, after code changes)
+npm run pm2:reload   # Zero-downtime reload
+npm run pm2:stop     # Stop service
+npm run pm2:logs     # View logs
+npm run pm2:status   # Check status
+npm run pm2:monit    # Live monitoring
+npm run pm2:delete   # Remove from PM2
+```
+
+### Log Management
+
+```bash
+npm run pm2:logs            # Real-time logs (all)
+pm2 logs disclaude-feishu   # Specific app logs
+pm2 flush                   # Clear all logs
+cat ./logs/pm2-out.log      # Standard output
+cat ./logs/pm2-error.log    # Errors only
+```
+
+### Configuration
+
+Edit `ecosystem.config.cjs`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_memory_restart` | `500M` | Restart if memory exceeded |
+| `instances` | `1` | Number of processes |
 
 ## Usage
 
 ### Starting the Bot
 
 ```bash
-# Feishu/Lark
-npm run dev
-
-# Or after build
+# Feishu/Lark mode (production)
 disclaude feishu
 
-# CLI (one-shot query)
-disclaude --prompt "your question"
+# CLI mode (one-shot query, no Feishu needed)
+disclaude --prompt "List all TypeScript files"
+
+# Combined
+disclaude --prompt "Read src/agent/client.ts" | head -20
 ```
 
-### Feishu/Lark Commands
+### Feishu Commands
 
 ```
-/reset             - Clear conversation
-/status            - Show current status
-/help              - Show help
+/reset   - Clear conversation history
+/status  - Show current session status
+/help    - Show help message
 ```
 
-### CLI Mode
+### Example Conversations
+
+```
+You: Read src/agent/client.ts
+Bot: [Shows file content]
+
+You: Add a new function to log errors
+Bot: [Edits the file with new function]
+
+You: Run npm run type-check
+Bot: [Executes and shows results]
+```
+
+## Development Workflow
+
+### CLI Mode for Rapid Development
+
+**Recommended approach:**
 
 ```bash
-# Using the CLI command
-disclaude --prompt "your question"
+# 1. Make code changes
+vim src/agent/client.ts
 
-# Or via npm
-npm start -- --prompt "your question"
+# 2. Build
+npm run build
+
+# 3. Test with CLI (instant feedback)
+disclaude --prompt "Test the new feature"
+disclaude --prompt "Read src/agent/client.ts and summarize"
+
+# 4. Deploy when ready
+npm run pm2:restart
 ```
 
-## Model Configuration
+### Mode Comparison
 
-### Using Anthropic Claude
-
-```env
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-CLAUDE_MODEL=claude-3-5-sonnet-20241022
-```
-
-### Using GLM (Zhipu AI)
-
-```env
-GLM_API_KEY=your_glm_api_key
-GLM_MODEL=glm-4.7
-GLM_API_BASE_URL=https://open.bigmodel.cn/api/anthropic
-```
-
-**Priority**: GLM takes precedence if both are configured.
+| Feature | CLI Mode | Feishu Mode |
+|---------|----------|-------------|
+| **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
+| **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
+| **Session** | ❌ One-shot | ✅ Persistent (in-memory) |
+| **Permissions** | 🔒 Asks user | ✅ Auto-approves |
+| **Best for** | 🔧 Development & testing | 🤖 Production & users |
 
 ## Project Structure
 
 ```
 disclaude/
 ├── src/
-│   ├── index.ts              # Entry point
-│   ├── cli-entry.ts          # CLI entry point
-│   ├── cli/                  # CLI mode
-│   ├── config/               # Configuration
-│   ├── agent/                # Claude Agent SDK wrapper
-│   ├── feishu/               # Feishu/Lark WebSocket bot
-│   ├── types/                # TypeScript type definitions
-│   └── utils/                # Utility functions
-│       ├── output-adapter.ts # Output abstraction layer
-│       └── sdk.ts            # SDK message parsing utilities
-├── .claude/                  # Claude Code configuration
-│   └── skills/               # Custom skills (optional)
-├── logs/                     # PM2 log directory
+│   ├── cli-entry.ts          # Main CLI entry point
+│   ├── index.ts              # Legacy entry (usage hint)
+│   ├── cli/                  # CLI mode handler
+│   ├── config/               # Environment configuration
+│   ├── agent/
+│   │   └── client.ts         # Claude Agent SDK wrapper
+│   ├── feishu/
+│   │   ├── bot.ts            # WebSocket bot implementation
+│   │   └── session.ts        # In-memory session storage
+│   ├── types/                # TypeScript types
+│   └── utils/                # Utilities (output adapter, SDK helpers)
+├── .claude/skills/           # Custom skills
 ├── workspace/                # Agent working directory
-├── package.json              # Dependencies
+├── logs/                     # PM2 logs
 ├── ecosystem.config.cjs      # PM2 configuration
-├── tsconfig.json             # TypeScript config
-├── CLAUDE.md                 # Claude Code project guide
 ├── .env.example              # Environment template
+├── CLAUDE.md                 # AI assistant guidance
 └── README.md                 # This file
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Claude Agent SDK                        │
-│  (Anthropic Claude or GLM with MCP Servers)                │
-└────────────────────┬────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│              Claude Agent SDK                        │
+│     (Anthropic or GLM with MCP Servers)              │
+└────────────────────┬────────────────────────────────┘
                      │
         ┌────────────┴────────────┐
-        │  Output Adapter Layer   │
-        │  (CLI / Feishu)         │
+        │     Output Adapter      │
+        │     (CLI / Feishu)      │
         └────────────┬────────────┘
                      │
         ┌────────────┴────────────┐
         │                         │
 ┌───────▼──────┐         ┌────────▼────────┐
-│  Feishu/Lark │         │     CLI         │
-│  Bot (WS)     │         │   Mode          │
-│  + Throttling │         │  + Colors       │
+│  Feishu/Lark │         │      CLI        │
+│  Bot (WS)    │         │     Mode        │
+│  + Throttling│         │   + Colors      │
 └──────────────┘         └─────────────────┘
 ```
 
-## Running as a Background Service (PM2)
-
-For running the bot as a persistent background service with automatic restarts.
-
-### Quick Start
-
-```bash
-# First time: build and start
-npm run pm2:start
-
-# After code changes: restart
-npm run pm2:restart
-```
-
-### PM2 Commands
-
-| Command | Description |
-|---------|-------------|
-| `npm run pm2:start` | Build and start the bot |
-| `npm run pm2:stop` | Stop the bot |
-| `npm run pm2:restart` | Restart the bot (use after code changes) |
-| `npm run pm2:reload` | Zero-downtime reload (graceful restart) |
-| `npm run pm2:logs` | View real-time logs |
-| `npm run pm2:status` | Check bot status |
-| `npm run pm2:monit` | Real-time monitoring dashboard |
-| `npm run pm2:delete` | Remove bot from PM2 |
-
-### Log Management
-
-```bash
-# View logs
-npm run pm2:logs
-
-# Clear logs
-pm2 flush
-
-# View specific log files
-cat ./logs/pm2-out.log    # Standard output
-cat ./logs/pm2-error.log  # Errors
-```
-
-### PM2 Configuration
-
-Edit `ecosystem.config.cjs` to customize:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `max_memory_restart` | `500M` | Restart if memory exceeds this |
-| `instances` | `1` | Number of instances to run |
-| `error_file` | `./logs/pm2-error.log` | Error log path |
-| `out_file` | `./logs/pm2-out.log` | Output log path |
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `FEISHU_APP_ID` | Feishu | Feishu app ID |
-| `FEISHU_APP_SECRET` | Feishu | Feishu app secret |
-| `ANTHROPIC_API_KEY` | Claude | Anthropic API key |
-| `CLAUDE_MODEL` | Claude | Model name |
-| `GLM_API_KEY` | GLM | Zhipu AI API key |
-| `GLM_MODEL` | GLM | GLM model name |
-| `GLM_API_BASE_URL` | GLM | GLM API endpoint |
-
-**Note**: Workspace directory is automatically set to the current working directory.
-
 ## Troubleshooting
 
-### Feishu/Lark Issues
+### Bot doesn't start
 
-**Bot doesn't start:**
-- Verify App ID and App Secret
-- Check bot has permissions
-- Ensure events are configured
+| Symptom | Solution |
+|---------|----------|
+| WebSocket connection fails | Verify WebSocket mode is enabled in Feishu |
+| Authentication error | Check `FEISHU_APP_ID` and `FEISHU_APP_SECRET` |
+| No events received | Verify `im.message.receive_v1` is subscribed |
 
-**Messages not sending:**
-- Check WebSocket connection status
-- Verify bot is not blocked by user
-- Check PM2 logs: `npm run pm2:logs`
+### Claude API errors
 
-### Agent Issues
+| Symptom | Solution |
+|---------|----------|
+| Invalid API key | Check `ANTHROPIC_API_KEY` or `GLM_API_KEY` |
+| Model not found | Verify model name in `.env` |
+| Rate limited | Check API quota/billing |
 
-**Claude API errors:**
-- Verify ANTHROPIC_API_KEY
-- Check billing/credits
-- Ensure model name is correct
+### MCP tools not working
 
-**GLM API errors:**
-- Verify GLM_API_KEY
-- Check GLM_API_BASE_URL
-- Ensure API quota
+| Symptom | Solution |
+|---------|----------|
+| Tool not found | Ensure `@playwright/mcp` is installed |
+| Access denied | Check tool is in `allowedTools` list in `src/agent/client.ts` |
+| Browser errors | Run `npm install playwright` (if standalone) |
 
-**MCP Tools not working:**
-- Ensure `@playwright/mcp` is installed: `npm install`
-- Check MCP server configuration in `src/agent/client.ts`
-- Verify tool is in `allowedTools` list
+### PM2 issues
 
-**Permission errors:**
-- Check `permissionMode` setting in agent config
-- For development, use `bypassPermissions: true`
-- Ensure file system permissions are correct
+```bash
+# Check if service is running
+npm run pm2:status
 
-## Development
+# View error logs
+npm run pm2:logs --err
 
-### Adding Commands
+# Restart cleanly
+npm run pm2:stop && npm run pm2:start
+```
 
-Edit `src/feishu/bot.ts` to add custom slash commands.
+## Roadmap
 
-### Customizing Agent Behavior
+### Core Milestones (In Progress)
 
-Edit `src/agent/client.ts` to customize SDK options:
-- `permissionMode`: Control permission behavior (`default`, `acceptEdits`, `bypassPermissions`, `plan`)
-- `allowedTools`: Specify which tools the agent can use
-- `mcpServers`: Add or configure MCP servers
+| Milestone | Status | Description |
+|-----------|--------|-------------|
+| **One-hour tasks** | 🔜 In Progress | Autonomous completion of tasks within ~1 hour |
+| **One-day tasks** | 🔜 Planned | Multi-step tasks with multiple commits within ~1 day |
+| **One-week tasks** | 🔜 Planned | Long-running tasks with delayed human feedback |
+| **Decouple from Claude Agent SDK** | 🔜 Planned | Build standalone agent without SDK dependency |
 
-### Adding Custom Skills
+### Current Status
 
-1. Create `.claude/skills/` directory
-2. Add skill files (e.g., `my-skill.md`)
-3. Skills are automatically loaded via `settingSources: ['project']`
-
-### Output Adapters
-
-The project uses an **Output Adapter** pattern for unified message handling:
-
-- **CLIOutputAdapter**: Formats messages with ANSI colors for terminal
-- **FeishuOutputAdapter**: Sends messages via WebSocket with smart throttling
-
-To add a new platform:
-1. Implement the `OutputAdapter` interface
-2. Add platform-specific message formatting
-3. Integrate with your message handler
-
-## Milestones
-
-### ✅ v0.0.1 (Completed)
-- [x] 实现聊天驱动的自我迭代
-- [x] 完成一小时的长任务（自动测试）
-- [x] 完成一天的长任务（多个 commit）
-- [ ] 完成一周的长任务（人类延迟反馈）
-- [ ] 与 Claude Code 解耦（工作量≈一周）
-
-**Achievements:**
-- Full Feishu/Lark integration with WebSocket
-- Claude Agent SDK integration with streaming
-- MCP tool support (Playwright browser automation)
-- Custom skills system (implement-feature, internet-research)
-- PM2 production deployment
-- Session management and message deduplication
-- Rich message parsing and formatting
+- ✅ Feishu/Lark integration (WebSocket bot)
+- ✅ MCP tool support (Playwright)
+- ✅ Custom skills system
+- ✅ Session management (in-memory)
+- 🔜 Working toward autonomous task completion milestones
 
 ## License
 
-MIT License - feel free to use and modify!
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-Made with ❤️ and Claude Agent SDK
+Made with [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk)
