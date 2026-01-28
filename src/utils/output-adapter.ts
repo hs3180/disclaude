@@ -163,6 +163,12 @@ export class FeishuOutputAdapter implements OutputAdapter {
     messageType: AgentMessageType = 'text',
     metadata?: MessageMetadata
   ): Promise<void> {
+    // Skip empty or whitespace-only content
+    const trimmedContent = content.trim();
+    if (!trimmedContent) {
+      return;
+    }
+
     // Throttle progress messages
     if (messageType === 'tool_progress') {
       // Extract tool name from content if possible
@@ -174,9 +180,10 @@ export class FeishuOutputAdapter implements OutputAdapter {
     }
 
     // Handle Edit tool use with unified diff card
+    // Note: We still send the text message after the card for better visibility
     if (messageType === 'tool_use' && metadata?.toolName === 'Edit' && metadata?.toolInputRaw) {
       await this.sendEditDiffCard(metadata.toolInputRaw);
-      return;
+      // Don't return here - let the text message be sent as well for better UX
     }
 
     await this.options.sendMessage(this.options.chatId, content);

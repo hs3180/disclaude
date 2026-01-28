@@ -118,7 +118,7 @@ export class SubtaskExecutor {
           // Stream message to Feishu using the adapter
           await adapter.write(parsed.content, parsed.type, {
             toolName: parsed.metadata?.toolName as string | undefined,
-            toolInput: parsed.metadata?.toolInput as Record<string, unknown> | undefined,
+            toolInputRaw: parsed.metadata?.toolInputRaw as Record<string, unknown> | undefined,
           });
 
           // Track file operations from metadata

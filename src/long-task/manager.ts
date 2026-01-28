@@ -40,7 +40,7 @@ export class LongTaskManager {
    */
   async startLongTask(userRequest: string): Promise<void> {
     const taskId = `task-${Date.now()}`;
-    const timeoutMs = this.config.taskTimeoutMs || 30 * 60 * 1000; // Default 30 minutes
+    const timeoutMs = this.config.taskTimeoutMs || 24 * 60 * 60 * 1000; // Default 24 hours
     const abortController = new AbortController();
 
     // Store abort controller for cancellation

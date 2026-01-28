@@ -260,8 +260,8 @@ export class FeishuBot extends EventEmitter {
           sendCard: this.sendCard.bind(this),
           chatId,
           apiBaseUrl: agentConfig.apiBaseUrl,
-          // Add 30-minute timeout for long tasks
-          taskTimeoutMs: 30 * 60 * 1000,
+          // Add 24-hour timeout for long tasks
+          taskTimeoutMs: 24 * 60 * 60 * 1000,
         }
       );
 

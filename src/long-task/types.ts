@@ -147,7 +147,7 @@ export interface LongTaskConfig {
   totalSteps?: number;
   /** Optional API base URL for custom endpoints (e.g., GLM) */
   apiBaseUrl?: string;
-  /** Timeout for task execution in milliseconds (default: 30 minutes) */
+  /** Timeout for task execution in milliseconds (default: 24 hours) */
   taskTimeoutMs?: number;
   /** Maximum cost limit in USD (optional, default: no limit) */
   maxCostUsd?: number;
