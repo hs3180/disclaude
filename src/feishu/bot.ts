@@ -195,16 +195,24 @@ export class FeishuBot extends EventEmitter {
   async processAgentMessage(
     chatId: string,
     prompt: string,
-    _messageId?: string
+    _messageId?: string,
+    userId?: string
   ): Promise<string> {
     // Get previous session
     const sessionId = await this.sessionManager.getSessionId(chatId);
 
-    // Check if there are pending attachments and include them in the prompt
+    // Add context metadata to message for Agent awareness
+    // This helps Agent understand the message source without relying on env vars
     let enhancedPrompt = prompt;
+    if (userId) {
+      enhancedPrompt = `从会话 ${chatId} 收到用户 ${userId} 的消息：${prompt}`;
+      this.logger.debug({ chatId, userId, promptLength: prompt.length }, 'Added message context for Agent');
+    }
+
+    // Check if there are pending attachments and include them in the prompt
     if (attachmentManager.hasAttachments(chatId)) {
       const attachmentInfo = attachmentManager.formatAttachmentsForPrompt(chatId);
-      enhancedPrompt = `${prompt}\n\n${attachmentInfo}`;
+      enhancedPrompt = `${enhancedPrompt}\n\n${attachmentInfo}`;
       this.logger.info({ chatId, attachmentCount: attachmentManager.getAttachmentCount(chatId) }, 'Including pending attachments in prompt');
     }
 
@@ -658,7 +666,12 @@ export class FeishuBot extends EventEmitter {
 
     {
       // All messages are processed by the agent (including slash commands for SDK skills)
-      const response = await this.processAgentMessage(chat_id, text, message_id);
+      const response = await this.processAgentMessage(
+        chat_id,
+        text,
+        message_id,
+        sender?.sender_id // Pass userId for message context
+      );
 
       // Update task record with actual response
       if (message_id) {

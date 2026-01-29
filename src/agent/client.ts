@@ -12,6 +12,8 @@ import type {
 } from '../types/agent.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
+import * as url from 'url';
+import * as path from 'path';
 
 /**
  * Agent SDK client with full tool support.
@@ -46,6 +48,11 @@ export class AgentClient {
     const nodeBinDir = getNodeBinDir();
     const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
 
+    // Get the path to the Feishu MCP server
+    const __filename = url.fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const mcpServerPath = path.join(__dirname, '../dist/mcp/feishu-mcp-server.js');
+
     const sdkOptions: Record<string, unknown> = {
       cwd: Config.getWorkspaceDir(),
       permissionMode: this.permissionMode || 'default',
@@ -56,6 +63,7 @@ export class AgentClient {
         'Skill',
         'WebSearch',
         'Task',
+        // Playwright MCP tools
         'mcp__playwright__browser_navigate',
         'mcp__playwright__browser_click',
         'mcp__playwright__browser_snapshot',
@@ -75,14 +83,22 @@ export class AgentClient {
         'mcp__playwright__browser_network_requests',
         'mcp__playwright__browser_console_messages',
         'mcp__playwright__browser_install',
+        // Feishu MCP tools
+        'mcp__feishu__send_file_to_feishu',
       ],
-      // Configure Playwright MCP server
+      // Configure MCP servers
       mcpServers: {
         // Playwright for browser automation
         playwright: {
           type: 'stdio',
           command: 'npx',
           args: ['@playwright/mcp@latest'],
+        },
+        // Feishu for file sending and chat integration
+        feishu: {
+          type: 'stdio',
+          command: 'node',
+          args: [mcpServerPath],
         },
       },
     };
@@ -106,6 +122,16 @@ export class AgentClient {
       ...(sdkOptions.env as Record<string, string | undefined>),
       ...(process.env as Record<string, string | undefined>),
     };
+
+    // Explicitly pass Feishu credentials from Config to MCP server
+    // This ensures MCP tools (send_file_to_feishu) have access to Feishu API
+    if (Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET) {
+      (sdkOptions.env as Record<string, string>).FEISHU_APP_ID = Config.FEISHU_APP_ID;
+      (sdkOptions.env as Record<string, string>).FEISHU_APP_SECRET = Config.FEISHU_APP_SECRET;
+      this.logger.debug({ hasCredentials: true }, 'Feishu credentials passed to MCP environment');
+    } else {
+      this.logger.warn({ hasCredentials: false }, 'Feishu credentials not configured in Config');
+    }
 
     // Set model
     if (this.model) {

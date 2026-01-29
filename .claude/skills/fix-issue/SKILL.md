@@ -26,6 +26,8 @@ Use this skill when:
 4. Implementation → 5. Static Checks → 6. Testing → Verification
 ```
 
+**💡 Tip**: Use `TodoWrite` to track progress through these steps. This helps maintain context and provides visibility into the debugging process.
+
 ---
 
 ## Step 1: Root Cause Analysis (分析根源问题)
@@ -299,6 +301,37 @@ If fix breaks other tests:
    - Can you maintain both behaviors?
    - Is a breaking change acceptable?
 
+### Debugging Environment-Specific Issues
+
+When issue only occurs in specific environments:
+
+**Dev vs Production:**
+1. Check environment variable differences
+2. Verify database/data state differences
+3. Compare dependency versions
+4. Review build artifacts (are they identical?)
+
+**CI/CD Pipeline:**
+1. Check CI environment variables and secrets
+2. Verify build steps match local build
+3. Review timing issues (CI might be slower)
+4. Check for missing test data or fixtures
+
+**Docker/Container:**
+1. Verify container environment matches local
+2. Check file permissions and volume mounts
+3. Review network connectivity within container
+4. Compare resource limits (CPU, memory)
+
+**Quick environment diagnostic script:**
+```bash
+# Check environment differences
+echo "Node version: $(node --version)"
+echo "NPM version: $(npm --version)"
+echo "Environment vars: $(env | grep -E 'NODE|API_' | wc -l)"
+echo "Git status: $(git status --short)"
+```
+
 ---
 
 ## Anti-Patterns to Avoid
@@ -346,6 +379,67 @@ If fix breaks other tests:
 ```
 "Tests pass, but let me run type-check and lint first..."
 ```
+
+---
+
+## Emergency Rollback Plan
+
+When a fix makes things worse:
+
+### 🚨 Immediate Actions
+
+1. **Assess Severity**
+   - Is production broken? (users affected)
+   - Is data loss possible?
+   - Can the system continue operating?
+
+2. **Quick Rollback Options**
+
+   **Git Revert** (if fix was already committed):
+   ```bash
+   # Revert the specific commit
+   git revert <commit-hash>
+   git push
+
+   # Or reset if commit wasn't pushed
+   git reset --hard HEAD~1
+   ```
+
+   **Manual Code Revert** (if no git available):
+   - Use `Edit` to revert the specific changes
+   - Rebuild: `npm run build`
+   - Restart service: `npm run pm2:restart`
+
+3. **Verify Rollback**
+   - Check that the original issue doesn't reappear (or document known issue)
+   - Verify system is operational
+   - Run smoke tests if available
+
+### 📋 Post-Mortem Steps
+
+After rollback, analyze what went wrong:
+
+1. **Why was the fix incorrect?**
+   - Misunderstood root cause?
+   - Introduced new bug?
+   - Missing edge case?
+
+2. **What should we do differently?**
+   - Better testing in staging?
+   - More comprehensive test coverage?
+   - Different approach needed?
+
+3. **Document the lesson**
+   - Add comment to code about the pitfall
+   - Update test cases to cover the scenario
+   - Consider adding integration test
+
+### 🛡️ Prevention Strategies
+
+- **Always test in staging before production**
+- **Use feature flags for risky changes**
+- **Keep changes small and isolated**
+- **Have monitoring/alerting in place**
 
 ---
 
