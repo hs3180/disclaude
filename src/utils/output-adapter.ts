@@ -182,27 +182,31 @@ export class FeishuOutputAdapter implements OutputAdapter {
       }
     }
 
+    let cardSent = false;
+
     // Handle Edit tool use with unified diff card
-    // Note: We still send the text message after the card for better visibility
     if (messageType === 'tool_use' && metadata?.toolName === 'Edit' && metadata?.toolInputRaw) {
-      await this.sendEditDiffCard(metadata.toolInputRaw);
-      // Don't return here - let the text message be sent as well for better UX
+      cardSent = await this.sendEditDiffCard(metadata.toolInputRaw);
     }
 
     // Handle Write tool use with content preview card
     if (messageType === 'tool_use' && metadata?.toolName === 'Write' && metadata?.toolInputRaw) {
-      await this.sendWriteContentCard(metadata.toolInputRaw);
-      // Don't return here - let the text message be sent as well for better UX
+      cardSent = await this.sendWriteContentCard(metadata.toolInputRaw);
     }
 
-    await this.options.sendMessage(this.options.chatId, content);
+    // Only send text message if no card was sent
+    if (!cardSent) {
+      await this.options.sendMessage(this.options.chatId, content);
+    }
   }
 
   /**
    * Send Edit tool use as a Unified Diff card.
    * Dynamically import the diff card builder to avoid circular dependencies.
+   *
+   * @returns true if card was sent successfully, false otherwise
    */
-  private async sendEditDiffCard(toolInput: Record<string, unknown>): Promise<void> {
+  private async sendEditDiffCard(toolInput: Record<string, unknown>): Promise<boolean> {
     logger.debug({ keys: Object.keys(toolInput) }, 'Edit tool input keys');
     logger.debug({ toolInput }, 'Edit tool input');
 
@@ -225,23 +229,26 @@ export class FeishuOutputAdapter implements OutputAdapter {
         logger.debug('Card built, sending...');
         await this.options.sendCard(this.options.chatId, card);
         logger.debug('Card sent successfully');
-        return;
+        return true;
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to send diff card, falling back to text');
     }
 
-    // Fallback: send as plain text
+    // Fallback: send as plain text (will be handled by caller)
     const filePath = (toolInput.file_path as string | undefined) || (toolInput.filePath as string | undefined) || '<unknown>';
     logger.debug({ filePath }, 'Fallback to text');
     await this.options.sendMessage(this.options.chatId, `📝 Editing: ${filePath}`);
+    return false;
   }
 
   /**
    * Send Write tool use as a content preview card.
    * Shows full content if under threshold, otherwise shows truncated version.
+   *
+   * @returns true if card was sent successfully, false otherwise
    */
-  private async sendWriteContentCard(toolInput: Record<string, unknown>): Promise<void> {
+  private async sendWriteContentCard(toolInput: Record<string, unknown>): Promise<boolean> {
     logger.debug({ keys: Object.keys(toolInput) }, 'Write tool input keys');
     logger.debug({ toolInput }, 'Write tool input');
 
@@ -264,15 +271,16 @@ export class FeishuOutputAdapter implements OutputAdapter {
         logger.debug('Card built, sending...');
         await this.options.sendCard(this.options.chatId, card);
         logger.debug('Card sent successfully');
-        return;
+        return true;
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to send write content card, falling back to text');
     }
 
-    // Fallback: send as plain text
+    // Fallback: send as plain text (will be handled by caller)
     const filePath = (toolInput.file_path as string | undefined) || (toolInput.filePath as string | undefined) || '<unknown>';
     logger.debug({ filePath }, 'Fallback to text');
     await this.options.sendMessage(this.options.chatId, `✍️ Writing: ${filePath}`);
+    return false;
   }
 }

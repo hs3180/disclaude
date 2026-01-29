@@ -7,6 +7,10 @@ import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
+import { createLogger } from '../utils/logger.js';
+import { handleError, ErrorCategory } from '../utils/error-handler.js';
+
+const logger = createLogger('CLI');
 
 /**
  * ANSI color codes for terminal output.
@@ -62,7 +66,7 @@ async function executeOnce(
       chatId: feishuChatId,
       throttleIntervalMs: 2000,
     });
-    console.error(`[CLI] Output will be sent to Feishu chat: ${feishuChatId}`);
+    logger.info({ chatId: feishuChatId }, 'Output will be sent to Feishu chat');
   } else {
     // Default CLI mode: output to console
     adapter = new CLIOutputAdapter();
@@ -117,7 +121,7 @@ export async function runCli(args: string[]): Promise<void> {
       feishuChatId = Config.FEISHU_CLI_CHAT_ID;
       chatIdSource = 'env';
     } else {
-      console.error('Error: FEISHU_CLI_CHAT_ID environment variable is not set');
+      logger.error('FEISHU_CLI_CHAT_ID environment variable is not set');
       process.exit(1);
     }
   } else if (feishuChatId) {
@@ -140,7 +144,7 @@ export async function runCli(args: string[]): Promise<void> {
     console.log(`                         ${color('auto', 'cyan')} = use FEISHU_CLI_CHAT_ID env var`);
     console.log('');
     console.log(color('Environment Variables:', 'bold'));
-    console.log(`  FEISHU_CLI_CHAT_ID    Chat ID used when --feishu-chat-id auto is specified`);
+    console.log('  FEISHU_CLI_CHAT_ID    Chat ID used when --feishu-chat-id auto is specified');
     console.log('');
     console.log(color('Example:', 'bold'));
     console.log(`  npm start -- --prompt ${color('"Create a hello world file"', 'yellow')}`);
@@ -167,15 +171,22 @@ export async function runCli(args: string[]): Promise<void> {
     };
     const sourceLabel = chatIdSource ? sourceLabels[chatIdSource] : 'unknown';
 
-    console.error(`[CLI] Using Feishu chat: ${feishuChatId}`);
-    console.error(`[CLI] Source: ${sourceLabel}`);
+    logger.info({ chatId: feishuChatId, source: sourceLabel }, 'Using Feishu chat');
   }
 
   try {
     await executeOnce(prompt, agentConfig, feishuChatId);
   } catch (error) {
+    const enriched = handleError(error, {
+      category: ErrorCategory.SDK,
+      userMessage: 'CLI execution failed. Please check your prompt and try again.'
+    }, {
+      log: true,
+      customLogger: logger
+    });
+
     console.log('');
-    console.log(color(`Error: ${error instanceof Error ? error.message : String(error)}`, 'red'));
+    console.log(color(`Error: ${enriched.userMessage || enriched.message}`, 'red'));
     console.log('');
     process.exit(1);
   }

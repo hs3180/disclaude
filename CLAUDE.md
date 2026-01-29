@@ -27,6 +27,106 @@ disclaude feishu              # Start Feishu bot
 disclaude --prompt "<query>"  # Single prompt query
 ```
 
+## Environment Initialization (.bashrc-like Mechanism)
+
+Disclaude supports automatic environment initialization through bash scripts, similar to `.bashrc`.
+
+### Script Files
+
+On startup, Disclaude looks for and executes bash initialization scripts in the working directory (in priority order):
+
+1. **`.disclauderc`** - Project-specific environment initialization (checked first)
+2. **`.env.sh`** - Generic shell environment setup (fallback)
+
+Only the first script found is executed.
+
+### Use Cases
+
+- **Conda environments**: Activate specific conda environments for Python subprocesses
+- **Custom PATH**: Add directories to PATH for subprocess execution
+- **Environment-specific configs**: Set different variables for dev/staging/production
+- **Proxy settings**: Configure HTTP/HTTPS proxies for API calls
+- **Custom variables**: Set application-specific environment variables
+
+### Example Configuration
+
+```bash
+#!/bin/bash
+# .disclauderc example
+
+# Activate conda environment
+source ~/anaconda/anaconda3/bin/activate falcon
+
+# Add conda environment to PATH
+export PATH="$HOME/anaconda/anaconda3/envs/falcon/bin:$PATH"
+
+# Set conda environment variables
+export CONDA_DEFAULT_ENV="falcon"
+export CONDA_PREFIX="$HOME/anaconda/anaconda3/envs/falcon"
+
+# Set Python interpreter
+export PYTHON="$HOME/anaconda/anaconda3/envs/falcon/bin/python"
+```
+
+### Execution Behavior
+
+- Scripts are sourced in a bash shell before main service logic
+- Environment variables are captured and merged into `process.env`
+- **Existing variables are not overwritten** - only new variables are added
+- Script execution errors are logged but don't prevent startup
+- Use PM2 logs to verify script execution: `pm2 logs disclaude-feishu`
+
+### Setup Steps
+
+1. **Copy example script**:
+   ```bash
+   cp .disclauderc.example .disclauderc
+   ```
+
+2. **Customize for your environment**:
+   ```bash
+   vim .disclauderc
+   ```
+
+3. **Restart Disclaude**:
+   ```bash
+   npm run build
+   npm run pm2:restart
+   ```
+
+4. **Verify loading**:
+   ```bash
+   pm2 logs disclaude-feishu --lines 50
+   # Look for: "Environment initialization script loaded"
+   ```
+
+### Important Notes
+
+- Scripts must be valid bash syntax
+- Avoid long-running operations (scripts run synchronously during startup)
+- Use `source` to activate conda environments (not `conda activate`)
+- Multi-line shell functions are not captured as environment variables
+- For security, scripts are only loaded from the working directory
+
+### Debugging
+
+If environment variables aren't loading as expected:
+
+1. **Check script execution in logs**:
+   ```bash
+   pm2 logs disclaude-feishu --err
+   ```
+
+2. **Test script manually**:
+   ```bash
+   bash -lc "source .disclauderc && env | grep CONDA"
+   ```
+
+3. **Verify variables in process**:
+   - Add debug logging in your code
+   - Check `process.env.VARIABLE_NAME`
+   - Use `disclaude --prompt "echo $CONDA_DEFAULT_ENV"`
+
 ## Architecture Overview
 
 Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/Lark) with Claude Agent SDK capabilities.
@@ -385,6 +485,7 @@ export function buildWriteContentCard(...) {
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `WORKSPACE_DIR` | Optional | Working directory for file operations (default: current directory) |
 | `FEISHU_APP_ID` | Bot mode | Feishu/Lark application ID |
 | `FEISHU_APP_SECRET` | Bot mode | Feishu/Lark application secret |
 | `ANTHROPIC_API_KEY` | One of | Anthropic Claude API key |

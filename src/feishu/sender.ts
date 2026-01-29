@@ -73,7 +73,7 @@ export function createFeishuSender(): (chatId: string, text: string) => Promise<
       console.error(`[Feishu] Sent to ${chatId}: ${preview}`);
     } catch (error) {
       // Log error but don't crash
-      console.error(`[Feishu Error] Failed to send message:`, error);
+      console.error('[Feishu Error] Failed to send message:', error);
       throw error; // Re-throw to let caller handle it
     }
   };
@@ -110,7 +110,7 @@ export function createFeishuCardSender(): (chatId: string, card: Record<string, 
       console.error(`[Feishu] Sent card to ${chatId}`);
     } catch (error) {
       // Log error but don't crash
-      console.error(`[Feishu Error] Failed to send card:`, error);
+      console.error('[Feishu Error] Failed to send card:', error);
       throw error; // Re-throw to let caller handle it
     }
   };

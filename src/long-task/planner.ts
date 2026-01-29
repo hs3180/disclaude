@@ -204,7 +204,8 @@ Now, analyze this request and respond with ONLY the JSON plan (no explanation, n
     // Remove markdown code blocks if present
     const jsonCodeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (jsonCodeBlockMatch) {
-      cleaned = jsonCodeBlockMatch[1];
+      const [, extracted] = jsonCodeBlockMatch;
+      cleaned = extracted;
     }
 
     // Try to find JSON object boundaries
@@ -235,7 +236,7 @@ Now, analyze this request and respond with ONLY the JSON plan (no explanation, n
     }
 
     if (plan.subtasks.length > 10) {
-      throw new Error('Plan should have at most 10 subtasks (current: ' + plan.subtasks.length + ')');
+      throw new Error(`Plan should have at most 10 subtasks (current: ${  plan.subtasks.length  })`);
     }
 
     // Validate each subtask
@@ -309,8 +310,8 @@ Now, analyze this request and respond with ONLY the JSON plan (no explanation, n
           // Match pattern like "subtask-1/summary.md#section-id"
           const match = source.match(/^subtask-(\d+)\/[^#]+(?:#(.+))?$/);
           if (match) {
-            const sourceStep = parseInt(match[1], 10);
-            const sectionId = match[2];
+            const [, stepStr, sectionId] = match;
+            const sourceStep = parseInt(stepStr, 10);
 
             // Check that source step exists and is before current step
             if (sourceStep >= subtask.sequence) {

@@ -5,7 +5,8 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ParsedSDKMessage,
 } from '../types/agent.js';
-import { ALLOWED_TOOLS, CONFIGURED_AGENTS } from '../config/tool-configuration.js';
+import { Config } from '../config/index.js';
+import { ALLOWED_TOOLS } from '../config/tool-configuration.js';
 
 /**
  * Parameters for creating agent SDK options.
@@ -46,7 +47,7 @@ export function createAgentSdkOptions(params: CreateAgentSdkOptionsParams): Reco
     apiKey,
     model,
     apiBaseUrl,
-    cwd = process.cwd(),
+    cwd = Config.getWorkspaceDir(),
     permissionMode = 'bypassPermissions',
     resume,
   } = params;
@@ -58,12 +59,10 @@ export function createAgentSdkOptions(params: CreateAgentSdkOptionsParams): Reco
   const sdkOptions: Record<string, unknown> = {
     cwd,
     permissionMode,
-    // Load settings from .claude/ directory (skills, agents, etc.)
+    // Load settings from .claude/ directory (skills, etc.)
     settingSources: ['project'],
     // Enable Skill tool, WebSearch, Task, and Playwright MCP tools
     allowedTools: ALLOWED_TOOLS,
-    // Configure custom subagents for specialized tasks
-    agents: CONFIGURED_AGENTS,
     // Configure Playwright MCP server
     mcpServers: {
       playwright: {
@@ -153,7 +152,7 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
       const lineCount = writeContent ? writeContent.split('\n').length : 0;
       return writePath
         ? `Writing: ${writePath} (${lineCount} lines)`
-        : `Writing: <unknown file>`;
+        : 'Writing: <unknown file>';
     }
 
     case 'Grep': {
@@ -272,6 +271,132 @@ export function formatEditToolUseMarkdown(input: Record<string, unknown>): strin
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Format Edit tool use as git diff unified format.
+ * Reads the file to calculate accurate line numbers.
+ *
+ * @param input - Edit tool input from SDK
+ * @returns Git diff formatted string
+ */
+export async function formatEditToolUseGitDiff(input: Record<string, unknown>): Promise<string> {
+  // SDK uses snake_case for Edit tool parameters
+  const filePath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
+  const oldString = (input.old_string as string | undefined) || (input.oldString as string | undefined);
+  const newString = (input.new_string as string | undefined) || (input.newString as string | undefined);
+
+  if (!filePath) {
+    return '🔧 Editing: <unknown file>';
+  }
+
+  if (!oldString || !newString) {
+    return `📝 Editing: ${filePath}`;
+  }
+
+  try {
+    // Import fs dynamically to avoid issues in non-Node environments
+    const fs = await import('fs/promises');
+
+    // Read file content
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n');
+
+    // Split strings into lines
+    const oldLines = oldString.split('\n');
+    const newLines = newString.split('\n');
+
+    // Find old_string position in file
+    let oldLineStart = 1; // Git diff uses 1-based line numbers
+    let found = false;
+
+    for (let i = 0; i <= lines.length - oldLines.length; i++) {
+      const matchCandidate = lines.slice(i, i + oldLines.length).join('\n');
+      if (matchCandidate === oldString) {
+        oldLineStart = i + 1;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      // Fallback: simple diff without line numbers
+      return buildSimpleDiff(filePath, oldString, newString);
+    }
+
+    // Calculate diff header
+    const oldLineCount = oldLines.length;
+    const newLineCount = newLines.length;
+
+    // Build git diff output
+    const diffLines: string[] = [];
+    diffLines.push(`📝 Editing: ${filePath}`);
+    diffLines.push('');
+    diffLines.push('```diff');
+    diffLines.push(`--- a/${filePath}`);
+    diffLines.push(`+++ b/${filePath}`);
+    diffLines.push(`@@ -${oldLineStart},${oldLineCount} +${oldLineStart},${newLineCount} @@`);
+
+    // Add removed lines
+    for (const line of oldLines) {
+      diffLines.push(`-${escapeForDiff(line)}`);
+    }
+
+    // Add added lines
+    for (const line of newLines) {
+      diffLines.push(`+${escapeForDiff(line)}`);
+    }
+
+    diffLines.push('```');
+
+    return diffLines.join('\n');
+  } catch {
+    // If file doesn't exist or read error, fall back to simple diff
+    return buildSimpleDiff(filePath, oldString, newString);
+  }
+}
+
+/**
+ * Build a simple diff without line numbers (fallback).
+ */
+function buildSimpleDiff(filePath: string, oldString: string, newString: string): string {
+  const lines: string[] = [];
+  const oldLines = oldString.split('\n');
+  const newLines = newString.split('\n');
+
+  lines.push(`📝 Editing: ${filePath}`);
+  lines.push('');
+  lines.push('```diff');
+  lines.push(`--- a/${filePath}`);
+  lines.push(`+++ b/${filePath}`);
+
+  // Simple header without line numbers
+  const maxCount = Math.max(oldLines.length, newLines.length);
+  lines.push(`@@ -0,${maxCount} +0,${maxCount} @@`);
+
+  // Add removed lines
+  for (const line of oldLines) {
+    lines.push(`-${escapeForDiff(line)}`);
+  }
+
+  // Add added lines
+  for (const line of newLines) {
+    lines.push(`+${escapeForDiff(line)}`);
+  }
+
+  lines.push('```');
+
+  return lines.join('\n');
+}
+
+/**
+ * Escape special characters for git diff.
+ * Currently handles backticks which could break code blocks.
+ */
+function escapeForDiff(text: string): string {
+  // In git diff, backticks don't need escaping in the content itself
+  // They only need escaping if they appear in special contexts
+  return text;
 }
 
 /**

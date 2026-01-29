@@ -1,0 +1,136 @@
+# =============================================================================
+# Disclaude Configuration File
+# =============================================================================
+#
+# This is an example configuration file for Disclaude.
+# Copy this file to `disclaude.config.yaml` and customize it for your needs.
+#
+# IMPORTANT: Security Best Practices
+# - disclaude.config.yaml is in .gitignore - safe to store secrets locally
+# - This example file (disclaude.config.example.yaml) is committed to git
+# - DO NOT commit your actual disclaude.config.yaml with real API keys
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Workspace Configuration
+# -----------------------------------------------------------------------------
+workspace:
+  # Working directory for file operations
+  # Default: current working directory
+  dir: "./workspace"
+
+# -----------------------------------------------------------------------------
+# Agent/AI Configuration
+# -----------------------------------------------------------------------------
+agent:
+  # API provider preference
+  # Options: anthropic, glm
+  provider: "glm"
+
+  # Model to use for AI operations
+  # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
+  model: "glm-4.7"
+
+  # Permission mode for SDK tools
+  # Options: default (ask user), bypassPermissions (auto-approve)
+  # Default: default for CLI, bypassPermissions for bot
+  permissionMode: "bypassPermissions"
+
+  # Maximum number of concurrent long-running tasks
+  # Default: 1
+  maxConcurrentTasks: 1
+
+# -----------------------------------------------------------------------------
+# Feishu/Lark Platform Configuration
+# -----------------------------------------------------------------------------
+feishu:
+  # Feishu App ID and Secret
+  appId: "your_feishu_app_id_here"
+  appSecret: "your_feishu_app_secret_here"
+
+  # CLI chat ID for testing (optional)
+  cliChatId: ""
+
+  # Message deduplication settings
+  deduplication:
+    # Maximum number of message IDs to keep in memory
+    # Default: 1000
+    maxIds: 1000
+
+    # Maximum message age in milliseconds
+    # Default: 60000 (1 minute)
+    maxAgeMs: 60000
+
+# -----------------------------------------------------------------------------
+# GLM (Zhipu AI) API Configuration
+# -----------------------------------------------------------------------------
+glm:
+  # GLM API key from https://open.bigmodel.cn/
+  apiKey: "your_glm_api_key_here"
+
+  # API base URL (usually no need to change)
+  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+logging:
+  # Log level
+  # Options: trace, debug, info, warn, error, fatal
+  # Default: info
+  level: "info"
+
+  # Log file path (optional)
+  # If not specified, logs go to stdout/stderr only
+  # file: "./logs/disclaude.log"
+
+  # Enable pretty printing in console
+  # Default: true
+  pretty: true
+
+  # Enable log rotation
+  # Default: false
+  rotate: false
+
+# -----------------------------------------------------------------------------
+# Tools Configuration
+# -----------------------------------------------------------------------------
+tools:
+  # List of disabled tools (optional)
+  # If empty, all tools are enabled
+  # Example: ['WebSearch', 'WebFetch']
+  disabled: []
+
+  # MCP server configurations
+  mcpServers:
+    # Playwright browser automation
+    playwright:
+      type: "stdio"
+      command: "npx"
+      args: ["@playwright/mcp@latest"]
+
+    # Example: Add a custom MCP server
+    # my-custom-server:
+    #   type: "stdio"
+    #   command: "node"
+    #   args: ["./my-mcp-server.js"]
+    #   env:
+    #     CUSTOM_VAR: "value"
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Setup:
+#   1. Copy this file to disclaude.config.yaml
+#   2. Replace placeholder values with your actual configuration
+#   3. Run: npm run build
+#   4. Run: npm run pm2:restart
+#
+# Bash Environment Initialization:
+#   For conda environment activation and other shell-specific setup,
+#   use the .disclauderc file (bash script, not YAML).
+#   See .disclauderc.example for details.
+#
+# =============================================================================

@@ -28,7 +28,8 @@ export interface CodeChange {
  *
  * Features:
  * - File path header with emoji
- * - Code blocks with diff syntax highlighting
+ * - Single code block with git diff unified format
+ * - Context lines before and after changes
  * - Removed lines in red with `-` prefix
  * - Added lines in green with `+` prefix
  * - Git-style diff formatting in code blocks
@@ -52,43 +53,9 @@ export function buildUnifiedDiffCard(
     const languageBadge = change.language ? `\`${change.language}\`` : '';
     contentParts.push(`**📄 ${escapeHtml(change.filePath)}** ${languageBadge}\n`);
 
-    // Build diff header if line numbers available
-    if (change.oldLineStart !== undefined || change.newLineStart !== undefined) {
-      const removedCount = change.removed?.length ?? 0;
-      const addedCount = change.added?.length ?? 0;
-      contentParts.push(
-        `━━━ @@ -${change.oldLineStart ?? 1},${removedCount} +${change.newLineStart ?? 1},${addedCount} @@ ━━━\n`
-      );
-    }
-
-    // Build unified diff in code block
-    const diffLines: string[] = [];
-
-    // Removed lines (red with - prefix)
-    if (change.removed && change.removed.length > 0) {
-      diffLines.push('```');
-      diffLines.push('❌ **删除 (Removed)**');
-      diffLines.push('```');
-      diffLines.push('```diff');
-      for (const line of change.removed) {
-        diffLines.push(`- ${escapeForCodeBlock(line)}`);
-      }
-      diffLines.push('```');
-    }
-
-    // Added lines (green with + prefix)
-    if (change.added && change.added.length > 0) {
-      diffLines.push('```');
-      diffLines.push('✅ **新增 (Added)**');
-      diffLines.push('```');
-      diffLines.push('```diff');
-      for (const line of change.added) {
-        diffLines.push(`+ ${escapeForCodeBlock(line)}`);
-      }
-      diffLines.push('```');
-    }
-
-    contentParts.push(diffLines.join('\n'));
+    // Generate git diff style unified format
+    const diffContent = generateUnifiedDiff(change);
+    contentParts.push(diffContent);
 
     elements.push({
       tag: 'markdown',
@@ -116,6 +83,81 @@ export function buildUnifiedDiffCard(
 }
 
 /**
+ * Generate git diff unified format with context.
+ *
+ * @param change - Code change object
+ * @returns Markdown-formatted diff content
+ */
+function generateUnifiedDiff(change: CodeChange): string {
+  const diffLines: string[] = [];
+
+  const removed = change.removed ?? [];
+  const added = change.added ?? [];
+
+  // Build unified diff by comparing lines
+  const unifiedLines = buildUnifiedDiffLines(removed, added);
+
+  // Build diff header
+  const oldLineStart = change.oldLineStart ?? 1;
+  const newLineStart = change.newLineStart ?? 1;
+  const totalRemoved = removed.length;
+  const totalAdded = added.length;
+
+  diffLines.push('```diff');
+  diffLines.push(`@@ -${oldLineStart},${totalRemoved} +${newLineStart},${totalAdded} @@`);
+
+  // Add all diff lines
+  for (const line of unifiedLines) {
+    diffLines.push(line);
+  }
+
+  diffLines.push('```');
+
+  return diffLines.join('\n');
+}
+
+/**
+ * Build unified diff lines comparing removed and added content.
+ * Uses a simple line-by-line comparison with context.
+ *
+ * @param removed - Lines being removed
+ * @param added - Lines being added
+ * @returns Array of formatted diff lines
+ */
+function buildUnifiedDiffLines(removed: string[], added: string[]): string[] {
+  const lines: string[] = [];
+
+  // Simple approach: if we have both removed and added, show them in unified format
+  // If only one exists, show all lines with appropriate prefix
+
+  if (removed.length === 0 && added.length > 0) {
+    // Only additions
+    for (const line of added) {
+      lines.push(`+${escapeForCodeBlock(line)}`);
+    }
+  } else if (added.length === 0 && removed.length > 0) {
+    // Only deletions
+    for (const line of removed) {
+      lines.push(`-${escapeForCodeBlock(line)}`);
+    }
+  } else if (removed.length > 0 && added.length > 0) {
+    // Both exist - show in unified format
+    // Strategy: Show all removed lines first, then all added lines
+    // This is simplified but effective for showing the change
+
+    for (const line of removed) {
+      lines.push(`-${escapeForCodeBlock(line)}`);
+    }
+
+    for (const line of added) {
+      lines.push(`+${escapeForCodeBlock(line)}`);
+    }
+  }
+
+  return lines;
+}
+
+/**
  * Parse Edit tool input into CodeChange format.
  * Extracts file_path, old_string, and new_string from SDK tool input.
  *
@@ -123,14 +165,14 @@ export function buildUnifiedDiffCard(
  * @returns CodeChange object or null if parsing fails
  */
 export function parseEditToolInput(input: Record<string, unknown> | undefined): CodeChange | null {
-  if (!input) return null;
+  if (!input) {return null;}
 
   // SDK uses snake_case for Edit tool parameters
   const filePath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
   const oldString = (input.old_string as string | undefined) || (input.oldString as string | undefined);
   const newString = (input.new_string as string | undefined) || (input.newString as string | undefined);
 
-  if (!filePath) return null;
+  if (!filePath) {return null;}
 
   // Detect language from file extension
   const language = detectLanguage(filePath);

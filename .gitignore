@@ -1,17 +1,28 @@
 # Environment variables
 .env
 
+# Configuration file with secrets
+disclaude.config.yaml
+
+# Environment initialization (user-specific)
+.disclauderc
+
 # Node.js
 node_modules/
 dist/
-*.log
+
+# Package manager logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # PM2
 .pm2/
-logs/
+
+# Logs (keep directory, ignore contents)
+logs/*
+!logs/.gitkeep
 
 # IDE
 .vscode/
@@ -32,3 +43,7 @@ Thumbs.db
 
 # Task records
 tasks/
+
+# Workspace directory (keep directory structure, ignore contents)
+workspace/*
+!workspace/.gitkeep

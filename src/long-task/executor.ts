@@ -218,14 +218,14 @@ export class SubtaskExecutor {
 
       if (result.success) {
         info.push(`**Summary File**: \`${result.summaryFile}\`\n`);
-        info.push(`**Created Files**:\n`);
+        info.push('**Created Files**:\n');
 
         if (result.files.length > 0) {
           for (const file of result.files) {
             info.push(`- \`${file}\`\n`);
           }
         } else {
-          info.push(`(No files tracked)\n`);
+          info.push('(No files tracked)\n');
         }
       } else if (result.error) {
         info.push(`**Error**: ${result.error}\n`);

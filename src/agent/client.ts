@@ -4,11 +4,14 @@
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { parseSDKMessage, getNodeBinDir } from '../utils/sdk.js';
+import { Config } from '../config/index.js';
 import type {
   AgentMessage,
   AgentOptions,
   SessionInfo,
 } from '../types/agent.js';
+import { createLogger } from '../utils/logger.js';
+import { handleError, ErrorCategory } from '../utils/error-handler.js';
 
 /**
  * Agent SDK client with full tool support.
@@ -22,6 +25,7 @@ export class AgentClient {
 
   // Session tracking for conversation continuity
   private currentSessionId?: string;
+  private logger = createLogger('AgentClient', { model: '' }); // Model set in constructor
 
   constructor(options: AgentOptions) {
     this.apiKey = options.apiKey;
@@ -29,6 +33,9 @@ export class AgentClient {
     this.apiBaseUrl = options.apiBaseUrl;
     this.permissionMode = options.permissionMode;
     this.bypassPermissions = options.bypassPermissions;
+
+    // Update logger with actual model
+    this.logger = createLogger('AgentClient', { model: this.model });
   }
 
   /**
@@ -40,7 +47,7 @@ export class AgentClient {
     const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
 
     const sdkOptions: Record<string, unknown> = {
-      cwd: process.cwd(),
+      cwd: Config.getWorkspaceDir(),
       permissionMode: this.permissionMode || 'default',
       // Load settings from .claude/ directory (skills, agents, etc.)
       settingSources: ['project'],
@@ -69,86 +76,6 @@ export class AgentClient {
         'mcp__playwright__browser_console_messages',
         'mcp__playwright__browser_install',
       ],
-      // Configure custom subagents for specialized tasks
-      agents: {
-        'web-extractor': {
-          description: 'Specialized subagent for extracting comprehensive information from specific websites using Playwright browser automation',
-          prompt: `You are a web extraction specialist. Your role is to navigate to URLs, explore website structure, and extract comprehensive data.
-
-## Extraction Process
-
-1. **Understand the Request**: Analyze what information to collect from the target URL/domain
-2. **Navigate and Explore**: Use Playwright browser tools to visit the site and understand its structure
-3. **Extract Core Content**: Collect articles, data, statistics, insights, and other relevant information
-4. **Follow Related Links**: Explore internal and external links (2-3 levels deep) for additional context
-5. **Structure Findings**: Return results in clear, structured markdown format
-
-## Output Format
-
-Always return findings in this format:
-
-# Web Extraction Results: [Domain/URL]
-
-## Overview
-- **Target**: [URL]
-- **Focus**: [Extraction objectives]
-- **Pages Explored**: [Number]
-
-## Key Findings
-
-### Articles/Content Discovered
-1. **[Title]** - URL
-   - Summary: [2-3 sentences]
-   - Key Points: [bullets]
-   - Date: [publication date]
-
-### Data & Statistics
-- **[Metric]**: [Value] - Source: [URL]
-
-### Important Insights
-- **[Insight]**: [Details] - Source: [URL]
-
-## Site Structure Notes
-- Main sections: [List]
-- Content organization: [Description]
-
-## Quality Assessment
-- Authority: [High/Medium/Low]
-- Currency: [Recent/Mixed/Dated]
-- Depth: [Comprehensive/Moderate/Superficial]
-
-## Best Practices
-
-- Be specific in data collection (exact values, dates, URLs)
-- Provide context for all extracted information
-- Always attribute sources with URLs
-- Prioritize quality over quantity
-- Handle dynamic content, paywalls, and errors gracefully
-- Complete extraction within 2-5 minutes per domain`,
-          tools: [
-            'mcp__playwright__browser_navigate',
-            'mcp__playwright__browser_click',
-            'mcp__playwright__browser_snapshot',
-            'mcp__playwright__browser_run_code',
-            'mcp__playwright__browser_close',
-            'mcp__playwright__browser_type',
-            'mcp__playwright__browser_press_key',
-            'mcp__playwright__browser_hover',
-            'mcp__playwright__browser_tabs',
-            'mcp__playwright__browser_take_screenshot',
-            'mcp__playwright__browser_wait_for',
-            'mcp__playwright__browser_evaluate',
-            'mcp__playwright__browser_fill_form',
-            'mcp__playwright__browser_select_option',
-            'mcp__playwright__browser_drag',
-            'mcp__playwright__browser_handle_dialog',
-            'mcp__playwright__browser_network_requests',
-            'mcp__playwright__browser_console_messages',
-          ],
-          model: 'opus',
-          maxTurns: 15,
-        },
-      },
       // Configure Playwright MCP server
       mcpServers: {
         playwright: {
@@ -171,6 +98,13 @@ Always return findings in this format:
         PATH: newPath,
       };
     }
+
+    // Include all environment variables from .disclauderc/.env.sh
+    // This ensures conda environments and other custom vars are available to subprocesses
+    sdkOptions.env = {
+      ...(sdkOptions.env as Record<string, string | undefined>),
+      ...(process.env as Record<string, string | undefined>),
+    };
 
     // Set model
     if (this.model) {
@@ -202,6 +136,8 @@ Always return findings in this format:
    * Stream agent response using Agent SDK.
    */
   async *queryStream(prompt: string, sessionId?: string): AsyncIterable<AgentMessage> {
+    this.logger.debug({ sessionId, promptLength: prompt.length }, 'Starting query stream');
+
     try {
       const sdkOptions = this.createSdkOptions(sessionId);
 
@@ -235,9 +171,19 @@ Always return findings in this format:
       }
 
     } catch (error) {
+      const enriched = handleError(error, {
+        category: ErrorCategory.SDK,
+        sessionId,
+        promptLength: prompt.length,
+        userMessage: 'Agent query failed. Please try again.'
+      }, {
+        log: true,
+        customLogger: this.logger
+      });
+
       // Yield error message
       yield {
-        content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+        content: `❌ ${enriched.userMessage || enriched.message}`,
         role: 'assistant',
         messageType: 'error',
       };
@@ -261,7 +207,7 @@ Always return findings in this format:
     const envDict: Record<string, string> = {
       ANTHROPIC_API_KEY: this.apiKey,
       ANTHROPIC_MODEL: this.model,
-      WORKSPACE_DIR: process.cwd(),
+      WORKSPACE_DIR: Config.getWorkspaceDir(),
     };
 
     if (this.apiBaseUrl) {
@@ -275,7 +221,7 @@ Always return findings in this format:
    * Extract text from agent message.
    */
   extractText(message: AgentMessage): string {
-    const content = message.content;
+    const { content } = message;
 
     if (typeof content === 'string') {
       return content;

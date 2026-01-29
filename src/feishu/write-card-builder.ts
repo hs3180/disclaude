@@ -126,7 +126,7 @@ function generateContentPreview(writeContent: WriteContent, config: Required<Wri
   // Build code block with language
   const language = writeContent.language ?? 'text';
 
-  lines.push('```' + language);
+  lines.push(`\`\`\`${  language}`);
 
   // Add each line with line number
   let startLineNumber = 1;
@@ -213,7 +213,7 @@ export function parseWriteToolInput(
 
   if (isTruncated) {
     // Show first N lines and last N lines with truncation marker
-    const contextLines = previewConfig.contextLines;
+    const {contextLines} = previewConfig;
     const startLines = allLines.slice(0, contextLines);
     const endLines = allLines.slice(-contextLines);
 
@@ -250,7 +250,7 @@ function truncateLine(line: string, maxLength: number): string {
   }
 
   // Truncate and add ellipsis
-  return line.substring(0, maxLength - 3) + '...';
+  return `${line.substring(0, maxLength - 3)  }...`;
 }
 
 /**

@@ -1,16 +1,16 @@
 ---
 name: deep-search
-description: Conduct comprehensive research using WebSearch API and web-extractor subagent. Use for investigating complex topics that require thorough analysis across multiple authoritative sources.
+description: Conduct comprehensive research using WebSearch API and browser automation tools. Use for investigating complex topics that require thorough analysis across multiple authoritative sources.
 argument-hint: [research topic]
 disable-model-invocation: true
-allowed-tools: WebSearch,Task
+allowed-tools: WebSearch,mcp__playwright__browser_navigate,mcp__playwright__browser_run_code,mcp__playwright__browser_click,mcp__playwright__browser_snapshot,mcp__playwright__browser_take_screenshot
 ---
 
 # Deep Search
 
 **Version:** 4.0.0
 
-Advanced research capability that conducts systematic investigation using WebSearch API for discovery and web-extractor subagent for deep information collection from specific websites.
+Advanced research capability that conducts systematic investigation using WebSearch API for discovery and browser automation tools for deep information collection from specific websites.
 
 **What's New in v4.0.0:**
 - ✅ **ULTRA-SIMPLIFIED:** Iterative loop approach - search → read → search → read
@@ -22,18 +22,17 @@ Advanced research capability that conducts systematic investigation using WebSea
 
 ## Tool Constraints
 
-Available tools: WebSearch API and Task tool for subagent delegation.
+Available tools: WebSearch API and Playwright browser automation tools.
 
 You can:
 - Use WebSearch API for fast, efficient web searches
-- Use Task tool to delegate web extraction to specialized subagent
+- Use browser automation tools to navigate and extract detailed content from websites
 - Present research findings directly in the conversation
 
 You cannot:
 - Write to local files
 - Read or edit existing local files
 - Run bash commands or scripts
-- Use browser automation tools directly
 
 Research findings are presented directly in the conversation.
 
@@ -50,7 +49,7 @@ Research follows a natural, adaptive cycle:
      │
      ▼
 ┌──────────┐
-│  Read    │  ← Use web-extractor subagent for high-value sources
+│  Read    │  ← Use browser automation for high-value sources
 └────┬─────┘     OR read WebSearch results for simple content
      │
      ▼
@@ -92,18 +91,18 @@ findings)
 - **Objectivity**: Balanced perspectives
 
 **2. Read Phase**
-- For high-value sources (official docs, research papers, comprehensive guides): Use web-extractor subagent
+- For high-value sources (official docs, research papers, comprehensive guides): Use browser automation tools
 - For simple content (blog posts, news): WebSearch results are sufficient
 - Extract key information, data points, quotes, and insights
 - Note conflicting information or gaps
 
-**When to use web-extractor subagent:**
+**When to use browser automation:**
 - Official documentation sites with detailed technical content
 - Research papers or academic publications
 - Comprehensive guides or tutorials
 - Sites requiring navigation beyond landing page
 
-**When to skip subagent:**
+**When to skip browser automation:**
 - Simple blog posts or news articles
 - Paywalled or login-required content
 - Sites with minimal information
@@ -209,7 +208,7 @@ Loop 1:
 
 Loop 2:
   Search: "FDA AI medical device regulation 2024"
-  Read: Official FDA documentation (use web-extractor)
+  Read: Official FDA documentation (use browser automation)
   Evaluate: Need clinical trial data
 
 Loop 3:
@@ -289,7 +288,7 @@ Research is successful when:
 
 **Quality Indicators:**
 - Each search loop refined understanding or filled gaps
-- High-value sources explored deeply via web-extractor subagent
+- High-value sources explored deeply via browser automation tools
 - Multiple independent sources verify critical claims
 - Both breadth and depth achieved naturally
 - Time invested proportional to topic complexity

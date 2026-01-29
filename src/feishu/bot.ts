@@ -5,11 +5,16 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { EventEmitter } from 'events';
 import { AgentClient } from '../agent/client.js';
 import { Config } from '../config/index.js';
+import { DEDUPLICATION } from '../config/constants.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { LongTaskManager } from '../long-task/index.js';
 import type { SessionManager } from './session.js';
 import { buildTextContent } from './content-builder.js';
+import { createLogger } from '../utils/logger.js';
+import { handleError, ErrorCategory } from '../utils/error-handler.js';
+import * as CommandHandlers from './command-handlers.js';
+import type { CommandHandlerContext } from './command-handlers.js';
 
 // Temporarily disabled: Markdown detection for rich text messages
 // TODO: Re-enable when rich text format is needed again
@@ -60,13 +65,12 @@ export class FeishuBot extends EventEmitter {
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
   private running = false;
+  private logger = createLogger('FeishuBot');
 
   // Track processed message IDs to prevent duplicate processing
   private processedMessageIds = new Set<string>();
-  private readonly MAX_PROCESSED_IDS = 1000;
-
-  // Ignore messages older than this (milliseconds)
-  private readonly MAX_MESSAGE_AGE = 60 * 1000; // 1 minute
+  private readonly MAX_PROCESSED_IDS = DEDUPLICATION.MAX_PROCESSED_IDS;
+  private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
   // Task tracker for persistent deduplication
   private taskTracker: TaskTracker;
@@ -124,10 +128,17 @@ export class FeishuBot extends EventEmitter {
 
       // Defensive: Ensure text is valid before substring
       const safeText = text || '';
-      const preview = safeText.length > 100 ? safeText.substring(0, 100) + '...' : safeText;
-      console.log(`[Sent] chat_id: ${chatId}, type: text, text: ${preview}`);
+      const preview = safeText.length > 100 ? `${safeText.substring(0, 100)  }...` : safeText;
+      this.logger.debug({ chatId, messageType: 'text', preview }, 'Message sent');
     } catch (error) {
-      console.error(`Failed to send message to ${chatId}:`, error);
+      handleError(error, {
+        category: ErrorCategory.API,
+        chatId,
+        messageType: 'text'
+      }, {
+        log: true,
+        customLogger: this.logger
+      });
     }
   }
 
@@ -159,9 +170,17 @@ export class FeishuBot extends EventEmitter {
       });
 
       const desc = description ? ` (${description})` : '';
-      console.log(`[Sent] chat_id: ${chatId}, type: interactive${desc}`);
+      this.logger.debug({ chatId, description: desc }, 'Card sent');
     } catch (error) {
-      console.error(`Failed to send card to ${chatId}:`, error);
+      handleError(error, {
+        category: ErrorCategory.API,
+        chatId,
+        description,
+        messageType: 'card'
+      }, {
+        log: true,
+        customLogger: this.logger
+      });
     }
   }
 
@@ -219,8 +238,17 @@ export class FeishuBot extends EventEmitter {
       // Return accumulated response
       return responseChunks.join('\n');
     } catch (error) {
-      const errorMsg = `❌ Error: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(`Agent error for chat ${chatId}:`, error);
+      const enriched = handleError(error, {
+        category: ErrorCategory.SDK,
+        chatId,
+        sessionId,
+        userMessage: 'Agent processing failed. Please try again.'
+      }, {
+        log: true,
+        customLogger: this.logger
+      });
+
+      const errorMsg = `❌ ${enriched.userMessage || enriched.message}`;
       await this.sendMessage(chatId, errorMsg);
       return errorMsg;
     }
@@ -255,7 +283,7 @@ export class FeishuBot extends EventEmitter {
         agentConfig.model,
         agentConfig.apiBaseUrl,
         {
-          workspaceBaseDir: process.cwd(), // Use project root as base
+          workspaceBaseDir: Config.getWorkspaceDir(),
           sendMessage: this.sendMessage.bind(this),
           sendCard: this.sendCard.bind(this),
           chatId,
@@ -271,10 +299,17 @@ export class FeishuBot extends EventEmitter {
       // Start long task workflow (non-blocking)
       taskManager.startLongTask(userRequest)
         .then(() => {
-          console.log(`[LongTask] Completed for chat ${chatId}`);
+          this.logger.info({ chatId }, 'Long task completed');
         })
         .catch((error) => {
-          console.error(`[LongTask] Failed for chat ${chatId}:`, error);
+          handleError(error, {
+            category: ErrorCategory.SDK,
+            chatId,
+            userMessage: 'Long task failed'
+          }, {
+            log: true,
+            customLogger: this.logger
+          });
         })
         .finally(() => {
           // Clean up manager after completion (only if it's still the same manager)
@@ -285,8 +320,16 @@ export class FeishuBot extends EventEmitter {
         });
 
     } catch (error) {
-      const errorMsg = `❌ Failed to start long task: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(`[LongTask] Error for chat ${chatId}:`, error);
+      const enriched = handleError(error, {
+        category: ErrorCategory.UNKNOWN,
+        chatId,
+        userMessage: 'Failed to start long task. Please try again.'
+      }, {
+        log: true,
+        customLogger: this.logger
+      });
+
+      const errorMsg = `❌ ${enriched.userMessage || enriched.message}`;
       await this.sendMessage(chatId, errorMsg);
 
       // Clean up manager on error
@@ -298,60 +341,59 @@ export class FeishuBot extends EventEmitter {
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: any): Promise<void> {
-    if (!this.running) return;
+    if (!this.running) {return;}
 
     const { message } = data;
-    if (!message) return;
+    if (!message) {return;}
 
     const { message_id, chat_id, content, message_type, sender, create_time } = message;
 
     // Defensive: Validate required fields
     if (!message_id) {
-      console.error('[Error] Missing message_id in message');
+      this.logger.warn('Missing message_id in message');
       return;
     }
 
     if (!chat_id) {
-      console.error('[Error] Missing chat_id in message');
+      this.logger.warn('Missing chat_id in message');
       return;
     }
 
     if (!content) {
-      console.error('[Error] Missing content in message');
+      this.logger.warn('Missing content in message');
       return;
     }
 
     if (!message_type) {
-      console.error('[Error] Missing message_type in message');
+      this.logger.warn('Missing message_type in message');
       return;
     }
 
     // Debug: log full message structure
-    console.log(`[Debug] message keys:`, Object.keys(message));
-    console.log(`[Debug] message_id: ${message_id}, create_time: ${create_time}`);
+    this.logger.debug({ keys: Object.keys(message), messageId: message_id, createTime: create_time }, 'Message keys');
 
     // Deduplication: skip already processed messages
     if (message_id) {
-      console.log(`[Debug] Checking deduplication for message_id: ${message_id}`);
+      this.logger.debug({ messageId: message_id }, 'Checking deduplication');
       // First check: in-memory cache
       if (this.processedMessageIds.has(message_id)) {
-        console.log(`[Skipped duplicate] message_id: ${message_id} (in-memory)`);
+        this.logger.debug({ messageId: message_id }, 'Skipped duplicate message (in-memory)');
         return;
       }
 
       // Second check: file-based deduplication
-      console.log(`[Debug] Checking file-based deduplication...`);
+      this.logger.debug('Checking file-based deduplication');
       const hasRecord = await this.taskTracker.hasTaskRecord(message_id);
-      console.log(`[Debug] File-based deduplication result: ${hasRecord}`);
+      this.logger.debug({ hasRecord }, 'File-based deduplication result');
       if (hasRecord) {
-        console.log(`[Skipped duplicate] message_id: ${message_id} (file-based)`);
+        this.logger.debug({ messageId: message_id }, 'Skipped duplicate message (file-based)');
         // Add to memory cache to avoid repeated file checks
         this.processedMessageIds.add(message_id);
         return;
       }
 
       // Add to memory cache
-      console.log(`[Debug] Adding to memory cache...`);
+      this.logger.debug('Adding to memory cache');
       this.processedMessageIds.add(message_id);
 
       // Prevent memory leak - remove old entries when limit is reached
@@ -363,43 +405,43 @@ export class FeishuBot extends EventEmitter {
       }
     }
 
-    console.log(`[Debug] Checking sender type...`);
+    this.logger.debug('Checking sender type');
     // CRITICAL: Ignore messages sent by the bot itself
     // When bot sends a message, Feishu may trigger an event for it
     // We must skip these to prevent infinite loops
     if (sender?.sender_type === 'app') {
-      console.log(`[Skipped bot message] sender_type: ${sender.sender_type}`);
+      this.logger.debug({ senderType: sender.sender_type }, 'Skipped bot message');
       return;
     }
 
     // Check message age - ignore old messages to prevent delayed processing
-    console.log(`[Debug] Checking message age...`);
+    this.logger.debug('Checking message age');
     if (create_time) {
       const currentTime = Date.now();
       const messageAge = currentTime - create_time;
-      console.log(`[Debug] Message age: ${messageAge}ms (max: ${this.MAX_MESSAGE_AGE}ms)`);
+      this.logger.debug({ ageMs: messageAge, maxAgeMs: this.MAX_MESSAGE_AGE }, 'Message age');
 
       if (messageAge > this.MAX_MESSAGE_AGE) {
         const ageSeconds = Math.floor(messageAge / 1000);
-        console.log(`[Skipped old message] message_id: ${message_id}, age: ${ageSeconds}s`);
+        this.logger.debug({ messageId: message_id, ageSeconds }, 'Skipped old message');
         return;
       }
     }
 
-    console.log(`[Debug] Checking message type: ${message_type}`);
+    this.logger.debug({ messageType: message_type }, 'Checking message type');
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
-      console.log(`[Skipped] unsupported message_type: ${message_type}`);
+      this.logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
       return;
     }
 
-    console.log(`[Debug] Parsing content...`);
+    this.logger.debug('Parsing content');
     // Parse content
     let text = '';
     try {
       // Defensive: Ensure content is valid before parsing
       if (typeof content !== 'string') {
-        console.error('[Error] Invalid content type:', typeof content);
+        this.logger.warn({ contentType: typeof content }, 'Invalid content type');
         return;
       }
 
@@ -425,17 +467,17 @@ export class FeishuBot extends EventEmitter {
         }
       }
     } catch (error) {
-      console.error('[Error] Failed to parse content:', error);
+      this.logger.error({ err: error }, 'Failed to parse content');
       return;
     }
 
-    console.log(`[Debug] Parsed text length: ${text.length}`);
+    this.logger.debug({ length: text.length }, 'Parsed text');
     if (!text) {
-      console.log(`[Skipped] empty text`);
+      this.logger.debug('Skipped empty text');
       return;
     }
 
-    console.log(`[Received] message_id: ${message_id}, chat_id: ${chat_id}, type: ${message_type}, text: ${text}`);
+    this.logger.info({ messageId: message_id, chatId: chat_id, messageType: message_type, textLength: text.length }, 'Message received');
 
     // Save task record BEFORE processing to prevent loss on restart
     // For restart commands, use sync write to ensure record is persisted before process exits
@@ -454,7 +496,7 @@ export class FeishuBot extends EventEmitter {
 
       if (isRestartCommand) {
         // Use synchronous write for restart commands to ensure record persists before process exits
-        console.log(`[Debug] Restart command detected, using sync write for task record`);
+        this.logger.debug('Restart command detected, using sync write for task record');
         this.taskTracker.saveTaskRecordSync(
           message_id,
           metadata,
@@ -470,50 +512,32 @@ export class FeishuBot extends EventEmitter {
       }
     }
 
-    // Check for /long command to trigger long task workflow
-    if (text.trim().startsWith('/long ')) {
-      const longTaskText = text.trim().substring(6).trim(); // Remove '/long ' prefix
-      if (longTaskText) {
-        console.log(`[LongTask] Triggered for chat ${chat_id}: ${longTaskText}`);
-        await this.handleLongTask(chat_id, longTaskText, message_id);
-      } else {
-        await this.sendMessage(chat_id, '⚠️ Usage: `/long <your task description>`\n\nExample: `/long Analyze the codebase and create documentation`');
-      }
-      return; // Return early to avoid normal processing
-    }
+    // Check for commands
+    if (CommandHandlers.isCommand(text)) {
+      const commandContext: CommandHandlerContext = {
+        chatId: chat_id,
+        sendMessage: this.sendMessage.bind(this),
+        sessionManager: this.sessionManager,
+        longTaskManagers: this.longTaskManagers,
+      };
 
-    // Check for /cancel command to cancel running long task
-    if (text.trim() === '/cancel') {
-      const taskManager = this.longTaskManagers.get(chat_id);
-      if (taskManager) {
-        const cancelled = await taskManager.cancelTask(chat_id);
-        if (cancelled) {
-          // Clean up manager after cancellation
-          this.longTaskManagers.delete(chat_id);
-        }
-      } else {
-        await this.sendMessage(chat_id, '⚠️ No long task is currently running in this chat.');
-      }
-      return; // Return early to avoid normal processing
-    }
+      // Handle special case for /long command (needs additional logic)
+      if (text.trim().startsWith('/long ')) {
+        const longTaskText = text.trim().substring(6).trim();
+        await CommandHandlers.handleLongTaskCommand(commandContext, longTaskText);
 
-    // Check for /status command to show running long task status
-    if (text.trim() === '/status') {
-      const taskManager = this.longTaskManagers.get(chat_id);
-      if (taskManager) {
-        const activeTasks = taskManager.getActiveTasks();
-        if (activeTasks.size > 0) {
-          const statusMsg = `📊 **Long Task Status**\n\nActive tasks: ${activeTasks.size}\n\n${Array.from(activeTasks.values()).map(state =>
-            `- **${state.plan.title}**\n  Status: ${state.status}\n  Step: ${state.currentStep}/${state.plan.totalSteps}`
-          ).join('\n\n')}`;
-          await this.sendMessage(chat_id, statusMsg);
-        } else {
-          await this.sendMessage(chat_id, '⚠️ No long task is currently running.');
+        if (longTaskText) {
+          // Proceed with long task setup
+          await this.handleLongTask(chat_id, longTaskText, message_id);
         }
-      } else {
-        await this.sendMessage(chat_id, '⚠️ No long task is currently running in this chat.');
+        return;
       }
-      return; // Return early to avoid normal processing
+
+      // Handle all other commands
+      const handled = await CommandHandlers.executeCommand(commandContext, text);
+      if (handled) {
+        return;
+      }
     }
 
     {
@@ -543,7 +567,7 @@ export class FeishuBot extends EventEmitter {
   async start(): Promise<void> {
     this.running = true;
     const agentConfig = Config.getAgentConfig();
-    console.log(`Feishu bot starting (model: ${agentConfig.model})...`);
+    this.logger.info({ model: agentConfig.model }, 'Feishu bot starting');
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -551,7 +575,7 @@ export class FeishuBot extends EventEmitter {
         try {
           await this.handleMessageReceive(data);
         } catch (error) {
-          console.error('[Error] Failed to handle message receive:', error);
+          this.logger.error({ err: error }, 'Failed to handle message receive');
         }
       },
       // Suppress warnings for unhandled events
@@ -574,7 +598,7 @@ export class FeishuBot extends EventEmitter {
       eventDispatcher: this.eventDispatcher,
     });
 
-    console.log('Feishu WebSocket bot started!');
+    this.logger.info('Feishu WebSocket bot started');
 
     // Handle shutdown
     process.on('SIGINT', () => this.stop());
@@ -583,9 +607,9 @@ export class FeishuBot extends EventEmitter {
   /**
    * Stop bot.
    */
-  async stop(): Promise<void> {
+  stop(): void {
     this.running = false;
     this.wsClient = undefined;
-    console.log('Feishu bot stopped.');
+    this.logger.info('Feishu bot stopped');
   }
 }
