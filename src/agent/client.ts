@@ -78,6 +78,7 @@ export class AgentClient {
       ],
       // Configure Playwright MCP server
       mcpServers: {
+        // Playwright for browser automation
         playwright: {
           type: 'stdio',
           command: 'npx',

@@ -15,6 +15,8 @@ import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import * as CommandHandlers from './command-handlers.js';
 import type { CommandHandlerContext } from './command-handlers.js';
+import { attachmentManager, type FileAttachment } from './attachment-manager.js';
+import { downloadFile } from './file-downloader.js';
 
 // Temporarily disabled: Markdown detection for rich text messages
 // TODO: Re-enable when rich text format is needed again
@@ -198,6 +200,14 @@ export class FeishuBot extends EventEmitter {
     // Get previous session
     const sessionId = await this.sessionManager.getSessionId(chatId);
 
+    // Check if there are pending attachments and include them in the prompt
+    let enhancedPrompt = prompt;
+    if (attachmentManager.hasAttachments(chatId)) {
+      const attachmentInfo = attachmentManager.formatAttachmentsForPrompt(chatId);
+      enhancedPrompt = `${prompt}\n\n${attachmentInfo}`;
+      this.logger.info({ chatId, attachmentCount: attachmentManager.getAttachmentCount(chatId) }, 'Including pending attachments in prompt');
+    }
+
     // Create output adapter for this chat with both sendMessage and sendCard
     const adapter = new FeishuOutputAdapter({
       sendMessage: this.sendMessage.bind(this),
@@ -214,7 +224,7 @@ export class FeishuBot extends EventEmitter {
     try {
       // Stream agent response - send each message immediately
       for await (const message of this.agentClient.queryStream(
-        prompt,
+        enhancedPrompt,
         sessionId ?? undefined
       )) {
         const content = typeof message.content === 'string'
@@ -235,6 +245,13 @@ export class FeishuBot extends EventEmitter {
         });
       }
 
+      // Clear attachments after successful processing
+      if (attachmentManager.hasAttachments(chatId)) {
+        const count = attachmentManager.getAttachmentCount(chatId);
+        attachmentManager.clearAttachments(chatId);
+        this.logger.info({ chatId, clearedCount: count }, 'Cleared processed attachments');
+      }
+
       // Return accumulated response
       return responseChunks.join('\n');
     } catch (error) {
@@ -250,6 +267,8 @@ export class FeishuBot extends EventEmitter {
 
       const errorMsg = `❌ ${enriched.userMessage || enriched.message}`;
       await this.sendMessage(chatId, errorMsg);
+
+      // Don't clear attachments on error - user can retry
       return errorMsg;
     }
   }
@@ -334,6 +353,97 @@ export class FeishuBot extends EventEmitter {
 
       // Clean up manager on error
       this.longTaskManagers.delete(chatId);
+    }
+  }
+
+  /**
+   * Handle image/file message - download and store for later processing.
+   */
+  private async handleFileMessage(
+    chatId: string,
+    messageType: string,
+    content: any,
+    messageId: string,
+    _sender?: any
+  ): Promise<void> {
+    try {
+      this.logger.info({ chatId, messageType, messageId }, 'File/image message received');
+
+      // Extract file_key from content based on message type
+      let fileKey: string | undefined;
+      let fileName: string | undefined;
+
+      if (messageType === 'image') {
+        // Image message content: {"image_key":"..."}
+        const parsed = JSON.parse(content);
+        fileKey = parsed.image_key;
+        // Provide default filename with extension for better file handling
+        fileName = `image_${fileKey?.substring(0, 8)}.jpg`;
+      } else if (messageType === 'file') {
+        // File message content: {"file_key":"...","file_name":"..."}
+        const parsed = JSON.parse(content);
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name;
+      } else if (messageType === 'media') {
+        // Audio/video message
+        const parsed = JSON.parse(content);
+        fileKey = parsed.file_key || parsed.media_key;
+        fileName = parsed.file_name || `media_${fileKey?.substring(0, 8)}.mp4`;
+      }
+
+      if (!fileKey) {
+        this.logger.warn({ messageType, content }, 'No file_key found in message');
+        await this.sendMessage(chatId, '⚠️ Unable to process this file (missing file_key)');
+        return;
+      }
+
+      // Create attachment metadata
+      const attachment: FileAttachment = {
+        fileKey,
+        fileType: messageType,
+        fileName,
+        timestamp: Date.now(),
+        messageId, // Store messageId for downloading user uploads
+      };
+
+      // Download file immediately
+      const client = this.getClient();
+      try {
+        const localPath = await downloadFile(client, fileKey, messageType, fileName, messageId);
+        attachment.localPath = localPath;
+
+        // Get file stats
+        const stats = await import('./file-downloader.js').then(m => m.getFileStats(localPath));
+        if (stats) {
+          attachment.fileSize = stats.size;
+        }
+
+        // Store attachment
+        attachmentManager.addAttachment(chatId, attachment);
+
+        // Send confirmation to user
+        const count = attachmentManager.getAttachmentCount(chatId);
+        const sizeText = attachment.fileSize
+          ? `(${(attachment.fileSize / 1024 / 1024).toFixed(2)} MB)`
+          : '';
+        await this.sendMessage(
+          chatId,
+          `✅ File received: ${attachment.fileName || messageType} ${sizeText}\n\nPlease send a text command to process this file.\n\nPending files: ${count}`
+        );
+
+        this.logger.info({ chatId, fileKey, localPath }, 'File downloaded and stored');
+
+      } catch (downloadError) {
+        this.logger.error({ err: downloadError, fileKey }, 'Failed to download file');
+        await this.sendMessage(
+          chatId,
+          '⚠️ Failed to download file. Please try again or contact support.'
+        );
+        return;
+      }
+
+    } catch (error) {
+      this.logger.error({ err: error, chatId, messageType }, 'Failed to handle file message');
     }
   }
 
@@ -429,6 +539,12 @@ export class FeishuBot extends EventEmitter {
     }
 
     this.logger.debug({ messageType: message_type }, 'Checking message type');
+    // Handle file/image messages - download and store for later processing
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+      await this.handleFileMessage(chat_id, message_type, content, message_id, sender);
+      return;
+    }
+
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
       this.logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
