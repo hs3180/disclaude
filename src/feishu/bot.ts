@@ -436,9 +436,15 @@ export class FeishuBot extends EventEmitter {
         const sizeText = attachment.fileSize
           ? `(${(attachment.fileSize / 1024 / 1024).toFixed(2)} MB)`
           : '';
+
+        // Add local path information if available
+        const pathInfo = attachment.localPath
+          ? `\n📁 Local path: \`${attachment.localPath}\``
+          : '';
+
         await this.sendMessage(
           chatId,
-          `✅ File received: ${attachment.fileName || messageType} ${sizeText}\n\nPlease send a text command to process this file.\n\nPending files: ${count}`
+          `✅ File received: ${attachment.fileName || messageType} ${sizeText}${pathInfo}\n\nPlease send a text command to process this file.\n\nPending files: ${count}`
         );
 
         this.logger.info({ chatId, fileKey, localPath }, 'File downloaded and stored');
