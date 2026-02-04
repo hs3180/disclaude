@@ -11,6 +11,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import { Config } from '../config/index.js';
 
 const logger = createLogger('SkillLoader');
 
@@ -121,15 +122,14 @@ function parseSkillFrontmatter(content: string): {
 /**
  * Load a skill file from .claude/skills directory.
  *
- * @param skillName - Name of the skill directory (e.g., "interaction-agent")
+ * @param skillName - Name of the skill directory (e.g., "planner")
  * @returns Parsed skill data or error
  */
 export async function loadSkill(skillName: string): Promise<SkillLoadResult> {
   try {
+    const skillsBaseDir = Config.getSkillsDir();
     const skillPath = path.join(
-      process.cwd(),
-      '.claude',
-      'skills',
+      skillsBaseDir,
       skillName,
       'SKILL.md'
     );
@@ -183,7 +183,7 @@ export async function loadSkillOrThrow(skillName: string): Promise<ParsedSkill> 
     throw new Error(
       `Required skill "${skillName}" failed to load. ` +
       `Error: ${result.error || 'Unknown error'}. ` +
-      `Please ensure .claude/skills/${skillName}/SKILL.md exists and is valid.`
+      `Please ensure skills directory is configured and ${skillName}/SKILL.md exists.`
     );
   }
 
@@ -193,15 +193,15 @@ export async function loadSkillOrThrow(skillName: string): Promise<ParsedSkill> 
 /**
  * Get MCP server configuration for a skill.
  *
- * Some skills (like execution-agent) need MCP servers.
+ * Some skills (like worker) need MCP servers.
  * This can be extended or made configurable via skill frontmatter in the future.
  *
  * @param skillName - Name of the skill
  * @returns MCP server configuration or undefined
  */
 export function getSkillMcpServers(skillName: string): Record<string, unknown> | undefined {
-  // Execution agent needs Playwright MCP server
-  if (skillName === 'execution-agent') {
+  // Worker agent needs Playwright MCP server
+  if (skillName === 'worker') {
     return {
       playwright: {
         type: 'stdio',

@@ -57,6 +57,9 @@ export class Config {
   static readonly LOG_PRETTY = fileConfigOnly.logging?.pretty ?? true;
   static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
 
+  // Skills configuration
+  static readonly SKILLS_DIR = fileConfigOnly.skills?.dir || path.join(process.cwd(), '.claude', 'skills');
+
   /**
    * Get the raw configuration object.
    *
@@ -85,6 +88,15 @@ export class Config {
    */
   static resolveWorkspace(relativePath: string): string {
     return path.resolve(this.getWorkspaceDir(), relativePath);
+  }
+
+  /**
+   * Get the skills directory.
+   *
+   * @returns Absolute path to the skills directory
+   */
+  static getSkillsDir(): string {
+    return this.SKILLS_DIR;
   }
 
   /**

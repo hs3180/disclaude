@@ -75,6 +75,14 @@ export interface LoggingConfig {
 }
 
 /**
+ * Skills configuration section.
+ */
+export interface SkillsConfig {
+  /** Base directory for skill files (default: .claude/skills) */
+  dir?: string;
+}
+
+/**
  * Tools configuration section.
  */
 export interface ToolsConfig {
@@ -113,6 +121,8 @@ export interface DisclaudeConfig {
   logging?: LoggingConfig;
   /** Tool configuration */
   tools?: ToolsConfig;
+  /** Skills configuration */
+  skills?: SkillsConfig;
 }
 
 /**
