@@ -8,7 +8,7 @@
  * - send_user_feedback: Send a text message to a Feishu chat
  * - send_user_card: Send an interactive card to a Feishu chat
  * - send_file_to_feishu: Send a file to a Feishu chat
- * - send_complete: Signal task completion and end dialogue loop
+ * - task_done: Signal task completion and end dialogue loop
  *
  * **No global state**: Credentials are read from Config, chatId is passed as parameter.
  */
@@ -26,6 +26,9 @@ const logger = createLogger('FeishuContextMCP');
  *
  * This tool allows agents to send text messages directly to Feishu chats.
  * Credentials are read from Config, chatId is required parameter.
+ *
+ * CLI Mode: When chatId starts with "cli-", the message is logged
+ * instead of being sent to Feishu API.
  *
  * @param params - Tool parameters
  * @returns Result object with success status
@@ -46,6 +49,17 @@ export async function send_user_feedback(params: {
     }
     if (!chatId) {
       throw new Error('chatId is required');
+    }
+
+    // CLI mode: Log the message instead of sending to Feishu
+    if (chatId.startsWith('cli-')) {
+      logger.info({ chatId, message: message.substring(0, 100) }, 'CLI mode: User feedback');
+      // Use console.log for direct visibility in CLI mode
+      console.log(`\n${message}\n`);
+      return {
+        success: true,
+        message: '✅ Feedback displayed (CLI mode)',
+      };
     }
 
     // Read credentials from Config
@@ -74,7 +88,11 @@ export async function send_user_feedback(params: {
       },
     });
 
-    logger.debug({ chatId, messageLength: message.length }, 'User feedback sent');
+    logger.debug({
+      chatId,
+      messageLength: message.length,
+      message: message
+    }, 'User feedback sent');
 
     return {
       success: true,
@@ -262,16 +280,16 @@ export async function send_file_to_feishu(params: {
 }
 
 /**
- * Tool: Send completion signal
+ * Tool: Signal task completion
  *
- * This tool signals that the task is complete and the dialogue loop should end.
- * The optional message parameter allows providing a final summary to the user.
+ * This tool signals that the task is done and the dialogue loop should end.
+ * Use send_user_feedback or send_user_card BEFORE calling this tool to provide
+ * a final message to the user.
  *
  * @param params - Tool parameters
  * @returns Result object with completion status
  */
-export function send_complete(params: {
-  message?: string;
+export function task_done(params: {
   chatId: string;
   taskId?: string;
   files?: string[];
@@ -280,7 +298,7 @@ export function send_complete(params: {
   completed: boolean;
   message: string;
 } {
-  const { message, chatId, taskId, files } = params;
+  const { chatId, taskId, files } = params;
 
   try {
     if (!chatId) {
@@ -288,22 +306,20 @@ export function send_complete(params: {
     }
 
     // The completion signal is detected by the dialogue bridge
-    // The final message will be sent separately by the bridge
     logger.info({
       chatId,
       taskId,
-      hasMessage: !!message,
       fileCount: files?.length ?? 0,
     }, 'Task completion signaled');
 
     return {
       success: true,
       completed: true,
-      message: message || 'Task completed.',
+      message: 'Task completed.',
     };
 
   } catch (error) {
-    logger.error({ err: error }, 'Tool: send_complete failed');
+    logger.error({ err: error }, 'Tool: task_done failed');
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
@@ -480,15 +496,11 @@ export const feishuContextTools = {
     },
     handler: send_file_to_feishu,
   },
-  send_complete: {
-    description: 'Signal that the task is complete and end the dialogue loop. Provide a final summary message to the user.',
+  task_done: {
+    description: 'Signal that the task is done and end the dialogue loop. Use send_user_feedback or send_user_card BEFORE calling this to provide a final message to the user.',
     parameters: {
       type: 'object',
       properties: {
-        message: {
-          type: 'string',
-          description: 'Final summary message for the user',
-        },
         chatId: {
           type: 'string',
           description: 'Feishu chat ID (get this from the task context/metadata)',
@@ -505,7 +517,7 @@ export const feishuContextTools = {
       },
       required: ['chatId'],
     },
-    handler: send_complete,
+    handler: task_done,
   },
   finalize_task_definition: {
     description: 'Signal that the task definition phase is complete. Provide structured task details including objectives, deliverables, and quality criteria.',
@@ -555,3 +567,158 @@ export const feishuContextTools = {
     handler: finalize_task_definition,
   },
 };
+
+/**
+ * SDK-compatible tool definitions.
+ *
+ * Converts feishuContextTools to the format expected by the Agent SDK:
+ * - Array format (not object with keys)
+ * - Zod schemas for input validation
+ * - Proper SdkMcpToolDefinition structure
+ */
+import { z } from 'zod';
+import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * Helper to create a successful tool result.
+ * Returns content in MCP CallToolResult format.
+ */
+function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
+  return {
+    content: [{ type: 'text', text }],
+  };
+}
+
+/**
+ * Helper to create an error tool result.
+ */
+function toolError(errorMessage: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+  return {
+    content: [{ type: 'text', text: `❌ Error: ${errorMessage}` }],
+    isError: true,
+  };
+}
+
+// SDK-compatible tools array
+export const feishuSdkTools = [
+  tool(
+    'send_user_feedback',
+    'Send a text message to a Feishu chat. Use this to report progress or provide updates to users.',
+    {
+      message: z.string().describe('The message text to send'),
+      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
+    },
+    async ({ message, chatId }) => {
+      try {
+        const result = await send_user_feedback({ message, chatId });
+        if (result.success) {
+          return toolSuccess(result.message);
+        } else {
+          return toolError(result.error || 'Unknown error');
+        }
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  ),
+  tool(
+    'send_user_card',
+    'Send an interactive card to a Feishu chat. Use this for rich content like code diffs, formatted output, etc.',
+    {
+      card: z.object({}).passthrough().describe('The card JSON structure to send'),
+      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
+    },
+    async ({ card, chatId }) => {
+      try {
+        const result = await send_user_card({ card, chatId });
+        if (result.success) {
+          return toolSuccess(result.message);
+        } else {
+          return toolError(result.error || 'Unknown error');
+        }
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  ),
+  tool(
+    'send_file_to_feishu',
+    'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
+    {
+      filePath: z.string().describe('Path to the file to send (relative to workspace or absolute)'),
+      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
+    },
+    async ({ filePath, chatId }) => {
+      try {
+        const result = await send_file_to_feishu({ filePath, chatId });
+        if (result.success) {
+          return toolSuccess(result.message);
+        } else {
+          return toolError(result.error || 'Unknown error');
+        }
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  ),
+  tool(
+    'task_done',
+    'Signal that the task is done and end the dialogue loop. Use send_user_feedback or send_user_card BEFORE calling this to provide a final message to the user.',
+    {
+      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
+      taskId: z.string().optional().describe('Optional task ID for tracking'),
+      files: z.array(z.string()).optional().describe('Optional list of files created/modified'),
+    },
+    async ({ chatId, taskId, files }) => {
+      try {
+        const result = task_done({ chatId, taskId, files });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  ),
+  tool(
+    'finalize_task_definition',
+    'Signal that the task definition phase is complete. Provide structured task details including objectives, deliverables, and quality criteria.',
+    {
+      primary_goal: z.string().describe('The primary goal of the task - what should be achieved'),
+      success_criteria: z.array(z.string()).describe('Specific conditions that indicate the task is complete'),
+      expected_outcome: z.string().describe('What the user will receive when the task is complete'),
+      deliverables: z.array(z.string()).describe('List of specific outputs (files, reports, code, etc.)'),
+      format_requirements: z.array(z.string()).optional().describe('Required formats or structures for deliverables'),
+      constraints: z.array(z.string()).optional().describe('Limitations or requirements (time, resources, technology, etc.)'),
+      quality_criteria: z.array(z.string()).optional().describe('Standards for quality (performance, readability, maintainability, etc.)'),
+      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
+    },
+    async ({ primary_goal, success_criteria, expected_outcome, deliverables, format_requirements, constraints, quality_criteria, chatId }) => {
+      try {
+        const result = finalize_task_definition({
+          primary_goal,
+          success_criteria,
+          expected_outcome,
+          deliverables,
+          format_requirements,
+          constraints,
+          quality_criteria,
+          chatId,
+        });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  ),
+];
+
+/**
+ * SDK MCP Server for Feishu context tools.
+ *
+ * Creates an in-process MCP server that provides Feishu integration tools
+ * to the Agent SDK. Use this by adding it to the `mcpServers` SDK option.
+ */
+export const feishuSdkMcpServer = createSdkMcpServer({
+  name: 'feishu-context',
+  version: '1.0.0',
+  tools: feishuSdkTools,
+});

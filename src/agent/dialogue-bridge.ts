@@ -3,21 +3,27 @@
  *
  * NEW Architecture (Flow 2):
  * - Task.md content → ExecutionAgent FIRST (executes/explores)
- * - ExecutionAgent output → OrchestrationAgent (evaluates/plans)
+ * - ExecutionAgent output with 'result' type → OrchestrationAgent (evaluates/plans)
  * - OrchestrationAgent output → ExecutionAgent (next steps)
- * - Loop continues until OrchestrationAgent calls send_complete
+ * - Loop continues until OrchestrationAgent calls task_done
  *
  * Completion detection:
- * - Via send_complete tool call only
+ * - Via task_done tool call only
  * - When called, loop ends and final message is sent to user
  *
  * Session Management:
  * - Each messageId has its own OrchestrationAgent session
  * - Sessions are stored internally in taskSessions Map
  * - This allows multiple parallel tasks within the same chat
+ *
+ * Execution Phase Detection:
+ * - SDK sends 'result' message type when ExecutionAgent completes (no more tool calls)
+ * - Before 'result': Execution is in progress, send UPDATES to OrchestrationAgent for display only
+ * - After 'result': Execution complete, OrchestrationAgent evaluates and decides next steps
  */
 import type { AgentMessage } from '../types/agent.js';
 import { extractText } from '../utils/sdk.js';
+import { DIALOGUE } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -27,11 +33,21 @@ import type { ExecutionAgent } from './execution-agent.js';
 const logger = createLogger('AgentDialogueBridge', {});
 
 /**
- * Completion signal data from send_complete tool call.
+ * Detect if ExecutionAgent has completed execution.
+ * Checks if the message stream contains a 'result' type message from SDK.
+ *
+ * @param messages - Messages from ExecutionAgent
+ * @returns true if execution is complete (SDK sent 'result'), false otherwise
+ */
+export function isExecutionComplete(messages: AgentMessage[]): boolean {
+  return messages.some(msg => msg.messageType === 'result');
+}
+
+/**
+ * Completion signal data from task_done tool call.
  */
 export interface CompletionSignal {
   completed: boolean;
-  finalMessage?: string;
   files?: string[];
 }
 
@@ -53,7 +69,6 @@ export interface TaskPlanData {
 export interface DialogueBridgeConfig {
   orchestrationAgent: OrchestrationAgent;
   executionAgent: ExecutionAgent;
-  maxIterations?: number;
   /** Callback when orchestration agent generates a task plan */
   onTaskPlanGenerated?: (plan: TaskPlanData) => Promise<void>;
 }
@@ -63,28 +78,44 @@ export interface DialogueBridgeConfig {
  *
  * NEW Flow:
  * 1. User request from Task.md → ExecutionAgent (works/explores first)
- * 2. ExecutionAgent output → OrchestrationAgent (evaluates/plans)
- * 3. OrchestrationAgent output → ExecutionAgent (next instructions)
- * 4. Loop until OrchestrationAgent calls send_complete
+ * 2. When SDK sends 'result' → ExecutionAgent output → OrchestrationAgent (evaluates/plans)
+ * 3. OrchestrationAgent output → ExecutionAgent (next instructions) OR task_done
+ * 4. Loop until OrchestrationAgent calls task_done
  *
- * This approach uses Claude Agent SDK's native conversation capability:
- * Each agent maintains its own session context, and the bridge simply
- * passes the output of one as input to the other.
+ * Key change: OrchestrationAgent only receives ExecutionAgent output AFTER execution completes.
+ * During execution, UPDATES are sent for display but don't trigger new ExecutionAgent rounds.
  */
 export class AgentDialogueBridge {
   readonly orchestrationAgent: OrchestrationAgent;
   readonly executionAgent: ExecutionAgent;
-  readonly maxIterations: number;
+  /** Maximum iterations from constants - single source of truth */
+  readonly maxIterations = DIALOGUE.MAX_ITERATIONS;
   private onTaskPlanGenerated?: (plan: TaskPlanData) => Promise<void>;
   private taskId: string = '';
   private originalRequest: string = '';
   private taskPlanSaved = false;
+  private userMessageSent = false;  // Track if any user message was sent
 
   constructor(config: DialogueBridgeConfig) {
     this.orchestrationAgent = config.orchestrationAgent;
     this.executionAgent = config.executionAgent;
-    this.maxIterations = config.maxIterations ?? 1;
     this.onTaskPlanGenerated = config.onTaskPlanGenerated;
+  }
+
+  /**
+   * Record that a user message was sent.
+   * Called by FeishuBot when a message is sent to the user.
+   */
+  recordUserMessageSent(): void {
+    this.userMessageSent = true;
+  }
+
+  /**
+   * Check if any user message has been sent.
+   * Used to determine if a no-message warning is needed.
+   */
+  hasUserMessageBeenSent(): boolean {
+    return this.userMessageSent;
   }
 
   /**
@@ -97,34 +128,57 @@ export class AgentDialogueBridge {
   }
 
   /**
-   * Detect completion via send_complete tool call only.
-   * Scans message content for tool_use blocks with name 'send_complete'.
+   * Detect completion via task_done tool call only.
+   * Scans message content for tool_use blocks with name 'task_done'.
    *
    * @param messages - Messages to scan for completion signal
    * @returns Completion signal data if found, null otherwise
    */
   private detectCompletion(messages: AgentMessage[]): CompletionSignal | null {
     for (const msg of messages) {
-      const {content} = msg;
+      const {content, metadata} = msg;
 
-      // Handle array content (ContentBlock[])
+      // Debug: log all message types for troubleshooting
+      logger.debug({
+        messageType: msg.messageType,
+        contentType: Array.isArray(content) ? `array[${content.length}]` : typeof content,
+        contentTypes: Array.isArray(content) ? content.map(b => b.type) : [typeof content],
+        toolName: metadata?.toolName,
+      }, 'detectCompletion: checking message');
+
+      // Handle array content (ContentBlock[]) - raw SDK format
       if (Array.isArray(content)) {
         for (const block of content) {
-          if (block.type === 'tool_use' && block.name === 'send_complete') {
+          if (block.type === 'tool_use' && block.name === 'task_done') {
             const input = block.input as Record<string, unknown> | undefined;
-            const finalMessage = input?.message as string | undefined;
             const files = input?.files as string[] | undefined;
-            logger.info({ source: 'tool_call' }, 'Completion detected via send_complete tool');
+            logger.info({ source: 'tool_call' }, 'Completion detected via task_done tool');
             return {
               completed: true,
-              finalMessage: finalMessage || undefined,
               files,
             };
           }
         }
       }
+
+      // Handle parsed SDK messages - tool_use info stored in metadata
+      // parseSDKMessage() converts tool_use blocks to string content
+      // and stores tool info in metadata.toolName and metadata.toolInput
+      // Note: MCP tools are namespaced as "mcp__server-name__tool-name"
+      if (msg.messageType === 'tool_use' &&
+          (metadata?.toolName === 'task_done' ||
+           metadata?.toolName?.endsWith('__task_done'))) {
+        const toolInput = metadata.toolInput as Record<string, unknown> | undefined;
+        const files = toolInput?.files as string[] | undefined;
+        logger.info({ source: 'metadata', toolName: metadata.toolName }, 'Completion detected via task_done tool');
+        return {
+          completed: true,
+          files,
+        };
+      }
     }
 
+    logger.debug({ messageCount: messages.length }, 'detectCompletion: no completion signal found');
     return null;
   }
 
@@ -185,13 +239,159 @@ export class AgentDialogueBridge {
   }
 
   /**
+   * Build a warning message when task completes without sending any user message.
+   *
+   * @param reason - Why the task ended (e.g., 'task_done', 'max_iterations')
+   * @param taskId - Optional task ID for context
+   * @returns Formatted warning message
+   */
+  buildNoMessageWarning(reason: string, taskId?: string): string {
+    const parts = [
+      '⚠️ **任务完成但无反馈消息**',
+      '',
+      `结束原因: ${reason}`,
+    ];
+
+    if (taskId) {
+      parts.push(`任务 ID: ${taskId}`);
+    }
+
+    parts.push('', '这可能表示:');
+    parts.push('- Agent 没有生成任何输出');
+    parts.push('- 所有消息都通过内部工具处理');
+    parts.push('- 可能存在配置问题');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Build complete evaluation prompt for OrchestrationAgent.
+   * Combines: Task.md context + Execution result + Evaluation instruction
+   *
+   * This ensures OrchestrationAgent has all context needed to:
+   * 1. Understand the original request (from Task.md)
+   * 2. See what ExecutionAgent produced
+   * 3. Know how to evaluate completion
+   * 4. Extract chatId for task_done tool
+   *
+   * @param taskMdContent - Full Task.md content with original request and metadata
+   * @param executionOutput - ExecutionAgent's output text
+   * @param iteration - Current iteration number
+   * @returns Complete evaluation prompt
+   */
+  private buildEvaluationPrompt(
+    taskMdContent: string,
+    executionOutput: string,
+    iteration: number
+  ): string {
+    return `${taskMdContent}
+
+---
+
+## ExecutionAgent Result (Iteration ${iteration}/${this.maxIterations})
+
+\`\`\`
+${executionOutput}
+\`\`\`
+
+---
+
+## Your Evaluation Task
+
+You are the **OrchestrationAgent**. ExecutionAgent has completed work on the task above.
+
+### CRITICAL - How to Signal Completion
+
+When the task is complete, follow this EXACT order:
+
+**Step 1:** Send the final message to the user
+\`\`\`
+send_user_feedback({
+  message: "Your response to the user...",
+  chatId: "EXTRACT_CHAT_ID_FROM_TASK_MD"
+})
+\`\`\`
+
+**Step 2:** Signal completion
+\`\`\`
+task_done({
+  chatId: "EXTRACT_CHAT_ID_FROM_TASK_MD"
+})
+\`\`\`
+
+Replace EXTRACT_CHAT_ID_FROM_TASK_MD with the Chat ID value from Task.md.
+
+**IMPORTANT:** The user will NOT see your text response. They only see messages sent via send_user_feedback or send_user_card.
+
+### Step 1: Evaluate Completion
+Compare ExecutionAgent output against the Expected Results in Task.md:
+- Is the user's original request satisfied?
+- Has the expected deliverable been produced?
+- Is the response complete and adequate?
+
+### Step 2: Take Action
+
+**If COMPLETE** → Send message via send_user_feedback, then call task_done
+**If INCOMPLETE** → Provide next instructions for ExecutionAgent
+
+### Examples
+
+For greeting "hi":
+send_user_feedback({ message: "Hello! I'm here to help.", chatId: "..." })
+task_done({ chatId: "..." })
+
+For code analysis:
+send_user_feedback({ message: "Analysis complete. Found 5 functions.", chatId: "..." })
+task_done({ chatId: "..." })
+
+**IMPORTANT**: The task_done and send_user_feedback tools ARE available. Look for them in your tool list and use them!`;
+  }
+
+  /**
+   * Build execution instruction for ExecutionAgent's first prompt.
+   *
+   * This tells ExecutionAgent:
+   * - Its role and responsibilities
+   * - How to interpret the task.md
+   * - What to focus on when working
+   *
+   * @returns Execution instruction string
+   */
+  private buildExecutionInstruction(): string {
+    return `## Your Role
+
+You are the **ExecutionAgent**. Your job is to execute the task described above.
+
+### What You Should Do
+
+1. **Read the task carefully** - Review Original Request and Expected Results
+2. **Use tools appropriately** - You have full access to development tools
+3. **Execute the work** - Complete what's needed to satisfy the Expected Results
+4. **Report clearly** - Provide a clear summary of what you did and the outcomes
+
+### Important Notes
+
+- Focus on **execution** - get the work done
+- The OrchestrationAgent will evaluate your results and decide next steps
+- You don't need to signal completion - just report what you did
+- Be thorough but efficient
+
+**Now execute the task.**`;
+  }
+
+  /**
    * Run a dialogue loop (Flow 2).
    *
    * NEW FLOW:
-   * 1. ExecutionAgent works FIRST on user request
-   * 2. ExecutionAgent output → OrchestrationAgent for evaluation
-   * 3. OrchestrationAgent provides next instructions OR calls send_complete
-   * 4. Loop continues until send_complete is called
+   * 1. ExecutionAgent works on prompt, SDK streams messages
+   * 2. When SDK sends 'result', execution is complete → send to OrchestrationAgent
+   * 3. OrchestrationAgent evaluates and either:
+   *    - Calls task_done → task done
+   *    - Provides next instructions → becomes new ExecutionAgent prompt
+   * 4. Loop continues until task_done is called
+   *
+   * Key insight: SDK's 'result' message type signals execution completion.
+   * Before 'result', ExecutionAgent is still working (tool calls in progress).
    *
    * @param taskPath - Path to Task.md file
    * @param originalRequest - Original user request text
@@ -209,74 +409,92 @@ export class AgentDialogueBridge {
     this.originalRequest = originalRequest;
     this.taskPlanSaved = false;
 
-    // Read Task.md content (contains chatId!)
+    // Read Task.md content (contains chatId, original request, expected results)
+    // Task.md will be included in evaluation prompt for OrchestrationAgent
     const taskMdContent = await fs.readFile(taskPath, 'utf-8');
 
-    // Set Task.md as OrchestrationAgent's system prompt
-    // This provides the chatId context needed for send_complete tool
-    this.orchestrationAgent.setSystemPrompt(taskMdContent);
+    // Build first prompt: task.md + execution instruction
+    const executionInstruction = this.buildExecutionInstruction();
+    let currentPrompt = `${taskMdContent}
 
-    let currentPrompt = taskMdContent;
+---
+
+${executionInstruction}`;
     let iteration = 0;
-    let firstIteration = true;
+    let taskCompleted = false;  // Track if task completed successfully
 
     logger.info(
       { taskId: this.taskId, chatId, maxIterations: this.maxIterations },
-      'Starting Flow 2: ExecutionAgent first'
+      'Starting Flow 2: ExecutionAgent first, SDK "result" type signals completion'
     );
 
     while (iteration < this.maxIterations) {
       iteration++;
 
-      // === FIRST iteration: ExecutionAgent works on original request ===
-      if (firstIteration) {
-        logger.debug({ iteration, promptLength: currentPrompt.length },
-                     'ExecutionAgent working (FIRST iteration)');
+      // === ExecutionAgent executes ===
+      logger.debug({ iteration, promptLength: currentPrompt.length },
+                   'ExecutionAgent working');
 
-        const executionMessages: AgentMessage[] = [];
-        for await (const msg of this.executionAgent.queryStream(currentPrompt)) {
-          executionMessages.push(msg);
-          // Don't yield execution messages - they go to orchestration agent
+      // Collect all messages from ExecutionAgent
+      const executionMessages: AgentMessage[] = [];
+      for await (const msg of this.executionAgent.queryStream(currentPrompt)) {
+        executionMessages.push(msg);
+        // Optionally yield intermediate messages for visibility
+        // (These are tool_use, tool_progress, etc. - not the final result)
+      }
+
+      // Check if execution is complete by looking for 'result' message type
+      const executionComplete = isExecutionComplete(executionMessages);
+      const executionOutput = executionMessages.map(msg => extractText(msg)).join('');
+
+      logger.debug({
+        iteration,
+        executionComplete,
+        executionOutputLength: executionOutput.length,
+        executionOutput: executionOutput
+      }, 'ExecutionAgent output received');
+
+      if (!executionComplete) {
+        // Execution still in progress: send PROGRESS_UPDATE to OrchestrationAgent
+        // This is only for display purposes - doesn't trigger new ExecutionAgent round
+        logger.debug({ iteration }, 'Execution in progress, sending PROGRESS_UPDATE');
+
+        const progressPrompt = '[PROGRESS_UPDATE] - Execution in progress (iteration ' + iteration + ')\n\n' + executionOutput + '\n\nDO NOT call task_done - wait for the completed result in the next message.';
+
+        // OrchestrationAgent receives progress update but its response is not used as next prompt
+        for await (const _msg of this.orchestrationAgent.queryStream(progressPrompt)) {
+          // Optionally yield to user for visibility
+          // yield _msg;
         }
 
-        const executionOutput = executionMessages
-          .map(msg => extractText(msg))
-          .join('');
-
-        logger.debug({ iteration, executionOutputLength: executionOutput.length },
-                     'ExecutionAgent output received (first iteration)');
-
-        // Execution output becomes orchestration input
-        currentPrompt = executionOutput;
-        firstIteration = false;
+        // Continue waiting for ExecutionAgent to complete
+        // Keep the same prompt for next iteration (ExecutionAgent session continues)
+        continue;
       }
 
-      // === OrchestrationAgent evaluates ExecutionAgent's work ===
-      logger.debug({ iteration, promptLength: currentPrompt.length },
-                   'OrchestrationAgent evaluating');
+      // === Execution complete: build evaluation prompt and send to OrchestrationAgent ===
+      logger.debug({ iteration }, 'Execution complete, sending to OrchestrationAgent for evaluation');
 
-      // OrchestrationAgent internally manages its own session
+      // Build complete evaluation prompt: Task.md + execution result + evaluation instruction
+      const evaluationPrompt = this.buildEvaluationPrompt(
+        taskMdContent,    // Task.md full content
+        executionOutput,  // ExecutionAgent output
+        iteration
+      );
+
       const orchestrationMessages: AgentMessage[] = [];
-      for await (const msg of this.orchestrationAgent.queryStream(currentPrompt)) {
+      for await (const msg of this.orchestrationAgent.queryStream(evaluationPrompt)) {
         orchestrationMessages.push(msg);
-        // Yield orchestration messages to user for progress visibility
-        yield msg;
+        // Do NOT yield - OrchestrationAgent output is for internal evaluation only
+        // User-facing messages come from send_user_feedback/send_user_card tools
       }
 
-      // === Check for send_complete tool call ===
+      // === Check for task_done tool call ===
       const completion = this.detectCompletion(orchestrationMessages);
       if (completion?.completed) {
-        logger.info({ iteration, hasFinalMessage: !!completion.finalMessage },
-                    'Task completed via send_complete');
-
-        // Yield final message if provided
-        if (completion.finalMessage) {
-          yield {
-            content: completion.finalMessage,
-            role: 'assistant',
-            messageType: 'result',
-          };
-        }
+        taskCompleted = true;  // Mark task as completed
+        logger.info({ iteration },
+                    'Task completed via task_done');
         break;  // Exit loop
       }
 
@@ -284,8 +502,11 @@ export class AgentDialogueBridge {
         .map(msg => extractText(msg))
         .join('');
 
-      logger.debug({ iteration, outputLength: orchestrationOutput.length },
-                   'OrchestrationAgent output received');
+      logger.debug({
+        iteration,
+        outputLength: orchestrationOutput.length,
+        output: orchestrationOutput
+      }, 'OrchestrationAgent output received');
 
       // === Save task plan on first orchestration output ===
       if (iteration === 1 && this.onTaskPlanGenerated && !this.taskPlanSaved) {
@@ -301,29 +522,22 @@ export class AgentDialogueBridge {
         }
       }
 
-      // === Orchestration output becomes prompt for ExecutionAgent (next iteration) ===
-      logger.debug({ iteration }, 'ExecutionAgent working (next iteration)');
-
-      const executionMessages: AgentMessage[] = [];
-      for await (const msg of this.executionAgent.queryStream(orchestrationOutput)) {
-        executionMessages.push(msg);
-        // Don't yield execution messages directly
-      }
-
-      const executionOutput = executionMessages
-        .map(msg => extractText(msg))
-        .join('');
-
-      logger.debug({ iteration, executionOutputLength: executionOutput.length },
-                   'ExecutionAgent output received');
-
-      currentPrompt = executionOutput;
+      // === Orchestration output becomes prompt for next ExecutionAgent round ===
+      currentPrompt = orchestrationOutput;
     }
 
-    if (iteration >= this.maxIterations) {
-      logger.warn({ iteration }, 'Dialogue reached max iterations');
+    // Only show max iterations warning if task did not complete successfully
+    if (!taskCompleted && iteration >= this.maxIterations) {
+      logger.warn({ iteration }, 'Dialogue reached max iterations without completion');
       yield {
-        content: `⚠️ Maximum iterations reached (${this.maxIterations}). Use /reset to start fresh.`,
+        content: 'Warning: Dialogue reached max iterations (' + this.maxIterations + ') but task may not be complete.\n\n' +
+          'Possible reasons:\n' +
+          '1. Task complexity requires more iterations\n' +
+          '2. OrchestrationAgent did not call task_done tool to mark completion\n\n' +
+          'Suggestions:\n' +
+          '- Use /reset to clear conversation and resubmit\n' +
+          '- Or check and modify task description for clarity\n' +
+          '- If this is an analysis task, may need more explicit completion criteria',
         role: 'assistant',
         messageType: 'error',
       };

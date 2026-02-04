@@ -64,8 +64,12 @@ async function executeOnce(
   await interactionAgent.initialize();
 
   // Set context for Task.md creation
+  // Use system username for CLI mode, fallback to 'cli-user'
+  const userId = process.env.USER || process.env.USERNAME || 'cli-user';
+
   interactionAgent.setTaskContext({
     chatId,
+    userId,
     messageId,
     taskPath,
   });
@@ -108,7 +112,6 @@ async function executeOnce(
   const bridge = new AgentDialogueBridge({
     orchestrationAgent,
     executionAgent,
-    maxIterations: 1,
   });
 
   // Create output adapter

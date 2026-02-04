@@ -45,3 +45,11 @@ export const FILE_DEDUPLICATION = {
   /** Maximum number of records to keep per chat */
   MAX_RECORDS_PER_CHAT: 100,
 } as const;
+
+/**
+ * Dialogue/Agent loop configuration
+ */
+export const DIALOGUE = {
+  /** Maximum number of iterations in the dialogue loop */
+  MAX_ITERATIONS: 3,
+} as const;

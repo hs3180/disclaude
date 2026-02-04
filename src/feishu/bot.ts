@@ -20,6 +20,7 @@ import * as CommandHandlers from './command-handlers.js';
 import type { CommandHandlerContext } from './command-handlers.js';
 import { attachmentManager, type FileAttachment } from './attachment-manager.js';
 import { downloadFile } from './file-downloader.js';
+import { messageHistoryManager } from './message-history.js';
 
 // Temporarily disabled: Markdown detection for rich text messages
 // TODO: Re-enable when rich text format is needed again
@@ -120,7 +121,7 @@ export class FeishuBot extends EventEmitter {
     try {
       // Always use plain text format
       // Use content builder utility for consistent message formatting
-      await client.im.message.create({
+      const response = await client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
         },
@@ -131,10 +132,17 @@ export class FeishuBot extends EventEmitter {
         },
       });
 
+      // Track outgoing bot message in history
+      // Feishu API returns message_id in response.data.message_id
+      const botMessageId = response?.data?.message_id;
+      if (botMessageId) {
+        messageHistoryManager.addBotMessage(chatId, botMessageId, text);
+      }
+
       // Defensive: Ensure text is valid before substring
       const safeText = text || '';
       const preview = safeText.length > 100 ? `${safeText.substring(0, 100)  }...` : safeText;
-      this.logger.debug({ chatId, messageType: 'text', preview }, 'Message sent');
+      this.logger.debug({ chatId, messageType: 'text', preview, botMessageId }, 'Message sent');
     } catch (error) {
       handleError(error, {
         category: ErrorCategory.API,
@@ -254,11 +262,15 @@ export class FeishuBot extends EventEmitter {
     await interactionAgent.initialize();
 
     // Set context for Task.md creation
+    // Include conversation history from message history manager
+    const conversationHistory = messageHistoryManager.getFormattedHistory(chatId, 20); // Last 20 messages
+
     interactionAgent.setTaskContext({
       chatId,
       userId: sender?.sender_id,
       messageId,
       taskPath,
+      conversationHistory,
     });
 
     // Run InteractionAgent to create Task.md
@@ -271,7 +283,7 @@ export class FeishuBot extends EventEmitter {
     // === Send task.md content to user ===
     try {
       const taskContent = await fs.readFile(taskPath, 'utf-8');
-      await this.sendMessage(chatId, `📋 **任务定义**\n\n${taskContent}\n\n---\n\n**开始执行...**`);
+      await this.sendMessage(chatId, taskContent);
     } catch (error) {
       this.logger.error({ err: error, taskPath }, 'Failed to read/send task.md');
     }
@@ -297,7 +309,6 @@ export class FeishuBot extends EventEmitter {
     const bridge = new AgentDialogueBridge({
       orchestrationAgent,
       executionAgent,
-      maxIterations: 1,
       onTaskPlanGenerated: async (plan: TaskPlanData) => {
         await this.taskTracker.saveDialogueTaskPlan(plan as DialogueTaskPlan);
       },
@@ -307,16 +318,27 @@ export class FeishuBot extends EventEmitter {
     this.activeDialogues.set(chatId, bridge);
 
     // Create output adapter for this chat
+    // Wrap sendMessage to track when user messages are sent
     const adapter = new FeishuOutputAdapter({
-      sendMessage: this.sendMessage.bind(this),
-      sendCard: this.sendCard.bind(this),
+      sendMessage: async (id: string, msg: string) => {
+        bridge.recordUserMessageSent();  // Track message sending
+        return this.sendMessage(id, msg);
+      },
+      sendCard: async (id: string, card: Record<string, unknown>) => {
+        bridge.recordUserMessageSent();  // Track card sending
+        return this.sendCard(id, card);
+      },
       chatId,
       sendFile: this.sendFileToUser.bind(this, chatId),
     });
     adapter.clearThrottleState();
+    adapter.resetMessageTracking();  // Reset tracking for new task
 
     // Accumulate response content
     const responseChunks: string[] = [];
+
+    // Track completion reason for warning message
+    let completionReason = 'unknown';
 
     try {
       this.logger.debug({ chatId, taskId: path.basename(taskPath, '.md') }, 'Flow 2: Starting dialogue');
@@ -343,6 +365,13 @@ export class FeishuBot extends EventEmitter {
           toolName: message.metadata?.toolName as string | undefined,
           toolInputRaw: message.metadata?.toolInputRaw as Record<string, unknown> | undefined,
         });
+
+        // Update completion reason based on message type
+        if (message.messageType === 'result') {
+          completionReason = 'task_done';
+        } else if (message.messageType === 'error') {
+          completionReason = 'error';
+        }
       }
 
       const finalResponse = responseChunks.join('\n');
@@ -350,6 +379,7 @@ export class FeishuBot extends EventEmitter {
       return finalResponse;
     } catch (error) {
       this.logger.error({ err: error, chatId }, 'Task flow failed');
+      completionReason = 'error';
 
       const enriched = handleError(error, {
         category: ErrorCategory.SDK,
@@ -365,6 +395,14 @@ export class FeishuBot extends EventEmitter {
 
       return errorMsg;
     } finally {
+      // Check if no user message was sent and send warning
+      if (!bridge.hasUserMessageBeenSent()) {
+        const taskId = path.basename(taskPath, '.md');
+        const warning = bridge.buildNoMessageWarning(completionReason, taskId);
+        this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
+        await this.sendMessage(chatId, warning);
+      }
+
       // Clean up bridge reference
       this.activeDialogues.delete(chatId);
     }
@@ -697,6 +735,9 @@ export class FeishuBot extends EventEmitter {
     }
 
     this.logger.info({ messageId: message_id, chatId: chat_id, messageType: message_type, textLength: text.length }, 'Message received');
+
+    // Track incoming user message in history
+    messageHistoryManager.addUserMessage(chat_id, message_id, text, sender?.sender_id);
 
     // Save task record BEFORE processing to prevent loss on restart
     // For restart commands, use sync write to ensure record is persisted before process exits

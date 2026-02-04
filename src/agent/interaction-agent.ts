@@ -41,6 +41,8 @@ export interface TaskContext {
   userId?: string;
   messageId: string;
   taskPath: string;
+  /** Conversation history (optional) */
+  conversationHistory?: string;
 }
 
 /**
@@ -157,12 +159,15 @@ export class InteractionAgent {
       return userPrompt;
     }
 
-    return `## Task Context
+    let prompt = `## Task Context
 
 - **Message ID**: ${this.taskContext.messageId}
 - **Task Path**: ${this.taskContext.taskPath}
 - **Chat ID**: ${this.taskContext.chatId}
 ${this.taskContext.userId ? `- **User ID**: ${this.taskContext.userId}` : ''}
+`;
+
+    prompt += `
 
 ---
 
@@ -176,18 +181,30 @@ ${userPrompt}
 
 ## Your Instruction
 
-**DO NOT answer the user's request directly.** Your job is to create a Task.md file that defines a task for solving this request.
+You are a **task initialization specialist**. Your workflow:
 
-1. Use the **Write** tool to create a Task.md file at the exact taskPath specified above
-2. The Task.md should contain:
-   - Original request (preserved exactly)
-   - Intent analysis (what does the user want?)
-   - Expected results (what should be produced to satisfy the request)
+1. **Explore first** (for code-related tasks): Use Read, Glob, Grep to understand the codebase
+2. **Create Task.md**: Use the Write tool to create a Task.md file at the exact taskPath
 
-Think of it as: **create a task specification that another agent will execute**, not "answer the question now".
+**CRITICAL - Task.md Format:**
+Task.md must contain ONLY these sections:
+- **Metadata header** (Task ID, Created, Chat ID, User ID)
+- **Original Request** (preserved exactly)
+- **Expected Results** (what ExecutionAgent should produce)
 
-For questions like math problems, write: "User wants to solve [specific problem]. Calculate and provide the answer." in the Expected Results section.
+**DO NOT add to Task.md:**
+- ❌ Context Discovery
+- ❌ Intent Analysis
+- ❌ Completion Instructions
+- ❌ Task Type field
+- ❌ Any other sections
+
+Use your exploration and analysis INTERNALLY to inform the Expected Results section, but do NOT write those sections to the file.
+
+**Remember**: You are creating a task specification for ExecutionAgent to execute, not answering directly.
 `;
+
+    return prompt;
   }
 
   /**

@@ -246,6 +246,7 @@ export class TaskTracker {
 
   /**
    * Format task record as Markdown (new dialogue format).
+   * Note: Bot Response section is intentionally excluded as per requirements.
    */
   private formatDialogueTaskRecord(
     messageId: string,
@@ -255,7 +256,7 @@ export class TaskTracker {
       senderId?: string;
       text: string;
     },
-    content: string,
+    _content: string,
     timestamp: string
   ): string {
     // Extract title from first line or first 50 chars
@@ -274,12 +275,6 @@ ${metadata.senderType ? `**Sender Type**: ${metadata.senderType}` : ''}
 
 \`\`\`
 ${metadata.text}
-\`\`\`
-
-## Bot Response
-
-\`\`\`
-${content}
 \`\`\`
 `;
   }
@@ -300,6 +295,7 @@ ${content}
   /**
    * Create initial Task.md file (Flow 1 output).
    * This creates the task file that will be used as input for Flow 2.
+   * Note: Bot Response section is intentionally excluded as per requirements.
    *
    * @param messageId - Unique message identifier
    * @param metadata - Task metadata (chatId, userId, text, timestamp)

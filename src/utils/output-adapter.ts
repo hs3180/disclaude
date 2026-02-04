@@ -128,13 +128,30 @@ export interface FeishuOutputAdapterOptions {
 /**
  * Feishu output adapter - sends messages via WebSocket.
  * Handles throttling for progress messages and sends interactive cards for Edit tool use.
+ *
+ * Tracks whether any user-facing message has been sent during a task.
  */
 export class FeishuOutputAdapter implements OutputAdapter {
   private progressThrottleMap = new Map<string, number>();
   private readonly throttleIntervalMs: number;
+  private messageSentFlag = false;  // Track if any user message was sent
 
   constructor(private options: FeishuOutputAdapterOptions) {
     this.throttleIntervalMs = options.throttleIntervalMs ?? 2000;
+  }
+
+  /**
+   * Check if any user message has been sent during this task.
+   */
+  hasSentMessage(): boolean {
+    return this.messageSentFlag;
+  }
+
+  /**
+   * Reset message tracking for a new task.
+   */
+  resetMessageTracking(): void {
+    this.messageSentFlag = false;
   }
 
   /**
@@ -204,6 +221,9 @@ export class FeishuOutputAdapter implements OutputAdapter {
     // Only send text message if no card was sent
     if (!cardSent) {
       await this.options.sendMessage(this.options.chatId, content);
+      this.messageSentFlag = true;  // Mark that we sent a user message
+    } else if (cardSent) {
+      this.messageSentFlag = true;  // Card was also sent to user
     }
   }
 

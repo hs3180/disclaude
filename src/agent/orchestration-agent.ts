@@ -21,7 +21,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage, SessionInfo } from '../types/agent.js';
-import { feishuContextTools } from '../mcp/feishu-context-mcp.js';
+import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { createLogger } from '../utils/logger.js';
 import { loadSkill, type ParsedSkill } from './skill-loader.js';
 
@@ -122,7 +122,6 @@ export class OrchestrationAgent {
     // Tool configuration from skill file
     const allowedTools = this.skill?.allowedTools || [
       'WebSearch',             // For information lookup
-      // User feedback tools (inline tools, not MCP)
       'send_user_feedback',    // Send text messages to user
       'send_user_card',        // Send rich interactive cards
       'send_complete',         // Signal task completion
@@ -133,10 +132,17 @@ export class OrchestrationAgent {
       cwd: Config.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       settingSources: ['project'],
-      allowedTools,
-      // Register inline tools for user feedback
-      tools: feishuContextTools,
+      // Register Feishu context tools as inline MCP server
+      mcpServers: {
+        'feishu-context': feishuSdkMcpServer,
+      },
     };
+
+    // Debug: Log tool configuration
+    this.logger.debug({
+      allowedTools,
+      mcpServers: ['feishu-context'],
+    }, 'OrchestrationAgent SDK tool configuration');
 
     // Set environment using unified helper
     sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl);

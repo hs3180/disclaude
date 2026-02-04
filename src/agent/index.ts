@@ -33,7 +33,7 @@ export {
   send_user_feedback,
   send_user_card,
   send_file_to_feishu,
-  send_complete,
+  task_done,
   finalize_task_definition,
   type TaskDefinitionDetails,
 } from '../mcp/feishu-context-mcp.js';
