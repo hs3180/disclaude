@@ -79,9 +79,9 @@ export class Worker {
     const result = await loadSkill('worker');
     if (!result.success || !result.skill) {
       throw new Error(
-        `Worker skill is required but failed to load. ` +
+        'Worker skill is required but failed to load. ' +
         `Error: ${result.error || 'Unknown error'}. ` +
-        `Please ensure .claude/skills/worker/SKILL.md exists and is valid.`
+        'Please ensure .claude/skills/worker/SKILL.md exists and is valid.'
       );
     }
     this.skill = result.skill;
@@ -224,5 +224,26 @@ export class Worker {
       sessionId: this.currentSessionId,
       resume: this.currentSessionId,
     };
+  }
+
+  /**
+   * Cleanup resources and clear session.
+   *
+   * Call this method when the agent is no longer needed to:
+   * - Clear session ID to release SDK resources
+   * - Allow SDK to clean up MCP server instances associated with the session
+   *
+   * **Memory Management:**
+   * - Session IDs are cleared, allowing SDK to release conversation context
+   * - MCP server instances (playwright) are created per query by SDK
+   * - Worker does not hold persistent MCP server references
+   * - SDK handles cleanup of MCP server instances automatically when queries complete
+   *
+   * Note: MCP server configurations are passed to SDK on each query.
+   * The SDK manages the lifecycle of these server instances.
+   */
+  cleanup(): void {
+    this.logger.debug({ sessionId: this.currentSessionId }, 'Cleaning up Worker agent');
+    this.currentSessionId = undefined;
   }
 }

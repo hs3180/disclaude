@@ -86,9 +86,9 @@ export class Manager {
     const result = await loadSkill('manager');
     if (!result.success || !result.skill) {
       throw new Error(
-        `Manager skill is required but failed to load. ` +
+        'Manager skill is required but failed to load. ' +
         `Error: ${result.error || 'Unknown error'}. ` +
-        `Please ensure .claude/skills/manager/SKILL.md exists and is valid.`
+        'Please ensure .claude/skills/manager/SKILL.md exists and is valid.'
       );
     }
     this.skill = result.skill;
@@ -240,5 +240,28 @@ ${userPrompt}`;
       sessionId: this.currentSessionId,
       resume: this.currentSessionId,
     };
+  }
+
+  /**
+   * Cleanup resources and clear session.
+   *
+   * Call this method when the agent is no longer needed to:
+   * - Clear session ID to release SDK resources
+   * - Clear custom system prompt
+   * - Allow SDK to clean up MCP server instances associated with the session
+   *
+   * **Memory Management:**
+   * - Session IDs are cleared, allowing SDK to release conversation context
+   * - MCP server instances (feishu-context) are managed by the SDK lifecycle
+   * - The feishuSdkMcpServer singleton is created once per process and reused
+   * - SDK handles cleanup of per-query MCP server instances automatically
+   *
+   * Note: The feishuSdkMcpServer is a module-level singleton and intentionally
+   * not cleaned up here. It persists for the lifetime of the process.
+   */
+  cleanup(): void {
+    this.logger.debug({ sessionId: this.currentSessionId }, 'Cleaning up Manager agent');
+    this.currentSessionId = undefined;
+    this.customSystemPrompt = undefined;
   }
 }

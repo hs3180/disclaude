@@ -120,7 +120,7 @@ export async function handleHelpCommand(
 • /cancel - Cancel running long task
 
 **Task Mode (Default):**
-• All messages use dual-agent mode (ExecutionAgent + OrchestrationAgent)
+• All messages use dual-agent mode (Worker + Manager)
 
 **Examples:**
 \`\`\`
@@ -131,8 +131,8 @@ Analyze the authentication system
 
 **How It Works:**
 1. Your message creates a Task.md file
-2. ExecutionAgent explores and executes
-3. OrchestrationAgent evaluates and plans
+2. Worker explores and executes
+3. Manager evaluates and plans
 4. Loop continues until task is complete
 `;
 

@@ -4,7 +4,7 @@
  */
 
 import * as fs from 'fs/promises';
-import { InteractionAgent, OrchestrationAgent, ExecutionAgent, AgentDialogueBridge } from '../agent/index.js';
+import { Planner, Manager, Worker, AgentDialogueBridge } from '../agent/index.js';
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
@@ -53,31 +53,31 @@ async function executeOnce(
   const chatId = feishuChatId || 'cli-console';
   const taskTracker = new TaskTracker();
 
-  // === FLOW 1: InteractionAgent creates Task.md ===
+  // === FLOW 1: Planner creates Task.md ===
   const taskPath = taskTracker.getDialogueTaskPath(messageId);
 
-  const interactionAgent = new InteractionAgent({
+  const planner = new Planner({
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
   });
-  await interactionAgent.initialize();
+  await planner.initialize();
 
   // Set context for Task.md creation
   // Use system username for CLI mode, fallback to 'cli-user'
   const userId = process.env.USER || process.env.USERNAME || 'cli-user';
 
-  interactionAgent.setTaskContext({
+  planner.setTaskContext({
     chatId,
     userId,
     messageId,
     taskPath,
   });
 
-  // Run InteractionAgent to create Task.md
-  logger.info({ messageId, taskPath }, 'Flow 1: InteractionAgent creating Task.md');
-  for await (const msg of interactionAgent.queryStream(prompt)) {
-    logger.debug({ content: msg.content }, 'InteractionAgent output');
+  // Run Planner to create Task.md
+  logger.info({ messageId, taskPath }, 'Flow 1: Planner creating Task.md');
+  for await (const msg of planner.queryStream(prompt)) {
+    logger.debug({ content: msg.content }, 'Planner output');
   }
 
   // Verify Task.md was created
@@ -85,33 +85,33 @@ async function executeOnce(
     await fs.access(taskPath);
   } catch {
     throw new Error(
-      `InteractionAgent failed to create Task.md at ${taskPath}. ` +
+      `Planner failed to create Task.md at ${taskPath}. ` +
       `The model may not have called the Write tool. ` +
       `Please check if the model supports tool calling properly.`
     );
   }
 
-  logger.info({ taskPath }, 'Task.md created by InteractionAgent');
+  logger.info({ taskPath }, 'Task.md created by Planner');
 
   // === FLOW 2: Create agents and dialogue bridge ===
-  const orchestrationAgent = new OrchestrationAgent({
+  const manager = new Manager({
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
     permissionMode: 'bypassPermissions',
   });
-  await orchestrationAgent.initialize();
+  await manager.initialize();
 
-  const executionAgent = new ExecutionAgent({
+  const worker = new Worker({
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
   });
-  await executionAgent.initialize();
+  await worker.initialize();
 
   const bridge = new AgentDialogueBridge({
-    orchestrationAgent,
-    executionAgent,
+    manager,
+    worker,
   });
 
   // Create output adapter

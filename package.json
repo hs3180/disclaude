@@ -9,6 +9,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "package.json"
   ],
   "scripts": {

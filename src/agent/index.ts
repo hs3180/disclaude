@@ -2,14 +2,14 @@
  * Agent module exports.
  *
  * Architecture:
- * - InteractionAgent: Task initialization - creates Task.md with metadata
- * - OrchestrationAgent: Task evaluation + user communication
- * - ExecutionAgent: Task execution with full tool access
+ * - Planner: Task initialization - creates Task.md with metadata
+ * - Manager: Task evaluation + user communication
+ * - Worker: Task execution with full tool access
  * - AgentDialogueBridge: Manages prompt-based dialogue between agents
  *
  * Complete Workflow:
- * Flow 1: User request → InteractionAgent → Task.md (metadata + original request)
- * Flow 2: Task.md → ExecutionAgent ↔ OrchestrationAgent → ...
+ * Flow 1: User request → Planner → Task.md (metadata + original request)
+ * Flow 2: Task.md → Worker ↔ Manager → ...
  *
  * Session Management:
  * - Bridge internally manages sessions per messageId
@@ -17,9 +17,9 @@
  */
 
 // Core agents
-export { InteractionAgent } from './interaction-agent.js';
-export { OrchestrationAgent } from './orchestration-agent.js';
-export { ExecutionAgent } from './execution-agent.js';
+export { Planner } from './planner.js';
+export { Manager } from './manager.js';
+export { Worker } from './worker.js';
 
 // Bridges
 export {
@@ -39,4 +39,4 @@ export {
 } from '../mcp/feishu-context-mcp.js';
 
 // Utility
-export { extractText } from './orchestration-agent.js';
+export { extractText } from './manager.js';

@@ -4,7 +4,7 @@
  * Tracks conversation history between users and the bot,
  * including both inbound (user) and outbound (bot) messages.
  *
- * This provides context for InteractionAgent to understand
+ * This provides context for Planner to understand
  * the conversation flow before creating Task.md.
  *
  * Storage: In-memory Map (lost on restart)

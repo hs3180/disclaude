@@ -5,7 +5,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { EventEmitter } from 'events';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { extractText, InteractionAgent, OrchestrationAgent, ExecutionAgent, AgentDialogueBridge } from '../agent/index.js';
+import { extractText, Planner, Manager, Worker, AgentDialogueBridge } from '../agent/index.js';
 import type { TaskPlanData } from '../agent/dialogue-bridge.js';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
@@ -234,8 +234,8 @@ export class FeishuBot extends EventEmitter {
    * This is INTENTIONAL - do not "optimize" by reusing agent instances.
    *
    * NEW FLOW:
-   * Flow 1: InteractionAgent creates Task.md file
-   * Flow 2: Execute dialogue loop with ExecutionAgent ↔ OrchestrationAgent
+   * Flow 1: Planner creates Task.md file
+   * Flow 2: Execute dialogue loop with Worker ↔ Manager
    *
    * @param chatId - Feishu chat ID
    * @param text - User's message text
@@ -251,21 +251,21 @@ export class FeishuBot extends EventEmitter {
   ): Promise<string> {
     const agentConfig = Config.getAgentConfig();
 
-    // === FLOW 1: InteractionAgent creates Task.md ===
+    // === FLOW 1: Planner creates Task.md ===
     const taskPath = this.taskTracker.getDialogueTaskPath(messageId);
 
-    const interactionAgent = new InteractionAgent({
+    const planner = new Planner({
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,
       apiBaseUrl: agentConfig.apiBaseUrl,
     });
-    await interactionAgent.initialize();
+    await planner.initialize();
 
     // Set context for Task.md creation
     // Include conversation history from message history manager
     const conversationHistory = messageHistoryManager.getFormattedHistory(chatId, 20); // Last 20 messages
 
-    interactionAgent.setTaskContext({
+    planner.setTaskContext({
       chatId,
       userId: sender?.sender_id,
       messageId,
@@ -273,12 +273,12 @@ export class FeishuBot extends EventEmitter {
       conversationHistory,
     });
 
-    // Run InteractionAgent to create Task.md
-    this.logger.info({ messageId, taskPath }, 'Flow 1: InteractionAgent creating Task.md');
-    for await (const msg of interactionAgent.queryStream(text)) {
-      this.logger.debug({ content: msg.content }, 'InteractionAgent output');
+    // Run Planner to create Task.md
+    this.logger.info({ messageId, taskPath }, 'Flow 1: Planner creating Task.md');
+    for await (const msg of planner.queryStream(text)) {
+      this.logger.debug({ content: msg.content }, 'Planner output');
     }
-    this.logger.info({ taskPath }, 'Task.md created by InteractionAgent');
+    this.logger.info({ taskPath }, 'Task.md created by Planner');
 
     // === Send task.md content to user ===
     try {
@@ -290,28 +290,37 @@ export class FeishuBot extends EventEmitter {
 
     // === FLOW 2: Execute dialogue ===
     // Create agents
-    const orchestrationAgent = new OrchestrationAgent({
+    const manager = new Manager({
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,
       apiBaseUrl: agentConfig.apiBaseUrl,
       permissionMode: 'bypassPermissions',
     });
-    await orchestrationAgent.initialize();
+    await manager.initialize();
 
-    const executionAgent = new ExecutionAgent({
+    const worker = new Worker({
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,
       apiBaseUrl: agentConfig.apiBaseUrl,
     });
-    await executionAgent.initialize();
+    await worker.initialize();
+
+    // Import MCP tools to set message tracking callback
+    const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
 
     // Create bridge with task plan callback
     const bridge = new AgentDialogueBridge({
-      orchestrationAgent,
-      executionAgent,
+      manager,
+      worker,
       onTaskPlanGenerated: async (plan: TaskPlanData) => {
         await this.taskTracker.saveDialogueTaskPlan(plan as DialogueTaskPlan);
       },
+    });
+
+    // Set the message sent callback to track when MCP tools send messages
+    // This ensures hasUserMessageBeenSent() returns true when agents use send_user_feedback/send_user_card
+    setMessageSentCallback((_chatId: string) => {
+      bridge.recordUserMessageSent();
     });
 
     // Store for potential cancellation
@@ -395,6 +404,10 @@ export class FeishuBot extends EventEmitter {
 
       return errorMsg;
     } finally {
+      // Clean up message tracking callback to prevent memory leaks
+      const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
+      setMessageSentCallback(null);
+
       // Check if no user message was sent and send warning
       if (!bridge.hasUserMessageBeenSent()) {
         const taskId = path.basename(taskPath, '.md');
@@ -802,7 +815,7 @@ export class FeishuBot extends EventEmitter {
 
     {
       // NEW: All non-command messages use Flow 1 → Flow 2 (task flow)
-      // Note: handleTaskFlow already creates Task.md via InteractionAgent,
+      // Note: handleTaskFlow already creates Task.md via Planner,
       // so we don't use saveTaskRecord here to avoid overwriting it with old format
       await this.handleTaskFlow(
         chat_id,
@@ -811,7 +824,7 @@ export class FeishuBot extends EventEmitter {
         sender
       );
 
-      // Task.md is already created by InteractionAgent in handleTaskFlow
+      // Task.md is already created by Planner in handleTaskFlow
       // No need to save separate task record - the Task.md file serves as the record
     }
   }

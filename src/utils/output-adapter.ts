@@ -115,6 +115,18 @@ export class CLIOutputAdapter implements OutputAdapter {
 }
 
 /**
+ * Configuration for automatic file attachment.
+ */
+export interface FileAttachmentConfig {
+  /** Minimum line count to trigger auto-attachment (default: 500) */
+  minLines?: number;
+  /** Minimum character count to trigger auto-attachment (default: 10000) */
+  minChars?: number;
+  /** File patterns that should trigger auto-attachment (default: ["*-report.md", "summary.md"]) */
+  patterns?: string[];
+}
+
+/**
  * Feishu output adapter options.
  */
 export interface FeishuOutputAdapterOptions {
@@ -123,6 +135,8 @@ export interface FeishuOutputAdapterOptions {
   chatId: string;
   throttleIntervalMs?: number;
   sendFile?: (filePath: string) => Promise<void>;
+  /** Configuration for automatic file attachment */
+  fileAttachment?: FileAttachmentConfig;
 }
 
 /**
@@ -135,9 +149,15 @@ export class FeishuOutputAdapter implements OutputAdapter {
   private progressThrottleMap = new Map<string, number>();
   private readonly throttleIntervalMs: number;
   private messageSentFlag = false;  // Track if any user message was sent
+  private readonly fileAttachmentConfig: Required<FileAttachmentConfig>;
 
   constructor(private options: FeishuOutputAdapterOptions) {
     this.throttleIntervalMs = options.throttleIntervalMs ?? 2000;
+    this.fileAttachmentConfig = {
+      minLines: options.fileAttachment?.minLines ?? 500,
+      minChars: options.fileAttachment?.minChars ?? 10000,
+      patterns: options.fileAttachment?.patterns ?? ['*-report.md', 'summary.md', 'analysis-report.md'],
+    };
   }
 
   /**
@@ -178,6 +198,31 @@ export class FeishuOutputAdapter implements OutputAdapter {
         this.progressThrottleMap.delete(key);
       }
     }
+  }
+
+  /**
+   * Check if a file should be automatically attached based on configuration.
+   *
+   * @param filePath - Path to the file
+   * @param lineCount - Number of lines in the file
+   * @param charCount - Number of characters in the file
+   * @returns true if file should be attached, false otherwise
+   */
+  private shouldAutoAttachFile(filePath: string, lineCount: number, charCount: number): boolean {
+    const fileName = path.basename(filePath);
+
+    // Check if file matches any of the configured patterns
+    const matchesPattern = this.fileAttachmentConfig.patterns.some(pattern => {
+      // Simple glob matching for *-report.md patterns
+      const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+      return regex.test(fileName);
+    });
+
+    // Check thresholds
+    const exceedsLineThreshold = lineCount >= this.fileAttachmentConfig.minLines;
+    const exceedsCharThreshold = charCount >= this.fileAttachmentConfig.minChars;
+
+    return matchesPattern || exceedsLineThreshold || exceedsCharThreshold;
   }
 
   async write(
@@ -299,16 +344,34 @@ export class FeishuOutputAdapter implements OutputAdapter {
         await this.options.sendCard(this.options.chatId, card);
         logger.debug('Card sent successfully');
 
-        // Send task.md file as attachment if applicable
+        // Check if file should be auto-attached
         if (writeContent.filePath && this.options.sendFile) {
-          const fileName = path.basename(writeContent.filePath);
-          // Check for task.md pattern (files with "task" in name ending with .md)
-          if (fileName.toLowerCase().includes('task') && fileName.endsWith('.md')) {
-            logger.info({ filePath: writeContent.filePath }, 'Sending task.md file to user');
+          const shouldAttach = this.shouldAutoAttachFile(
+            writeContent.filePath,
+            writeContent.totalLines,
+            writeContent.content.length
+          );
+
+          if (shouldAttach) {
+            const fileName = path.basename(writeContent.filePath);
+            logger.info({
+              filePath: writeContent.filePath,
+              fileName,
+              lineCount: writeContent.totalLines,
+              charCount: writeContent.content.length,
+            }, 'Auto-attaching large file to user');
+
             // Send file asynchronously, don't block the response
             this.options.sendFile(writeContent.filePath).catch(err => {
-              logger.error({ err, filePath: writeContent.filePath }, 'Failed to send task.md file');
+              logger.error({ err, filePath: writeContent.filePath }, 'Failed to send file attachment');
             });
+
+            // Send a notification message about the file attachment
+            const sizeMB = (writeContent.content.length / 1024 / 1024).toFixed(2);
+            await this.options.sendMessage(
+              this.options.chatId,
+              `📎 **文件已发送**: ${fileName} (${writeContent.totalLines} 行, ${sizeMB} MB)\n\n完整报告已作为附件发送，请查看上方文件消息。`
+            );
           }
         }
 

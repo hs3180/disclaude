@@ -75,10 +75,11 @@ export interface LoggingConfig {
 }
 
 /**
- * Skills configuration section.
+ * @deprecated Skills are loaded from package installation directory.
+ * This interface is kept for config file compatibility only.
  */
 export interface SkillsConfig {
-  /** Base directory for skill files (default: .claude/skills) */
+  /** @deprecated Not used - skills are loaded from package directory */
   dir?: string;
 }
 
@@ -121,7 +122,7 @@ export interface DisclaudeConfig {
   logging?: LoggingConfig;
   /** Tool configuration */
   tools?: ToolsConfig;
-  /** Skills configuration */
+  /** @deprecated Skills are loaded from package directory */
   skills?: SkillsConfig;
 }
 

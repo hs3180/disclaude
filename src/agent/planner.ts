@@ -97,9 +97,9 @@ export class Planner {
     const result = await loadSkill('planner');
     if (!result.success || !result.skill) {
       throw new Error(
-        `Planner skill is required but failed to load. ` +
+        'Planner skill is required but failed to load. ' +
         `Error: ${result.error || 'Unknown error'}. ` +
-        `Please ensure .claude/skills/planner/SKILL.md exists and is valid.`
+        'Please ensure .claude/skills/planner/SKILL.md exists and is valid.'
       );
     }
     this.skill = result.skill;
@@ -273,5 +273,20 @@ Use your exploration and analysis INTERNALLY to inform the Expected Results sect
       sessionId: this.currentSessionId,
       resume: this.currentSessionId,
     };
+  }
+
+  /**
+   * Cleanup resources and clear session.
+   *
+   * Call this method when the agent is no longer needed to:
+   * - Clear session ID to release SDK resources
+   * - Clear task context
+   *
+   * Note: Planner does not use MCP servers, so no MCP cleanup needed.
+   */
+  cleanup(): void {
+    this.logger.debug({ sessionId: this.currentSessionId }, 'Cleaning up Planner agent');
+    this.currentSessionId = undefined;
+    this.taskContext = undefined;
   }
 }

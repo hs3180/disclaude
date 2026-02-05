@@ -7,6 +7,7 @@
  * All configuration is read from the config file.
  */
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig } from './loader.js';
 import type { DisclaudeConfig } from './types.js';
@@ -57,8 +58,35 @@ export class Config {
   static readonly LOG_PRETTY = fileConfigOnly.logging?.pretty ?? true;
   static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
 
-  // Skills configuration
-  static readonly SKILLS_DIR = fileConfigOnly.skills?.dir || path.join(process.cwd(), '.claude', 'skills');
+  // Skills configuration - loaded from package installation directory
+  static readonly SKILLS_DIR = Config.getBuiltinSkillsDir();
+
+  /**
+   * Get the built-in skills directory from package installation.
+   * Skills are bundled with the package and loaded from the install location.
+   *
+   * After bundling, import.meta.url points to the entry point file:
+   * - cli-entry.js (bundled): dist/cli-entry.js -> skills (one level up)
+   * - index.js (module): dist/config/index.js -> skills (two levels up)
+   *
+   * @returns Absolute path to the skills directory
+   */
+  private static getBuiltinSkillsDir(): string {
+    const moduleUrl = fileURLToPath(import.meta.url);
+    const moduleDir = path.dirname(moduleUrl);
+
+    // Detect if we're in a bundled file (cli-entry.js) or module (index.js)
+    // Bundled files are directly in dist/, modules are in dist/config/
+    const isBundled = path.basename(moduleDir) === 'dist';
+
+    if (isBundled) {
+      // dist/cli-entry.js -> dist/ -> ../skills
+      return path.join(moduleDir, '..', 'skills');
+    } else {
+      // dist/config/index.js -> dist/ -> ../../skills
+      return path.join(moduleDir, '..', '..', 'skills');
+    }
+  }
 
   /**
    * Get the raw configuration object.

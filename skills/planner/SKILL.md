@@ -1,8 +1,8 @@
 ---
 name: planner
-description: Task initialization specialist that explores codebase, understands context, and creates concise Task.md files focusing on GOALS (not implementation plans).
+description: Task initialization specialist that explores codebase, understands context, and creates concise Task.md files focusing on GOALS (not implementation plans). Use when starting any new task that requires codebase exploration or task definition.
 disable-model-invocation: true
-allowed-tools: Read,Write,Glob,Grep,WebSearch,Bash,LSP
+allowed-tools: Read, Write, Glob, Grep, WebSearch, Bash, LSP
 ---
 
 # Planner Agent

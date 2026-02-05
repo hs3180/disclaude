@@ -5,8 +5,7 @@
  * and files to Feishu chats directly using Feishu API.
  *
  * Tools provided:
- * - send_user_feedback: Send a text message to a Feishu chat
- * - send_user_card: Send an interactive card to a Feishu chat
+ * - send_user_feedback: Send a message to a Feishu chat (supports text or card format)
  * - send_file_to_feishu: Send a file to a Feishu chat
  * - task_done: Signal task completion and end dialogue loop
  *
@@ -22,9 +21,61 @@ import { Config } from '../config/index.js';
 const logger = createLogger('FeishuContextMCP');
 
 /**
- * Tool: Send user feedback (text message)
+ * Message sent callback type.
+ * Called when a message is successfully sent to track user communication.
+ */
+export type MessageSentCallback = (chatId: string) => void;
+
+/**
+ * Global callback for tracking when messages are sent.
+ * Set by FeishuBot to bridge MCP tool calls with message tracking.
+ */
+let messageSentCallback: MessageSentCallback | null = null;
+
+/**
+ * Set the callback to be invoked when messages are successfully sent.
+ * This allows MCP tools to notify the dialogue bridge when user messages are sent.
  *
- * This tool allows agents to send text messages directly to Feishu chats.
+ * @param callback - Function to call on successful message send
+ */
+export function setMessageSentCallback(callback: MessageSentCallback | null): void {
+  messageSentCallback = callback;
+}
+
+/**
+ * Internal helper: Send a message to Feishu chat.
+ *
+ * Handles the common logic for sending messages to Feishu API.
+ *
+ * @param client - Lark client instance
+ * @param chatId - Feishu chat ID
+ * @param msgType - Message type ('text' or 'interactive')
+ * @param content - Message content (JSON stringified)
+ * @throws Error if sending fails
+ */
+async function sendMessageToFeishu(
+  client: lark.Client,
+  chatId: string,
+  msgType: 'text' | 'interactive',
+  content: string
+): Promise<void> {
+  await client.im.message.create({
+    params: {
+      receive_id_type: 'chat_id',
+    },
+    data: {
+      receive_id: chatId,
+      msg_type: msgType,
+      content,
+    },
+  });
+}
+
+/**
+ * Tool: Send user feedback (unified text/card message)
+ *
+ * This tool allows agents to send messages directly to Feishu chats.
+ * Supports both text messages and interactive cards via the format parameter.
  * Credentials are read from Config, chatId is required parameter.
  *
  * CLI Mode: When chatId starts with "cli-", the message is logged
@@ -34,18 +85,29 @@ const logger = createLogger('FeishuContextMCP');
  * @returns Result object with success status
  */
 export async function send_user_feedback(params: {
-  message: string;
+  content: string | Record<string, unknown>;
+  format?: 'text' | 'card';
   chatId: string;
 }): Promise<{
   success: boolean;
   message: string;
   error?: string;
 }> {
-  const { message, chatId } = params;
+  const { content, format, chatId } = params;
 
   try {
-    if (!message) {
-      throw new Error('message is required');
+    // Auto-detect format if not specified
+    let detectedFormat: 'text' | 'card';
+    if (format) {
+      // Explicit format takes precedence
+      detectedFormat = format;
+    } else {
+      // Auto-detect: string → text, object → card
+      detectedFormat = typeof content === 'string' ? 'text' : 'card';
+    }
+
+    if (!content) {
+      throw new Error('content is required');
     }
     if (!chatId) {
       throw new Error('chatId is required');
@@ -53,12 +115,23 @@ export async function send_user_feedback(params: {
 
     // CLI mode: Log the message instead of sending to Feishu
     if (chatId.startsWith('cli-')) {
-      logger.info({ chatId, message: message.substring(0, 100) }, 'CLI mode: User feedback');
+      const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      logger.info({ chatId, format: detectedFormat, contentPreview: displayContent.substring(0, 100) }, 'CLI mode: User feedback');
       // Use console.log for direct visibility in CLI mode
-      console.log(`\n${message}\n`);
+      console.log(`\n${displayContent}\n`);
+
+      // Notify callback that a message was sent (for dialogue bridge tracking)
+      if (messageSentCallback) {
+        try {
+          messageSentCallback(chatId);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to invoke message sent callback');
+        }
+      }
+
       return {
         success: true,
-        message: '✅ Feedback displayed (CLI mode)',
+        message: `✅ Feedback displayed (CLI mode, format: ${detectedFormat})`,
       };
     }
 
@@ -77,26 +150,36 @@ export async function send_user_feedback(params: {
       domain: lark.Domain.Feishu,
     });
 
-    await client.im.message.create({
-      params: {
-        receive_id_type: 'chat_id',
-      },
-      data: {
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({ text: message }),
-      },
-    });
+    if (detectedFormat === 'text') {
+      // Send as text message
+      const textContent = typeof content === 'string' ? content : JSON.stringify(content);
+      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }));
 
-    logger.debug({
-      chatId,
-      messageLength: message.length,
-      message: message
-    }, 'User feedback sent');
+      logger.debug({
+        chatId,
+        messageLength: textContent.length,
+        message: textContent
+      }, 'User feedback sent (text)');
+    } else {
+      // Send as interactive card
+      const cardContent = typeof content === 'object' ? content : { text: content };
+      await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent));
+
+      logger.debug({ chatId }, 'User card sent (interactive)');
+    }
+
+    // Notify callback that a message was sent (for dialogue bridge tracking)
+    if (messageSentCallback) {
+      try {
+        messageSentCallback(chatId);
+      } catch (error) {
+        logger.error({ err: error }, 'Failed to invoke message sent callback');
+      }
+    }
 
     return {
       success: true,
-      message: '✅ Feedback sent',
+      message: `✅ Feedback sent (format: ${detectedFormat})`,
     };
 
   } catch (error) {
@@ -113,10 +196,10 @@ export async function send_user_feedback(params: {
 }
 
 /**
- * Tool: Send user feedback (interactive card)
+ * Tool: Send user card (deprecated wrapper)
  *
- * This tool allows agents to send interactive cards to Feishu chats.
- * Use this for rich content like code diffs, formatted output, etc.
+ * @deprecated Use send_user_feedback with format='card' instead.
+ * This function is kept for backward compatibility.
  *
  * @param params - Tool parameters
  * @returns Result object with success status
@@ -131,58 +214,14 @@ export async function send_user_card(params: {
 }> {
   const { card, chatId } = params;
 
-  try {
-    if (!card) {
-      throw new Error('card is required');
-    }
-    if (!chatId) {
-      throw new Error('chatId is required');
-    }
+  // Delegate to the unified send_user_feedback function
+  const result = await send_user_feedback({
+    content: card,
+    format: 'card',
+    chatId,
+  });
 
-    // Read credentials from Config
-    const appId = Config.FEISHU_APP_ID;
-    const appSecret = Config.FEISHU_APP_SECRET;
-
-    if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured in Config');
-    }
-
-    // Create Lark client and send card
-    const client = new lark.Client({
-      appId,
-      appSecret,
-      domain: lark.Domain.Feishu,
-    });
-
-    await client.im.message.create({
-      params: {
-        receive_id_type: 'chat_id',
-      },
-      data: {
-        receive_id: chatId,
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-    });
-
-    logger.debug({ chatId }, 'User card sent');
-
-    return {
-      success: true,
-      message: '✅ Card sent',
-    };
-
-  } catch (error) {
-    logger.error({ err: error }, 'Tool: send_user_card failed');
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    return {
-      success: false,
-      error: errorMessage,
-      message: `❌ Failed to send card: ${errorMessage}`,
-    };
-  }
+  return result;
 }
 
 /**
@@ -283,8 +322,7 @@ export async function send_file_to_feishu(params: {
  * Tool: Signal task completion
  *
  * This tool signals that the task is done and the dialogue loop should end.
- * Use send_user_feedback or send_user_card BEFORE calling this tool to provide
- * a final message to the user.
+ * Use send_user_feedback BEFORE calling this tool to provide a final message to the user.
  *
  * @param params - Tool parameters
  * @returns Result object with completion status
@@ -443,40 +481,30 @@ export function finalize_task_definition(params: {
  */
 export const feishuContextTools = {
   send_user_feedback: {
-    description: 'Send a text message to a Feishu chat. Use this to report progress or provide updates to users.',
+    description: 'Send a message to a Feishu chat. Supports both text and interactive card format. Use this to report progress, provide updates, or send rich content like code diffs to users.',
     parameters: {
       type: 'object',
       properties: {
-        message: {
+        content: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'object' }
+          ],
+          description: 'The content to send. Use a string for text messages, or an object for interactive cards.',
+        },
+        format: {
           type: 'string',
-          description: 'The message text to send',
+          enum: ['text', 'card'],
+          description: 'Optional format specifier. If not provided, auto-detects based on content type (string→text, object→card).',
         },
         chatId: {
           type: 'string',
           description: 'Feishu chat ID (get this from the task context/metadata)',
         },
       },
-      required: ['message', 'chatId'],
+      required: ['content', 'chatId'],
     },
     handler: send_user_feedback,
-  },
-  send_user_card: {
-    description: 'Send an interactive card to a Feishu chat. Use this for rich content like code diffs, formatted output, etc.',
-    parameters: {
-      type: 'object',
-      properties: {
-        card: {
-          type: 'object',
-          description: 'The card JSON structure to send',
-        },
-        chatId: {
-          type: 'string',
-          description: 'Feishu chat ID (get this from the task context/metadata)',
-        },
-      },
-      required: ['card', 'chatId'],
-    },
-    handler: send_user_card,
   },
   send_file_to_feishu: {
     description: 'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
@@ -497,7 +525,7 @@ export const feishuContextTools = {
     handler: send_file_to_feishu,
   },
   task_done: {
-    description: 'Signal that the task is done and end the dialogue loop. Use send_user_feedback or send_user_card BEFORE calling this to provide a final message to the user.',
+    description: 'Signal that the task is done and end the dialogue loop. Use send_user_feedback BEFORE calling this to provide a final message to the user.',
     parameters: {
       type: 'object',
       properties: {
@@ -603,34 +631,15 @@ function toolError(errorMessage: string): { content: Array<{ type: 'text'; text:
 export const feishuSdkTools = [
   tool(
     'send_user_feedback',
-    'Send a text message to a Feishu chat. Use this to report progress or provide updates to users.',
+    'Send a message to a Feishu chat. Supports both text and interactive card format. Use this to report progress, provide updates, or send rich content like code diffs to users.',
     {
-      message: z.string().describe('The message text to send'),
+      content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. Use a string for text messages, or an object for interactive cards.'),
+      format: z.enum(['text', 'card']).optional().describe('Optional format specifier. If not provided, auto-detects based on content type (string→text, object→card).'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
     },
-    async ({ message, chatId }) => {
+    async ({ content, format, chatId }) => {
       try {
-        const result = await send_user_feedback({ message, chatId });
-        if (result.success) {
-          return toolSuccess(result.message);
-        } else {
-          return toolError(result.error || 'Unknown error');
-        }
-      } catch (error) {
-        return toolError(error instanceof Error ? error.message : String(error));
-      }
-    }
-  ),
-  tool(
-    'send_user_card',
-    'Send an interactive card to a Feishu chat. Use this for rich content like code diffs, formatted output, etc.',
-    {
-      card: z.object({}).passthrough().describe('The card JSON structure to send'),
-      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
-    },
-    async ({ card, chatId }) => {
-      try {
-        const result = await send_user_card({ card, chatId });
+        const result = await send_user_feedback({ content, format, chatId });
         if (result.success) {
           return toolSuccess(result.message);
         } else {
@@ -663,7 +672,7 @@ export const feishuSdkTools = [
   ),
   tool(
     'task_done',
-    'Signal that the task is done and end the dialogue loop. Use send_user_feedback or send_user_card BEFORE calling this to provide a final message to the user.',
+    'Signal that the task is done and end the dialogue loop. Use send_user_feedback BEFORE calling this to provide a final message to the user.',
     {
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
       taskId: z.string().optional().describe('Optional task ID for tracking'),
@@ -714,8 +723,33 @@ export const feishuSdkTools = [
 /**
  * SDK MCP Server for Feishu context tools.
  *
+ * **Lifecycle:**
+ * - This is a module-level singleton created once at process startup
+ * - Persists for the lifetime of the application
+ * - Shared across all Manager agent instances
+ * - Does NOT need to be cleaned up between dialogues
+ *
+ * **Usage:**
+ * Add this to the `mcpServers` SDK option when creating queries:
+ * ```typescript
+ * query({
+ *   prompt: "...",
+ *   options: {
+ *     mcpServers: {
+ *       'feishu-context': feishuSdkMcpServer,
+ *     },
+ *   },
+ * })
+ * ```
+ *
+ * **Memory Management:**
+ * - The SDK creates per-query instances of this MCP server
+ * - SDK automatically cleans up these instances when queries complete
+ * - No manual cleanup required for the singleton itself
+ * - Agent cleanup() methods clear session IDs, allowing SDK to release resources
+ *
  * Creates an in-process MCP server that provides Feishu integration tools
- * to the Agent SDK. Use this by adding it to the `mcpServers` SDK option.
+ * to the Agent SDK.
  */
 export const feishuSdkMcpServer = createSdkMcpServer({
   name: 'feishu-context',
