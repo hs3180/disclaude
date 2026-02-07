@@ -5,9 +5,11 @@
  * and files to Feishu chats directly using Feishu API.
  *
  * Tools provided:
- * - send_user_feedback: Send a message to a Feishu chat (supports text or card format)
+ * - send_user_feedback: Send a message to a Feishu chat (text or card format, REQUIRED)
  * - send_file_to_feishu: Send a file to a Feishu chat
- * - task_done: Signal task completion and end dialogue loop
+ *
+ * **Note**: task_done is now an inline tool provided by the Evaluator agent,
+ * not part of the Feishu MCP server.
  *
  * **No global state**: Credentials are read from Config, chatId is passed as parameter.
  */
@@ -122,10 +124,10 @@ function buildMarkdownCard(markdownContent: string, title = 'Assistant'): Record
 }
 
 /**
- * Tool: Send user feedback (unified text/card message)
+ * Tool: Send user feedback (text or card message)
  *
  * This tool allows agents to send messages directly to Feishu chats.
- * Supports both text messages and interactive cards via the format parameter.
+ * Requires explicit format specification: 'text' or 'card'.
  * Credentials are read from Config, chatId is required parameter.
  *
  * CLI Mode: When chatId starts with "cli-", the message is logged
@@ -136,7 +138,7 @@ function buildMarkdownCard(markdownContent: string, title = 'Assistant'): Record
  */
 export async function send_user_feedback(params: {
   content: string | Record<string, unknown>;
-  format?: 'text' | 'card';
+  format: 'text' | 'card';
   chatId: string;
 }): Promise<{
   success: boolean;
@@ -145,19 +147,20 @@ export async function send_user_feedback(params: {
 }> {
   const { content, format, chatId } = params;
 
-  try {
-    // Auto-detect format if not specified
-    let detectedFormat: 'text' | 'card';
-    if (format) {
-      // Explicit format takes precedence
-      detectedFormat = format;
-    } else {
-      // Auto-detect: string → text, object → card
-      detectedFormat = typeof content === 'string' ? 'text' : 'card';
-    }
+  // DIAGNOSTIC: Log all send_user_feedback calls
+  logger.info({
+    chatId,
+    format,
+    contentType: typeof content,
+    contentPreview: typeof content === 'string' ? content.substring(0, 100) : JSON.stringify(content).substring(0, 100),
+  }, 'send_user_feedback called');
 
+  try {
     if (!content) {
       throw new Error('content is required');
+    }
+    if (!format) {
+      throw new Error('format is required (must be "text" or "card")');
     }
     if (!chatId) {
       throw new Error('chatId is required');
@@ -166,7 +169,7 @@ export async function send_user_feedback(params: {
     // CLI mode: Log the message instead of sending to Feishu
     if (chatId.startsWith('cli-')) {
       const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      logger.info({ chatId, format: detectedFormat, contentPreview: displayContent.substring(0, 100) }, 'CLI mode: User feedback');
+      logger.info({ chatId, format, contentPreview: displayContent.substring(0, 100) }, 'CLI mode: User feedback');
       // Use console.log for direct visibility in CLI mode
       console.log(`\n${displayContent}\n`);
 
@@ -181,7 +184,7 @@ export async function send_user_feedback(params: {
 
       return {
         success: true,
-        message: `✅ Feedback displayed (CLI mode, format: ${detectedFormat})`,
+        message: `✅ Feedback displayed (CLI mode, format: ${format})`,
       };
     }
 
@@ -200,7 +203,7 @@ export async function send_user_feedback(params: {
       domain: lark.Domain.Feishu,
     });
 
-    if (detectedFormat === 'text') {
+    if (format === 'text') {
       // Send as text message
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
       await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }));
@@ -240,11 +243,17 @@ export async function send_user_feedback(params: {
 
     return {
       success: true,
-      message: `✅ Feedback sent (format: ${detectedFormat})`,
+      message: `✅ Feedback sent (format: ${format})`,
     };
 
   } catch (error) {
-    logger.error({ err: error }, 'Tool: send_user_feedback failed');
+    // DIAGNOSTIC: Enhanced error logging
+    logger.error({
+      err: error,
+      chatId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+    }, 'send_user_feedback FAILED');
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
@@ -254,35 +263,6 @@ export async function send_user_feedback(params: {
       message: `❌ Failed to send feedback: ${errorMessage}`,
     };
   }
-}
-
-/**
- * Tool: Send user card (deprecated wrapper)
- *
- * @deprecated Use send_user_feedback with format='card' instead.
- * This function is kept for backward compatibility.
- *
- * @param params - Tool parameters
- * @returns Result object with success status
- */
-export async function send_user_card(params: {
-  card: Record<string, unknown>;
-  chatId: string;
-}): Promise<{
-  success: boolean;
-  message: string;
-  error?: string;
-}> {
-  const { card, chatId } = params;
-
-  // Delegate to the unified send_user_feedback function
-  const result = await send_user_feedback({
-    content: card,
-    format: 'card',
-    chatId,
-  });
-
-  return result;
 }
 
 /**
@@ -380,159 +360,6 @@ export async function send_file_to_feishu(params: {
 }
 
 /**
- * Tool: Signal task completion
- *
- * This tool signals that the task is done and the dialogue loop should end.
- * Use send_user_feedback BEFORE calling this tool to provide a final message to the user.
- *
- * @param params - Tool parameters
- * @returns Result object with completion status
- */
-export function task_done(params: {
-  chatId: string;
-  taskId?: string;
-  files?: string[];
-}): {
-  success: boolean;
-  completed: boolean;
-  message: string;
-} {
-  const { chatId, taskId, files } = params;
-
-  try {
-    if (!chatId) {
-      throw new Error('chatId is required');
-    }
-
-    // The completion signal is detected by the dialogue bridge
-    logger.info({
-      chatId,
-      taskId,
-      fileCount: files?.length ?? 0,
-    }, 'Task completion signaled');
-
-    return {
-      success: true,
-      completed: true,
-      message: 'Task completed.',
-    };
-
-  } catch (error) {
-    logger.error({ err: error }, 'Tool: task_done failed');
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    return {
-      success: false,
-      completed: false,
-      message: `Failed to signal completion: ${errorMessage}`,
-    };
-  }
-}
-
-/**
- * Task definition details interface.
- */
-export interface TaskDefinitionDetails {
-  primary_goal: string;
-  success_criteria: string[];
-  expected_outcome: string;
-  deliverables: string[];
-  format_requirements: string[];
-  constraints: string[];
-  quality_criteria: string[];
-}
-
-/**
- * Tool: Finalize task definition
- *
- * This tool signals that the task definition phase is complete.
- * It provides structured task details that will be appended to Task.md
- * before the execution phase begins.
- *
- * @param params - Tool parameters
- * @returns Result object with task definition details
- */
-export function finalize_task_definition(params: {
-  primary_goal: string;
-  success_criteria: string[];
-  expected_outcome: string;
-  deliverables: string[];
-  format_requirements?: string[];
-  constraints?: string[];
-  quality_criteria?: string[];
-  chatId: string;
-}): {
-  success: boolean;
-  completed: boolean;
-  message: string;
-  taskDetails: TaskDefinitionDetails;
-} {
-  const {
-    primary_goal,
-    success_criteria,
-    expected_outcome,
-    deliverables,
-    format_requirements = [],
-    constraints = [],
-    quality_criteria = [],
-    chatId,
-  } = params;
-
-  try {
-    if (!chatId) {
-      throw new Error('chatId is required');
-    }
-    if (!primary_goal) {
-      throw new Error('primary_goal is required');
-    }
-
-    const taskDetails: TaskDefinitionDetails = {
-      primary_goal,
-      success_criteria,
-      expected_outcome,
-      deliverables,
-      format_requirements,
-      constraints,
-      quality_criteria,
-    };
-
-    logger.info({
-      chatId,
-      primaryGoal: primary_goal.substring(0, 50),
-      deliverableCount: deliverables.length,
-    }, 'Task definition finalized');
-
-    return {
-      success: true,
-      completed: true,
-      message: 'Task definition complete.',
-      taskDetails,
-    };
-
-  } catch (error) {
-    logger.error({ err: error }, 'Tool: finalize_task_definition failed');
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    return {
-      success: false,
-      completed: false,
-      message: `Failed to finalize task definition: ${errorMessage}`,
-      taskDetails: {
-        primary_goal: '',
-        success_criteria: [],
-        expected_outcome: '',
-        deliverables: [],
-        format_requirements: [],
-        constraints: [],
-        quality_criteria: [],
-      },
-    };
-  }
-}
-
-/**
  * Tool definitions for Agent SDK integration.
  *
  * Export tools in a format compatible with inline MCP servers.
@@ -542,7 +369,7 @@ export function finalize_task_definition(params: {
  */
 export const feishuContextTools = {
   send_user_feedback: {
-    description: 'Send a message to a Feishu chat. Supports both text and interactive card format. Use this to report progress, provide updates, or send rich content like code diffs to users.',
+    description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content like code diffs to users.',
     parameters: {
       type: 'object',
       properties: {
@@ -556,14 +383,14 @@ export const feishuContextTools = {
         format: {
           type: 'string',
           enum: ['text', 'card'],
-          description: 'Optional format specifier. If not provided, auto-detects based on content type (string→text, object→card).',
+          description: 'Format specifier (required): "text" for plain text, "card" for interactive cards.',
         },
         chatId: {
           type: 'string',
           description: 'Feishu chat ID (get this from the task context/metadata)',
         },
       },
-      required: ['content', 'chatId'],
+      required: ['content', 'format', 'chatId'],
     },
     handler: send_user_feedback,
   },
@@ -584,76 +411,6 @@ export const feishuContextTools = {
       required: ['filePath', 'chatId'],
     },
     handler: send_file_to_feishu,
-  },
-  task_done: {
-    description: 'Signal that the task is done and end the dialogue loop. Use send_user_feedback BEFORE calling this to provide a final message to the user.',
-    parameters: {
-      type: 'object',
-      properties: {
-        chatId: {
-          type: 'string',
-          description: 'Feishu chat ID (get this from the task context/metadata)',
-        },
-        taskId: {
-          type: 'string',
-          description: 'Optional task ID for tracking',
-        },
-        files: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of files created/modified',
-        },
-      },
-      required: ['chatId'],
-    },
-    handler: task_done,
-  },
-  finalize_task_definition: {
-    description: 'Signal that the task definition phase is complete. Provide structured task details including objectives, deliverables, and quality criteria.',
-    parameters: {
-      type: 'object',
-      properties: {
-        primary_goal: {
-          type: 'string',
-          description: 'The primary goal of the task - what should be achieved',
-        },
-        success_criteria: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Specific conditions that indicate the task is complete',
-        },
-        expected_outcome: {
-          type: 'string',
-          description: 'What the user will receive when the task is complete',
-        },
-        deliverables: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'List of specific outputs (files, reports, code, etc.)',
-        },
-        format_requirements: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Required formats or structures for deliverables',
-        },
-        constraints: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Limitations or requirements (time, resources, technology, etc.)',
-        },
-        quality_criteria: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Standards for quality (performance, readability, maintainability, etc.)',
-        },
-        chatId: {
-          type: 'string',
-          description: 'Feishu chat ID (get this from the task context/metadata)',
-        },
-      },
-      required: ['primary_goal', 'success_criteria', 'expected_outcome', 'deliverables', 'chatId'],
-    },
-    handler: finalize_task_definition,
   },
 };
 
@@ -692,10 +449,10 @@ function toolError(errorMessage: string): { content: Array<{ type: 'text'; text:
 export const feishuSdkTools = [
   tool(
     'send_user_feedback',
-    'Send a message to a Feishu chat. Supports both text and interactive card format. Use this to report progress, provide updates, or send rich content like code diffs to users.',
+    'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content like code diffs to users.',
     {
       content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. Use a string for text messages, or an object for interactive cards.'),
-      format: z.enum(['text', 'card']).optional().describe('Optional format specifier. If not provided, auto-detects based on content type (string→text, object→card).'),
+      format: z.enum(['text', 'card']).describe('Format specifier (required): "text" for plain text, "card" for interactive cards.'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
     },
     async ({ content, format, chatId }) => {
@@ -726,54 +483,6 @@ export const feishuSdkTools = [
         } else {
           return toolError(result.error || 'Unknown error');
         }
-      } catch (error) {
-        return toolError(error instanceof Error ? error.message : String(error));
-      }
-    }
-  ),
-  tool(
-    'task_done',
-    'Signal that the task is done and end the dialogue loop. Use send_user_feedback BEFORE calling this to provide a final message to the user.',
-    {
-      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
-      taskId: z.string().optional().describe('Optional task ID for tracking'),
-      files: z.array(z.string()).optional().describe('Optional list of files created/modified'),
-    },
-    async ({ chatId, taskId, files }) => {
-      try {
-        const result = task_done({ chatId, taskId, files });
-        return toolSuccess(result.message);
-      } catch (error) {
-        return toolError(error instanceof Error ? error.message : String(error));
-      }
-    }
-  ),
-  tool(
-    'finalize_task_definition',
-    'Signal that the task definition phase is complete. Provide structured task details including objectives, deliverables, and quality criteria.',
-    {
-      primary_goal: z.string().describe('The primary goal of the task - what should be achieved'),
-      success_criteria: z.array(z.string()).describe('Specific conditions that indicate the task is complete'),
-      expected_outcome: z.string().describe('What the user will receive when the task is complete'),
-      deliverables: z.array(z.string()).describe('List of specific outputs (files, reports, code, etc.)'),
-      format_requirements: z.array(z.string()).optional().describe('Required formats or structures for deliverables'),
-      constraints: z.array(z.string()).optional().describe('Limitations or requirements (time, resources, technology, etc.)'),
-      quality_criteria: z.array(z.string()).optional().describe('Standards for quality (performance, readability, maintainability, etc.)'),
-      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
-    },
-    async ({ primary_goal, success_criteria, expected_outcome, deliverables, format_requirements, constraints, quality_criteria, chatId }) => {
-      try {
-        const result = finalize_task_definition({
-          primary_goal,
-          success_criteria,
-          expected_outcome,
-          deliverables,
-          format_requirements,
-          constraints,
-          quality_criteria,
-          chatId,
-        });
-        return toolSuccess(result.message);
       } catch (error) {
         return toolError(error instanceof Error ? error.message : String(error));
       }

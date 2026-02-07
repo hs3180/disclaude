@@ -81,7 +81,7 @@ export async function handleHelpCommand(
 • /cancel - Cancel running long task
 
 **Task Mode (Structured):**
-• /task <task> - Use Planner + Worker/Manager agents (creates Task.md)
+• /task <task> - Use Scout + Worker/Manager agents (creates Task.md)
 
 **Long Task Mode:**
 • /long <task> - Start long task workflow (24h timeout, multi-step)
@@ -111,7 +111,7 @@ What's the weather today?
 }
 
 /**
- * Handle /task command - start structured task workflow (Planner + Worker/Manager)
+ * Handle /task command - start structured task workflow (Scout + Worker/Manager)
  */
 export async function handleTaskCommand(
   context: CommandHandlerContext,

@@ -4,7 +4,7 @@
  */
 
 import * as fs from 'fs/promises';
-import { Planner, AgentDialogueBridge } from '../agent/index.js';
+import { Scout, DialogueOrchestrator } from '../task/index.js';
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
@@ -53,31 +53,31 @@ async function executeOnce(
   const chatId = feishuChatId || 'cli-console';
   const taskTracker = new TaskTracker();
 
-  // === FLOW 1: Planner creates Task.md ===
+  // === FLOW 1: Scout creates Task.md ===
   const taskPath = taskTracker.getDialogueTaskPath(messageId);
 
-  const planner = new Planner({
+  const scout = new Scout({
     apiKey: agentConfig.apiKey,
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
   });
-  await planner.initialize();
+  await scout.initialize();
 
   // Set context for Task.md creation
   // Use system username for CLI mode, fallback to 'cli-user'
   const userId = process.env.USER || process.env.USERNAME || 'cli-user';
 
-  planner.setTaskContext({
+  scout.setTaskContext({
     chatId,
     userId,
     messageId,
     taskPath,
   });
 
-  // Run Planner to create Task.md
-  logger.info({ messageId, taskPath }, 'Flow 1: Planner creating Task.md');
-  for await (const msg of planner.queryStream(prompt)) {
-    logger.debug({ content: msg.content }, 'Planner output');
+  // Run Scout to create Task.md
+  logger.info({ messageId, taskPath }, 'Flow 1: Scout creating Task.md');
+  for await (const msg of scout.queryStream(prompt)) {
+    logger.debug({ content: msg.content }, 'Scout output');
   }
 
   // Verify Task.md was created
@@ -85,27 +85,27 @@ async function executeOnce(
     await fs.access(taskPath);
   } catch {
     throw new Error(
-      `Planner failed to create Task.md at ${taskPath}. ` +
+      `Scout failed to create Task.md at ${taskPath}. ` +
       `The model may not have called the Write tool. ` +
       `Please check if the model supports tool calling properly.`
     );
   }
 
-  logger.info({ taskPath }, 'Task.md created by Planner');
+  logger.info({ taskPath }, 'Task.md created by Scout');
 
   // === FLOW 2: Create dialogue bridge ===
-  // The bridge will create fresh Manager/Worker instances per iteration
-  const bridge = new AgentDialogueBridge({
-    managerConfig: {
-      apiKey: agentConfig.apiKey,
-      model: agentConfig.model,
-      apiBaseUrl: agentConfig.apiBaseUrl,
-      permissionMode: 'bypassPermissions',
-    },
+  // The bridge will create fresh Evaluator/Worker instances per iteration
+  const bridge = new DialogueOrchestrator({
     workerConfig: {
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,
       apiBaseUrl: agentConfig.apiBaseUrl,
+    },
+    evaluatorConfig: {
+      apiKey: agentConfig.apiKey,
+      model: agentConfig.model,
+      apiBaseUrl: agentConfig.apiBaseUrl,
+      permissionMode: 'bypassPermissions',
     },
   });
 

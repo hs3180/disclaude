@@ -5,13 +5,12 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { EventEmitter } from 'events';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { extractText, Planner, AgentDialogueBridge } from '../agent/index.js';
-import type { TaskPlanData } from '../agent/dialogue-bridge.js';
+import { extractText, Scout, DialogueOrchestrator } from '../task/index.js';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
-import { TaskTracker, type DialogueTaskPlan } from '../utils/task-tracker.js';
-import { LongTaskManager } from '../long-task/index.js';
+import { TaskTracker } from '../utils/task-tracker.js';
+import { LongTaskManager, LongTaskTracker, type TaskPlanData, type DialogueTaskPlan } from '../long-task/index.js';
 import { buildTextContent } from './content-builder.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
@@ -20,6 +19,7 @@ import type { CommandHandlerContext } from './command-handlers.js';
 import { attachmentManager, type FileAttachment } from './attachment-manager.js';
 import { downloadFile } from './file-downloader.js';
 import { messageHistoryManager } from './message-history.js';
+import { Pilot } from '../pilot/index.js';
 
 // Temporarily disabled: Markdown detection for rich text messages
 // TODO: Re-enable when rich text format is needed again
@@ -58,15 +58,6 @@ import { messageHistoryManager } from './message-history.js';
 // }
 
 /**
- * Pending message in the chat queue.
- */
-interface PendingMessage {
-  text: string;
-  messageId: string;
-  timestamp: number;
-}
-
-/**
  * Feishu/Lark bot using WebSocket.
  */
 export class FeishuBot extends EventEmitter {
@@ -87,16 +78,17 @@ export class FeishuBot extends EventEmitter {
   // Task tracker for persistent deduplication
   private taskTracker: TaskTracker;
 
+  // Long task tracker for dialogue task plans
+  private longTaskTracker: LongTaskTracker;
+
   // Active long task managers per chat (one per chat to avoid conflicts)
   private longTaskManagers = new Map<string, LongTaskManager>();
 
   // Active dialogue bridges per chat
-  private activeDialogues = new Map<string, AgentDialogueBridge>();
+  private activeDialogues = new Map<string, DialogueOrchestrator>();
 
-  // Per-chatId message queues for streaming sessions
-  private chatQueues = new Map<string, PendingMessage[]>();
-  private queueReadyCallbacks = new Map<string, () => void>();
-  private activeStreams = new Map<string, Promise<void>>();
+  // Pilot instance for direct chat mode
+  private pilot: Pilot;
 
   constructor(
     appId: string,
@@ -106,6 +98,16 @@ export class FeishuBot extends EventEmitter {
     this.appId = appId;
     this.appSecret = appSecret;
     this.taskTracker = new TaskTracker();
+    this.longTaskTracker = new LongTaskTracker();
+
+    // Initialize Pilot with Feishu-specific callbacks
+    this.pilot = new Pilot({
+      callbacks: {
+        sendMessage: this.sendMessage.bind(this),
+        sendCard: this.sendCard.bind(this),
+        sendFile: this.sendFileToUser.bind(this),
+      },
+    });
   }
 
   /**
@@ -244,7 +246,7 @@ export class FeishuBot extends EventEmitter {
    * This is INTENTIONAL - do not "optimize" by reusing agent instances.
    *
    * NEW FLOW:
-   * Flow 1: Planner creates Task.md file
+   * Flow 1: Scout creates Task.md file
    * Flow 2: Execute dialogue loop with Worker ↔ Manager
    *
    * @param chatId - Feishu chat ID
@@ -261,21 +263,21 @@ export class FeishuBot extends EventEmitter {
   ): Promise<string> {
     const agentConfig = Config.getAgentConfig();
 
-    // === FLOW 1: Planner creates Task.md ===
+    // === FLOW 1: Scout creates Task.md ===
     const taskPath = this.taskTracker.getDialogueTaskPath(messageId);
 
-    const planner = new Planner({
+    const scout = new Scout({
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,
       apiBaseUrl: agentConfig.apiBaseUrl,
     });
-    await planner.initialize();
+    await scout.initialize();
 
     // Set context for Task.md creation
     // Include conversation history from message history manager
     const conversationHistory = messageHistoryManager.getFormattedHistory(chatId, 20); // Last 20 messages
 
-    planner.setTaskContext({
+    scout.setTaskContext({
       chatId,
       userId: sender?.sender_id,
       messageId,
@@ -283,12 +285,30 @@ export class FeishuBot extends EventEmitter {
       conversationHistory,
     });
 
-    // Run Planner to create Task.md
-    this.logger.info({ messageId, taskPath }, 'Flow 1: Planner creating Task.md');
-    for await (const msg of planner.queryStream(text)) {
-      this.logger.debug({ content: msg.content }, 'Planner output');
+    // Create output adapter for Scout phase
+    const scoutAdapter = new FeishuOutputAdapter({
+      sendMessage: async (id: string, msg: string) => this.sendMessage(id, msg),
+      sendCard: async (id: string, card: Record<string, unknown>) => this.sendCard(id, card),
+      chatId,
+      sendFile: this.sendFileToUser.bind(this, chatId),
+    });
+    scoutAdapter.clearThrottleState();
+    scoutAdapter.resetMessageTracking();
+
+    // Run Scout to create Task.md
+    this.logger.info({ messageId, taskPath }, 'Flow 1: Scout creating Task.md');
+    for await (const msg of scout.queryStream(text)) {
+      this.logger.debug({ content: msg.content }, 'Scout output');
+
+      // Send text content to user
+      if (msg.content && typeof msg.content === 'string') {
+        await scoutAdapter.write(msg.content, msg.messageType ?? 'text', {
+          toolName: msg.metadata?.toolName as string | undefined,
+          toolInputRaw: msg.metadata?.toolInputRaw as Record<string, unknown> | undefined,
+        });
+      }
     }
-    this.logger.info({ taskPath }, 'Task.md created by Planner');
+    this.logger.info({ taskPath }, 'Task.md created by Scout');
 
     // === Send task.md content to user ===
     try {
@@ -299,32 +319,33 @@ export class FeishuBot extends EventEmitter {
     }
 
     // === FLOW 2: Execute dialogue ===
-    // The bridge will create fresh Manager/Worker instances per iteration
+    // The bridge will create fresh Evaluator/Manager/Worker instances per iteration (P0 Architecture)
     // Import MCP tools to set message tracking callback
     const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
 
     // Create bridge with agent configs (not instances)
-    const bridge = new AgentDialogueBridge({
-      managerConfig: {
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        permissionMode: 'bypassPermissions',
-      },
+    const bridge = new DialogueOrchestrator({
       workerConfig: {
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
       },
+      evaluatorConfig: {
+        apiKey: agentConfig.apiKey,
+        model: agentConfig.model,
+        apiBaseUrl: agentConfig.apiBaseUrl,
+        permissionMode: 'bypassPermissions',
+      },
       onTaskPlanGenerated: async (plan: TaskPlanData) => {
-        await this.taskTracker.saveDialogueTaskPlan(plan as DialogueTaskPlan);
+        await this.longTaskTracker.saveDialogueTaskPlan(plan as DialogueTaskPlan);
       },
     });
 
     // Set the message sent callback to track when MCP tools send messages
-    // This ensures hasUserMessageBeenSent() returns true when agents use send_user_feedback/send_user_card
+    // This ensures hasAnyMessage() returns true when agents use send_user_feedback
+    const messageTracker = bridge.getMessageTracker();
     setMessageSentCallback((_chatId: string) => {
-      bridge.recordUserMessageSent();
+      messageTracker.recordMessageSent();
     });
 
     // Store for potential cancellation
@@ -334,11 +355,11 @@ export class FeishuBot extends EventEmitter {
     // Wrap sendMessage to track when user messages are sent
     const adapter = new FeishuOutputAdapter({
       sendMessage: async (id: string, msg: string) => {
-        bridge.recordUserMessageSent();  // Track message sending
+        messageTracker.recordMessageSent();  // Track message sending
         return this.sendMessage(id, msg);
       },
       sendCard: async (id: string, card: Record<string, unknown>) => {
-        bridge.recordUserMessageSent();  // Track card sending
+        messageTracker.recordMessageSent();  // Track card sending
         return this.sendCard(id, card);
       },
       chatId,
@@ -413,9 +434,9 @@ export class FeishuBot extends EventEmitter {
       setMessageSentCallback(null);
 
       // Check if no user message was sent and send warning
-      if (!bridge.hasUserMessageBeenSent()) {
+      if (!messageTracker.hasAnyMessage()) {
         const taskId = path.basename(taskPath, '.md');
-        const warning = bridge.buildNoMessageWarning(completionReason, taskId);
+        const warning = messageTracker.buildWarning(completionReason, taskId);
         this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
         await this.sendMessage(chatId, warning);
       }
@@ -430,10 +451,13 @@ export class FeishuBot extends EventEmitter {
    * This is the DEFAULT behavior when no command is given.
    *
    * Key differences from handleTaskFlow:
-   * - No Planner agent
+   * - No Scout agent
    * - No Task.md creation
    * - No Worker/Manager dialogue loop
    * - Direct SDK query with session resume
+   *
+   * This method delegates to the Pilot abstraction for platform-agnostic
+   * direct chat functionality.
    *
    * @param chatId - Feishu chat ID
    * @param text - User's message text
@@ -445,107 +469,22 @@ export class FeishuBot extends EventEmitter {
     text: string,
     messageId: string
   ): Promise<string> {
-    // Initialize queue for this chatId (if not exists)
-    if (!this.chatQueues.has(chatId)) {
-      this.chatQueues.set(chatId, []);
+    // Check if there are pending attachments and include their information
+    let enhancedText = text;
+    if (attachmentManager.hasAttachments(chatId)) {
+      const attachmentInfo = attachmentManager.formatAttachmentsForPrompt(chatId);
+      if (attachmentInfo) {
+        // Prepend attachment info to the user's message
+        // This ensures the agent knows about the files before processing the user's request
+        enhancedText = `${attachmentInfo}\n\nUser message:\n${text}`;
+        this.logger.debug({ chatId, hasAttachments: true }, 'Enhanced text with attachment info');
+      }
     }
 
-    // Add message to queue
-    const queue = this.chatQueues.get(chatId)!;
-    queue.push({ text, messageId, timestamp: Date.now() });
-
-    // Wake up the waiting generator
-    const callback = this.queueReadyCallbacks.get(chatId);
-    if (callback) {
-      callback();
-    }
-
-    // Start streaming processing (if not already running)
-    // Coroutine runs forever, does not auto-exit
-    if (!this.activeStreams.has(chatId)) {
-      const streamPromise = this.runStreamingChat(chatId);
-      this.activeStreams.set(chatId, streamPromise);
-
-      // Only clean up on error, normally never ends
-      streamPromise.catch((err) => {
-        this.logger.error({ err, chatId }, 'Stream error, will restart on next message');
-        this.activeStreams.delete(chatId);
-      });
-    }
+    // Delegate to Pilot for streaming chat
+    await this.pilot.enqueueMessage(chatId, enhancedText, messageId);
 
     return '';
-  }
-
-  /**
-   * Run streaming chat for a specific chatId.
-   * This method creates a persistent coroutine that waits for messages in the queue
-   * and sends them to the SDK. The coroutine runs forever until an error occurs.
-   *
-   * @param chatId - Feishu chat ID
-   */
-  private async runStreamingChat(chatId: string): Promise<void> {
-    // Create async generator for SDK use
-    // Note: This generator never ends, always waits for new messages
-    async function* messageGenerator(
-      getQueue: () => PendingMessage[],
-      waitForMessage: () => Promise<void>
-    ) {
-      while (true) {  // Infinite loop, coroutine never exits
-        const queue = getQueue();
-        if (queue.length > 0) {
-          const msg = queue.shift()!;
-          yield {
-            type: 'user',
-            parent_tool_use_id: null,
-            session_id: null,
-            message: {
-              role: 'user',
-              content: msg.text,
-            },
-          } as const;
-        } else {
-          // Wait for new message when queue is empty, do not exit
-          await waitForMessage();
-        }
-      }
-    }
-
-    // Promise that resolves when a new message arrives
-    const waitForMessage = () =>
-      new Promise<void>(resolve => {
-        this.queueReadyCallbacks.set(chatId, resolve);
-      });
-
-    const generator = messageGenerator(
-      () => this.chatQueues.get(chatId) || [],
-      waitForMessage
-    );
-
-    // Configure SDK
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { createAgentSdkOptions, parseSDKMessage } = await import('../utils/sdk.js');
-    const agentConfig = Config.getAgentConfig();
-
-    const sdkOptions = createAgentSdkOptions({
-      apiKey: agentConfig.apiKey,
-      model: agentConfig.model,
-      apiBaseUrl: agentConfig.apiBaseUrl,
-      permissionMode: 'bypassPermissions',
-    });
-
-    this.logger.info({ chatId }, 'Starting streaming chat');
-
-    // Start streaming query - runs forever, never ends
-    // Type assertion: generator matches SDK input format
-    for await (const message of query({ prompt: generator as any, options: sdkOptions })) {
-      const parsed = parseSDKMessage(message);
-      if (parsed.content) {
-        await this.sendMessage(chatId, parsed.content);
-      }
-    }
-
-    // Theoretically never reaches here, unless a serious error occurs
-    this.logger.warn({ chatId }, 'Streaming chat ended unexpectedly');
   }
 
   /**
@@ -713,6 +652,20 @@ export class FeishuBot extends EventEmitter {
         );
 
         this.logger.info({ chatId, fileKey, localPath }, 'File downloaded and stored');
+
+        // Send a prompt to the agent about the newly uploaded file
+        // This informs the agent immediately that a file is available, even before the user sends a text message
+        const filePrompt = `User uploaded a file: ${attachment.fileName || messageType}
+Type: ${messageType}
+File key: ${fileKey}
+Local path: ${localPath}${attachment.fileSize ? `\nSize: ${(attachment.fileSize / 1024 / 1024).toFixed(2)} MB` : ''}
+
+The file is now available for processing. You can use tools like Read to examine its contents.`;
+
+        // Queue the file notification message to the Pilot
+        await this.pilot.enqueueMessage(chatId, filePrompt, `file-${messageId}`);
+
+        this.logger.info({ chatId, fileName: attachment.fileName }, 'File notification sent to agent');
 
       } catch (downloadError) {
         this.logger.error({ err: downloadError, fileKey }, 'Failed to download file');
@@ -938,7 +891,7 @@ export class FeishuBot extends EventEmitter {
         await CommandHandlers.handleTaskCommand(commandContext, taskText);
 
         if (taskText) {
-          // Use existing task flow (Planner → Task.md → Worker/Manager)
+          // Use existing task flow (Scout → Task.md → Worker/Manager)
           await this.handleTaskFlow(chat_id, taskText, message_id, sender);
         }
         return;
@@ -951,7 +904,7 @@ export class FeishuBot extends EventEmitter {
       }
     }
 
-    // DEFAULT: Direct chat mode (no Task.md, no Planner, just SDK query)
+    // DEFAULT: Direct chat mode (no Task.md, no Scout, just SDK query)
     await this.handleDirectChat(chat_id, text, message_id);
   }
 

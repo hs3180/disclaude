@@ -385,6 +385,42 @@ When adding new tools:
 - Add to `allowedTools` in `src/agent/client.ts`
 - Web tools are disabled by default for security
 
+## Logging Guidelines
+
+**IMPORTANT**: All Agent outputs MUST be logged in full, not just metadata (like length).
+
+- **Scout/Manager/Worker outputs**: Must include a `content` field with the full text
+- **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
+- **Purpose**: Enables task retrospection and debugging by showing actual Agent output
+
+### Why This Matters
+
+When reviewing logs to understand what happened during a task execution:
+- **Only `textLength`**: Tells you the output was 2463 bytes, but not what it said
+- **With `content`**: You can see the actual instructions, responses, and reasoning
+
+### Example Pattern
+
+```typescript
+// ❌ Bad - only metadata
+logger.debug({
+  iteration: this.iteration,
+  textLength: text.length,
+}, 'Manager output received');
+
+// ✅ Good - includes content
+logger.debug({
+  iteration: this.iteration,
+  textLength: text.length,
+  content: text,  // Full output for retrospection
+}, 'Manager output received');
+```
+
+### Locations
+
+- `src/agent/stream-bridge.ts`: Manager and Worker outputs
+- `src/feishu/bot.ts`: Scout outputs
+
 ## Debugging Tips
 
 ### Enable Verbose Logging

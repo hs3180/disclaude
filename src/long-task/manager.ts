@@ -5,7 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { TaskPlanner } from './planner.js';
 import { SubtaskExecutor } from './executor.js';
-import { TaskTracker } from '../utils/task-tracker.js';
+import { LongTaskTracker } from './tracker.js';
 import type {
   LongTaskPlan,
   LongTaskState,
@@ -21,7 +21,7 @@ export class LongTaskManager {
   private readonly apiBaseUrl: string | undefined;
   private readonly config: LongTaskConfig;
   private activeTasks: Map<string, LongTaskState>;
-  private readonly taskTracker: TaskTracker;
+  private readonly taskTracker: LongTaskTracker;
 
   constructor(
     apiKey: string,
@@ -34,7 +34,7 @@ export class LongTaskManager {
     this.apiBaseUrl = apiBaseUrl;
     this.config = config;
     this.activeTasks = new Map();
-    this.taskTracker = new TaskTracker(config.workspaceBaseDir);
+    this.taskTracker = new LongTaskTracker(config.workspaceBaseDir);
   }
 
   /**

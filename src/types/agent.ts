@@ -1,3 +1,5 @@
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+
 // Agent message type enum
 export type AgentMessageType =
   | 'text'
@@ -7,7 +9,9 @@ export type AgentMessageType =
   | 'error'
   | 'status'
   | 'result'
-  | 'notification';
+  | 'notification'
+  | 'task_completion'  // Task completed message
+  | 'max_iterations_warning';  // Max iterations reached warning
 
 // Content block type from Anthropic API
 export interface ContentBlock {
@@ -65,3 +69,15 @@ export interface SessionInfo {
   sessionId?: string;
   resume?: string;
 }
+
+/**
+ * Union type for agent input supporting both string prompts and streaming message arrays.
+ * This enables Streaming Input Mode for multi-turn conversation support.
+ */
+export type AgentInput = string | AsyncIterable<SDKUserMessage>;
+
+/**
+ * Conversation history for multi-turn context.
+ * Used to maintain conversation state across multiple turns.
+ */
+export type ConversationHistory = SDKUserMessage[];

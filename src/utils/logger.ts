@@ -58,6 +58,16 @@ const SENSITIVE_FIELDS = [
 let rootLogger: Logger | null = null;
 
 /**
+ * Reset the root logger instance.
+ * This is primarily useful for testing.
+ *
+ * @internal
+ */
+export function resetLogger(): void {
+  rootLogger = null;
+}
+
+/**
  * Detect if running in development environment
  */
 function isDevelopment(): boolean {
