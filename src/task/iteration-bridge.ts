@@ -309,15 +309,6 @@ export class IterationBridge {
     return instruction;
   }
   private async evaluateCompletion(evaluator: Evaluator): Promise<EvaluationResult> {
-    // Build evaluation prompt for Evaluator
-    const evaluationPrompt = Evaluator.buildEvaluationPrompt(
-      this.taskMdContent,
-      this.iteration,
-      this.previousWorkerOutput
-    );
-
-    const evaluationInput = this.promptAsMessages(evaluationPrompt) as EvaluatorInput;
-
     // Query Evaluator and parse result
     const { result } = await evaluator.evaluate(
       this.taskMdContent,

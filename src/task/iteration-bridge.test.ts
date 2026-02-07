@@ -1,32 +1,39 @@
 /**
- * Tests for IterationBridge (src/agent/iteration-bridge.ts)
+ * Tests for IterationBridge (src/task/iteration-bridge.ts)
  *
- * Tests the DUAL-COROUTINE architecture:
- * - Phase 1: Manager starts, produces instruction for Worker
- * - Phase 2: Worker executes with Manager's instruction
- * - Phase 3: Manager waits for Worker, processes result
- * - Only ONE Manager-Worker exchange per iteration (no internal loop)
+ * Tests the DIRECT Evaluator → Worker architecture:
+ * - Phase 1: Evaluator evaluates task completion
+ * - Phase 2: If not complete, Worker executes with Evaluator's feedback
+ * - Only ONE Evaluator-Worker exchange per iteration (no internal loop)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IterationBridge } from './iteration-bridge.js';
 import type { IterationBridgeConfig, IterationResult } from './iteration-bridge.js';
-import type { ManagerConfig } from './manager.js';
+import type { EvaluatorConfig } from './evaluator.js';
 import type { WorkerConfig } from './worker.js';
 
-// Mock Manager and Worker classes
-const mockBuildGenerateInstructionPrompt = vi.fn(() => 'mocked prompt');
-const mockBuildFollowupPrompt = vi.fn(() => 'mocked followup');
-const mockBuildPrompt = vi.fn(() => 'mocked worker prompt');
-
-vi.mock('./manager.js', () => ({
-  Manager: vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
-    queryStream: vi.fn(),
-    cleanup: vi.fn(),
-  })),
-  type: {},
-}));
+// Mock Evaluator and Worker classes
+vi.mock('./evaluator.js', () => {
+  const mockBuildEvaluationPrompt = vi.fn(() => 'mocked evaluation prompt');
+  return {
+    Evaluator: vi.fn().mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      queryStream: vi.fn(),
+      cleanup: vi.fn(),
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          is_complete: false,
+          reason: 'Task not complete',
+          missing_items: ['Item 1'],
+          confidence: 0.8,
+        },
+      }),
+    })),
+    buildEvaluationPrompt: mockBuildEvaluationPrompt,
+    type: {},
+  };
+});
 
 vi.mock('./worker.js', () => ({
   Worker: vi.fn().mockImplementation(() => ({
@@ -57,40 +64,35 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 vi.mock('./mcp-utils.js', () => ({
-  isUserFeedbackTool: vi.fn((msg: any) =>
-    msg.messageType === 'tool_use' && msg.metadata?.toolName === 'send_user_feedback'
-  ),
   isTaskDoneTool: vi.fn((msg: any) =>
     msg.messageType === 'tool_use' && msg.metadata?.toolName === 'task_done'
   ),
 }));
 
-import { Manager } from './manager.js';
+import { Evaluator } from './evaluator.js';
 import { Worker } from './worker.js';
 import { extractText } from '../utils/sdk.js';
 
-// Assign static method mocks
-(Manager as any).buildGenerateInstructionPrompt = mockBuildGenerateInstructionPrompt;
-(Manager as any).buildFollowupPrompt = mockBuildFollowupPrompt;
-(Worker as any).buildPrompt = mockBuildPrompt;
-
-const mockedManager = vi.mocked(Manager);
+const mockedEvaluator = vi.mocked(Evaluator);
 const mockedWorker = vi.mocked(Worker);
 const mockedExtractText = vi.mocked(extractText);
 
-describe('IterationBridge (Dual-Coroutine Architecture)', () => {
+// Mock static methods
+(Worker as any).buildPrompt = vi.fn(() => 'mocked worker prompt');
+
+describe('IterationBridge (Direct Evaluator-Worker Architecture)', () => {
   let iterationBridge: IterationBridge;
   let config: IterationBridgeConfig;
-  let managerConfig: ManagerConfig;
+  let evaluatorConfig: EvaluatorConfig;
   let workerConfig: WorkerConfig;
-  let mockManagerInstance: any;
+  let mockEvaluatorInstance: any;
   let mockWorkerInstance: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    managerConfig = {
-      apiKey: 'test-manager-key',
+    evaluatorConfig = {
+      apiKey: 'test-evaluator-key',
       model: 'claude-3-5-sonnet-20241022',
     };
 
@@ -100,17 +102,25 @@ describe('IterationBridge (Dual-Coroutine Architecture)', () => {
     };
 
     config = {
-      managerConfig,
+      evaluatorConfig,
       workerConfig,
       taskMdContent: '# Test Task\n\nDescription here',
       iteration: 1,
     };
 
-    // Mock Manager instance
-    mockManagerInstance = {
+    // Mock Evaluator instance
+    mockEvaluatorInstance = {
       initialize: vi.fn().mockResolvedValue(undefined),
       queryStream: vi.fn(),
       cleanup: vi.fn(),
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          is_complete: false,
+          reason: 'Task not complete',
+          missing_items: ['Item 1', 'Item 2'],
+          confidence: 0.8,
+        },
+      }),
     };
 
     // Mock Worker instance
@@ -120,7 +130,7 @@ describe('IterationBridge (Dual-Coroutine Architecture)', () => {
       cleanup: vi.fn(),
     };
 
-    mockedManager.mockImplementation(() => mockManagerInstance as any);
+    mockedEvaluator.mockImplementation(() => mockEvaluatorInstance as any);
     mockedWorker.mockImplementation(() => mockWorkerInstance as any);
 
     // Default extractText implementation
@@ -148,93 +158,49 @@ describe('IterationBridge (Dual-Coroutine Architecture)', () => {
     it('should accept previousWorkerOutput', () => {
       const configWithOutput: IterationBridgeConfig = {
         ...config,
-        previousWorkerOutput: 'Previous worker result',
+        iteration: 2,
+        previousWorkerOutput: 'Previous result',
       };
 
       const bridge = new IterationBridge(configWithOutput);
-      expect(bridge).toBeInstanceOf(IterationBridge);
+      expect(bridge.iteration).toBe(2);
+      expect(bridge.previousWorkerOutput).toBe('Previous result');
     });
   });
 
-  describe('runIterationStreaming (dual-coroutine)', () => {
-    it('should execute single Manager-Worker exchange', async () => {
-      const managerInstance = mockManagerInstance;
+  describe('runIterationStreaming (direct Evaluator-Worker)', () => {
+    it('should execute single Evaluator-Worker exchange', async () => {
+      const evaluatorInstance = mockEvaluatorInstance;
 
-      // Phase 1: Manager produces instruction
-      // Phase 3: Manager processes Worker result
-      let callCount = 0;
-      managerInstance.queryStream.mockImplementation(async function* () {
-        callCount++;
-        if (callCount === 1) {
-          // Phase 1: Manager instruction
-          yield { content: 'Execute this task', messageType: 'text', metadata: {} };
-        } else {
-          // Phase 3: Manager processes result
-          yield { content: 'Task complete', messageType: 'text', metadata: {} };
-        }
-      });
-
-      const workerInstance = mockWorkerInstance;
-      // Phase 2: Worker executes and returns result
-      workerInstance.queryStream.mockReturnValueOnce(async function* () {
-        yield { content: 'Worker result here', messageType: 'result', metadata: {} };
+      // Phase 1: Evaluator evaluates task (not complete, provides missing_items)
+      evaluatorInstance.queryStream.mockReturnValueOnce(async function* () {
+        yield {
+          content: JSON.stringify({ is_complete: false, missing_items: ['Implement feature X'] }),
+          messageType: 'text',
+          metadata: {},
+        };
       }());
 
-      // Collect all yielded messages
+      const workerInstance = mockWorkerInstance;
+      workerInstance.queryStream.mockReturnValueOnce(async function* () {
+        yield { content: 'Feature X implemented', messageType: 'result', metadata: {} };
+      }());
+
       const messages: any[] = [];
       for await (const msg of iterationBridge.runIterationStreaming()) {
         messages.push(msg);
       }
 
       expect(messages).toBeDefined();
-      expect(callCount).toBe(2); // Manager called twice (instruction + process result)
-      expect(workerInstance.queryStream).toHaveBeenCalledTimes(1); // Worker called once
+      expect(evaluatorInstance.queryStream).toHaveBeenCalledTimes(1);
+      expect(workerInstance.queryStream).toHaveBeenCalledTimes(1);
     });
 
-    it('should yield send_user_feedback messages from Manager', async () => {
-      const managerInstance = mockManagerInstance;
+    it('should skip Worker if Evaluator determines task is complete', async () => {
+      const evaluatorInstance = mockEvaluatorInstance;
 
-      let callCount = 0;
-      managerInstance.queryStream.mockImplementation(async function* () {
-        callCount++;
-        if (callCount === 1) {
-          // Phase 1: Manager sends feedback and produces instruction
-          yield {
-            content: '',
-            messageType: 'tool_use',
-            metadata: {
-              toolName: 'send_user_feedback',
-              toolInputRaw: { content: 'Starting task...', format: 'text' },
-            },
-          };
-          yield { content: 'Execute task', messageType: 'text', metadata: {} };
-        } else {
-          // Phase 3: Manager processes result
-          yield { content: 'Done', messageType: 'text', metadata: {} };
-        }
-      });
-
-      const workerInstance = mockWorkerInstance;
-      workerInstance.queryStream.mockReturnValueOnce(async function* () {
-        yield { content: 'Result', messageType: 'result', metadata: {} };
-      }());
-
-      const messages: any[] = [];
-      for await (const msg of iterationBridge.runIterationStreaming()) {
-        messages.push(msg);
-      }
-
-      const feedbackMessages = messages.filter(
-        (m) => m.metadata?.toolName === 'send_user_feedback'
-      );
-      expect(feedbackMessages.length).toBeGreaterThan(0);
-    });
-
-    it('should skip Worker if Manager calls task_done directly', async () => {
-      const managerInstance = mockManagerInstance;
-
-      // Manager calls task_done immediately
-      managerInstance.queryStream.mockReturnValueOnce(async function* () {
+      // Evaluator determines task is complete
+      evaluatorInstance.queryStream.mockReturnValueOnce(async function* () {
         yield {
           content: '',
           messageType: 'tool_use',
@@ -254,18 +220,16 @@ describe('IterationBridge (Dual-Coroutine Architecture)', () => {
       expect(workerInstance.queryStream).not.toHaveBeenCalled();
     });
 
-    it('should cleanup both Manager and Worker', async () => {
-      const managerInstance = mockManagerInstance;
+    it('should cleanup both Evaluator and Worker', async () => {
+      const evaluatorInstance = mockEvaluatorInstance;
 
-      let callCount = 0;
-      managerInstance.queryStream.mockImplementation(async function* () {
-        callCount++;
-        if (callCount === 1) {
-          yield { content: 'Do work', messageType: 'text', metadata: {} };
-        } else {
-          yield { content: 'Finished', messageType: 'text', metadata: {} };
-        }
-      });
+      evaluatorInstance.queryStream.mockReturnValueOnce(async function* () {
+        yield {
+          content: JSON.stringify({ is_complete: false, missing_items: ['Do work'] }),
+          messageType: 'text',
+          metadata: {},
+        };
+      }());
 
       const workerInstance = mockWorkerInstance;
       workerInstance.queryStream.mockReturnValueOnce(async function* () {
@@ -276,86 +240,8 @@ describe('IterationBridge (Dual-Coroutine Architecture)', () => {
         // consume
       }
 
-      expect(managerInstance.cleanup).toHaveBeenCalled();
+      expect(evaluatorInstance.cleanup).toHaveBeenCalled();
       expect(workerInstance.cleanup).toHaveBeenCalled();
-    });
-  });
-
-  describe('runIteration (legacy)', () => {
-    it('should return buffered results from streaming', async () => {
-      const managerInstance = mockManagerInstance;
-
-      let callCount = 0;
-      managerInstance.queryStream.mockImplementation(async function* () {
-        callCount++;
-        if (callCount === 1) {
-          // Phase 1: Manager produces instruction (not yielded, only stored)
-          yield { content: 'Instruction', messageType: 'text', metadata: {} };
-        } else {
-          // Phase 3: Manager processes result
-          yield { content: 'Complete', messageType: 'text', metadata: {} };
-        }
-      });
-
-      const workerInstance = mockWorkerInstance;
-      workerInstance.queryStream.mockReturnValueOnce(async function* () {
-        yield { content: 'Worker result', messageType: 'result', metadata: {} };
-      }());
-
-      const result = await iterationBridge.runIteration();
-
-      expect(result).toBeDefined();
-      expect(result.messages).toBeDefined();
-      // Manager's text output in Phase 3 should be collected
-      expect(result.managerOutput).toContain('Complete');
-      // Worker output should be collected from queue
-      expect(result.workerOutput).toContain('Worker result');
-    });
-
-    it('should handle Manager task_done', async () => {
-      const managerInstance = mockManagerInstance;
-
-      managerInstance.queryStream.mockReturnValueOnce(async function* () {
-        yield {
-          content: '',
-          messageType: 'tool_use',
-          metadata: { toolName: 'task_done' },
-        };
-      }());
-
-      const result = await iterationBridge.runIteration();
-
-      expect(result.taskDone).toBe(true);
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle Manager query errors', async () => {
-      const managerInstance = mockManagerInstance;
-
-      managerInstance.queryStream.mockImplementation(() => {
-        throw new Error('Manager error');
-      });
-
-      // Should throw error
-      await expect(iterationBridge.runIteration()).rejects.toThrow('Manager error');
-    });
-
-    it('should cleanup on error', async () => {
-      const managerInstance = mockManagerInstance;
-
-      managerInstance.queryStream.mockImplementation(() => {
-        throw new Error('Error');
-      });
-
-      try {
-        await iterationBridge.runIteration();
-      } catch (e) {
-        // Expected
-      }
-
-      // Cleanup should still happen
-      expect(managerInstance.cleanup).toHaveBeenCalled();
     });
   });
 });
