@@ -237,6 +237,31 @@ ${text}`;
   }
 
   /**
+   * Reset Pilot instance to clear all conversation context.
+   *
+   * This creates a new Pilot instance, effectively clearing all:
+   * - Message queues
+   * - Active streams
+   * - Session history (via SDK resume)
+   *
+   * Called when user sends /reset command.
+   */
+  private resetPilot(): void {
+    this.logger.info('Resetting Pilot instance to clear conversation context');
+
+    // Create new Pilot instance with same callbacks
+    this.pilot = new Pilot({
+      callbacks: {
+        sendMessage: this.sendMessage.bind(this),
+        sendCard: this.sendCard.bind(this),
+        sendFile: this.sendFileToUser.bind(this),
+      },
+    });
+
+    this.logger.info('Pilot reset complete');
+  }
+
+  /**
    * Handle /long command - start long task workflow.
    */
 
@@ -391,6 +416,17 @@ ${text}`;
 
       // Use task flow (Scout → Task.md → DialogueOrchestrator)
       await this.handleTaskFlow(chat_id, taskText, message_id, sender);
+      return;
+    }
+
+    // Check for /reset command - clear conversation context
+    if (text.trim() === '/reset') {
+      this.logger.info({ chatId: chat_id }, 'Reset command triggered');
+      await this.resetPilot();
+      await this.sendMessage(
+        chat_id,
+        '✅ **Conversation reset**\n\nA new conversation session has been started. All previous context has been cleared.'
+      );
       return;
     }
 

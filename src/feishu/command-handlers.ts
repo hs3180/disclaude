@@ -4,8 +4,11 @@
  * This module extracts command handling logic from the main bot class
  * to improve modularity and maintainability.
  *
- * Only /task command is specially handled. All other messages (including
- * any potential commands like /status, /help, /cancel) are passed through
+ * Supported commands:
+ * - /task <description> - Start structured task workflow (Scout + Planner)
+ * - /reset - Clear conversation context by creating new Pilot instance
+ *
+ * All other messages (including any other potential commands) are passed
  * to the Agent SDK for direct processing.
  */
 
@@ -19,6 +22,7 @@ const logger = createLogger('CommandHandlers');
 export interface CommandHandlerContext {
   chatId: string;
   sendMessage: (chatId: string, message: string) => Promise<void>;
+  resetPilot?: () => void; // Optional callback to reset Pilot instance
 }
 
 /**
@@ -45,13 +49,51 @@ export async function handleTaskCommand(
 }
 
 /**
- * Check if text is a /task command.
+ * Handle /reset command - clear conversation context by creating new Pilot instance
+ */
+export async function handleResetCommand(
+  context: CommandHandlerContext
+): Promise<void> {
+  const { chatId, sendMessage, resetPilot } = context;
+
+  logger.info({ chatId }, 'Reset command triggered');
+
+  if (!resetPilot) {
+    await sendMessage(
+      chatId,
+      '⚠️ Reset functionality is not available in this context.'
+    );
+    return;
+  }
+
+  try {
+    // Reset Pilot by creating new instance (clears all context)
+    resetPilot();
+
+    await sendMessage(
+      chatId,
+      '✅ **Conversation reset**\n\nA new conversation session has been started. All previous context has been cleared.'
+    );
+
+    logger.info({ chatId }, 'Pilot reset successfully');
+  } catch (error) {
+    logger.error({ err: error, chatId }, 'Failed to reset Pilot');
+
+    await sendMessage(
+      chatId,
+      '❌ Failed to reset conversation. Please try again.'
+    );
+  }
+}
+
+/**
+ * Check if text is a /task or /reset command.
  *
  * Note: All other text (including any other "commands") are passed to the SDK.
  */
 export function isCommand(text: string): boolean {
   const trimmed = text.trim();
-  return trimmed.startsWith('/task ');
+  return trimmed.startsWith('/task ') || trimmed === '/reset';
 }
 
 /**
@@ -82,9 +124,9 @@ export function parseCommand(text: string): {
 /**
  * Execute command.
  *
- * Only handles /task command. Returns true if handled, false otherwise.
+ * Handles /task and /reset commands. Returns true if handled, false otherwise.
  *
- * Note: /reset and any other potential commands are passed to the Agent SDK.
+ * Note: Any other potential commands are passed to the Agent SDK.
  */
 export async function executeCommand(
   context: CommandHandlerContext,
@@ -96,6 +138,12 @@ export async function executeCommand(
   if (trimmed.startsWith('/task ')) {
     const args = trimmed.substring(6).trim();
     await handleTaskCommand(context, args);
+    return true;
+  }
+
+  // Handle /reset command (no arguments)
+  if (trimmed === '/reset') {
+    await handleResetCommand(context);
     return true;
   }
 
