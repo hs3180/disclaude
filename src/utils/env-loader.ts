@@ -168,6 +168,16 @@ function executeBashScript(scriptPath: string): Promise<Record<string, string>> 
     let stdout = '';
     let stderr = '';
 
+    // Track if promise was already resolved/rejected to prevent double resolution
+    let settled = false;
+
+    const cleanup = () => {
+      // Remove all listeners to prevent memory leaks
+      bash.stdout?.removeAllListeners();
+      bash.stderr?.removeAllListeners();
+      bash.removeAllListeners();
+    };
+
     bash.stdout?.on('data', (data) => {
       stdout += data.toString();
     });
@@ -177,6 +187,11 @@ function executeBashScript(scriptPath: string): Promise<Record<string, string>> 
     });
 
     bash.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+
+      cleanup();
+
       if (code !== 0) {
         reject(new Error(`Script exited with code ${code}: ${stderr}`));
         return;
@@ -212,6 +227,10 @@ function executeBashScript(scriptPath: string): Promise<Record<string, string>> 
     });
 
     bash.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+
+      cleanup();
       reject(new Error(`Failed to spawn bash: ${error.message}`));
     });
   });

@@ -518,6 +518,11 @@ ${uploadPrompt}`;
     const agentConfig = Config.getAgentConfig();
     this.logger.info({ model: agentConfig.model }, 'Feishu bot starting');
 
+    // Initialize message logger BEFORE processing any messages
+    this.logger.debug('Initializing message logger...');
+    await messageLogger.init();
+    this.logger.debug('Message logger initialized');
+
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: any) => {

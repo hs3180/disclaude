@@ -10,6 +10,10 @@ import { FeishuBot } from './feishu/index.js';
 export async function runFeishu(): Promise<void> {
   console.log('Initializing Feishu/Lark bot...');
 
+  // Increase max listeners to prevent MaxListenersExceededWarning
+  // The bot may spawn multiple subprocesses through Agent tools
+  process.setMaxListeners(20);
+
   // Create Feishu bot
   const bot = new FeishuBot(Config.FEISHU_APP_ID!, Config.FEISHU_APP_SECRET!);
 

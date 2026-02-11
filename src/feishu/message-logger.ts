@@ -27,12 +27,24 @@ export class MessageLogger {
   // In-memory cache for immediate deduplication (no size limit)
   // Loaded at startup from all existing MD files
   private processedMessageIds = new Set<string>();
+  private initialized = false;
 
   constructor() {
     const workspaceDir = Config.getWorkspaceDir();
     this.chatDir = path.join(workspaceDir, MESSAGE_LOGGING.LOGS_DIR);
+    // Don't call initialize() in constructor - it's async and needs to be awaited
+  }
 
-    this.initialize();
+  /**
+   * Explicit initialization method that must be called and awaited before using the logger.
+   * This ensures the chat directory exists and message IDs are loaded.
+   */
+  async init(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+    await this.initialize();
+    this.initialized = true;
   }
 
   private async initialize(): Promise<void> {
