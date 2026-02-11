@@ -89,6 +89,7 @@ describe('IterationBridge (Plan-and-Execute Architecture)', () => {
       },
       taskMdContent: '# Test Task\n\nDescription here',
       iteration: 1,
+      taskId: 'test-task-id',  // ✨ Add required taskId
     };
 
     // Mock Evaluator instance
@@ -98,7 +99,7 @@ describe('IterationBridge (Plan-and-Execute Architecture)', () => {
         yield { content: 'Mock evaluation response', role: 'assistant', messageType: 'text' };
       })()),
       cleanup: vi.fn(),
-      evaluate: vi.fn(async function(this: any, taskMdContent: string, iteration: number, workerOutput?: string) {
+      evaluate: vi.fn(async function(this: any, _taskMdContent: string, _iteration: number, _workerOutput?: string) {
         const messages: any[] = [];
         for await (const msg of mockEvaluatorInstance.queryStream('mocked evaluation prompt')) {
           messages.push(msg);

@@ -24,23 +24,26 @@ export interface TaskContext {
 /**
  * Build prompt with task context for Scout agent.
  *
+ * Uses a direct template defined in this module (not extracted from skill files).
+ * This ensures Scout's prompt structure is stable and explicitly defined in code.
+ *
  * @param userPrompt - Original user prompt
  * @param taskContext - Task context object containing chatId, userId, messageId, taskPath
- * @param skillContent - Optional skill file content for template extraction
  * @returns Formatted prompt with context prepended
  */
 export function buildScoutPrompt(
   userPrompt: string,
   taskContext: TaskContext,
+  // skillContent parameter is kept for backward compatibility but unused
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   skillContent?: string
 ): string {
   if (!taskContext) {
     return userPrompt;
   }
 
-  // Extract prompt template from skill file
-  // The template should be in a section called "## Prompt Template"
-  const promptTemplate = extractPromptTemplate(skillContent);
+  // Use direct template (defined below)
+  const promptTemplate = getDirectTemplate();
 
   // Replace placeholders in the template
   const prompt = promptTemplate
@@ -54,105 +57,14 @@ export function buildScoutPrompt(
 }
 
 /**
- * Parse Task.md to extract metadata and user request.
+ * Get the direct prompt template for Scout agent.
  *
- * Extracts:
- * - Task ID (messageId)
- * - Chat ID
- * - User ID (optional)
- * - User's original request (from "## Original Request" section)
+ * This template is explicitly defined in code (not loaded from external files)
+ * to ensure stability and predictability of Scout's behavior.
  *
- * @param taskMdContent - Full Task.md content
- * @returns Parsed task metadata
+ * @returns Direct template string with placeholders
  */
-export function parseTaskMd(taskMdContent: string): {
-  messageId: string;
-  chatId: string;
-  userId?: string;
-  userRequest: string;
-} {
-  // Extract Task ID (messageId) from "**Task ID**: ..." or "**Task ID**: ..." line
-  const taskIdMatch = taskMdContent.match(/\*?\*?Task ID\*?\*?:\s*([^\n]+)/i);
-  const messageId = taskIdMatch ? taskIdMatch[1].trim() : '';
-
-  // Extract Chat ID from "**Chat ID**: ..." line
-  const chatIdMatch = taskMdContent.match(/\*?\*?Chat ID\*?\*?:\s*([^\n]+)/i);
-  const chatId = chatIdMatch ? chatIdMatch[1].trim() : '';
-
-  // Extract User ID from "**User ID**: ..." line (optional)
-  const userIdMatch = taskMdContent.match(/\*?\*?User ID\*?\*?:\s*([^\n]+)/i);
-  const userId = userIdMatch ? userIdMatch[1].trim() : undefined;
-
-  // Extract Original Request from "## Original Request" section
-  // The request is in a code block after this section
-  const originalRequestSectionMatch = taskMdContent.match(/##\s*Original\s*Request\s*\n([\s\S]*?)(?=##|\Z)/);
-  let userRequest = '';
-
-  if (originalRequestSectionMatch && originalRequestSectionMatch[1]) {
-    // Extract content from code block (``` or ~~~)
-    const codeBlockMatch = originalRequestSectionMatch[1].match(/```[\s\S]*?\n([\s\S]*?)```|~~~[\s\S]*?\n([\s\S]*?)~~~/);
-    if (codeBlockMatch) {
-      userRequest = (codeBlockMatch[1] || codeBlockMatch[2] || '').trim();
-    } else {
-      // Fallback: use the entire section content without leading/trailing whitespace
-      userRequest = originalRequestSectionMatch[1].trim();
-    }
-  }
-
-  return {
-    messageId,
-    chatId,
-    userId,
-    userRequest,
-  };
-}
-
-/**
- * Extract the prompt template from the scout skill file.
- *
- * Looks for a section titled "## Prompt Template" and returns its content.
- * The template should use placeholders like {messageId}, {taskPath}, etc.
- * that will be replaced with actual values.
- *
- * The template is delimited by ~~~PROMPT_TEMPLATE markers to avoid conflicts
- * with nested code blocks that use ``` markers.
- *
- * @param skillContent - Skill file markdown content (optional)
- * @returns Extracted template string or fallback template if not found
- */
-export function extractPromptTemplate(skillContent?: string): string {
-  if (!skillContent) {
-    logger.warn('Skill content not provided, using fallback template');
-    return getFallbackTemplate();
-  }
-
-  // Find the "## Prompt Template" section (match everything after it to end of file)
-  // This is the last section in the skill file, so we match to the end
-  const templateSectionMatch = skillContent.match(/##\s*Prompt\s*\Template\s*\n([\s\S]+)/);
-
-  if (!templateSectionMatch || !templateSectionMatch[1]) {
-    logger.warn('Could not find "## Prompt Template" section in skill file, using fallback');
-    return getFallbackTemplate();
-  }
-
-  // Extract the template content between ~~~PROMPT_TEMPLATE markers
-  const codeBlockMatch = templateSectionMatch[1].match(/~~~PROMPT_TEMPLATE\n([\s\S]*?)~~~PROMPT_TEMPLATE/);
-
-  if (!codeBlockMatch || !codeBlockMatch[1]) {
-    logger.warn('Could not find PROMPT_TEMPLATE delimiters in skill file, using fallback');
-    return getFallbackTemplate();
-  }
-
-  return codeBlockMatch[1].trim();
-}
-
-/**
- * Get fallback prompt template when skill file is unavailable.
- * This should rarely happen as skill loading is mandatory.
- *
- * @returns Default template string
- */
-export function getFallbackTemplate(): string {
+function getDirectTemplate(): string {
   return `## Task Context
 
 - **Message ID**: {messageId}
@@ -194,3 +106,4 @@ Use your exploration and analysis INTERNALLY to inform the Expected Results sect
 
 **Remember**: You are creating a task specification for execution, not answering directly.`;
 }
+
