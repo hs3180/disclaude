@@ -41,6 +41,7 @@ import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { createLogger } from '../utils/logger.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
+import { TaskFileManager } from '../task/file-manager.js';
 
 const logger = createLogger('Evaluator');
 
@@ -57,6 +58,8 @@ export interface EvaluatorConfig {
   model: string;
   apiBaseUrl?: string;
   permissionMode?: 'default' | 'bypassPermissions';
+  /** Optional subdirectory for task files (e.g., 'regular' for CLI tasks) */
+  subdirectory?: string;
 }
 
 /**
@@ -88,6 +91,7 @@ export class Evaluator {
   readonly permissionMode: EvaluatorPermissionMode;
   protected skill?: ParsedSkill;
   protected initialized = false;
+  private fileManager: TaskFileManager;
 
   private readonly logger = createLogger('Evaluator');
 
@@ -96,6 +100,7 @@ export class Evaluator {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode || 'bypassPermissions';
+    this.fileManager = new TaskFileManager(Config.getWorkspaceDir(), config.subdirectory);
   }
 
   /**
@@ -214,7 +219,8 @@ export class Evaluator {
   async evaluate(
     taskMdContent: string,
     iteration: number,
-    workerOutput?: string
+    workerOutput?: string,
+    taskId?: string
   ): Promise<{
     result: EvaluationResult;
     messages: AgentMessage[];
@@ -230,10 +236,52 @@ export class Evaluator {
     // Parse evaluation result from messages
     const result = Evaluator.parseEvaluationResult(messages, iteration);
 
+    // ✨ NEW: Write evaluation.md via TaskFileManager
+    if (taskId) {
+      try {
+        await this.fileManager.createIteration(taskId, iteration);
+        const evalContent = this.formatEvaluationMarkdown(result, iteration);
+        await this.fileManager.writeEvaluation(taskId, iteration, evalContent);
+        this.logger.debug({ taskId, iteration }, 'Evaluation written via TaskFileManager');
+      } catch (error) {
+        this.logger.error({ err: error, taskId, iteration }, 'Failed to write evaluation via TaskFileManager');
+      }
+    }
+
     return {
       result,
       messages,
     };
+  }
+
+  /**
+   * Format evaluation result as markdown.
+   */
+  private formatEvaluationMarkdown(result: EvaluationResult, iteration: number): string {
+    const timestamp = new Date().toISOString();
+
+    return `# Evaluation: Iteration ${iteration}
+
+**Timestamp**: ${timestamp}
+**Iteration**: ${iteration}
+
+## Completion Status
+
+**Is Complete**: ${result.is_complete}
+**Confidence**: ${result.confidence.toFixed(2)}
+
+## Assessment
+
+${result.reason}
+
+## Missing Items
+
+${result.missing_items.length > 0 ? result.missing_items.map(item => `- [ ] ${item}`).join('\n') : '(None - task is complete)'}
+
+## Recommendations
+
+${result.is_complete ? 'Task is complete. No further action needed.' : 'Task requires additional work. See missing items above.'}
+`;
   }
 
   /**

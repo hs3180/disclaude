@@ -19,8 +19,9 @@ import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage } from '../types/agent.js';
 import { createLogger } from '../utils/logger.js';
-import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { buildScoutPrompt, type TaskContext } from '../task/prompt-builder.js';
+import { TaskFileManager } from '../task/file-manager.js';
+import { ALLOWED_TOOLS } from '../config/tool-configuration.js';
 
 // Re-export extractText for convenience
 export { extractText } from '../utils/sdk.js';
@@ -29,43 +30,36 @@ export { extractText } from '../utils/sdk.js';
  * Scout agent configuration.
  */
 export interface ScoutConfig {
-  apiKey: string;
-  model: string;
-  apiBaseUrl?: string;
+  /**
+   * Name of the skill to use.
+   * Defaults to 'scout' if not provided.
+   * The skill file should be available in workspace/.claude/skills/{skillName}/
+   */
+  skillName?: string;
 }
 
 /**
  * Scout agent for task initialization.
  *
- * This agent relies entirely on skill files for behavior definition.
- * No fallback prompts are used - if the skill fails to load, an error is thrown.
+ * This agent uses SDK's built-in skill loading via settingSources: ['project'].
+ * Skills are copied to workspace/.claude/skills during service startup.
+ *
+ * The agent activates the skill using a command prefix in the prompt.
  */
 export class Scout {
-  readonly apiKey: string;
-  readonly model: string;
-  readonly apiBaseUrl: string | undefined;
   readonly workingDirectory: string;
+  readonly skillName: string;
   private taskContext?: TaskContext;
-  private skill?: ParsedSkill;
-  private initialized = false;
-  private logger = createLogger('Scout', { model: '' });
+  private logger: ReturnType<typeof createLogger>;
+  private fileManager: TaskFileManager;
 
   constructor(config: ScoutConfig) {
-    this.apiKey = config.apiKey;
-    this.model = config.model;
-    this.apiBaseUrl = config.apiBaseUrl;
+    this.skillName = config.skillName || 'scout';
     this.workingDirectory = Config.getWorkspaceDir();
-    this.logger = createLogger('Scout', { model: this.model });
-  }
-
-  /**
-   * Initialize agent by loading skill file.
-   * Must be called before queryStream().
-   */
-  async initialize(): Promise<void> {
-    if (this.initialized) {return;}
-    await this.loadSkill();
-    this.initialized = true;
+    // Get model from Config for logger initialization
+    const agentConfig = Config.getAgentConfig();
+    this.logger = createLogger('Scout', { model: agentConfig.model });
+    this.fileManager = new TaskFileManager(this.workingDirectory);
   }
 
   /**
@@ -77,62 +71,40 @@ export class Scout {
     this.logger.debug({ chatId: context.chatId, messageId: context.messageId, taskPath: context.taskPath }, 'Task context set');
   }
 
-  /**
-   * Load skill file for this agent.
-   * Skill loading is required - throws error if it fails.
-   */
-  private async loadSkill(): Promise<void> {
-    this.skill = await loadSkillOrThrow('scout');
-    this.logger.debug({
-      skillName: this.skill.name,
-      toolCount: this.skill.allowedTools.length,
-      contentLength: this.skill.content.length,
-    }, 'Scout skill loaded');
-  }
 
   /**
    * Create SDK options for interaction agent.
-   * Tool configuration comes from the skill file.
+   * Uses settingSources: ['project'] to load skills from workspace/.claude/skills
    */
   private createSdkOptions(): Record<string, unknown> {
-    // Skill is required, so allowedTools is always defined
-    const allowedTools = this.skill!.allowedTools;
+    // Get agent configuration from Config (delayed loading)
+    const agentConfig = Config.getAgentConfig();
 
     this.logger.debug({
-      hasSkill: !!this.skill,
-      skillName: this.skill?.name,
-      allowedTools,
-      toolCount: allowedTools.length,
+      skillName: this.skillName,
+      workingDirectory: this.workingDirectory,
+      provider: agentConfig.provider,
+      model: agentConfig.model,
     }, 'Scout SDK options');
 
-    const sdkOptions: Record<string, unknown> = {
+    return {
       cwd: this.workingDirectory,
       permissionMode: 'bypassPermissions',
+      // Load skills from workspace/.claude/skills via settingSources
       settingSources: ['project'],
-      // Tool configuration from skill file
-      allowedTools,
+      // Use default tool configuration
+      allowedTools: ALLOWED_TOOLS,
+      // Set model
+      model: agentConfig.model,
+      // Set environment using unified helper
+      env: buildSdkEnv(agentConfig.apiKey, agentConfig.apiBaseUrl),
     };
-
-    // Set environment using unified helper
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl);
-
-    // Set model
-    if (this.model) {
-      sdkOptions.model = this.model;
-    }
-
-    return sdkOptions;
   }
 
   /**
    * Stream agent response.
    */
   async *queryStream(prompt: string): AsyncIterable<AgentMessage> {
-    // Ensure skill is loaded before processing
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
     this.logger.debug({ promptLength: prompt.length }, 'Starting scout query');
 
     try {
@@ -146,11 +118,13 @@ export class Scout {
         baseUrl: (sdkOptions as { env?: Record<string, unknown> }).env?.ANTHROPIC_BASE_URL,
       }, 'Scout SDK query config');
 
-      // Build prompt with context prepended using prompt builder
-      const skillContent = this.skill?.content;
-      const fullPrompt = this.taskContext
-        ? buildScoutPrompt(prompt, this.taskContext, skillContent)
-        : prompt;
+      // Build prompt with skill activation command and context
+      const fullPrompt = this.buildFullPrompt(prompt);
+
+      this.logger.debug({
+        fullPrompt: fullPrompt.substring(0, 500),
+        promptLength: fullPrompt.length,
+      }, 'Scout full prompt with skill activation');
 
       const queryResult = query({
         prompt: fullPrompt,
@@ -162,6 +136,21 @@ export class Scout {
 
         if (!parsed.content) {
           continue;
+        }
+
+        // ✨ NEW: Write task.md via TaskFileManager when Write tool is used
+        if (parsed.metadata?.toolName === 'Write' && this.taskContext?.messageId) {
+          try {
+            // Extract file content from metadata
+            const toolInput = parsed.metadata.toolInput as { filePath?: string; content?: string } | undefined;
+            if (toolInput?.content && typeof toolInput.content === 'string') {
+              await this.fileManager.initializeTask(this.taskContext.messageId);
+              await this.fileManager.writeTaskSpec(this.taskContext.messageId, toolInput.content);
+              this.logger.debug({ taskId: this.taskContext.messageId }, 'Task spec written via TaskFileManager');
+            }
+          } catch (error) {
+            this.logger.error({ err: error }, 'Failed to write task spec via TaskFileManager');
+          }
         }
 
         yield {
@@ -190,5 +179,34 @@ export class Scout {
   cleanup(): void {
     this.logger.debug('Cleaning up Scout agent');
     this.taskContext = undefined;
+  }
+
+  /**
+   * Build full prompt with skill activation command and task context.
+   *
+   * The prompt structure is:
+   * 1. Skill activation command (uses SDK's Skill tool)
+   * 2. Task context (if available)
+   * 3. Original user prompt
+   *
+   * @param userPrompt - Original user prompt
+   * @returns Full prompt with skill activation and context
+   */
+  private buildFullPrompt(userPrompt: string): string {
+    const parts: string[] = [];
+
+    // 1. Skill activation command - tells SDK to load and use the skill
+    parts.push(`/skill:${this.skillName}`);
+
+    // 2. Task context (if available)
+    if (this.taskContext) {
+      const contextPrompt = buildScoutPrompt(userPrompt, this.taskContext);
+      parts.push(contextPrompt);
+    } else {
+      // 3. Original prompt (if no context)
+      parts.push(userPrompt);
+    }
+
+    return parts.join('\n\n');
   }
 }
