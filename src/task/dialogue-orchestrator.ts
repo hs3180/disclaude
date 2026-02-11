@@ -34,7 +34,7 @@
  * - No cross-iteration session IDs needed
  */
 import type { AgentMessage } from '../types/agent.js';
-import { DIALOGUE } from '../config/constants.js';
+import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { extractText } from '../utils/sdk.js';
 import * as path from 'path';
@@ -84,7 +84,7 @@ export class DialogueOrchestrator {
   readonly executorConfig: LongTaskConfig;
   readonly evaluatorConfig: EvaluatorConfig;
   /** Maximum iterations from constants - single source of truth */
-  readonly maxIterations = DIALOGUE.MAX_ITERATIONS;
+  readonly maxIterations = Config.MAX_ITERATIONS;
   private readonly onTaskPlanGenerated?: (plan: TaskPlanData) => Promise<void>;
   private readonly taskPlanExtractor: TaskPlanExtractor;
   private readonly messageTracker: DialogueMessageTracker;

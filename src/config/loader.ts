@@ -146,6 +146,13 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     logger.error('agent.model must be a string');
     return false;
   }
+  if (
+    config.agent?.maxIterations !== undefined
+    && (!Number.isInteger(config.agent.maxIterations) || config.agent.maxIterations < 1)
+  ) {
+    logger.error('agent.maxIterations must be a positive integer');
+    return false;
+  }
 
   // Validate logging config if present
   if (config.logging?.level && typeof config.logging.level !== 'string') {

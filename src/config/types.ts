@@ -27,6 +27,8 @@ export interface AgentConfig {
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
+  /** Maximum number of dialogue iterations */
+  maxIterations?: number;
 }
 
 /**

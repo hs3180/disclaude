@@ -51,7 +51,19 @@ export const FILE_DEDUPLICATION = {
  */
 export const DIALOGUE = {
   /** Maximum number of iterations in the dialogue loop */
-  MAX_ITERATIONS: 20,
+  MAX_ITERATIONS: 6,
+} as const;
+
+/**
+ * Evaluator prompt sizing configuration
+ */
+export const EVALUATOR = {
+  /** Max characters of worker output included in evaluator prompt */
+  MAX_WORKER_OUTPUT_CHARS: 8000,
+  /** Tail window from worker output to preserve latest execution details */
+  WORKER_OUTPUT_TAIL_CHARS: 4000,
+  /** Max number of extracted signal lines to include */
+  MAX_SIGNAL_LINES: 40,
 } as const;
 
 /**

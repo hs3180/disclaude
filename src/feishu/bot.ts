@@ -52,6 +52,8 @@ export class FeishuBot extends EventEmitter {
   // Active dialogue bridges per chat
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private activeDialogues = new Map<string, DialogueOrchestrator>();
+  // Enforce one /task flow per chat to avoid concurrent SDK load spikes
+  private activeTaskFlows = new Set<string>();
 
   // File handler for file/image message processing
   private fileHandler: FileHandler;
@@ -204,15 +206,29 @@ export class FeishuBot extends EventEmitter {
     messageId: string,
     sender?: { sender_type?: string; sender_id?: string }
   ): Promise<string> {
+    if (this.activeTaskFlows.has(chatId)) {
+      await this.sendMessage(
+        chatId,
+        '⏳ 当前已有一个 /task 正在执行。请等待当前任务完成后再提交新任务。'
+      );
+      this.logger.warn({ chatId, messageId }, 'Rejected concurrent /task request for chat');
+      return '';
+    }
+
+    this.activeTaskFlows.add(chatId);
     const conversationHistory = messageHistoryManager.getFormattedHistory(chatId, 20);
 
-    return this.taskFlowOrchestrator.execute({
-      chatId,
-      messageId,
-      text,
-      sender,
-      conversationHistory,
-    });
+    try {
+      return this.taskFlowOrchestrator.execute({
+        chatId,
+        messageId,
+        text,
+        sender,
+        conversationHistory,
+      });
+    } finally {
+      this.activeTaskFlows.delete(chatId);
+    }
   }
 
   /**

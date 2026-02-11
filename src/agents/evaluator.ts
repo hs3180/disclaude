@@ -37,6 +37,7 @@
 import { query, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
+import { EVALUATOR } from '../config/constants.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { createLogger } from '../utils/logger.js';
@@ -359,11 +360,10 @@ ${result.is_complete ? 'Task is complete. No further action needed.' : 'Task req
     // Add Worker output if available
     const hasWorkerOutput = workerOutput && workerOutput.trim().length > 0;
     if (hasWorkerOutput) {
+      const preparedWorkerOutput = Evaluator.prepareWorkerOutputForEvaluation(workerOutput!);
       prompt += `## Worker's Previous Output (Iteration ${iteration - 1})
 
-\`\`\`
-${workerOutput}
-\`\`\`
+${preparedWorkerOutput}
 
 ---
 
@@ -456,6 +456,77 @@ You ONLY evaluate, you do NOT generate instructions.
     }
 
     return prompt;
+  }
+
+  /**
+   * Prepare worker output for evaluator prompt with bounded size.
+   *
+   * For large outputs, keep high-signal lines and the latest tail window.
+   * This keeps completion evidence while reducing token growth across iterations.
+   */
+  private static prepareWorkerOutputForEvaluation(workerOutput: string): string {
+    const maxChars = EVALUATOR.MAX_WORKER_OUTPUT_CHARS;
+    const tailChars = EVALUATOR.WORKER_OUTPUT_TAIL_CHARS;
+    const maxSignalLines = EVALUATOR.MAX_SIGNAL_LINES;
+
+    if (workerOutput.length <= maxChars) {
+      return `\`\`\`\n${workerOutput}\n\`\`\``;
+    }
+
+    const signalPatterns: RegExp[] = [
+      /expected results?/i,
+      /verification/i,
+      /\btest(s|ing)?\b/i,
+      /\bbuild\b/i,
+      /\berror\b/i,
+      /\bfailed\b/i,
+      /\bsuccess\b/i,
+      /\bcreated\b/i,
+      /\bmodified\b/i,
+      /\bedit(ed|ing)?\b/i,
+      /\bwrite\b/i,
+      /\bsummary\b/i,
+      /✅|❌|⚠️/,
+    ];
+
+    const signalLines: string[] = [];
+    const seen = new Set<string>();
+    for (const line of workerOutput.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (!signalPatterns.some((pattern) => pattern.test(trimmed))) {
+        continue;
+      }
+      if (seen.has(trimmed)) {
+        continue;
+      }
+
+      seen.add(trimmed);
+      signalLines.push(trimmed);
+      if (signalLines.length >= maxSignalLines) {
+        break;
+      }
+    }
+
+    const tail = workerOutput.slice(-tailChars);
+    const signalBlock = signalLines.length > 0
+      ? signalLines.map((line, index) => `${index + 1}. ${line}`).join('\n')
+      : '(No high-signal lines extracted)';
+
+    return [
+      '> Worker output was truncated for evaluation to control token usage.',
+      `> Original length: ${workerOutput.length} chars`,
+      '',
+      '### Extracted Signals',
+      signalBlock,
+      '',
+      `### Tail Window (last ${tailChars} chars)`,
+      '```',
+      tail,
+      '```',
+    ].join('\n');
   }
 
   /**

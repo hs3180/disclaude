@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig } from './loader.js';
 import type { DisclaudeConfig } from './types.js';
+import { DIALOGUE } from './constants.js';
 
 // Export constants and types
 export * from './constants.js';
@@ -51,6 +52,10 @@ export class Config {
   // Anthropic Claude configuration (from env for fallback)
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
   static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || 'claude-3-5-sonnet-20241022';
+  static readonly MAX_ITERATIONS = Math.max(
+    1,
+    fileConfigOnly.agent?.maxIterations || DIALOGUE.MAX_ITERATIONS
+  );
 
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
