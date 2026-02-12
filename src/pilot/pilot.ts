@@ -100,10 +100,6 @@ export class Pilot {
   // Map<chatId, Set<filePath>>
   private pendingWriteFiles = new Map<string, Set<string>>();
 
-  // Track sender open_id per chatId for @ mention on result messages
-  // Map<chatId, senderOpenId>
-  private senderOpenIds = new Map<string, string>();
-
   constructor(options: PilotOptions) {
     this.callbacks = options.callbacks;
   }
@@ -128,11 +124,6 @@ export class Pilot {
     // Initialize queue for this chatId (if not exists)
     if (!this.chatQueues.has(chatId)) {
       this.chatQueues.set(chatId, []);
-    }
-
-    // Store sender open_id for this chatId (for @ mention on result)
-    if (senderOpenId) {
-      this.senderOpenIds.set(chatId, senderOpenId);
     }
 
     // Add message to queue
@@ -293,17 +284,8 @@ export class Pilot {
         }
       }
 
-      // Send @ mention when result message is received (conversation complete)
-      if (parsed.type === 'result') {
-        const senderOpenId = this.senderOpenIds.get(chatId);
-        if (senderOpenId) {
-          const atMessage = `<at user_id="${senderOpenId}">@用户</at>`;
-          await this.callbacks.sendMessage(chatId, atMessage);
-          this.logger.debug({ chatId, senderOpenId }, 'Sent @ mention on result message');
-        }
-      }
-
       // Send text content (for progress updates, tool notifications, etc.)
+      // Note: @ mention is handled by the Agent in its final response via prompt instructions
       if (parsed.content) {
         await this.callbacks.sendMessage(chatId, parsed.content);
       }
