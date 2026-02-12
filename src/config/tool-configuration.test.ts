@@ -41,7 +41,8 @@ describe('Tool Configuration', () => {
       'NotebookEdit',
 
       // User Interaction
-      'AskUserQuestion',
+      // Note: AskUserQuestion is intentionally disabled for all agents
+      // to prevent interactive prompts in automated workflows
       'TodoWrite',
     ];
 
@@ -66,7 +67,7 @@ describe('Tool Configuration', () => {
       // This test documents the architecture decision:
       // - MCP tools are NOT in ALLOWED_TOOLS
       // - Individual agents configure MCP servers via getSkillMcpServers()
-      // - See skill-loader.ts for Worker's Playwright configuration
+      // - See skill-loader.ts for Executor's Playwright configuration
       expect(ALLOWED_TOOLS).not.toContain('mcp__playwright__browser_navigate');
       expect(ALLOWED_TOOLS).not.toContain('mcp__feishu_context__get_user_info');
     });

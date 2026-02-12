@@ -8,21 +8,27 @@
  * - Evaluator: ONLY evaluates, does NOT generate instructions
  *
  * **Tools Available:**
- * - task_done: Signal task completion (ONLY when truly complete)
+ * - Read, Grep, Glob: For reading task files and verifying completion
  *
  * **Tools NOT Available (intentionally restricted):**
  * - send_user_feedback: Reporter's job, not Evaluator's
+ * - task_done: No longer needed - completion detected via final_result.md
  *
- * **Decision Logic:**
+ * **Simplified Decision Logic:**
  * 1. Read Task.md Expected Results
- * 2. Read Worker output (if any)
+ * 2. Read Executor output (if any)
  * 3. Check completion criteria:
- *    - First iteration? → Cannot be complete (no Worker execution yet)
- *    - Code modification required? → Worker must modify files
- *    - Testing required? → Worker must run tests
+ *    - First iteration? → Cannot be complete (no Executor execution yet)
+ *    - Code modification required? → Executor must modify files
+ *    - Testing required? → Executor must run tests
  * 4. Decision:
- *    - IF complete → Call task_done tool
- *    - IF not complete → Return JSON with evaluation result
+ *    - IF complete → Return JSON with is_complete: true AND write evaluation.md
+ *    - IF not complete → Return JSON with is_complete: false
+ *
+ * **Completion Detection:**
+ * - Task completion is determined by the presence of final_result.md (created by Executor)
+ * - Evaluator's evaluation.md is used for tracking evaluation history
+ * - No explicit task_done tool call needed
  *
  * **Output Format:**
  * Evaluator returns structured JSON (not user-facing text):
@@ -34,14 +40,14 @@
  * }
  */
 
-import { query, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { createLogger } from '../utils/logger.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { TaskFileManager } from '../task/file-manager.js';
+import { AgentExecutionError, TimeoutError, formatError } from '../utils/errors.js';
 
 const logger = createLogger('Evaluator');
 
@@ -92,6 +98,7 @@ export class Evaluator {
   protected skill?: ParsedSkill;
   protected initialized = false;
   private fileManager: TaskFileManager;
+  private readonly provider: 'anthropic' | 'glm';
 
   private readonly logger = createLogger('Evaluator');
 
@@ -101,6 +108,10 @@ export class Evaluator {
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode || 'bypassPermissions';
     this.fileManager = new TaskFileManager(Config.getWorkspaceDir(), config.subdirectory);
+
+    // Detect provider from API base URL
+    const agentConfig = Config.getAgentConfig();
+    this.provider = agentConfig.provider;
   }
 
   /**
@@ -123,35 +134,6 @@ export class Evaluator {
   }
 
   /**
-   * Inline tool: Signal task completion.
-   *
-   * This tool is called by the Evaluator agent when it determines the task is complete.
-   * The completion signal is detected by the dialogue bridge to end the iteration loop.
-   *
-   * @param params - Tool parameters
-   * @returns Tool result
-   */
-  private taskDoneTool = tool(
-    'task_done',
-    'Signal that the task is done and end the dialogue loop. Use send_user_feedback BEFORE calling this to provide a final message to the user.',
-    {
-      chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
-      taskId: z.string().optional().describe('Optional task ID for tracking'),
-    },
-    // eslint-disable-next-line require-await
-    async ({ chatId, taskId }) => {
-      this.logger.info({
-        chatId,
-        taskId,
-      }, 'Task completion signaled (task_done called)');
-
-      return {
-        content: [{ type: 'text' as const, text: 'Task completed.' }],
-      };
-    }
-  );
-
-  /**
    * Query the Evaluator agent with streaming response.
    *
    * @param input - Prompt or message array
@@ -165,16 +147,16 @@ export class Evaluator {
     // Create SDK options for Evaluator
     // Skill is required, so allowedTools is always defined
     const allowedTools = this.skill!.allowedTools;
-    // Note: send_user_feedback and send_file_to_feishu are intentionally NOT included (Reporter's job)
+    // Note: send_user_feedback, send_file_to_feishu are intentionally NOT included (Reporter's job)
+    // Note: task_done tool removed - completion detected via final_result.md instead
 
     const sdkOptions: Record<string, unknown> = {
       cwd: Config.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       allowedTools,
       settingSources: ['project'],
-      // No MCP servers needed - Evaluator only uses inline tools
-      // Add inline tools
-      tools: [this.taskDoneTool],
+      // No MCP servers needed - Evaluator only uses file reading tools
+      // No inline tools needed - task_done removed
     };
 
     // Set environment
@@ -185,10 +167,41 @@ export class Evaluator {
       sdkOptions.model = this.model;
     }
 
+    const ITERATOR_TIMEOUT_MS = 30000; // 30 seconds timeout for iterator
+
     try {
-      // Query SDK
-      for await (const message of query({ prompt: input, options: sdkOptions as any })) {
+      // Query SDK with timeout protection
+      const queryResult = query({ prompt: input, options: sdkOptions as any });
+      const iterator = queryResult[Symbol.asyncIterator]();
+
+      while (true) {
+        // Race between next message and timeout
+        const nextPromise = iterator.next();
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Iterator timeout')), ITERATOR_TIMEOUT_MS)
+        );
+
+        const result = await Promise.race([nextPromise, timeoutPromise]) as IteratorResult<unknown>;
+
+        if (result.done) {
+          break;
+        }
+
+        const message = result.value as SDKMessage;
         const parsed = parseSDKMessage(message);
+
+        // GLM-specific logging to monitor streaming behavior
+        if (this.provider === 'glm') {
+          this.logger.debug({
+            provider: 'GLM',
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            stopReason: (message as any).stop_reason,
+            stopSequence: (message as any).stop_sequence,
+            rawMessagePreview: JSON.stringify(message).substring(0, 500),
+          }, 'SDK message received (GLM)');
+        }
 
         // Yield formatted message
         yield {
@@ -199,12 +212,34 @@ export class Evaluator {
         };
       }
     } catch (error) {
-      this.logger.error({ err: error }, 'Evaluator query failed');
-      yield {
-        content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
-        role: 'assistant',
-        messageType: 'error',
-      };
+      if (error instanceof Error && error.message === 'Iterator timeout') {
+        const timeoutError = new TimeoutError(
+          'Evaluator query timeout - unable to complete evaluation',
+          ITERATOR_TIMEOUT_MS,
+          'queryStream'
+        );
+        this.logger.warn({ err: formatError(timeoutError) }, 'Iterator timeout - returning partial results');
+        yield {
+          content: '⚠️ Query timeout - unable to complete evaluation',
+          role: 'assistant',
+          messageType: 'error',
+        };
+      } else {
+        const agentError = new AgentExecutionError(
+          'Evaluator query failed',
+          {
+            cause: error instanceof Error ? error : new Error(String(error)),
+            agent: 'Evaluator',
+            recoverable: true,
+          }
+        );
+        this.logger.error({ err: formatError(agentError) }, 'Evaluator query failed');
+        yield {
+          content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+          role: 'assistant',
+          messageType: 'error',
+        };
+      }
     }
   }
 
@@ -213,19 +248,19 @@ export class Evaluator {
    *
    * @param taskMdContent - Full Task.md content
    * @param iteration - Current iteration number
-   * @param workerOutput - Worker's output from previous iteration (if any)
+   * @param executorOutput - Executor's output from previous iteration (if any)
    * @returns Evaluation result
    */
   async evaluate(
     taskMdContent: string,
     iteration: number,
-    workerOutput?: string,
+    executorOutput?: string,
     taskId?: string
   ): Promise<{
     result: EvaluationResult;
     messages: AgentMessage[];
   }> {
-    const prompt = Evaluator.buildEvaluationPrompt(taskMdContent, iteration, workerOutput);
+    const prompt = Evaluator.buildEvaluationPrompt(taskMdContent, iteration, executorOutput);
     const messages: AgentMessage[] = [];
 
     // Collect all messages from queryStream
@@ -288,20 +323,13 @@ ${result.is_complete ? 'Task is complete. No further action needed.' : 'Task req
    * Parse evaluation result from messages.
    *
    * Static method to allow external use (e.g., by IterationBridge).
+   *
+   * NOTE: task_done tool detection removed - completion is now determined
+   * by the presence of final_result.md in the task directory.
    */
   static parseEvaluationResult(messages: AgentMessage[], iteration: number): EvaluationResult {
     // Try to extract JSON from messages
     for (const msg of messages) {
-      if (msg.messageType === 'tool_use' && msg.metadata?.toolName === 'task_done') {
-        // Evaluator called task_done, so task is complete
-        return {
-          is_complete: true,
-          reason: 'Evaluator called task_done',
-          missing_items: [],
-          confidence: 1.0,
-        };
-      }
-
       if (typeof msg.content === 'string') {
         // Try to extract JSON from content
         const jsonMatch = msg.content.match(/```json\n([\s\S]*?)\n```/);
@@ -325,8 +353,8 @@ ${result.is_complete ? 'Task is complete. No further action needed.' : 'Task req
     if (iteration === 1) {
       return {
         is_complete: false,
-        reason: 'First iteration - Worker has not executed yet',
-        missing_items: ['Worker execution', 'Code modification'],
+        reason: 'First iteration - Executor has not executed yet',
+        missing_items: ['Executor execution', 'Code modification'],
         confidence: 1.0,
       };
     }
@@ -346,7 +374,7 @@ ${result.is_complete ? 'Task is complete. No further action needed.' : 'Task req
   static buildEvaluationPrompt(
     taskMdContent: string,
     iteration: number,
-    workerOutput?: string
+    executorOutput?: string
   ): string {
     let prompt = `${taskMdContent}
 
@@ -356,22 +384,22 @@ ${result.is_complete ? 'Task is complete. No further action needed.' : 'Task req
 
 `;
 
-    // Add Worker output if available
-    const hasWorkerOutput = workerOutput && workerOutput.trim().length > 0;
-    if (hasWorkerOutput) {
-      prompt += `## Worker's Previous Output (Iteration ${iteration - 1})
+    // Add Executor output if available
+    const hasExecutorOutput = executorOutput && executorOutput.trim().length > 0;
+    if (hasExecutorOutput) {
+      prompt += `## Executor's Previous Output (Iteration ${iteration - 1})
 
 \`\`\`
-${workerOutput}
+${executorOutput}
 \`\`\`
 
 ---
 
 `;
     } else {
-      prompt += `## Worker's Previous Output
+      prompt += `## Executor's Previous Output
 
-*No Worker output yet - this is the first iteration.*
+*No Executor output yet - this is the first iteration.*
 
 ---
 
@@ -379,7 +407,7 @@ ${workerOutput}
     }
 
     // Add evaluation instructions
-    if (!hasWorkerOutput) {
+    if (!hasExecutorOutput) {
       prompt += `### Your Evaluation Task
 
 **⚠️⚠️⚠️ CRITICAL: FIRST ITERATION ⚠️⚠️⚠️**
@@ -388,14 +416,14 @@ ${workerOutput}
 \`\`\`json
 {
   "is_complete": false,
-  "reason": "This is the first iteration. Worker has not executed yet.",
-  "missing_items": ["Worker execution", "Code modification", "Testing"],
+  "reason": "This is the first iteration. Executor has not executed yet.",
+  "missing_items": ["Executor execution", "Code modification", "Testing"],
   "confidence": 1.0
 }
 \`\`\`
 
 **Why CANNOT be complete on first iteration:**
-- ❌ Worker has NOT executed yet
+- ❌ Executor has NOT executed yet
 - ❌ NO code has been modified
 - ❌ NO tests have been run
 - ❌ Expected Results require implementation, not just planning
@@ -403,7 +431,7 @@ ${workerOutput}
 **Your ONLY job:**
 ✅ Evaluate the task completion status
 ✅ Return structured JSON result
-❌ DO NOT generate instructions for Worker
+❌ DO NOT generate instructions for Executor
 ❌ DO NOT format user-facing messages
 ❌ DO NOT call task_done on first iteration
 
@@ -415,17 +443,17 @@ You ONLY judge completion, you do NOT generate instructions.
 
 **🔍 EVALUATION CHECKLIST:**
 
-Check if Worker satisfied ALL Expected Results from Task.md:
+Check if Executor satisfied ALL Expected Results from Task.md:
 
 **For tasks requiring CODE CHANGES:**
-□ Worker actually modified the code files (not just read them)
+□ Executor actually modified the code files (not just read them)
 □ Build succeeded (if required)
 □ Tests passed (if required)
 □ All Expected Results satisfied
 
 **DO NOT mark complete if:**
-❌ Worker only explained what to do
-❌ Worker only created a plan
+❌ Executor only explained what to do
+❌ Executor only created a plan
 ❌ Build failed or tests failed
 ❌ Expected Results not satisfied
 

@@ -9,7 +9,12 @@ import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
 import { handleError, ErrorCategory } from './utils/error-handler.js';
 import { loadEnvironmentScripts } from './utils/env-loader.js';
 import { setupSkillsInWorkspace } from './utils/skills-setup.js';
-import packageJson from '../package.json' assert { type: 'json' };
+import { initializeSdkEnvironment, getSdkEnvironmentStatus } from './utils/sdk-env-init.js';
+import packageJson from '../package.json' with { type: 'json' };
+
+// Increase max listeners to prevent memory leak warnings
+// We register multiple process event handlers across the codebase
+process.setMaxListeners(20);
 
 /**
  * Main CLI entry point with enhanced error handling.
@@ -27,6 +32,43 @@ async function main(): Promise<void> {
     command: process.argv[2],
     args: process.argv.slice(3)
   }, 'Disclaude starting');
+
+  // Change working directory to workspace directory
+  const workspaceDir = Config.getWorkspaceDir();
+  logger.info({ workspaceDir }, 'Changing working directory');
+  process.chdir(workspaceDir);
+
+  // Initialize SDK environment (create required directories)
+  const sdkStatus = getSdkEnvironmentStatus();
+  logger.debug({
+    managedSkillsExists: sdkStatus.managedSkillsExists,
+    userSkillsExists: sdkStatus.userSkillsExists,
+    platform: sdkStatus.platform,
+  }, 'SDK environment status check');
+
+  if (!sdkStatus.managedSkillsExists && !sdkStatus.userSkillsExists) {
+    logger.info('SDK environment not initialized, setting up required directories...');
+    try {
+      const sdkInitResult = await initializeSdkEnvironment(workspaceDir);
+      if (sdkInitResult.success) {
+        logger.info(
+          {
+            directoriesCreated: sdkInitResult.directoriesCreated,
+            errors: sdkInitResult.errors,
+          },
+          'SDK environment initialized successfully'
+        );
+      } else {
+        logger.warn(
+          { errors: sdkInitResult.errors },
+          'SDK environment initialization had errors, but continuing anyway'
+        );
+      }
+    } catch (error) {
+      // Don't fail the entire application if SDK init fails
+      logger.warn({ err: error }, 'Failed to initialize SDK environment, continuing anyway');
+    }
+  }
 
   // Load environment scripts (.disclauderc, .env.sh) before main logic
   try {

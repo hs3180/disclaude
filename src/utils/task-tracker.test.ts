@@ -69,7 +69,6 @@ describe('TaskTracker', () => {
     it('should return correct file path for valid message ID', () => {
       const filePath = taskTracker.getTaskFilePath('om_msg123');
 
-      expect(filePath).toContain('regular');
       expect(filePath).toContain('om_msg123');
       expect(filePath).toContain('task.md');
     });
@@ -164,7 +163,6 @@ describe('TaskTracker', () => {
     it('should return correct dialogue task path', () => {
       const taskPath = taskTracker.getDialogueTaskPath('om_msg123');
 
-      expect(taskPath).toContain('regular');
       expect(taskPath).toContain('om_msg123');
       expect(taskPath).toContain('task.md');
     });

@@ -91,25 +91,8 @@ async function executeOnce(
   logger.info({ taskPath }, 'Task.md created by Scout');
 
   // === FLOW 2: Create dialogue bridge ===
-  // The bridge will create fresh Evaluator/Planner/Executor instances per iteration
-  const sendToFeishu = feishuChatId ? createFeishuSender() : async (_chatId: string, _msg: string) => {};
-  const sendCardToFeishu = feishuChatId ? createFeishuCardSender() : async (_chatId: string, _card: Record<string, unknown>) => {};
-
+  // The bridge will create fresh Evaluator/Executor instances per iteration
   const bridge = new DialogueOrchestrator({
-    evaluatorConfig: {
-      apiKey: agentConfig.apiKey,
-      model: agentConfig.model,
-      apiBaseUrl: agentConfig.apiBaseUrl,
-    },
-    executorConfig: {
-      apiKey: agentConfig.apiKey,
-      model: agentConfig.model,
-      apiBaseUrl: agentConfig.apiBaseUrl,
-      sendMessage: sendToFeishu,
-      sendCard: sendCardToFeishu,
-      chatId,
-      workspaceBaseDir: Config.getWorkspaceDir(),
-    },
     evaluatorConfig: {
       apiKey: agentConfig.apiKey,
       model: agentConfig.model,

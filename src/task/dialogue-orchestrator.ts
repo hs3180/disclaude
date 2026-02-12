@@ -4,9 +4,9 @@
  * ## Architecture: Eval-Execute (Simplified)
  *
  * - Phase 1: Evaluator evaluates task completion
- * - Phase 2: Worker executes tasks with Evaluator's feedback
+ * - Phase 2: Executor executes tasks with Evaluator's feedback
  * - Direct architecture: No intermediate layers
- * - Loop continues until max iterations reached or task complete
+ * - Loop continues until max iterations reached or final_result.md detected
  *
  * ## Key Changes from Previous Architecture
  *
@@ -14,37 +14,36 @@
  * - Evaluator → Planner → Executor (with multi-step breakdown)
  * - 3 agent instances per iteration
  * - Planner as intermediate layer
+ * - Completion signaled via task_done tool
  *
  * **AFTER (Eval-Execute)**:
- * - Evaluator (evaluate) → Worker (execute directly)
- * - 2 agent instances per iteration (Evaluator + Worker)
- * - Direct feedback from Evaluator to Worker
+ * - Evaluator (evaluate) → Executor (execute directly)
+ * - 2 agent instances per iteration (Evaluator + Executor)
+ * - Direct feedback from Evaluator to Executor
+ * - Completion detected via final_result.md file
  *
  * ## Simplified Flow
  *
  * - No Planner layer - tasks executed directly
- * - Worker processes the entire task in one pass
+ * - Executor processes the entire task in one pass
  * - Sequential execution with context passing
  * - Results evaluated for completion
+ * - Task completion automatically detected when Executor creates final_result.md
  *
  * ## No Session State Across Iterations
  *
  * - Each iteration creates FRESH agent instances via IterationBridge
- * - Context is maintained via previousWorkerOutput storage between iterations
+ * - Context is maintained via previousExecutorOutput storage between iterations
  * - No cross-iteration session IDs needed
  */
 import type { AgentMessage } from '../types/agent.js';
 import { DIALOGUE } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
-import { extractText } from '../utils/sdk.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
-import type { LongTaskConfig } from '../long-task/types.js';
 import { IterationBridge } from './iteration-bridge.js';
-import { TaskPlanExtractor, type TaskPlanData } from '../long-task/task-plan-extractor.js';
 import { DialogueMessageTracker } from './dialogue-message-tracker.js';
-import { isTaskDoneTool } from './mcp-utils.js';
 import { TaskFileManager } from './file-manager.js';
 
 const logger = createLogger('DialogueOrchestrator', {});
@@ -53,12 +52,8 @@ const logger = createLogger('DialogueOrchestrator', {});
  * Dialogue orchestrator configuration.
  */
 export interface DialogueOrchestratorConfig {
-  /** Executor configuration for task execution */
-  executorConfig: LongTaskConfig;
   /** Evaluator configuration */
   evaluatorConfig: EvaluatorConfig;
-  /** Callback when task plan is generated (deprecated - no longer used) */
-  onTaskPlanGenerated?: (plan: TaskPlanData) => Promise<void>;
 }
 
 /**
@@ -69,44 +64,36 @@ export interface DialogueOrchestratorConfig {
  * - Uses IterationBridge for single iterations
  *
  * NEW Streaming Flow:
- * 1. Each iteration: Evaluator and Worker run via IterationBridge
- * 2. Evaluator evaluates completion → Worker executes task
+ * 1. Each iteration: Evaluator and Executor run via IterationBridge
+ * 2. Evaluator evaluates completion → Executor executes task
  * 3. All tasks executed directly (no planning phase)
- * 4. When execution completes, iteration ends
- * 5. Loop continues until max iterations reached
+ * 4. When execution completes, check for final_result.md
+ * 5. Loop continues until final_result.md detected or max iterations reached
  *
  * **User Communication:**
  * - Agent output is streamed directly to users
  * - Progress updates provided in real-time
- * - Evaluator controls task completion signaling
+ * - Task completion detected automatically when Executor creates final_result.md
  */
 export class DialogueOrchestrator {
-  readonly executorConfig: LongTaskConfig;
   readonly evaluatorConfig: EvaluatorConfig;
   /** Maximum iterations from constants - single source of truth */
   readonly maxIterations = DIALOGUE.MAX_ITERATIONS;
-  private readonly onTaskPlanGenerated?: (plan: TaskPlanData) => Promise<void>;
-  private readonly taskPlanExtractor: TaskPlanExtractor;
   private readonly messageTracker: DialogueMessageTracker;
   private fileManager: TaskFileManager;
 
   private taskId: string = '';
-  private originalRequest: string = '';
-  private taskPlanSaved = false;
   private currentIterationTaskDone = false;
   private currentChatId?: string;
 
-  // Store previous Worker output for Evaluator evaluation in next iteration
-  private previousWorkerOutput?: string;
+  // Store previous Executor output for Evaluator evaluation in next iteration
+  private previousExecutorOutput?: string;
   private iterationCount: number = 0;
 
   constructor(config: DialogueOrchestratorConfig) {
-    this.executorConfig = config.executorConfig;
     this.evaluatorConfig = config.evaluatorConfig;
-    this.onTaskPlanGenerated = config.onTaskPlanGenerated;
 
     // Initialize extracted services
-    this.taskPlanExtractor = new TaskPlanExtractor();
     this.messageTracker = new DialogueMessageTracker();
     this.fileManager = new TaskFileManager();
   }
@@ -130,38 +117,13 @@ export class DialogueOrchestrator {
   cleanup(): void {
     logger.debug({ taskId: this.taskId }, 'Cleaning up dialogue orchestrator');
     this.taskId = '';
-    this.originalRequest = '';
-    this.taskPlanSaved = false;
-    this.previousWorkerOutput = undefined;
+    this.previousExecutorOutput = undefined;
     this.currentChatId = undefined;
     this.messageTracker.reset();
   }
 
   /**
-   * Save task plan on first iteration.
-   *
-   * Extracts and saves task plan from Manager's first output.
-   *
-   * @param managerOutput - Manager's output text
-   * @param iteration - Current iteration number
-   */
-  private async saveTaskPlanIfNeeded(managerOutput: string, iteration: number): Promise<void> {
-    if (iteration === 1 && this.onTaskPlanGenerated && !this.taskPlanSaved) {
-      const plan = this.taskPlanExtractor.extract(managerOutput, this.originalRequest);
-      if (plan) {
-        try {
-          await this.onTaskPlanGenerated(plan);
-          this.taskPlanSaved = true;
-          logger.info({ taskId: plan.taskId }, 'Task plan saved');
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to save task plan');
-        }
-      }
-    }
-  }
-
-  /**
-   * Process a single dialogue iteration with REAL-TIME streaming Evaluator-Worker communication.
+   * Process a single dialogue iteration with REAL-TIME streaming Evaluator-Executor communication.
    *
    * **NEW: Uses runIterationStreaming() for immediate user feedback**
    * - Agent messages are yielded immediately
@@ -173,6 +135,7 @@ export class DialogueOrchestrator {
    *   2. Run iteration with streaming: Agent messages are yielded immediately
    *   3. When execution sends 'result' message, iteration ends
    *   4. Store execution output for next iteration
+   *   5. Check for final_result.md to determine task completion
    *
    * @param taskMdContent - Full Task.md content
    * @param iteration - Current iteration number
@@ -186,68 +149,55 @@ export class DialogueOrchestrator {
 
     // Create IterationBridge with all necessary context including chatId and taskId
     const bridge = new IterationBridge({
-      executorConfig: this.executorConfig,
       evaluatorConfig: this.evaluatorConfig,
       taskMdContent,
       iteration,
-      taskId: this.taskId,  // Pass taskId for file management
-      previousWorkerOutput: this.previousWorkerOutput,
+      taskId: this.taskId,
+      previousExecutorOutput: this.previousExecutorOutput,
       chatId: this.currentChatId,
     });
 
-    let taskDone = false;
-
     // Run the iteration with streaming
     for await (const msg of bridge.runIterationStreaming()) {
-      // Check for task_done using mcp-utils
-      if (isTaskDoneTool(msg)) {
-        taskDone = true;
-      }
-
-      // Also check for task_completion message type (from Evaluator)
-      if (msg.messageType === 'task_completion') {
-        logger.debug({
-          iteration,
-          messageType: msg.messageType,
-        }, 'Task completion signal detected from Evaluator');
-        taskDone = true;
-      }
-
       // Yield the message for immediate delivery to user
       yield msg;
     }
 
-    // Get Worker output from this iteration for next iteration
-    const workerOutput = bridge.getWorkerOutput();
+    // Get Executor output from this iteration for next iteration
+    const workerOutput = bridge.getExecutorOutput();
 
-    // Store Worker output for next iteration
-    this.previousWorkerOutput = workerOutput;
+    // Store Executor output for next iteration
+    this.previousExecutorOutput = workerOutput;
+
+    // Check for task completion via final_result.md (created by Executor)
+    const hasFinalResult = await this.fileManager.hasFinalResult(this.taskId);
 
     // Log completion status
     logger.info({
       iteration,
-      taskDone,
+      hasFinalResult,
       workerOutputLength: workerOutput.length,
     }, 'REAL-TIME streaming iteration complete');
 
     // Update completion status for return value check
     // (This is a bit awkward with async generators - we track via instance variable)
-    this.currentIterationTaskDone = taskDone;
+    this.currentIterationTaskDone = hasFinalResult;
   }
 
   /**
-   * Run a dialogue loop with REAL-TIME streaming Evaluator-Worker communication.
+   * Run a dialogue loop with REAL-TIME streaming Evaluator-Executor communication.
    *
    * **NEW: Real-time Streaming Flow**
-   * - Evaluator's and Worker's messages are yielded immediately
+   * - Evaluator's and Executor's messages are yielded immediately
    * - Users receive progress updates as they happen
-   * - Worker's output is collected for Evaluator evaluation
+   * - Executor's output is collected for Evaluator evaluation
+   * - Task completion detected when final_result.md is created
    *
    * Flow:
    * 1. Each iteration: Evaluator runs and yields messages immediately
-   * 2. Worker executes based on Evaluator's feedback (output also yielded)
-   * 3. Evaluator evaluates Worker output
-   * 4. Loop continues until task_done or max iterations
+   * 2. Executor executes based on Evaluator's feedback (output also yielded)
+   * 3. After iteration, check if final_result.md was created
+   * 4. Loop continues until final_result.md detected or max iterations reached
    *
    * @param taskPath - Path to Task.md file
    * @param originalRequest - Original user request text
@@ -257,15 +207,13 @@ export class DialogueOrchestrator {
    */
   async *runDialogue(
     taskPath: string,
-    originalRequest: string,
+    _originalRequest: string,
     chatId: string,
     _messageId: string
   ): AsyncIterable<AgentMessage> {
     // Extract taskId from the parent directory name (e.g., /path/to/tasks/cli-123/task.md -> cli-123)
     const taskDir = path.dirname(taskPath);
     this.taskId = path.basename(taskDir);
-    this.originalRequest = originalRequest;
-    this.taskPlanSaved = false;
     this.currentIterationTaskDone = false;
     this.currentChatId = chatId;
     this.iterationCount = 0;
@@ -278,7 +226,7 @@ export class DialogueOrchestrator {
       'Starting Eval-Execute dialogue flow with REAL-TIME streaming'
     );
 
-    // Main dialogue loop: Evaluator → Worker → Evaluator → Worker → ...
+    // Main dialogue loop: Evaluator → Executor → Evaluator → Executor → ...
     while (iteration < this.maxIterations) {
       iteration++;
       this.iterationCount = iteration;
@@ -287,14 +235,7 @@ export class DialogueOrchestrator {
       this.currentIterationTaskDone = false;
 
       // Process iteration with REAL-TIME streaming
-      // All messages are yielded immediately
       for await (const msg of this.processIterationStreaming(taskMdContent, iteration)) {
-        // Save task plan on first iteration (from Worker's output)
-        const text = typeof msg.content === 'string' ? msg.content : extractText(msg);
-        if (iteration === 1 && text) {
-          await this.saveTaskPlanIfNeeded(text, iteration);
-        }
-
         // Yield the message immediately to the user
         yield msg;
       }
@@ -367,12 +308,11 @@ ${Array.from({ length: this.iterationCount }, (_, i) => `- Iteration ${i + 1}: E
 
 - Task specification: \`tasks/${this.taskId}/task.md\`
 - Evaluation results: \`tasks/${this.taskId}/iterations/iter-*/evaluation.md\`
-- Execution plans: \`tasks/${this.taskId}/iterations/iter-*/plan.md\`
 - Step results: \`tasks/${this.taskId}/iterations/iter-*/steps/step-*.md\`
 
 ## Lessons Learned
 
-Task execution completed successfully with Plan-and-Execute architecture.
+Task execution completed successfully with Evaluation-Execution architecture.
 
 ## Recommendations
 
@@ -380,6 +320,3 @@ Review the generated markdown files for detailed execution history.
 `;
   }
 }
-
-// Re-export TaskPlanData for backward compatibility
-export type { TaskPlanData } from '../long-task/task-plan-extractor.js';

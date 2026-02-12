@@ -2,7 +2,7 @@
  * Tests for CLI entry point (src/cli-entry.ts).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 describe('CLI Entry Point', () => {
   describe('Module Structure', () => {

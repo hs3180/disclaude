@@ -30,9 +30,30 @@
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('EnvLoader');
+
+/**
+ * Get the project root directory from the module URL.
+ *
+ * This function determines the project root based on the entry point location:
+ * - When running from dist/cli-entry.js, the project root is one level up
+ * - When running from dist/config/index.js, the project root is two levels up
+ *
+ * @returns Absolute path to the project root directory
+ */
+export function getProjectRoot(): string {
+  const moduleUrl = fileURLToPath(import.meta.url);
+  const moduleDir = dirname(moduleUrl);
+
+  // Detect if we're in a bundled file (cli-entry.js level) or module
+  // We need to go up from src/utils/env-loader.js -> src/ -> project root
+  // Or from dist/utils/env-loader.js -> dist/ -> project root
+  return resolve(moduleDir, '..', '..');
+}
 
 /**
  * Script file names to look for, in priority order.
@@ -54,12 +75,15 @@ interface EnvLoadResult {
 /**
  * Find and execute the first available bash initialization script.
  *
- * Scripts are searched in the current working directory. The first script found
+ * Scripts are searched in the project root directory. The first script found
  * (based on SCRIPT_NAMES priority) is executed in a bash shell, and environment
  * variables are captured and merged into the current process.
  *
+ * The script is executed with the project root as the working directory,
+ * allowing it to access project-specific files and configurations.
+ *
  * Execution behavior:
- * - Scripts are run with `bash -c "source <script>; env"`
+ * - Scripts are run with `bash -c "cd <projectRoot> && source <script>; env"`
  * - Only environment variables (lines containing '=') are captured
  * - Existing process.env variables are NOT overwritten
  * - Script execution errors are logged but don't stop the application
@@ -75,18 +99,20 @@ interface EnvLoadResult {
  * ```
  */
 export async function loadEnvironmentScripts(): Promise<EnvLoadResult> {
-  const cwd = process.cwd();
+  const projectRoot = getProjectRoot();
 
-  logger.debug({ cwd, scriptNames: SCRIPT_NAMES }, 'Looking for environment scripts');
+  logger.debug({ projectRoot, scriptNames: SCRIPT_NAMES }, 'Looking for environment scripts in project root');
 
   // Find the first available script
   const scriptName = SCRIPT_NAMES.find((name) => {
-    const path = `${cwd}/${name}`;
-    return existsSync(path);
+    const path = resolve(projectRoot, name);
+    const exists = existsSync(path);
+    logger.debug({ scriptName: name, path, exists }, 'Checking script file');
+    return exists;
   });
 
   if (!scriptName) {
-    logger.debug('No environment scripts found');
+    logger.debug('No environment scripts found in project root');
     return {
       success: false,
       scriptName: null,
@@ -95,11 +121,11 @@ export async function loadEnvironmentScripts(): Promise<EnvLoadResult> {
     };
   }
 
-  const scriptPath = `${cwd}/${scriptName}`;
-  logger.info({ scriptPath }, 'Found environment script, executing...');
+  const scriptPath = resolve(projectRoot, scriptName);
+  logger.info({ scriptPath, projectRoot }, 'Found environment script in project root, executing...');
 
   try {
-    const envVars = await executeBashScript(scriptPath);
+    const envVars = await executeBashScript(scriptPath, projectRoot);
 
     // Merge environment variables into process.env
     let mergedCount = 0;
@@ -146,21 +172,22 @@ export async function loadEnvironmentScripts(): Promise<EnvLoadResult> {
 /**
  * Execute a bash script and capture environment variables.
  *
- * The script is sourced in a bash shell, and all environment variables
- * are captured and returned as a key-value object.
+ * The script is sourced in a bash shell with the project root as the working directory,
+ * and all environment variables are captured and returned as a key-value object.
  *
  * @param scriptPath - Absolute or relative path to the bash script
+ * @param workingDir - Directory to execute the script from (usually project root)
  * @returns Promise<Record<string, string>> Object containing environment variables
  * @throws Error if script execution fails
  *
  * @private
  */
-function executeBashScript(scriptPath: string): Promise<Record<string, string>> {
+function executeBashScript(scriptPath: string, workingDir: string): Promise<Record<string, string>> {
   return new Promise((resolve, reject) => {
-    // Use bash to source the script and print all environment variables
+    // Use bash to change to project directory, source the script, and print all environment variables
     // We use `env` command to list all variables after sourcing
-    const bash = spawn('bash', ['-lc', `source "${scriptPath}" && env`], {
-      cwd: process.cwd(),
+    const bash = spawn('bash', ['-lc', `cd "${workingDir}" && source "${scriptPath}" && env`], {
+      cwd: workingDir,
       env: { ...process.env }, // Pass current environment
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -254,7 +281,8 @@ export async function loadEnvironmentFromPath(scriptPath: string): Promise<EnvLo
   logger.debug({ scriptPath }, 'Loading environment from specific path');
 
   try {
-    const envVars = await executeBashScript(scriptPath);
+    const projectRoot = getProjectRoot();
+    const envVars = await executeBashScript(scriptPath, projectRoot);
 
     let mergedCount = 0;
     for (const [key, value] of Object.entries(envVars)) {

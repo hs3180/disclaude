@@ -392,7 +392,7 @@ When adding new tools:
 
 **IMPORTANT**: All Agent outputs MUST be logged in full, not just metadata (like length).
 
-- **Scout/Manager/Worker outputs**: Must include a `content` field with the full text
+- **Agent outputs** (Evaluator/Executor/Reporter/Scout): Must include a `content` field with the full text
 - **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
 - **Purpose**: Enables task retrospection and debugging by showing actual Agent output
 
@@ -421,7 +421,7 @@ logger.debug({
 
 ### Locations
 
-- `src/agent/stream-bridge.ts`: Manager and Worker outputs
+- `src/agent/stream-bridge.ts`: Executor and Reporter outputs
 - `src/feishu/bot.ts`: Scout outputs
 
 ## Debugging Tips

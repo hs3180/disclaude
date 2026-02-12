@@ -63,7 +63,7 @@ export function createAgentSdkOptions(params: CreateAgentSdkOptionsParams): Reco
     // Enable Skill tool, WebSearch, Task, and core tools
     allowedTools: ALLOWED_TOOLS,
     // NOTE: MCP servers are NOT configured here.
-    // Individual agents (like Worker) configure MCP servers via
+    // Individual agents (like Executor) configure MCP servers via
     // getSkillMcpServers() in skill-loader.ts.
   };
 
@@ -381,6 +381,9 @@ function escapeForDiff(text: string): string {
 /**
  * Parse SDK message into structured format with type and metadata.
  * Handles tool use, progress, results, and other message types.
+ *
+ * IMPORTANT: Accumulates ALL content blocks from assistant messages,
+ * not just the first one. This ensures all tool uses and text are sent.
  */
 export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
   const result: ParsedSDKMessage = {
@@ -411,40 +414,43 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
         (block) => block.type === 'text' && 'text' in block
       );
 
-      if (toolBlocks.length > 0) {
-        // Process each tool use block
-        for (const block of toolBlocks) {
-          if ('name' in block && 'input' in block) {
-            const toolName = block.name as string;
-            const input = block.input as Record<string, unknown> | undefined;
+      // Accumulate all content blocks (tool uses + text)
+      const contentParts: string[] = [];
 
-            result.type = 'tool_use';
-            result.metadata = {
-              toolName,
-              toolInput: formatToolInput(toolName, input),
-              toolInputRaw: input,  // Save raw input for processing (e.g., building diff cards)
-            };
+      // Process all tool use blocks
+      for (const block of toolBlocks) {
+        if ('name' in block && 'input' in block) {
+          const toolName = block.name as string;
+          const input = block.input as Record<string, unknown> | undefined;
 
-            // Use rich formatting for Edit tool
-            if (toolName === 'Edit' && input) {
-              result.content = formatEditToolUse(input);
-            } else {
-              result.content = `🔧 ${formatToolInput(toolName, input)}`;
-            }
+          result.type = 'tool_use';
+          result.metadata = {
+            toolName,
+            toolInput: formatToolInput(toolName, input),
+            toolInputRaw: input,  // Save raw input for processing (e.g., building diff cards)
+          };
 
-            return result;
+          // Use rich formatting for Edit tool
+          if (toolName === 'Edit' && input) {
+            contentParts.push(formatEditToolUse(input));
+          } else {
+            contentParts.push(`🔧 ${formatToolInput(toolName, input)}`);
           }
         }
       }
 
-      // Extract text content
+      // Extract all text content
       const textParts = textBlocks
         .filter((block) => 'text' in block)
         .map((block) => (block as { text: string }).text);
 
       if (textParts.length > 0) {
-        result.type = 'text';
-        result.content = textParts.join('');
+        contentParts.push(textParts.join(''));
+      }
+
+      // Return all accumulated content
+      if (contentParts.length > 0) {
+        result.content = contentParts.join('\n');
         return result;
       }
 

@@ -18,7 +18,6 @@ import { Scout, DialogueOrchestrator, extractText } from '../task/index.js';
 import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import type { TaskTracker } from '../utils/task-tracker.js';
-import type { LongTaskTracker, TaskPlanData, DialogueTaskPlan } from '../long-task/index.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
 
@@ -32,24 +31,21 @@ export interface TaskFlowContext {
   chatId: string;
   messageId: string;
   text: string;
-  sender?: { sender_type?: string; sender_id?: string };
+  sender?: { sender_type?: string; sender_id?: { open_id?: string; union_id?: string; user_id?: string } };
   conversationHistory?: string;
 }
 
 export class TaskFlowOrchestrator {
   private taskTracker: TaskTracker;
-  private longTaskTracker: LongTaskTracker;
   private messageCallbacks: MessageCallbacks;
   private logger: Logger;
 
   constructor(
     taskTracker: TaskTracker,
-    longTaskTracker: LongTaskTracker,
     messageCallbacks: MessageCallbacks,
     logger: Logger
   ) {
     this.taskTracker = taskTracker;
-    this.longTaskTracker = longTaskTracker;
     this.messageCallbacks = messageCallbacks;
     this.logger = logger;
   }
@@ -72,9 +68,11 @@ export class TaskFlowOrchestrator {
     });
 
     // Set context for Task.md creation
+    // Extract open_id from sender_id object (Feishu event structure)
+    const senderOpenId = sender?.sender_id?.open_id;
     scout.setTaskContext({
       chatId,
-      userId: sender?.sender_id,
+      userId: senderOpenId,
       messageId,
       taskPath,
       conversationHistory: context.conversationHistory,
@@ -140,24 +138,7 @@ export class TaskFlowOrchestrator {
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
-      },
-      executorConfig: {
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        sendMessage: this.messageCallbacks.sendMessage.bind(null),
-        sendCard: this.messageCallbacks.sendCard.bind(null),
-        chatId,
-        workspaceBaseDir: Config.getWorkspaceDir(),
-      },
-      evaluatorConfig: {
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
-      },
-      onTaskPlanGenerated: async (plan: TaskPlanData) => {
-        await this.longTaskTracker.saveDialogueTaskPlan(plan as DialogueTaskPlan);
       },
     });
 

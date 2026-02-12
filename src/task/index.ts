@@ -1,26 +1,26 @@
 /**
  * Agent module exports.
  *
- * Architecture (Plan-and-Execute):
+ * Architecture (Evaluation-Execution):
  * - Scout: Task initialization - creates Task.md with metadata
  * - Evaluator: Task completion evaluation
- * - Planner: Breaks down complex tasks into subtasks
- * - Executor: Executes individual subtasks
- * - DialogueOrchestrator: Manages direct Evaluator-Planner/Executor flow
+ * - Executor: Executes tasks directly with Reporter for progress updates
+ * - DialogueOrchestrator: Manages direct Evaluator-Executor flow
  *
  * Complete Workflow:
  * Flow 1: User request → Scout → Task.md (metadata + original request)
- * Flow 2: Task.md → Evaluator → Planner/Executor (plan + execute) → ...
+ * Flow 2: Task.md → Evaluator (evaluate) → Executor (execute directly) → ...
  *
- * Plan-and-Execute Flow:
- * - Planner breaks down complex tasks into subtasks
- * - Executor runs each subtask with fresh SDK instances
- * - Sequential handoff with context passing
- * - Results aggregated for final output
+ * Evaluation-Execution Flow:
+ * - Evaluator assesses task completion and identifies missing items
+ * - Executor executes tasks directly with a single pseudo-subtask
+ * - No intermediate planning layer - direct execution for faster response
+ * - Real-time streaming of agent messages for immediate user feedback
  *
  * Session Management:
  * - Orchestrator internally manages sessions per messageId
- * - SDK's native resume parameter handles session persistence
+ * - Each iteration creates fresh agent instances
+ * - Context maintained via previousExecutorOutput between iterations
  */
 
 // Core agents
@@ -31,7 +31,6 @@ export { Evaluator } from '../agents/evaluator.js';
 export {
   DialogueOrchestrator,
   type DialogueOrchestratorConfig,
-  type TaskPlanData,
 } from './dialogue-orchestrator.js';
 
 export {
@@ -42,7 +41,7 @@ export {
 
 // Supporting modules
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';
-export { parseBaseToolName, isUserFeedbackTool, isTaskDoneTool } from './mcp-utils.js';
+export { parseBaseToolName, isUserFeedbackTool } from './mcp-utils.js';
 
 // Feishu context MCP tools
 export {
@@ -51,8 +50,7 @@ export {
   send_file_to_feishu,
 } from '../mcp/feishu-context-mcp.js';
 
-// Note: task_done is now an inline tool provided by the Evaluator agent
-// and is not exported from the Feishu MCP server anymore
+// Note: task_done has been removed - completion is now detected via final_result.md
 
 // Utility
 export { extractText } from '../utils/sdk.js';

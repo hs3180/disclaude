@@ -3,21 +3,11 @@
  */
 import * as lark from '@larksuiteoapi/node-sdk';
 import { EventEmitter } from 'events';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import * as fs from 'fs/promises';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import * as path from 'path';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { extractText, Scout, DialogueOrchestrator } from '../task/index.js';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import { LongTaskTracker, type TaskPlanData, type DialogueTaskPlan } from '../long-task/index.js';
 import { createLogger } from '../utils/logger.js';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { attachmentManager, type FileAttachment } from './attachment-manager.js';
+import { attachmentManager } from './attachment-manager.js';
 import { downloadFile } from './file-downloader.js';
 import { messageHistoryManager } from './message-history.js';
 import { messageLogger } from './message-logger.js';
@@ -25,6 +15,7 @@ import { Pilot } from '../pilot/index.js';
 import { FileHandler } from './file-handler.js';
 import { MessageSender } from './message-sender.js';
 import { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
+import { handleGreeting } from '../agents/greeting-executor.js';
 
 /**
  * Feishu/Lark bot using WebSocket.
@@ -46,13 +37,6 @@ export class FeishuBot extends EventEmitter {
   // Task tracker for persistent deduplication
   private taskTracker: TaskTracker;
 
-  // Long task tracker for dialogue task plans
-  private longTaskTracker: LongTaskTracker;
-
-  // Active dialogue bridges per chat
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private activeDialogues = new Map<string, DialogueOrchestrator>();
-
   // File handler for file/image message processing
   private fileHandler: FileHandler;
 
@@ -73,7 +57,6 @@ export class FeishuBot extends EventEmitter {
     this.appId = appId;
     this.appSecret = appSecret;
     this.taskTracker = new TaskTracker();
-    this.longTaskTracker = new LongTaskTracker();
 
     // Initialize FileHandler with a wrapped downloadFile that will be bound later
     // The client is not available yet, so we pass a placeholder that will be replaced
@@ -105,7 +88,6 @@ export class FeishuBot extends EventEmitter {
     // Initialize TaskFlowOrchestrator
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
       this.taskTracker,
-      this.longTaskTracker,
       {
         sendMessage: this.sendMessage.bind(this),
         sendCard: this.sendCard.bind(this),
@@ -188,6 +170,29 @@ export class FeishuBot extends EventEmitter {
 
 
   /**
+   * Extract open_id from sender object.
+   * Feishu event structure: sender.sender_id.open_id
+   *
+   * @param sender - Sender object from Feishu event
+   * @returns open_id string or undefined
+   */
+  private extractOpenId(sender?: { sender_type?: string; sender_id?: unknown }): string | undefined {
+    if (!sender?.sender_id) {
+      return undefined;
+    }
+    // Feishu event: sender_id is an object containing open_id
+    if (typeof sender.sender_id === 'object' && sender.sender_id !== null) {
+      const senderId = sender.sender_id as { open_id?: string; union_id?: string; user_id?: string };
+      return senderId.open_id;
+    }
+    // Fallback: if sender_id is a string (legacy format)
+    if (typeof sender.sender_id === 'string') {
+      return sender.sender_id;
+    }
+    return undefined;
+  }
+
+  /**
    * Handle the complete task flow: Flow 1 (create Task.md) → Flow 2 (execute dialogue)
    *
    * Delegates to TaskFlowOrchestrator for Scout → Dialogue execution.
@@ -202,7 +207,7 @@ export class FeishuBot extends EventEmitter {
     chatId: string,
     text: string,
     messageId: string,
-    sender?: { sender_type?: string; sender_id?: string }
+    sender?: { sender_type?: string; sender_id?: { open_id?: string; union_id?: string; user_id?: string } }
   ): Promise<string> {
     const conversationHistory = messageHistoryManager.getFormattedHistory(chatId, 20);
 
@@ -222,7 +227,7 @@ export class FeishuBot extends EventEmitter {
    * Key differences from handleTaskFlow:
    * - No Scout agent
    * - No Task.md creation
-   * - No Worker/Manager dialogue loop
+   * - No Executor/Evaluator dialogue loop
    * - Direct SDK query with session resume
    *
    * This method delegates to the Pilot abstraction for platform-agnostic
@@ -231,12 +236,14 @@ export class FeishuBot extends EventEmitter {
    * @param chatId - Feishu chat ID
    * @param text - User's message text
    * @param messageId - Unique message identifier for session resume
+   * @param sender - Message sender info (contains open_id for @ mentions)
    * @returns Accumulated response content
    */
   private async handleDirectChat(
     chatId: string,
     text: string,
-    messageId: string
+    messageId: string,
+    sender?: { sender_type?: string; sender_id?: unknown }
   ): Promise<string> {
     // Clear attachments after processing (they were already notified via buildFileUploadPrompt)
     if (attachmentManager.hasAttachments(chatId)) {
@@ -244,20 +251,54 @@ export class FeishuBot extends EventEmitter {
       this.logger.debug({ chatId }, 'Attachments cleared after system notification');
     }
 
-    // Wrap user message with chatId context
-    // This allows the agent to know which chat it's responding to
-    // IMPORTANT: Format is explicit for tool parameter extraction
-    const enhancedText = `You are responding in a Feishu chat.
+    // Extract sender's open_id for @ mention capability
+    const senderOpenId = this.extractOpenId(sender);
 
-**Chat ID for sending files/messages:** ${chatId}
+    // Build enhanced prompt with context
+    let enhancedText: string;
 
-When using tools like send_file_to_feishu or send_user_feedback, use this exact Chat ID value.
+    if (senderOpenId) {
+      // Include @ mention instructions when we have the user's open_id
+      enhancedText = `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+**Sender Open ID:** ${senderOpenId}
+
+---
+
+## @ Mention the User
+
+To notify the user in your FINAL response, use:
+\`\`\`
+<at user_id="${senderOpenId}">@用户</at>
+\`\`\`
+
+**Rules:**
+- Use @ ONLY in your **final/complete response**, NOT in intermediate messages
+- This triggers a Feishu notification to the user
+
+---
+
+## Tools
+
+When using send_file_to_feishu or send_user_feedback, use Chat ID: \`${chatId}\`
 
 --- User Message ---
 ${text}`;
+    } else {
+      // Fallback: no open_id available
+      enhancedText = `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+
+When using send_file_to_feishu or send_user_feedback, use this Chat ID.
+
+--- User Message ---
+${text}`;
+    }
 
     // Delegate to Pilot for streaming chat
-    await this.pilot.enqueueMessage(chatId, enhancedText, messageId);
+    await this.pilot.enqueueMessage(chatId, enhancedText, messageId, senderOpenId);
 
     return '';
   }
@@ -301,10 +342,14 @@ ${text}`;
     // This is critical for file/image downloads which need the client
     this.getClient();
 
-    const { message } = data;
+    // Feishu event structure: data.event contains both sender and message
+    // See: https://open.feishu.cn/document/server-docs/im-v1/message/events/receive
+    const event = data.event || data;
+    const { message, sender } = event;
+
     if (!message) {return;}
 
-    const { message_id, chat_id, content, message_type, sender, create_time } = message;
+    const { message_id, chat_id, content, message_type, create_time } = message;
 
     // Defensive: Validate required fields
     if (!message_id) {
@@ -476,6 +521,14 @@ ${uploadPrompt}`;
       create_time
     );
 
+    // Check for greeting messages - provide friendly introduction
+    const greetingResponse = handleGreeting(text);
+    if (greetingResponse) {
+      this.logger.info({ chatId: chat_id }, 'Greeting detected, sending welcome message');
+      await this.sendMessage(chat_id, greetingResponse);
+      return;
+    }
+
     // Check for /task command (all other commands go to Pilot)
     if (text.trim().startsWith('/task ')) {
       const taskText = text.trim().substring(6).trim();
@@ -507,7 +560,7 @@ ${uploadPrompt}`;
 
     // DEFAULT: Direct chat mode (no Task.md, no Scout, just SDK query)
     // All other messages (including any other "commands") go to Pilot
-    await this.handleDirectChat(chat_id, text, message_id);
+    await this.handleDirectChat(chat_id, text, message_id, sender);
   }
 
   /**

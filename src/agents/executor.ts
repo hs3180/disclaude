@@ -1,58 +1,38 @@
 /**
- * Executor - runs individual subtasks with isolated agents.
+ * Executor - Executes tasks directly with a fresh agent.
  *
- * Refactored to yield progress events instead of handling reporting directly.
- * The IterationBridge layer connects these events to the Reporter for user communication.
- *
- * Now follows Scout's architecture:
- * - Uses Config.getAgentConfig() for unified configuration
- * - Uses createLogger() for structured logging
- * - Uses buildExecutorPrompt() from prompt-builder
- * - Supports skill activation via /skill:executor command
+ * Simplified architecture:
+ * - No subtask concept
+ * - Direct task execution based on Evaluator feedback
+ * - Yields progress events for real-time reporting
+ * - Uses Config for unified configuration
  */
 import * as fs from 'fs/promises';
-import * as path from 'path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createAgentSdkOptions, parseSDKMessage } from '../utils/sdk.js';
-import type { Subtask, SubtaskResult, LongTaskConfig } from '../long-task/types.js';
 import type { ParsedSDKMessage } from '../types/agent.js';
-import { TaskFileManager } from '../task/file-manager.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import { buildExecutorPrompt, buildContextInfo } from '../long-task/executor-prompt-builder.js';
+import { AgentExecutionError, TimeoutError, formatError } from '../utils/errors.js';
 
 /**
  * Executor configuration.
- *
- * Follows Scout's pattern with optional skillName and uses Config for API credentials.
  */
 export interface ExecutorConfig {
-  /**
-   * Name of the skill to use.
-   * Defaults to 'executor' if not provided.
-   */
-  skillName?: string;
   /**
    * Abort signal for cancellation.
    */
   abortSignal?: AbortSignal;
-  /**
-   * Total number of steps in the task (for progress reporting).
-   */
-  totalSteps?: number;
 }
 
 /**
- * Progress event type for subtask execution.
- * These events are yielded during execution and passed to the Reporter by the IterationBridge.
+ * Progress event type for task execution.
+ * These events are yielded during execution and passed to the Reporter.
  */
-export type SubtaskProgressEvent =
+export type TaskProgressEvent =
   | {
       type: 'start';
-      sequence: number;
-      totalSteps: number;
       title: string;
-      description: string;
     }
   | {
       type: 'output';
@@ -62,511 +42,330 @@ export type SubtaskProgressEvent =
     }
   | {
       type: 'complete';
-      sequence: number;
-      title: string;
-      files: string[];
       summaryFile: string;
+      files: string[];
     }
   | {
       type: 'error';
-      sequence: number;
-      title: string;
       error: string;
     };
 
 /**
- * Executor for running individual subtasks.
+ * Result of task execution.
+ */
+export interface TaskResult {
+  success: boolean;
+  summaryFile: string;
+  files: string[];
+  output: string;
+  error?: string;
+}
+
+/**
+ * Executor for running tasks directly.
  *
  * Yields progress events during execution without handling user communication.
  * All reporting is delegated to the Reporter via the IterationBridge layer.
- *
- * Now follows Scout's architecture:
- * - Uses Config for unified agent configuration
- * - Uses createLogger for structured logging
- * - Supports skill activation
  */
 export class Executor {
-  private readonly skillName: string;
-  private readonly config: LongTaskConfig;
   private readonly apiKey: string;
   private readonly model: string;
   private readonly apiBaseUrl?: string;
-  private fileManager: TaskFileManager;
+  private readonly provider: 'anthropic' | 'glm';
   private logger: ReturnType<typeof createLogger>;
+  private readonly config: ExecutorConfig;
 
-  constructor(config: ExecutorConfig & LongTaskConfig) {
-    // Get agent configuration from Config (like Scout)
+  constructor(config: ExecutorConfig) {
+    this.config = config;
+
+    // Get agent configuration from Config
     const agentConfig = Config.getAgentConfig();
 
-    this.skillName = config.skillName || 'executor';
     this.apiKey = agentConfig.apiKey;
     this.model = agentConfig.model;
     this.apiBaseUrl = agentConfig.apiBaseUrl;
-    this.config = config;
+    this.provider = agentConfig.provider;
 
-    // Create logger with model information (like Scout)
+    // Create logger
     this.logger = createLogger('Executor', { model: this.model });
-    this.fileManager = new TaskFileManager();
 
     this.logger.debug({
-      skillName: this.skillName,
       provider: agentConfig.provider,
       model: this.model,
-      totalSteps: config.totalSteps,
     }, 'Executor initialized');
   }
 
   /**
-   * Execute a single subtask with a fresh agent.
+   * Execute a task with a fresh agent.
    *
    * Yields progress events during execution:
-   * - 'start': When the subtask begins
+   * - 'start': When the task begins
    * - 'output': For each message from the agent
-   * - 'complete': When the subtask succeeds
-   * - 'error': When the subtask fails
+   * - 'complete': When the task succeeds
+   * - 'error': When the task fails
    *
-   * Returns the final SubtaskResult when complete.
+   * Returns the final TaskResult when complete.
    */
-  async *executeSubtask(
-    subtask: Subtask,
-    previousResults: SubtaskResult[],
+  async *executeTask(
+    taskInstructions: string,
     workspaceDir: string,
     taskId?: string,
-    iteration?: number
-  ): AsyncGenerator<SubtaskProgressEvent, SubtaskResult> {
-    const subtaskDir = path.join(workspaceDir, `subtask-${subtask.sequence}`);
-
-    // Check for cancellation before starting
-    if (this.config.abortSignal?.aborted) {
+    iteration?: number,
+    previousOutput?: string
+  ): AsyncGenerator<TaskProgressEvent, TaskResult> {
+    // Check for cancellation
+    if (this.config?.abortSignal?.aborted) {
       throw new Error('AbortError');
     }
 
-    await fs.mkdir(subtaskDir, { recursive: true });
+    await fs.mkdir(workspaceDir, { recursive: true });
 
-    // ✨ NEW: Detailed logging (like Scout)
+    // Yield start event
+    yield {
+      type: 'start',
+      title: 'Execute Task',
+    };
+
+    // Build the task execution prompt
+    const prompt = this.buildTaskPrompt(taskInstructions, previousOutput);
+
+    // Log execution start
     this.logger.debug({
-      subtaskSequence: subtask.sequence,
-      subtaskTitle: subtask.title,
-      workspaceDir: subtaskDir,
+      workspaceDir,
       taskId,
       iteration,
-      previousResultsCount: previousResults.length,
-    }, 'Starting subtask execution');
-
-    // Prepare context from previous results using prompt builder
-    const contextInfo = buildContextInfo(previousResults);
-
-    // Create execution prompt using prompt builder (like Scout's buildScoutPrompt)
-    const prompt = this.buildFullPrompt(subtask, contextInfo, subtaskDir);
-
-    // Create SDK options using shared utility (like Scout's createSdkOptions)
-    const sdkOptions = this.createSdkOptions(subtaskDir);
-
-    // ✨ NEW: Log prompt and SDK config (like Scout)
-    this.logger.debug({
       promptLength: prompt.length,
-      promptPreview: prompt.substring(0, 500),
-      model: (sdkOptions as { model?: string }).model,
-      allowedTools: (sdkOptions as { allowedTools?: string[] }).allowedTools,
-      hasEnv: !!(sdkOptions as { env?: Record<string, unknown> }).env,
-    }, 'Executor SDK query config');
+      previousOutputLength: previousOutput?.length || 0,
+    }, 'Starting task execution');
 
-    const startTime = Date.now();
+    // Prepare SDK options
+    const sdkOptions = createAgentSdkOptions({
+      apiKey: this.apiKey,
+      model: this.model,
+      apiBaseUrl: this.apiBaseUrl,
+      permissionMode: 'bypassPermissions',
+      cwd: workspaceDir,
+    });
+
+    let output = '';
+    let error: string | undefined;
+
+    // Get task timeout from Config (default: 5 minutes)
+    const ITERATOR_TIMEOUT_MS = Config.getTaskTimeout();
+
+    this.logger.debug({
+      timeoutMs: ITERATOR_TIMEOUT_MS,
+      timeoutMinutes: Math.round(ITERATOR_TIMEOUT_MS / 60000),
+    }, 'Executor timeout configured');
 
     try {
-      // Yield start event (reporting layer will format and send to user)
-      yield {
-        type: 'start',
-        sequence: subtask.sequence,
-        totalSteps: this.config.totalSteps ?? 0,
-        title: subtask.title,
-        description: subtask.description,
-      };
+      // Execute task with agent
+      const generator = query({ prompt, options: sdkOptions });
+      const iterator = generator[Symbol.asyncIterator]();
 
-      // Execute subtask with fresh agent
-      const queryResult = query({
-        prompt,
-        options: sdkOptions,
-      });
+      while (true) {
+        // Race between next message and timeout
+        const nextPromise = iterator.next();
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Iterator timeout')), ITERATOR_TIMEOUT_MS)
+        );
 
-      // Collect response and track created files
-      let fullResponse = '';
-      const createdFiles: string[] = [];
+        const result = await Promise.race([nextPromise, timeoutPromise]) as IteratorResult<unknown>;
 
-      // Track abort state
-      let aborted = false;
+        if (result.done) {
+          break;
+        }
 
-      // Add abort listener (set flag instead of throwing)
-      const abortHandler = () => {
-        console.log(`[Executor] Subtask ${subtask.sequence} aborted`);
-        aborted = true;
-      };
+        const message = result.value as SDKMessage;
+        const parsed = parseSDKMessage(message);
 
-      if (this.config.abortSignal) {
-        this.config.abortSignal.addEventListener('abort', abortHandler, { once: true });
-      }
+        // GLM-specific logging to monitor streaming behavior
+        if (this.provider === 'glm') {
+          this.logger.debug({
+            provider: 'GLM',
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            stopReason: (message as any).stop_reason,
+            stopSequence: (message as any).stop_sequence,
+            rawMessagePreview: JSON.stringify(message).substring(0, 500),
+          }, 'SDK message received (GLM)');
+        }
 
-      try {
-        for await (const message of queryResult) {
-          // Check for abort (from handler or signal state)
-          if (aborted || this.config.abortSignal?.aborted) {
-            throw new Error('AbortError');
-          }
-          // Check for cancellation during iteration
-          if (this.config.abortSignal?.aborted) {
-            throw new Error('AbortError');
-          }
+        // Collect all content-producing messages
+        if (['text', 'tool_use', 'tool_progress', 'tool_result', 'status', 'result'].includes(parsed.type)) {
+          output += parsed.content;
 
-          const parsed = parseSDKMessage(message);
-
-          if (parsed.content) {
-            fullResponse += parsed.content;
-          }
-
-          // ✨ NEW: Tool use tracking (like Scout)
-          if (parsed.type === 'tool_use' && parsed.metadata?.toolName) {
-            const toolName = parsed.metadata.toolName;
-
-            // Track Write/Edit operations
-            if (toolName === 'Write' || toolName === 'Edit') {
-              try {
-                const toolInputRaw = parsed.metadata.toolInputRaw as Record<string, unknown> | undefined;
-
-                if (toolInputRaw) {
-                  // Extract file path from tool input
-                  const filePath = (toolInputRaw.file_path as string | undefined) ||
-                                  (toolInputRaw.filePath as string | undefined);
-
-                  if (filePath) {
-                    this.logger.debug({
-                      toolName,
-                      filePath,
-                      contentLength: (toolInputRaw.content as string | undefined)?.length || 0,
-                    }, 'File operation detected');
-
-                    // Add to created files list
-                    if (!createdFiles.includes(filePath)) {
-                      createdFiles.push(filePath);
-                    }
-                  }
-                }
-              } catch (error) {
-                this.logger.error({ err: error }, 'Failed to parse tool input');
-              }
-            }
-
-            // Track other tool usage for logging
-            this.logger.debug({
-              toolName,
-              toolInput: parsed.metadata.toolInput,
-            }, 'Tool use detected');
-          }
-
-          // Yield output event (reporting layer will format and send to user)
+          // Yield output event
           yield {
             type: 'output',
             content: parsed.content,
             messageType: parsed.type,
             metadata: parsed.metadata,
           };
-        }
-      } finally {
-        // Remove abort listener
-        if (this.config.abortSignal) {
-          this.config.abortSignal.removeEventListener('abort', abortHandler);
-        }
-      }
 
-      // Ensure summary file exists
-      // If summaryFile is not specified in plan, use default: summary.md
-      const summaryFileName = subtask.outputs.summaryFile || 'summary.md';
-      const summaryFile = path.join(subtaskDir, summaryFileName);
-
-      // Check if summary file was created
-      try {
-        await fs.access(summaryFile);
-      } catch {
-        // Create default summary if agent didn't create one
-        const defaultSummary = this.createDefaultSummary(subtask, fullResponse, createdFiles);
-        await fs.writeFile(summaryFile, defaultSummary, 'utf-8');
-      }
-
-      // List all files created in subtask directory
-      const files = await this.listCreatedFiles(subtaskDir);
-
-      const duration = Date.now() - startTime;
-
-      console.log(`[Executor] Completed subtask ${subtask.sequence} in ${duration}ms`);
-
-      // ✨ NEW: Write step result via TaskFileManager
-      if (taskId && iteration) {
-        try {
-          const stepContent = this.formatStepMarkdown(subtask, fullResponse, files, duration, true);
-          await this.fileManager.writeStepResult(taskId, iteration, subtask.sequence, stepContent);
-        } catch (error) {
-          console.error(`[Executor] Failed to write step result via TaskFileManager:`, error);
+          // Log with full content (as per logging guidelines)
+          this.logger.debug({
+            content: parsed.content,
+            contentLength: parsed.content.length,
+            messageType: parsed.type,
+          }, 'Executor output');
+        } else if (parsed.type === 'error') {
+          error = parsed.content; // Error message is in content
+          this.logger.error({ error: parsed.content }, 'Executor error');
         }
       }
 
-      // Yield completion event (reporting layer will format and send to user)
+      // Create summary file
+      const summaryFile = await this.createSummary(workspaceDir, taskInstructions, output, error);
+
+      // Find all created files
+      const files = await this.findCreatedFiles(workspaceDir);
+
+      // Yield complete event
       yield {
         type: 'complete',
-        sequence: subtask.sequence,
-        title: subtask.title,
-        files,
         summaryFile,
+        files,
       };
 
+      // Return result
       return {
-        sequence: subtask.sequence,
-        success: true,
-        summary: fullResponse,
-        files,
+        success: !error,
         summaryFile,
-        completedAt: new Date().toISOString(),
+        files,
+        output,
+        error,
       };
-    } catch (error) {
-      const duration = Date.now() - startTime;
 
-      // ✨ NEW: Detailed error logging (like Scout)
-      this.logger.error({
-        err: error,
-        subtaskSequence: subtask.sequence,
-        subtaskTitle: subtask.title,
-        duration,
-        errorType: error instanceof Error ? error.constructor.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      }, 'Subtask execution failed');
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.message === 'Iterator timeout';
+      error = err instanceof Error ? err.message : String(err);
 
-      // ✨ NEW: Improved error classification and handling
-      if (error instanceof Error) {
-        // Abort error - re-raise without sending message
-        if (error.message === 'AbortError' || error.name === 'AbortError') {
-          this.logger.debug({ subtaskSequence: subtask.sequence }, 'Subtask aborted');
-          throw error;
-        }
-
-        // API errors - provide user-friendly message
-        if (error.message.includes('API') || error.message.includes('rate limit') || error.message.includes('quota')) {
-          const friendlyMessage = `API Error: ${error.message}. Please try again or check your API quota.`;
-
-          yield {
-            type: 'error',
-            sequence: subtask.sequence,
-            title: subtask.title,
-            error: friendlyMessage,
-          };
-
-          return {
-            sequence: subtask.sequence,
-            success: false,
-            summary: '',
-            files: [],
-            summaryFile: path.join(subtaskDir, subtask.outputs.summaryFile || 'summary.md'),
-            error: friendlyMessage,
-            completedAt: new Date().toISOString(),
-          };
-        }
-
-        // Network errors
-        if (error.message.includes('ECONN') || error.message.includes('network') || error.message.includes('timeout')) {
-          const friendlyMessage = `Network Error: ${error.message}. Please check your connection and try again.`;
-
-          yield {
-            type: 'error',
-            sequence: subtask.sequence,
-            title: subtask.title,
-            error: friendlyMessage,
-          };
-
-          return {
-            sequence: subtask.sequence,
-            success: false,
-            summary: '',
-            files: [],
-            summaryFile: path.join(subtaskDir, subtask.outputs.summaryFile || 'summary.md'),
-            error: friendlyMessage,
-            completedAt: new Date().toISOString(),
-          };
-        }
-
-        // Generic error - use original message
-        yield {
-          type: 'error',
-          sequence: subtask.sequence,
-          title: subtask.title,
-          error: error.message,
-        };
-
-        return {
-          sequence: subtask.sequence,
-          success: false,
-          summary: '',
-          files: [],
-          summaryFile: path.join(subtaskDir, subtask.outputs.summaryFile || 'summary.md'),
-          error: error.message,
-          completedAt: new Date().toISOString(),
-        };
+      if (isTimeout) {
+        const timeoutError = new TimeoutError(
+          'Task execution timeout - operation took longer than expected',
+          ITERATOR_TIMEOUT_MS,
+          'executeTask'
+        );
+        this.logger.warn({ err: formatError(timeoutError) }, 'Executor iterator timeout - task may be incomplete');
+        error = timeoutError.message;
+      } else {
+        const agentError = new AgentExecutionError(
+          'Task execution failed',
+          {
+            cause: err instanceof Error ? err : new Error(String(err)),
+            agent: 'Executor',
+            recoverable: true,
+          }
+        );
+        this.logger.error({ err: formatError(agentError) }, 'Task execution failed');
       }
 
-      // Non-Error errors (string, number, etc.)
-      const errorString = String(error);
       yield {
         type: 'error',
-        sequence: subtask.sequence,
-        title: subtask.title,
-        error: errorString,
+        error,
       };
 
       return {
-        sequence: subtask.sequence,
         success: false,
-        summary: '',
+        summaryFile: '',
         files: [],
-        summaryFile: path.join(subtaskDir, subtask.outputs.summaryFile || 'summary.md'),
-        error: errorString,
-        completedAt: new Date().toISOString(),
+        output,
+        error,
       };
     }
   }
 
   /**
-   * Create SDK options for Executor agent (like Scout's createSdkOptions).
-   *
-   * Uses unified configuration from Config and buildSdkEnv.
+   * Build task execution prompt.
    */
-  private createSdkOptions(workingDir: string): Record<string, unknown> {
-    const sdkOptions = createAgentSdkOptions({
-      apiKey: this.apiKey,
-      model: this.model,
-      apiBaseUrl: this.apiBaseUrl,
-      cwd: workingDir,
-      permissionMode: 'bypassPermissions',
-    });
-
-    // Add executor-specific logging
-    this.logger.debug({
-      skillName: this.skillName,
-      workingDirectory: workingDir,
-      model: this.model,
-    }, 'Executor SDK options');
-
-    return sdkOptions;
-  }
-
-  /**
-   * Build full prompt with skill activation command (like Scout's buildFullPrompt).
-   *
-   * The prompt structure is:
-   * 1. Skill activation command (uses SDK's Skill tool)
-   * 2. Task context from prompt builder
-   *
-   * @param subtask - Subtask to execute
-   * @param contextInfo - Context from previous steps
-   * @param workspaceDir - Working directory for this subtask
-   * @returns Full prompt with skill activation
-   */
-  private buildFullPrompt(subtask: Subtask, contextInfo: string, workspaceDir: string): string {
+  private buildTaskPrompt(taskInstructions: string, previousOutput?: string): string {
     const parts: string[] = [];
 
-    // 1. Skill activation command - tells SDK to load and use the skill (like Scout)
-    parts.push(`/skill:${this.skillName}`);
+    parts.push('# Task Execution');
+    parts.push('');
+    parts.push('You are executing a task. Carefully read the instructions and complete the work.');
+    parts.push('');
 
-    // 2. Use prompt builder to create the execution prompt (like buildScoutPrompt)
-    const executionPrompt = buildExecutorPrompt({
-      subtask,
-      contextInfo,
-      workspaceDir,
-    });
+    if (previousOutput) {
+      parts.push('## Previous Work');
+      parts.push('');
+      parts.push('In the previous iteration, the following was accomplished:');
+      parts.push('');
+      parts.push(previousOutput);
+      parts.push('');
+      parts.push('---');
+      parts.push('');
+    }
 
-    parts.push(executionPrompt);
+    parts.push('## Task Instructions');
+    parts.push('');
+    parts.push(taskInstructions);
+    parts.push('');
+    parts.push('---');
+    parts.push('');
+    parts.push('**Start executing the task now.**');
+    parts.push('');
+    parts.push('**Remember to create a summary.md file documenting your work when you complete.**');
 
-    return parts.join('\n\n');
+    return parts.join('\n');
   }
 
   /**
-   * Create default summary if agent doesn't provide one.
+   * Create summary file in workspace.
    */
-  private createDefaultSummary(subtask: Subtask, response: string, files: string[]): string {
-    const date = new Date().toISOString();
-
-    return `# Summary: ${subtask.title}
-
-**Subtask Sequence**: ${subtask.sequence}
-**Completed At**: ${date}
-
-## What Was Done
-
-${subtask.description}
-
-## Agent Response
-
-\`\`\`
-${response.substring(0, 2000)}${response.length > 2000 ? '\n... (truncated)' : ''}
-\`\`\`
-
-## Files Created
-
-${files.length > 0 ? files.map(f => `- \`${f}\``).join('\n') : 'No files were tracked.'}
-
-## Notes
-
-This summary was automatically generated. The agent should have created a more detailed summary.
-`;
-  }
-
-  /**
-   * Format step result as markdown.
-   */
-  private formatStepMarkdown(subtask: Subtask, output: string, files: string[], duration: number, success: boolean): string {
+  private async createSummary(
+    workspaceDir: string,
+    taskInstructions: string,
+    output: string,
+    error?: string
+  ): Promise<string> {
+    const summaryPath = `${workspaceDir}/summary.md`;
     const timestamp = new Date().toISOString();
 
-    return `# Step Result: ${subtask.title}
+    const summary = `# Task Execution Summary
 
-**Step Number**: ${subtask.sequence}
 **Timestamp**: ${timestamp}
-**Agent**: ${this.model}
-**Duration**: ${duration}ms
+**Status**: ${error ? 'Failed' : 'Completed'}
 
-## Status
+## Task Instructions
 
-${success ? '✅ Success' : '❌ Failed'}
+${taskInstructions}
 
-## Output
+## Execution Output
 
 ${output}
 
+${error ? `## Error\n\n${error}\n` : ''}
+
 ## Files Created
 
-${files.length > 0 ? files.map(f => `- \`${f}\``).join('\n') : '(No files created)'}
-
-## Key Findings
-
-${success ? 'Step completed successfully.' : 'Step failed - see error details above.'}
+See task directory for created files.
 `;
+
+    await fs.writeFile(summaryPath, summary, 'utf-8');
+    this.logger.debug({ summaryPath }, 'Summary file created');
+
+    return summaryPath;
   }
 
   /**
-   * List all files created in the subtask directory.
+   * Find all files created in workspace (excluding summary.md).
    */
-  private async listCreatedFiles(subtaskDir: string): Promise<string[]> {
+  private async findCreatedFiles(workspaceDir: string): Promise<string[]> {
     const files: string[] = [];
 
     try {
-      const entries = await fs.readdir(subtaskDir, { withFileTypes: true });
+      const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (entry.isFile()) {
+        if (entry.isFile() && entry.name !== 'summary.md') {
           files.push(entry.name);
-        } else if (entry.isDirectory()) {
-          // Recursively list subdirectories
-          const subPath = path.join(subtaskDir, entry.name);
-          const subFiles = await this.listCreatedFiles(subPath);
-          files.push(...subFiles.map(f => path.join(entry.name, f)));
         }
       }
-    } catch (error) {
-      console.error(`[Executor] Failed to list files in ${subtaskDir}:`, error);
+    } catch (err) {
+      this.logger.warn({ err }, 'Failed to list workspace files');
     }
 
     return files;

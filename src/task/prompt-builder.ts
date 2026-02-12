@@ -5,10 +5,6 @@
  * for the Scout agent.
  */
 
-import { createLogger } from '../utils/logger.js';
-
-const logger = createLogger('PromptBuilder', {});
-
 /**
  * Task context for Scout agent.
  */
@@ -34,9 +30,7 @@ export interface TaskContext {
 export function buildScoutPrompt(
   userPrompt: string,
   taskContext: TaskContext,
-  // skillContent parameter is kept for backward compatibility but unused
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  skillContent?: string
+  _skillContent?: string
 ): string {
   if (!taskContext) {
     return userPrompt;
@@ -93,7 +87,7 @@ You are a **task initialization specialist**. Your workflow:
 Task.md must contain ONLY these sections:
 - **Metadata header** (Task ID, Created, Chat ID, User ID)
 - **Original Request** (preserved exactly)
-- **Expected Results** (what Worker should produce)
+- **Expected Results** (what Executor should produce)
 
 **DO NOT add to Task.md:**
 - ❌ Context Discovery

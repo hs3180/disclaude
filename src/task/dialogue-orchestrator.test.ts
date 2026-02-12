@@ -60,7 +60,6 @@ describe('DialogueOrchestrator', () => {
   let orchestrator: DialogueOrchestrator;
   let config: DialogueOrchestratorConfig;
   let evaluatorConfig: EvaluatorConfig;
-  let plannerConfig: { apiKey: string; model: string };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -70,22 +69,8 @@ describe('DialogueOrchestrator', () => {
       model: 'claude-3-5-sonnet-20241022',
     };
 
-    plannerConfig = {
-      apiKey: 'test-planner-key',
-      model: 'claude-3-5-sonnet-20241022',
-    };
-
     config = {
       evaluatorConfig,
-      plannerConfig,
-      executorConfig: {
-        apiKey: 'test-executor-key',
-        model: 'claude-3-5-sonnet-20241022',
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        chatId: 'test-chat',
-        workspaceBaseDir: '/workspace',
-      },
     };
 
     orchestrator = new DialogueOrchestrator(config);
@@ -95,7 +80,7 @@ describe('DialogueOrchestrator', () => {
     it('should create orchestrator with config', () => {
       expect(orchestrator).toBeInstanceOf(DialogueOrchestrator);
       expect(orchestrator.evaluatorConfig).toBe(evaluatorConfig);
-      expect(orchestrator.plannerConfig).toBe(plannerConfig);
+      // plannerConfig was removed from the architecture
     });
 
     it('should set max iterations from constants', () => {
@@ -103,10 +88,9 @@ describe('DialogueOrchestrator', () => {
     });
 
     it('should accept optional callback', () => {
-      const onTaskPlanGenerated = vi.fn();
+      // Test that we can create an orchestrator with just evaluatorConfig
       const configWithCallback: DialogueOrchestratorConfig = {
         ...config,
-        onTaskPlanGenerated,
       };
 
       const bridge = new DialogueOrchestrator(configWithCallback);

@@ -7,14 +7,14 @@
  *
  * This agent runs BEFORE the execution dialogue loop.
  * It focuses ONLY on creating the Task.md file that will be used
- * by the Worker and Manager agents.
+ * by the Executor and Evaluator agents.
  *
  * Key behaviors:
  * - Uses Write tool to create Task.md at the specified taskPath
  * - Task.md contains metadata (Task ID, Chat ID, User ID, timestamp)
  * - Task.md contains the original request
  */
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage } from '../types/agent.js';
@@ -22,6 +22,7 @@ import { createLogger } from '../utils/logger.js';
 import { buildScoutPrompt, type TaskContext } from '../task/prompt-builder.js';
 import { TaskFileManager } from '../task/file-manager.js';
 import { ALLOWED_TOOLS } from '../config/tool-configuration.js';
+import { AgentExecutionError, formatError } from '../utils/errors.js';
 
 // Re-export extractText for convenience
 export { extractText } from '../utils/sdk.js';
@@ -49,6 +50,7 @@ export interface ScoutConfig {
 export class Scout {
   readonly workingDirectory: string;
   readonly skillName: string;
+  private readonly provider: 'anthropic' | 'glm';
   private taskContext?: TaskContext;
   private logger: ReturnType<typeof createLogger>;
   private fileManager: TaskFileManager;
@@ -58,6 +60,7 @@ export class Scout {
     this.workingDirectory = Config.getWorkspaceDir();
     // Get model from Config for logger initialization
     const agentConfig = Config.getAgentConfig();
+    this.provider = agentConfig.provider;
     this.logger = createLogger('Scout', { model: agentConfig.model });
     this.fileManager = new TaskFileManager(this.workingDirectory);
   }
@@ -130,9 +133,31 @@ export class Scout {
         prompt: fullPrompt,
         options: sdkOptions,
       });
+      const iterator = queryResult[Symbol.asyncIterator]();
 
-      for await (const message of queryResult) {
+      while (true) {
+        // No timeout - let GLM-5 deep thinking complete naturally
+        const result = await iterator.next() as IteratorResult<unknown>;
+
+        if (result.done) {
+          break;
+        }
+
+        const message = result.value as SDKMessage;
         const parsed = parseSDKMessage(message);
+
+        // GLM-specific logging to monitor streaming behavior
+        if (this.provider === 'glm') {
+          this.logger.debug({
+            provider: 'GLM',
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            stopReason: (message as any).stop_reason,
+            stopSequence: (message as any).stop_sequence,
+            rawMessagePreview: JSON.stringify(message).substring(0, 500),
+          }, 'SDK message received (GLM)');
+        }
 
         if (!parsed.content) {
           continue;
@@ -161,7 +186,15 @@ export class Scout {
         };
       }
     } catch (error) {
-      this.logger.error({ err: error }, 'Scout query failed');
+      const agentError = new AgentExecutionError(
+        'Scout query failed',
+        {
+          cause: error instanceof Error ? error : new Error(String(error)),
+          agent: 'Scout',
+          recoverable: true,
+        }
+      );
+      this.logger.error({ err: formatError(agentError) }, 'Scout query failed');
       yield {
         content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
         role: 'assistant',

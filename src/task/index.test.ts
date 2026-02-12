@@ -52,11 +52,6 @@ describe('Task Module Exports', () => {
       expect(TaskModule.isUserFeedbackTool).toBeDefined();
       expect(typeof TaskModule.isUserFeedbackTool).toBe('function');
     });
-
-    it('should export isTaskDoneTool', () => {
-      expect(TaskModule.isTaskDoneTool).toBeDefined();
-      expect(typeof TaskModule.isTaskDoneTool).toBe('function');
-    });
   });
 
   describe('Feishu Context MCP Tools', () => {
@@ -89,7 +84,7 @@ describe('Task Module Exports', () => {
   });
 
   describe('Exported Types', () => {
-    it('should export WorkerConfig type', () => {
+    it('should export ExecutorConfig type', () => {
       // Type exports don't exist at runtime, but we can verify the module structure
       expect(TaskModule).toBeDefined();
     });
@@ -127,7 +122,6 @@ describe('Task Module Exports', () => {
       expect(exports).toContain('DialogueMessageTracker');
       expect(exports).toContain('parseBaseToolName');
       expect(exports).toContain('isUserFeedbackTool');
-      expect(exports).toContain('isTaskDoneTool');
 
       // Feishu tools
       expect(exports).toContain('feishuContextTools');

@@ -433,7 +433,7 @@ export async function send_file_to_feishu(params: {
  */
 export const feishuContextTools = {
   send_user_feedback: {
-    description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content like code diffs to users.',
+    description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content to users.\n\n**Format Guidelines:**\n- For "text" format: Send plain text as a string\n- For "card" format: Send a Feishu interactive card object following the structure below\n\n**Valid Card Structure:**\nA valid card must include:\n- config: Object with optional "wide_screen_mode"\n- header: Object with "title" (containing {"tag": "plain_text", "content": "..."}) and "template" color\n- elements: Array of element objects\n\n**Supported Element Types:**\n- Markdown content: {"tag": "markdown", "content": "**Your markdown text**"}\n- Divider: {"tag": "hr"}\n- Plain text in div: {"tag": "div", "text": {"tag": "plain_text", "content": "Your text"}}\n\n**Example Card:**\n{\n  "config": {"wide_screen_mode": true},\n  "header": {"title": {"tag": "plain_text", "content": "Summary Report"}, "template": "blue"},\n  "elements": [\n    {"tag": "markdown", "content": "## Task Status\\n\\n✅ Completed successfully"},\n    {"tag": "hr"},\n    {"tag": "markdown", "content": "**Details:**\\n\\n- Processed 150 files\\n- Generated 25 reports"},\n    {"tag": "hr"},\n    {"tag": "div", "text": {"tag": "plain_text", "content": "Next steps: Review and deploy"}}\n  ]\n}\n\n**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags',
     parameters: {
       type: 'object',
       properties: {
@@ -442,12 +442,12 @@ export const feishuContextTools = {
             { type: 'string' },
             { type: 'object' }
           ],
-          description: 'The content to send. Use a string for text messages, or an object for interactive cards.',
+          description: 'The content to send. For text format: use a string. For card format: use a valid Feishu card object (see description).',
         },
         format: {
           type: 'string',
           enum: ['text', 'card'],
-          description: 'Format specifier (required): "text" for plain text, "card" for interactive cards.',
+          description: 'Format specifier (required): "text" for plain text messages, "card" for interactive cards.',
         },
         chatId: {
           type: 'string',
@@ -513,10 +513,10 @@ function toolError(errorMessage: string): { content: Array<{ type: 'text'; text:
 export const feishuSdkTools = [
   tool(
     'send_user_feedback',
-    'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content like code diffs to users.',
+    'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content.\n\n**Card Format Requirements:**\nWhen format="card", content must be a valid Feishu card object with the following structure:\n\n{\n  "config": {"wide_screen_mode": true},\n  "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},\n  "elements": [\n    {"tag": "markdown", "content": "**Bold** and *italic* text"},\n    {"tag": "hr"},\n    {"tag": "div", "text": {"tag": "plain_text", "content": "Plain text content"}}\n  ]\n}\n\n**Key Elements to Use:**\n- {"tag": "markdown", "content": "..."} - For markdown formatted text\n- {"tag": "hr"} - For horizontal dividers\n- {"tag": "div", "text": {"tag": "plain_text", "content": "..."}} - For plain text in containers\n\n**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags',
     {
-      content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. Use a string for text messages, or an object for interactive cards.'),
-      format: z.enum(['text', 'card']).describe('Format specifier (required): "text" for plain text, "card" for interactive cards.'),
+      content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. String for text messages, object for cards (must follow Feishu card structure - see tool description).'),
+      format: z.enum(['text', 'card']).describe('Format specifier (required): "text" for plain text, "card" for interactive cards with VALID structure.'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
     },
     async ({ content, format, chatId }) => {

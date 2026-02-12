@@ -41,6 +41,7 @@ interface PendingMessage {
   text: string;
   messageId: string;
   timestamp: number;
+  senderOpenId?: string;
 }
 
 /**
@@ -99,6 +100,10 @@ export class Pilot {
   // Map<chatId, Set<filePath>>
   private pendingWriteFiles = new Map<string, Set<string>>();
 
+  // Track sender open_id per chatId for @ mention on result messages
+  // Map<chatId, senderOpenId>
+  private senderOpenIds = new Map<string, string>();
+
   constructor(options: PilotOptions) {
     this.callbacks = options.callbacks;
   }
@@ -112,20 +117,27 @@ export class Pilot {
    * @param chatId - Platform-specific chat identifier
    * @param text - User's message text
    * @param messageId - Unique message identifier for session resume
+   * @param senderOpenId - Optional sender's open_id for @ mention on result
    */
   enqueueMessage(
     chatId: string,
     text: string,
-    messageId: string
+    messageId: string,
+    senderOpenId?: string
   ): void {
     // Initialize queue for this chatId (if not exists)
     if (!this.chatQueues.has(chatId)) {
       this.chatQueues.set(chatId, []);
     }
 
+    // Store sender open_id for this chatId (for @ mention on result)
+    if (senderOpenId) {
+      this.senderOpenIds.set(chatId, senderOpenId);
+    }
+
     // Add message to queue
     const queue = this.chatQueues.get(chatId)!;
-    queue.push({ text, messageId, timestamp: Date.now() });
+    queue.push({ text, messageId, timestamp: Date.now(), senderOpenId });
 
     this.logger.debug({
       chatId,
@@ -142,13 +154,20 @@ export class Pilot {
     // Start streaming processing (if not already running)
     // Coroutine runs forever, does not auto-exit
     if (!this.activeStreams.has(chatId)) {
+      this.logger.info({ chatId }, 'Starting new stream for chat');
+
       const streamPromise = this.runStreamingChat(chatId);
       this.activeStreams.set(chatId, streamPromise);
 
-      // Only clean up on error, normally never ends
+      // Clean up and allow restart on error
       streamPromise.catch((err) => {
-        this.logger.error({ err, chatId }, 'Stream error, will restart on next message');
+        this.logger.error({ err, chatId }, 'Stream error, stream terminated');
+
+        // Remove from active streams to allow restart on next message
         this.activeStreams.delete(chatId);
+
+        // Also clean up queue callback to prevent memory leak
+        this.queueReadyCallbacks.delete(chatId);
       });
     }
   }
@@ -225,7 +244,8 @@ export class Pilot {
 
     // Start streaming query - runs forever, never ends
     // Type assertion: generator matches SDK input format
-    for await (const message of query({ prompt: generator as any, options: sdkOptions })) {
+    try {
+      for await (const message of query({ prompt: generator as any, options: sdkOptions })) {
       const parsed = parseSDKMessage(message);
 
       // Track Write tool use events - don't send file yet, wait for tool completion
@@ -273,10 +293,32 @@ export class Pilot {
         }
       }
 
+      // Send @ mention when result message is received (conversation complete)
+      if (parsed.type === 'result') {
+        const senderOpenId = this.senderOpenIds.get(chatId);
+        if (senderOpenId) {
+          const atMessage = `<at user_id="${senderOpenId}">@用户</at>`;
+          await this.callbacks.sendMessage(chatId, atMessage);
+          this.logger.debug({ chatId, senderOpenId }, 'Sent @ mention on result message');
+        }
+      }
+
       // Send text content (for progress updates, tool notifications, etc.)
       if (parsed.content) {
         await this.callbacks.sendMessage(chatId, parsed.content);
       }
+    }
+    } catch (error) {
+      // Handle streaming errors (including 429 quota errors)
+      const err = error as Error;
+      this.logger.error({
+        err,
+        chatId,
+        message: err.message,
+      }, 'Stream query error, terminating coroutine');
+
+      // Re-throw to trigger the catch block in enqueueMessage
+      throw error;
     }
 
     // Theoretically never reaches here, unless a serious error occurs

@@ -1,7 +1,7 @@
 /**
  * Reporter - Communication and instruction generation specialist.
  *
- * **Single Responsibility**: Generate Worker instructions and format user feedback.
+ * **Single Responsibility**: Generate Executor instructions and format user feedback.
  *
  * **Key Differences from Manager:**
  * - Manager: Evaluates AND generates instructions AND formats output
@@ -16,21 +16,21 @@
  *
  * **Workflow:**
  * 1. Receive evaluation result from Evaluator
- * 2. Read Task.md and Worker output
- * 3. Generate Worker instructions (if not complete)
+ * 2. Read Task.md and Executor output
+ * 3. Generate Executor instructions (if not complete)
  * 4. Format user feedback
  * 5. Send files to user (if applicable)
  * 6. Call send_user_feedback
  *
  * **Output Format:**
  * Reporter generates user-facing messages:
- * - Worker instructions (clear, actionable)
+ * - Executor instructions (clear, actionable)
  * - Progress updates (what was accomplished)
  * - Next steps (what needs to be done)
  * - File attachments (reports, logs, etc.)
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
@@ -38,6 +38,7 @@ import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { createLogger } from '../utils/logger.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import type { EvaluationResult } from './evaluator.js';
+import { AgentExecutionError, TimeoutError, formatError } from '../utils/errors.js';
 
 /**
  * Input type for Reporter queries.
@@ -69,6 +70,7 @@ export class Reporter {
   readonly permissionMode: ReporterPermissionMode;
   protected skill?: ParsedSkill;
   protected initialized = false;
+  private readonly provider: 'anthropic' | 'glm';
 
   private readonly logger = createLogger('Reporter');
 
@@ -77,6 +79,10 @@ export class Reporter {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode || 'bypassPermissions';
+
+    // Detect provider from API base URL
+    const agentConfig = Config.getAgentConfig();
+    this.provider = agentConfig.provider;
   }
 
   /**
@@ -132,10 +138,41 @@ export class Reporter {
       sdkOptions.model = this.model;
     }
 
+    const ITERATOR_TIMEOUT_MS = 30000; // 30 seconds timeout for Reporter
+
     try {
-      // Query SDK
-      for await (const message of query({ prompt: input, options: sdkOptions as any })) {
+      // Query SDK with timeout protection
+      const queryResult = query({ prompt: input, options: sdkOptions as any });
+      const iterator = queryResult[Symbol.asyncIterator]();
+
+      while (true) {
+        // Race between next message and timeout
+        const nextPromise = iterator.next();
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Iterator timeout')), ITERATOR_TIMEOUT_MS)
+        );
+
+        const result = await Promise.race([nextPromise, timeoutPromise]) as IteratorResult<unknown>;
+
+        if (result.done) {
+          break;
+        }
+
+        const message = result.value as SDKMessage;
         const parsed = parseSDKMessage(message);
+
+        // GLM-specific logging to monitor streaming behavior
+        if (this.provider === 'glm') {
+          this.logger.debug({
+            provider: 'GLM',
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            stopReason: (message as any).stop_reason,
+            stopSequence: (message as any).stop_sequence,
+            rawMessagePreview: JSON.stringify(message).substring(0, 500),
+          }, 'SDK message received (GLM)');
+        }
 
         // Yield formatted message
         yield {
@@ -146,21 +183,43 @@ export class Reporter {
         };
       }
     } catch (error) {
-      this.logger.error({ err: error }, 'Reporter query failed');
-      yield {
-        content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
-        role: 'assistant',
-        messageType: 'error',
-      };
+      if (error instanceof Error && error.message === 'Iterator timeout') {
+        const timeoutError = new TimeoutError(
+          'Reporter query timeout - unable to generate report',
+          ITERATOR_TIMEOUT_MS,
+          'queryStream'
+        );
+        this.logger.warn({ err: formatError(timeoutError) }, 'Reporter iterator timeout - unable to complete reporting');
+        yield {
+          content: '⚠️ Query timeout - unable to generate report',
+          role: 'assistant',
+          messageType: 'error',
+        };
+      } else {
+        const agentError = new AgentExecutionError(
+          'Reporter query failed',
+          {
+            cause: error instanceof Error ? error : new Error(String(error)),
+            agent: 'Reporter',
+            recoverable: true,
+          }
+        );
+        this.logger.error({ err: formatError(agentError) }, 'Reporter query failed');
+        yield {
+          content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+          role: 'assistant',
+          messageType: 'error',
+        };
+      }
     }
   }
 
   /**
-   * Generate Worker instructions and user feedback.
+   * Generate Executor instructions and user feedback.
    *
    * @param taskMdContent - Full Task.md content
    * @param iteration - Current iteration number
-   * @param workerOutput - Worker's output from previous iteration (if any)
+   * @param workerOutput - Executor's output from previous iteration (if any)
    * @param evaluation - Evaluation result from Evaluator
    * @returns Generated messages
    */
@@ -198,10 +257,10 @@ export class Reporter {
 
 `;
 
-    // Add Worker output if available
-    const hasWorkerOutput = workerOutput && workerOutput.trim().length > 0;
-    if (hasWorkerOutput) {
-      prompt += `## Worker's Previous Output (Iteration ${iteration - 1})
+    // Add Executor output if available
+    const hasExecutorOutput = workerOutput && workerOutput.trim().length > 0;
+    if (hasExecutorOutput) {
+      prompt += `## Executor's Previous Output (Iteration ${iteration - 1})
 
 \`\`\`
 ${workerOutput}
@@ -211,9 +270,9 @@ ${workerOutput}
 
 `;
     } else {
-      prompt += `## Worker's Previous Output
+      prompt += `## Executor's Previous Output
 
-*No Worker output yet - this is the first iteration.*
+*No Executor output yet - this is the first iteration.*
 
 ---
 
@@ -237,10 +296,10 @@ ${workerOutput}
 `;
 
     // Add report instructions
-    if (!hasWorkerOutput) {
+    if (!hasExecutorOutput) {
       prompt += `### Your Reporting Task
 
-**⚠️ FIRST ITERATION - Worker has NOT executed yet**
+**⚠️ FIRST ITERATION - Executor has NOT executed yet**
 
 **Evaluator determined: Task is NOT complete**
 - Reason: ${evaluation.reason}
@@ -248,10 +307,10 @@ ${workerOutput}
 
 **Your Job:**
 1. Read Task.md Expected Results
-2. Generate clear, actionable Worker instructions
+2. Generate clear, actionable Executor instructions
 3. Use send_user_feedback to send instructions to user
 
-**What to include in Worker instructions:**
+**What to include in Executor instructions:**
 - Primary objective (what to do)
 - Key requirements (constraints, success criteria)
 - Reference materials (files to read, patterns to follow)
@@ -266,8 +325,8 @@ ${workerOutput}
 **What NOT to do:**
 ❌ DO NOT evaluate if task is complete (Evaluator's job)
 ❌ DO NOT call task_done (Evaluator's job)
-❌ DO NOT judge Worker's performance
-✅ DO generate clear instructions for Worker
+❌ DO NOT judge Executor's performance
+✅ DO generate clear instructions for Executor
 ✅ DO use send_user_feedback to format output
 
 **Remember**: You are the REPORTER.
@@ -286,18 +345,18 @@ ${!evaluation.is_complete ? `
 ${evaluation.missing_items.map(item => `- ${item}`).join('\n')}
 
 **Your Job:**
-1. Generate specific Worker instructions to address missing items
+1. Generate specific Executor instructions to address missing items
 2. Organize progress update for user
 3. Use send_user_feedback to send formatted feedback
 
-**What to include in Worker instructions:**
+**What to include in Executor instructions:**
 - What still needs to be done (from missing_items)
 - Specific actions to take
 - Expected outcomes
 - Testing/validation steps
 
 **What to include in user feedback:**
-- What Worker accomplished in this iteration
+- What Executor accomplished in this iteration
 - What still needs to be done
 - Next steps
 
@@ -314,7 +373,7 @@ ${evaluation.missing_items.map(item => `- ${item}`).join('\n')}
 - Next steps for user (if any)
 
 **DO NOT:**
-❌ Generate more Worker instructions (task is complete)
+❌ Generate more Executor instructions (task is complete)
 ❌ Call task_done yourself (Evaluator will do that)
 
 `}
@@ -322,7 +381,7 @@ ${evaluation.missing_items.map(item => `- ${item}`).join('\n')}
 **DO NOT:**
 ❌ Evaluate if task is complete (Evaluator already did)
 ❌ Call task_done (Evaluator will do that when ready)
-❌ Judge Worker's work negatively
+❌ Judge Executor's work negatively
 
 **DO:**
 ✅ Provide constructive guidance

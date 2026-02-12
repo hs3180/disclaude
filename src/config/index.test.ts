@@ -191,7 +191,7 @@ describe('Config', () => {
     it('should have file property (optional)', () => {
       const loggingConfig = Config.getLoggingConfig();
       expect('file' in loggingConfig).toBe(true);
-      expect(loggingConfig.file === undefined || typeof loggingConfig.file ===toBe('string')).toBe(true);
+      expect(loggingConfig.file === undefined || typeof loggingConfig.file === 'string').toBe(true);
     });
 
     it('should have pretty property', () => {

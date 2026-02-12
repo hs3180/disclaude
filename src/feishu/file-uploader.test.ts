@@ -156,7 +156,7 @@ describe('Feishu File Uploader', () => {
       mockedFsStream.createReadStream = vi.fn(() => ({
         on: vi.fn(),
         pipe: vi.fn(),
-      }));
+      })) as any;
     });
 
     it('should upload image files using image API', async () => {

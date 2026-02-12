@@ -27,6 +27,8 @@ export interface AgentConfig {
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
+  /** Task execution timeout in milliseconds (default: 300000 = 5 minutes) */
+  taskTimeoutMs?: number;
 }
 
 /**

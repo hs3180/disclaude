@@ -52,6 +52,9 @@ export class Config {
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
   static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || 'claude-3-5-sonnet-20241022';
 
+  // Agent execution timeout (default: 5 minutes)
+  static readonly TASK_TIMEOUT_MS = fileConfigOnly.agent?.taskTimeoutMs || 300000;
+
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
   static readonly LOG_FILE = fileConfigOnly.logging?.file;
@@ -182,6 +185,15 @@ export class Config {
    */
   static getToolConfig(): DisclaudeConfig['tools'] {
     return fileConfigOnly.tools;
+  }
+
+  /**
+   * Get the task execution timeout in milliseconds.
+   *
+   * @returns Timeout in milliseconds (default: 300000 = 5 minutes)
+   */
+  static getTaskTimeout(): number {
+    return this.TASK_TIMEOUT_MS;
   }
 
   /**

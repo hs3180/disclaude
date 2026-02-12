@@ -205,6 +205,19 @@ ${entry.content}
     const logPath = this.getChatLogPath(entry.chatId);
 
     try {
+      // Ensure directory exists (defensive check in case it was deleted)
+      const logDir = path.dirname(logPath);
+      try {
+        await fs.mkdir(logDir, { recursive: true });
+      } catch (mkdirError) {
+        // If mkdir fails, try once more and then give up
+        console.error('[MessageLogger] First attempt to create directory failed, retrying...', {
+          error: (mkdirError as Error).message,
+          logDir,
+        });
+        await fs.mkdir(logDir, { recursive: true });
+      }
+
       // Check if file exists
       let fileExists = false;
       try {
@@ -223,8 +236,15 @@ ${entry.content}
         await fs.appendFile(logPath, this.formatMessageEntry(entry), 'utf-8');
       }
     } catch (error) {
-      console.error('[MessageLogger] Failed to append to log:', error);
-      throw error;
+      // Log error but don't throw - allow message processing to continue
+      // Logging failure should not block the bot from responding
+      const err = error as Error;
+      console.error('[MessageLogger] Failed to append to log:', {
+        message: err.message,
+        code: (err as any).code,
+        path: (err as any).path,
+        chatId: entry.chatId,
+      });
     }
   }
 

@@ -4,8 +4,6 @@
  * Provides a clean interface for message validation and routing.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import * as path from 'path';
 import { messageLogger } from './message-logger.js';
 import { DEDUPLICATION } from '../config/constants.js';
 import type { Logger } from 'pino';
@@ -17,7 +15,11 @@ export interface MessageContext {
   readonly content: string;
   readonly sender?: {
     sender_type?: string;
-    sender_id?: string;
+    sender_id?: {
+      open_id?: string;
+      union_id?: string;
+      user_id?: string;
+    };
   };
   readonly createTime: number;
 }
@@ -91,10 +93,9 @@ export class MessageRouter {
    * Route message to appropriate handler based on validation and type checks.
    * Returns handler type: 'task' | 'direct' | 'file' | 'skip'
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async route(
     ctx: MessageContext,
-    handlers: {
+    _handlers: {
       handleTaskFlow: (chatId: string, text: string, messageId: string, sender?: any) => Promise<void>;
       handleDirectChat: (chatId: string, text: string, messageId: string) => Promise<void>;
       handleFileMessage: (chatId: string, messageType: string, content: string, messageId: string, sender?: any) => Promise<void>;
