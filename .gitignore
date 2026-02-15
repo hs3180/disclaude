@@ -41,6 +41,7 @@ Thumbs.db
 .claude/settings*
 .claude/sessions/
 .claude/plans/
+!.claude/skills/
 
 # Playwright MCP
 .playwright-mcp/
@@ -52,5 +53,4 @@ tasks/
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep
-.claude
 ecosystem.config.cjs
