@@ -637,11 +637,17 @@ export function buildSdkEnv(
   const nodeBinDir = getNodeBinDir();
   const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
 
+  // Priority (highest to lowest):
+  // 1. Our forced values (API_KEY, PATH, BASE_URL)
+  // 2. process.env (system environment)
+  // 3. extraEnv (caller-provided defaults)
+  // This ensures system env vars can't be accidentally overridden by extraEnv,
+  // but our critical values always take precedence.
   const env: Record<string, string | undefined> = {
-    ANTHROPIC_API_KEY: apiKey,
-    PATH: newPath,
     ...extraEnv,
     ...(process.env as Record<string, string | undefined>),
+    ANTHROPIC_API_KEY: apiKey,
+    PATH: newPath,
   };
 
   // Set base URL if provided (for GLM or custom endpoints)
