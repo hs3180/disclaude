@@ -36,7 +36,11 @@ export class Config {
   static readonly CONFIG_SOURCE = fileConfig._source;
 
   // Workspace configuration
-  static readonly WORKSPACE_DIR = fileConfigOnly.workspace?.dir || process.cwd();
+  // Resolve to absolute path to ensure getWorkspaceDir() always returns absolute path
+  private static readonly RAW_WORKSPACE_DIR = fileConfigOnly.workspace?.dir || process.cwd();
+  static readonly WORKSPACE_DIR = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
+    ? Config.RAW_WORKSPACE_DIR
+    : path.resolve(process.cwd(), Config.RAW_WORKSPACE_DIR);
 
   // Feishu/Lark configuration (from config file)
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
