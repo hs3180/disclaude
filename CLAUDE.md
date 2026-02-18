@@ -12,6 +12,7 @@ npm run type-check   # TypeScript type checking
 npm run lint         # ESLint
 npm run lint:fix     # ESLint with auto-fix
 npm run test         # Run tests
+npm run test:coverage # Run tests with coverage
 
 # === Production (PM2) ===
 npm run pm2:start     # Build and start PM2 service
@@ -38,7 +39,7 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 
 - **`src/cli-entry.ts`** - Main CLI entry, handles `disclaude feishu` and `disclaude --prompt`
 
-### Core Components
+### Core Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -54,16 +55,11 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 │  (cli/)      │         │  (feishu/)   │
 └──────┬───────┘         └──────┬───────┘
        │                        │
-       │                ┌───────┴────────┐
-       │                │  Session Mgr   │
-       │                │  (in-memory)   │
-       │                └───────┬────────┘
-       │                        │
        └────────────────┬───────┴────────┐
                         ▼                ▼
                  ┌──────────────────────────┐
-                 │      Agent Client        │
-                 │      (agent/client.ts)   │
+                 │      Pilot Agent         │
+                 │    (agents/pilot.ts)     │
                  └────────────┬─────────────┘
                               ▼
                  ┌──────────────────────────┐
@@ -74,32 +70,66 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 
 ### Key Modules
 
-#### `src/config/` - Environment Configuration
+#### `src/config/` - Configuration Management
 
-Static configuration from environment variables:
+File-based configuration using `disclaude.config.yaml`:
 
 - **GLM (Zhipu AI)** takes precedence over Anthropic if both configured
 - `Config.getAgentConfig()` returns agent options:
   - `apiKey` - API key for the configured provider
   - `model` - Model identifier
-  - `permissionMode` - `bypassPermissions` for bot, `default` for CLI
+  - `apiBaseUrl` - Optional custom endpoint
+  - `provider` - `'anthropic'` or `'glm'`
 
-#### `src/agent/client.ts` - Agent SDK Wrapper
-
-Core wrapper around `@anthropic-ai/claude-agent-sdk`:
-
-```typescript
-// Main function
-queryStream(prompt: string, sessionId?: string): AsyncIterable<AgentMessage>
-
-// Key behaviors
-- Handles session persistence via SDK's `resume` option
-- Injects environment variables for subprocess execution
-- Configures allowed/disallowed tools
-- Sets up MCP server connections
+**Configuration file structure**:
+```yaml
+workspace:
+  dir: ./workspace
+glm:
+  apiKey: "..."
+  model: "glm-5"
+feishu:
+  appId: "..."
+  appSecret: "..."
+agent:
+  model: "claude-sonnet-4-20250514"
+logging:
+  level: debug
+  rotate: true
+tools:
+  mcpServers:
+    my-server:
+      command: node
+      args: ["./my-mcp-server.js"]
 ```
 
-**Tool Configuration**: Edit `allowedTools` in this file to enable/disable tools. Web tools (`WebSearch`, `WebFetch`) are disabled by default.
+#### `src/agents/` - Agent System
+
+Agent implementations using the Template Method pattern:
+
+- **`base-agent.ts`** - Abstract base class with common functionality:
+  - SDK configuration building via `createSdkOptions()`
+  - `queryOnce()` - For static prompts (Evaluator, Executor, Reporter)
+  - `createQueryStream()` - For streaming input (Pilot)
+  - Error handling and logging
+
+- **`pilot.ts`** - Platform-agnostic direct chat abstraction:
+  - **Streaming Input Mode**: Uses SDK's AsyncGenerator-based input
+  - **Per-chatId Agent Instances**: Each conversation has its own persistent Agent
+  - **Message Queue**: Messages queued and processed sequentially per chatId
+  - **Session Cleanup**: Idle sessions cleaned up after timeout (default 30min)
+  - `processMessage()` - Non-blocking, queues message for Agent processing
+  - `executeOnce()` - Blocking one-shot query for CLI mode
+
+- **`evaluator.ts`** - Task completion evaluation
+- **`executor.ts`** - Task execution with progress reporting
+- **`reporter.ts`** - Progress reporting to user
+
+#### `src/task/` - Task Orchestration
+
+- **`dialogue-orchestrator.ts`** - Manages Evaluator-Executor flow
+- **`iteration-bridge.ts`** - Handles iteration state and streaming messages
+- **`mcp-utils.ts`** - MCP server utilities for task processing
 
 #### `src/feishu/bot.ts` - WebSocket Bot
 
@@ -110,6 +140,7 @@ Feishu/Lark WebSocket implementation:
 - processedMessageIds: Set<string>  // Message deduplication
 - commands: /reset, /status, /help
 - Message handler: handleMessageReceive()
+- Uses Pilot for agent interactions
 ```
 
 **Critical behaviors**:
@@ -129,21 +160,15 @@ clearSession(chatId)            // Reset conversation
 
 **Limitation**: Sessions are lost on restart (in-memory only).
 
-#### `src/utils/sdk.ts` - SDK Utilities
+#### `src/mcp/` - MCP Servers
 
-Helper functions for SDK message handling:
+Internal MCP servers providing custom tools:
 
-```typescript
-extractTextFromSDKMessage(message: AgentMessage): string
-getNodeBinDir(): string  // For subprocess PATH
-```
+- **`feishu-context-mcp.ts`** - Feishu-specific operations (send messages, files, cards)
+- **`task-skill-mcp.ts`** - Custom skill integration
+- **`feishu-tools-server.ts`** - File sending to Feishu chats
 
-#### `src/utils/output-adapter.ts` - Output Adapter
-
-Converts SDK messages to platform-specific formats:
-
-- **CLI mode**: Full colored console output
-- **Feishu mode**: Text messages with rate limiting/throttling
+External MCP servers can be configured via `disclaude.config.yaml`.
 
 ### Data Flow (Feishu Mode)
 
@@ -158,7 +183,9 @@ Bot Self-Check? (skip if sender_type === 'app')
     ↓
 Is Command? → handleCommand() → Send response
     ↓
-processAgentMessage()
+pilot.processMessage() - queues message
+    ↓
+Agent loop processes queue → generates response
     ↓
 For each SDK message:
     extractText() → sendMessage() immediately
@@ -166,8 +193,8 @@ For each SDK message:
 
 ### Configuration Priority
 
-1. **GLM API** - If `GLM_API_KEY` is set, uses Zhipu AI
-2. **Anthropic** - Falls back to `ANTHROPIC_API_KEY`
+1. **Config file** (`disclaude.config.yaml`) - Primary source
+2. **Environment variables** - Fallback for Anthropic API key only
 
 ### Permission Modes
 
@@ -175,6 +202,8 @@ For each SDK message:
 |------|---------|----------|
 | **Bot** | `bypassPermissions` | Auto-approves all actions |
 | **CLI** | `default` | Asks user for permissions |
+
+**Note**: Pilot defaults to `bypassPermissions` for all modes unless explicitly configured.
 
 ### WebSocket Bot Gotchas
 
@@ -189,6 +218,7 @@ For each SDK message:
 - **Output dir**: `dist/`
 - **Entry points**:
   - `dist/cli-entry.js` - Main binary entry point
+  - `dist/mcp/` - Bundled MCP servers
 
 ### Testing
 
@@ -223,13 +253,13 @@ npm run test -- --coverage # With coverage
 
 ```bash
 # 1. Make code changes
-vim src/agent/client.ts
+vim src/agents/pilot.ts
 
 # 2. Build
 npm run build
 
 # 3. Test with CLI (instant feedback)
-disclaude --prompt "Read src/agent/client.ts and summarize it"
+disclaude --prompt "Read src/agents/pilot.ts and summarize it"
 disclaude --prompt "List all TypeScript files in src/"
 disclaude --prompt "Run npm run type-check"
 
@@ -243,9 +273,11 @@ npm run pm2:restart
 |--------|----------------------|------------------------|
 | **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
 | **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
-| **Session** | ❌ One-shot | ✅ Persistent (in-memory) |
+| **Session** | ❌ One-shot (`executeOnce()`) | ✅ Persistent (`processMessage()`) |
 | **Permissions** | 🔒 `default` (ask user) | ✅ `bypassPermissions` (auto-approve) |
 | **Best for** | 🔧 Development & testing | 🤖 Production & users |
+
+**Note**: Pilot defaults to `bypassPermissions` for both modes unless explicitly configured otherwise.
 
 ## Working Directory
 
@@ -282,9 +314,11 @@ Current implementation uses in-memory sessions:
 
 ### 5. Tool Configuration
 
-When adding new tools:
-- Add to `allowedTools` in `src/agent/client.ts`
-- Web tools are disabled by default for security
+Tools are configured via `disallowedTools` in the agent classes:
+- **Pilot** (`src/agents/pilot.ts`): Uses `disallowedTools: ['AskUserQuestion']`
+- **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
+
+To enable/disable tools, modify the `disallowedTools` array in `Pilot.processMessage()` or `Pilot.executeOnce()`.
 
 ## Logging Guidelines
 
@@ -319,7 +353,7 @@ logger.debug({
 
 ### Locations
 
-- `src/agent/stream-bridge.ts`: Executor and Reporter outputs
+- `src/task/iteration-bridge.ts`: Evaluator, Executor, and Reporter outputs
 
 ## Debugging Tips
 
@@ -357,14 +391,6 @@ pm2 logs disclaude-feishu  # Follows logs in real-time (Ctrl+C to exit)
 - **Without `--nostream`**: PM2 enters "follow mode" and streams logs indefinitely, blocking the command until manually interrupted (Ctrl+C)
 - **With `--nostream`**: PM2 outputs current logs and exits immediately - perfect for automation and Agent use
 - **Default npm scripts**: All `pm2:logs` commands use `--nostream` by default, except `pm2:logs:follow` which intentionally uses follow mode
-npm run pm2:logs
-
-# Errors only
-npm run pm2:logs --err
-
-# Last 100 lines
-pm2 logs disclaude-feishu --lines 100
-```
 
 ### WebSocket Connection Issues
 
@@ -374,8 +400,8 @@ pm2 logs disclaude-feishu --lines 100
 
 ### Tool Not Working
 
-1. Check if tool is in `allowedTools` list
-2. Verify MCP server is configured
+1. Check if tool is in `disallowedTools` array in `src/agents/pilot.ts`
+2. Verify MCP server is configured in `disclaude.config.yaml` or built-in
 3. Check SDK version compatibility
 
 ## Error Handling Patterns
@@ -440,15 +466,60 @@ export function buildWriteContentCard(...) {
 - ✅ Do: Update CLAUDE.md for architecture-level decisions
 - ✅ Do: Add inline comments for complex logic
 
-## Environment Variables Reference
+## Configuration Reference
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `WORKSPACE_DIR` | Optional | Working directory for file operations (default: current directory) |
-| `FEISHU_APP_ID` | Bot mode | Feishu/Lark application ID |
-| `FEISHU_APP_SECRET` | Bot mode | Feishu/Lark application secret |
-| `ANTHROPIC_API_KEY` | One of | Anthropic Claude API key |
-| `GLM_API_KEY` | One of | Zhipu AI API key (takes precedence) |
-| `CLAUDE_MODEL` | Optional | Model identifier |
-| `GLM_MODEL` | Optional | GLM model identifier |
-| `GLM_API_BASE_URL` | Optional | GLM API endpoint |
+### File-Based Configuration (`disclaude.config.yaml`)
+
+All configuration is read from `disclaude.config.yaml`. Create this file in your project root or home directory.
+
+```yaml
+# Workspace directory for file operations
+workspace:
+  dir: ./workspace
+
+# GLM (Zhipu AI) configuration - takes precedence over Anthropic
+glm:
+  apiKey: "your-glm-api-key"
+  model: "glm-5"
+  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"  # optional
+
+# Feishu/Lark bot configuration
+feishu:
+  appId: "your-app-id"
+  appSecret: "your-app-secret"
+  cliChatId: "optional-cli-chat-id"  # For CLI mode testing
+
+# Agent configuration
+agent:
+  model: "claude-sonnet-4-20250514"  # Used when Anthropic is provider
+
+# Logging configuration
+logging:
+  level: info          # trace | debug | info | warn | error
+  file: undefined      # Optional log file path
+  pretty: true         # Pretty print console output
+  rotate: false        # Enable log rotation
+
+# MCP external servers configuration
+tools:
+  mcpServers:
+    my-server:
+      command: node
+      args: ["./my-mcp-server.js"]
+      env:  # Optional environment variables for the MCP server
+        MY_VAR: "value"
+
+# Global environment variables (passed to all agent processes)
+env:
+  MY_GLOBAL_VAR: "value"
+```
+
+### Environment Variables (Fallback)
+
+Environment variables are **only** used as fallback for Anthropic API key:
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key (fallback if not in config file) |
+
+**Note**: GLM configuration must be in `disclaude.config.yaml` - environment variables are not supported for GLM.
