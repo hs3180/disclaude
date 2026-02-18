@@ -505,10 +505,21 @@ ${uploadPrompt}`;
       },
     });
 
-    // Create WebSocket client
+    // Create SDK logger adapter to integrate Lark SDK logs with Pino
+    const sdkLogger = {
+      error: (...msg: unknown[]) => this.logger.error({ context: 'LarkSDK' }, String(msg)),
+      warn: (...msg: unknown[]) => this.logger.warn({ context: 'LarkSDK' }, String(msg)),
+      info: (...msg: unknown[]) => this.logger.info({ context: 'LarkSDK' }, String(msg)),
+      debug: (...msg: unknown[]) => this.logger.debug({ context: 'LarkSDK' }, String(msg)),
+      trace: (...msg: unknown[]) => this.logger.trace({ context: 'LarkSDK' }, String(msg)),
+    };
+
+    // Create WebSocket client with custom logger
     this.wsClient = new lark.WSClient({
       appId: this.appId,
       appSecret: this.appSecret,
+      logger: sdkLogger,
+      loggerLevel: lark.LoggerLevel.info,
     });
 
     // Start WebSocket connection
