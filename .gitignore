@@ -38,10 +38,7 @@ logs/*
 Thumbs.db
 
 # Claude Code
-.claude/settings*
-.claude/sessions/
-.claude/plans/
-!.claude/skills/
+.claude/
 
 # Playwright MCP
 .playwright-mcp/
