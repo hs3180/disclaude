@@ -51,27 +51,34 @@ npm install
 
 ### 2. Configure
 
-Copy `.env.example` to `.env` and fill in your credentials:
+Copy the example configuration file and customize it:
 
 ```bash
-cp .env.example .env
+cp disclaude.config.example.yaml disclaude.config.yaml
 ```
 
-```env
-# === Feishu/Lark (required for bot mode) ===
-FEISHU_APP_ID=your_app_id
-FEISHU_APP_SECRET=your_secret
+Edit `disclaude.config.yaml` with your credentials:
 
-# === Claude Agent SDK (choose one) ===
-# Option 1: Anthropic Claude
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-CLAUDE_MODEL=claude-3-5-sonnet-20241022
+```yaml
+# Feishu/Lark Platform Configuration
+feishu:
+  appId: "your_feishu_app_id_here"
+  appSecret: "your_feishu_app_secret_here"
 
-# Option 2: GLM (Zhipu AI) - takes precedence if both configured
-GLM_API_KEY=your_glm_key
-GLM_MODEL=glm-4.7
-GLM_API_BASE_URL=https://open.bigmodel.cn/api/anthropic
+# GLM (Zhipu AI) API Configuration
+# GLM takes precedence if both GLM and Anthropic are configured
+glm:
+  apiKey: "your_glm_api_key_here"
+  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# Agent/AI Configuration
+agent:
+  provider: "glm"          # Options: "glm" or "anthropic"
+  model: "glm-4.7"         # Model to use
+  permissionMode: "bypassPermissions"  # Auto-approve tool actions
 ```
+
+For full configuration options (logging, MCP servers, etc.), see `disclaude.config.example.yaml`.
 
 ### 3. Run
 
@@ -274,7 +281,7 @@ disclaude/
 ├── workspace/                # Agent working directory
 ├── logs/                     # PM2 logs
 ├── ecosystem.config.cjs      # PM2 configuration
-├── .env.example              # Environment template
+├── disclaude.config.example.yaml  # Configuration template
 ├── CLAUDE.md                 # AI assistant guidance
 └── README.md                 # This file
 ```
@@ -315,8 +322,8 @@ disclaude/
 
 | Symptom | Solution |
 |---------|----------|
-| Invalid API key | Check `ANTHROPIC_API_KEY` or `GLM_API_KEY` |
-| Model not found | Verify model name in `.env` |
+| Invalid API key | Check `glm.apiKey` or `anthropic.apiKey` in `disclaude.config.yaml` |
+| Model not found | Verify model name in `disclaude.config.yaml` |
 | Rate limited | Check API quota/billing |
 
 ### MCP tools not working
