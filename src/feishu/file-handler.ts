@@ -6,11 +6,7 @@
  * - Store locally for agent processing
  * - Build upload notification prompts
  */
-// @ts-expect-error - Import kept for future use
-import * as lark from '@larksuiteoapi/node-sdk';
 import type { FileAttachment } from './attachment-manager.js';
-// @ts-expect-error - Import kept for future use
-import { downloadFile } from './file-downloader.js';
 import { createLogger } from '../utils/logger.js';
 
 export interface FileHandlerResult {
@@ -164,9 +160,9 @@ export class FileHandler {
    * @param chatId - Chat ID
    * @param attachment - File attachment metadata
    */
-  async notifyFileUpload(chatId: string, attachment: FileAttachment): Promise<void> {
+  notifyFileUpload(chatId: string, attachment: FileAttachment): void {
     // @ts-expect-error - Variable kept for future use
-    const prompt = this.buildUploadPrompt(attachment);
+    const _prompt = this.buildUploadPrompt(attachment);
 
     // Send to Pilot which will enqueue the message
     // The Pilot is injected from bot.ts, so we'll handle this differently

@@ -14,8 +14,13 @@ export async function runFeishu(): Promise<void> {
   // The bot may spawn multiple subprocesses through Agent tools
   process.setMaxListeners(20);
 
+  // Validate required environment variables
+  if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
+    throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET are required for bot mode');
+  }
+
   // Create Feishu bot
-  const bot = new FeishuBot(Config.FEISHU_APP_ID!, Config.FEISHU_APP_SECRET!);
+  const bot = new FeishuBot(Config.FEISHU_APP_ID, Config.FEISHU_APP_SECRET);
 
   // Run bot (blocking)
   await bot.start();

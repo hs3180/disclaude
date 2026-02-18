@@ -9,8 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DialogueOrchestrator } from './dialogue-orchestrator.js';
-import type { DialogueOrchestratorConfig } from './dialogue-orchestrator.js';
+import { DialogueOrchestrator, type DialogueOrchestratorConfig } from './dialogue-orchestrator.js';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
 
 // Mock dependencies

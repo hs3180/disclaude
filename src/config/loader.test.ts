@@ -75,13 +75,14 @@ describe('findConfigFile', () => {
 
   it('should search in home directory as fallback', () => {
     // Skip if HOME is not set
-    if (!process.env.HOME) {
+    const homeDir = process.env.HOME;
+    if (!homeDir) {
       return;
     }
 
     vi.mocked(existsSync).mockImplementation((path) => {
       const pathStr = String(path);
-      return pathStr.includes(process.env.HOME!) && pathStr.includes('disclaude.config.yaml');
+      return pathStr.includes(homeDir) && pathStr.includes('disclaude.config.yaml');
     });
 
     const result = findConfigFile();
@@ -249,36 +250,36 @@ describe('validateConfig', () => {
 
   it('should reject non-object config', () => {
     // null is treated as falsy object
-    expect(validateConfig(null as any)).toBe(false);
+    expect(validateConfig(null as unknown as Record<string, unknown>)).toBe(false);
     // undefined is falsy
-    expect(validateConfig(undefined as any)).toBe(false);
+    expect(validateConfig(undefined as unknown as Record<string, unknown>)).toBe(false);
     // Primitives return true (treated as empty objects)
     // Arrays are objects
-    expect(validateConfig([] as any)).toBe(true);
+    expect(validateConfig([] as unknown as Record<string, unknown>)).toBe(true);
   });
 
   it('should reject invalid workspace.dir', () => {
     const config1 = { workspace: { dir: 123 } };
     const config2 = { workspace: { dir: ['array'] } };
 
-    expect(validateConfig(config1 as any)).toBe(false);
-    expect(validateConfig(config2 as any)).toBe(false);
+    expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('should reject invalid agent.model', () => {
     const config1 = { agent: { model: 123 } };
     const config2 = { agent: { model: ['array'] } };
 
-    expect(validateConfig(config1 as any)).toBe(false);
-    expect(validateConfig(config2 as any)).toBe(false);
+    expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('should reject invalid logging.level', () => {
     const config1 = { logging: { level: 123 } };
     const config2 = { logging: { level: ['array'] } };
 
-    expect(validateConfig(config1 as any)).toBe(false);
-    expect(validateConfig(config2 as any)).toBe(false);
+    expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('should accept valid string values', () => {

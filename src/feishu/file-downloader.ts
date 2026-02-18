@@ -10,9 +10,29 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import type { FileAttachment } from './attachment-manager.js';
 
 const logger = createLogger('FileDownloader');
+
+/**
+ * Feishu file resource response type.
+ * SDK returns an object with writeFile method for saving files.
+ */
+interface FileResourceResponse {
+  writeFile: (path: string) => Promise<void>;
+  getReadableStream?: () => NodeJS.ReadableStream;
+}
+
+/**
+ * Extended error type with HTTP response details.
+ */
+interface FeishuApiError extends Error {
+  code?: string;
+  response?: {
+    status?: number;
+    statusText?: string;
+    data?: unknown;
+  };
+}
 
 /**
  * Get the attachments directory path.
@@ -186,7 +206,7 @@ export async function downloadFile(
   logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
 
   try {
-    let fileResource: any;
+    let fileResource: FileResourceResponse;
 
     // For user-uploaded files in messages, we MUST use messageResource.get API
     // This API retrieves files from messages regardless of who uploaded them
@@ -200,8 +220,8 @@ export async function downloadFile(
 
       logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
-      // Type assertion is used because SDK types require params.type
-      fileResource = await (client.im.messageResource.get as any)({
+      // SDK type doesn't include params.type, so we need to cast
+      fileResource = await client.im.messageResource.get({
         path: {
           message_id: messageId,
           file_key: fileKey,
@@ -209,7 +229,7 @@ export async function downloadFile(
         params: {
           type: apiFileType,
         },
-      });
+      }) as unknown as FileResourceResponse;
     } else if (fileType === 'image') {
       // Fallback: Try direct image API (only works for bot-uploaded images)
       // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
@@ -219,7 +239,7 @@ export async function downloadFile(
         path: {
           image_key: fileKey,
         },
-      });
+      }) as unknown as FileResourceResponse;
     } else {
       // Fallback: Try Drive API (only works for drive files uploaded by bot)
       // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/drive-v1/file/download
@@ -229,7 +249,7 @@ export async function downloadFile(
         path: {
           file_token: fileKey,
         },
-      });
+      }) as unknown as FileResourceResponse;
     }
 
     // Check if response contains file resource
@@ -247,87 +267,25 @@ export async function downloadFile(
     logger.info({ fileKey, localPath, size: stats.size }, 'File downloaded successfully');
 
     return localPath;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Extract detailed error response from Feishu API
-    const errorDetails: any = {
+    const apiError = error as FeishuApiError;
+    const errorDetails: Record<string, unknown> = {
       fileKey,
       fileType,
       messageId,
-      errorMessage: error.message,
-      errorCode: error.code,
+      errorMessage: apiError.message,
+      errorCode: apiError.code,
     };
 
     // Add response data if available
-    if (error.response) {
-      errorDetails.statusCode = error.response.status;
-      errorDetails.statusMessage = error.response.statusText;
-      errorDetails.responseData = error.response.data;
+    if (apiError.response) {
+      errorDetails.statusCode = apiError.response.status;
+      errorDetails.statusMessage = apiError.response.statusText;
+      errorDetails.responseData = apiError.response.data;
     }
 
     logger.error({ err: error, ...errorDetails }, 'Failed to download file');
     throw error;
-  }
-}
-
-/**
- * Download multiple files and update their metadata.
- *
- * @param client - Lark API client
- * @param attachments - Array of attachments to download
- * @returns Updated attachments with local paths
- */
-export async function downloadAttachments(
-  client: lark.Client,
-  attachments: FileAttachment[]
-): Promise<FileAttachment[]> {
-  const results: FileAttachment[] = [];
-
-  for (const att of attachments) {
-    try {
-      const localPath = await downloadFile(
-        client,
-        att.fileKey,
-        att.fileType,
-        att.fileName,
-        att.messageId
-      );
-
-      // Update attachment with local path
-      results.push({
-        ...att,
-        localPath,
-      });
-    } catch (error) {
-      logger.error({ err: error, fileKey: att.fileKey }, 'Failed to download attachment, skipping');
-      // Keep attachment but without local path
-      results.push(att);
-    }
-  }
-
-  return results;
-}
-
-/**
- * Delete a local file.
- */
-export async function deleteLocalFile(filePath: string): Promise<void> {
-  try {
-    await fs.unlink(filePath);
-    logger.debug({ filePath }, 'Local file deleted');
-  } catch (error) {
-    logger.warn({ err: error, filePath }, 'Failed to delete local file');
-  }
-}
-
-/**
- * Get file stats (size, etc.)
- */
-export async function getFileStats(filePath: string): Promise<{ size: number } | null> {
-  try {
-    const stats = await fs.stat(filePath);
-    return { size: stats.size };
-  } catch (error) {
-    logger.warn({ err: error, filePath }, 'Failed to get file stats');
-    return null;
   }
 }

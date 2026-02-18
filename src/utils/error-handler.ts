@@ -66,7 +66,7 @@ export interface ErrorContext {
   /** User-friendly message */
   userMessage?: string;
   /** Additional context data */
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -79,7 +79,7 @@ export class AppError extends Error {
   readonly transient: boolean;
   readonly userMessage?: string;
   readonly errorId: string;
-  readonly context?: Record<string, any>;
+  readonly context?: Record<string, unknown>;
   readonly originalError?: Error;
 
   constructor(
@@ -90,7 +90,7 @@ export class AppError extends Error {
       retryable?: boolean;
       transient?: boolean;
       userMessage?: string;
-      context?: Record<string, any>;
+      context?: Record<string, unknown>;
       cause?: Error;
     } = {}
   ) {
@@ -420,7 +420,7 @@ export function logError(
   const enriched = enrichError(error, context);
 
   const {severity} = enriched;
-  const logData: any = {
+  const logData: Record<string, unknown> = {
     err: error instanceof Error ? error : undefined,
     errorId: enriched.errorId,
     category: enriched.category,
@@ -483,126 +483,4 @@ export function handleError(
   }
 
   return enriched;
-}
-
-/**
- * Wrapper function to automatically handle errors in async functions
- */
-export function withErrorLogging<T extends (...args: any[]) => any>(
-  fn: T,
-  context: ErrorContext = {},
-  options: {
-    customLogger?: Logger;
-    rethrow?: boolean;
-    defaultValue?: any;
-  } = {}
-): T {
-  return (async (...args: any[]) => {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      const enriched = handleError(error, context, {
-        log: true,
-        customLogger: options.customLogger,
-        throwOnError: options.rethrow ?? false
-      });
-
-      if (options.defaultValue !== undefined) {
-        return options.defaultValue;
-      }
-
-      if (options.rethrow) {
-        throw enriched;
-      }
-    }
-  }) as T;
-}
-
-/**
- * Wrap synchronous functions with error handling
- */
-export function withSyncErrorLogging<T extends (...args: any[]) => any>(
-  fn: T,
-  context: ErrorContext = {},
-  options: {
-    customLogger?: Logger;
-    rethrow?: boolean;
-    defaultValue?: any;
-  } = {}
-): T {
-  return ((...args: any[]) => {
-    try {
-      return fn(...args);
-    } catch (error) {
-      const enriched = handleError(error, context, {
-        log: true,
-        customLogger: options.customLogger,
-        throwOnError: options.rethrow ?? false
-      });
-
-      if (options.defaultValue !== undefined) {
-        return options.defaultValue;
-      }
-
-      if (options.rethrow) {
-        throw enriched;
-      }
-    }
-  }) as T;
-}
-
-/**
- * Create a retryable operation wrapper
- */
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  options: {
-    maxAttempts?: number;
-    delayMs?: number;
-    backoffMultiplier?: number;
-    retryableCheck?: (error: Error) => boolean;
-    onRetry?: (attempt: number, error: Error) => void;
-  } = {}
-): Promise<T> {
-  const {
-    maxAttempts = 3,
-    delayMs = 1000,
-    backoffMultiplier = 2,
-    retryableCheck = isRetryable,
-    onRetry
-  } = options;
-
-  let lastError: Error | undefined;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      const errorObj = error instanceof Error ? error : new Error(String(error));
-      lastError = errorObj;
-
-      // Check if retryable
-      if (attempt < maxAttempts && retryableCheck(errorObj)) {
-        const delay = delayMs * Math.pow(backoffMultiplier, attempt - 1);
-
-        onRetry?.(attempt, errorObj);
-
-        getErrorHandlerLogger().warn({
-          attempt,
-          maxAttempts,
-          errorId: enrichError(errorObj).errorId,
-          delayMs: delay
-        }, 'Retrying operation');
-
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-
-      // Not retryable or max attempts reached
-      throw errorObj;
-    }
-  }
-
-  // Should never reach here, but TypeScript needs it
-  throw lastError || new Error('Retry failed');
 }

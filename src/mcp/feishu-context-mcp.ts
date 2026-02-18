@@ -95,32 +95,48 @@ function isValidFeishuCard(content: Record<string, unknown>): boolean {
 }
 
 /**
- * Build a simple Feishu card from Markdown text content.
- * Creates a minimal valid card structure with a single markdown element.
+ * Get detailed validation error for an invalid card.
+ * Used to provide helpful error messages to LLM for self-correction.
  *
- * Reference: src/feishu/write-card-builder.ts
- *
- * @param markdownContent - Markdown text to display
- * @param title - Optional card title (default: 'Assistant')
- * @returns Valid Feishu card structure
+ * @param content - Object to validate
+ * @returns Human-readable error message describing what's wrong
  */
-function buildMarkdownCard(markdownContent: string, title = 'Assistant'): Record<string, unknown> {
-  return {
-    config: { wide_screen_mode: true },
-    header: {
-      title: {
-        tag: 'plain_text',
-        content: title,
-      },
-      template: 'blue',
-    },
-    elements: [
-      {
-        tag: 'markdown',
-        content: markdownContent,
-      },
-    ],
-  };
+function getCardValidationError(content: unknown): string {
+  if (content === null) {
+    return 'content is null';
+  }
+  if (typeof content !== 'object') {
+    return `content is ${typeof content}, expected object`;
+  }
+  if (Array.isArray(content)) {
+    return 'content is array, expected object with config/header/elements';
+  }
+
+  const obj = content as Record<string, unknown>;
+  const missing: string[] = [];
+
+  if (!('config' in obj)) missing.push('config');
+  if (!('header' in obj)) missing.push('header');
+  if (!('elements' in obj)) missing.push('elements');
+
+  if (missing.length > 0) {
+    return `missing required fields: ${missing.join(', ')}`;
+  }
+
+  // Check header structure
+  if (typeof obj.header !== 'object' || obj.header === null) {
+    return 'header must be an object';
+  }
+  if (!('title' in (obj.header as Record<string, unknown>))) {
+    return 'header.title is missing';
+  }
+
+  // Check elements structure
+  if (!Array.isArray(obj.elements)) {
+    return 'elements must be an array';
+  }
+
+  return 'unknown validation error';
 }
 
 /**
@@ -214,13 +230,13 @@ export async function send_user_feedback(params: {
         message: textContent
       }, 'User feedback sent (text)');
     } else {
-      // Card format: validate before sending
+      // Card format: strict validation, no fallback
       if (typeof content === 'object' && isValidFeishuCard(content)) {
         // Valid card object - send as-is
         await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content));
         logger.debug({ chatId, hasValidStructure: true }, 'User card sent (interactive)');
       } else if (typeof content === 'string') {
-        // String content - check if it's a JSON-encoded card
+        // String content - must be valid JSON card
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
@@ -228,22 +244,52 @@ export async function send_user_feedback(params: {
             await sendMessageToFeishu(client, chatId, 'interactive', content);
             logger.debug({ chatId, wasJsonString: true }, 'User card sent (from JSON string)');
           } else {
-            // Valid JSON but not a card - treat as markdown text
-            const card = buildMarkdownCard(content);
-            await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card));
-            logger.debug({ chatId, contentLength: content.length }, 'User markdown card sent (JSON but not card)');
+            // Valid JSON but not a valid card - return error for LLM to fix
+            const validationError = getCardValidationError(parsed);
+            logger.error({
+              chatId,
+              contentType: 'string',
+              parsedType: Array.isArray(parsed) ? 'array' : typeof parsed,
+              parsedKeys: typeof parsed === 'object' && parsed !== null ? Object.keys(parsed) : [],
+              validationError,
+              contentPreview: content.substring(0, 500),
+            }, 'Card validation failed: invalid card structure');
+
+            return {
+              success: false,
+              error: `Invalid Feishu card structure: ${validationError}`,
+              message: `❌ Card validation failed. ${validationError}. Required: { config, header: { title }, elements: [] }`,
+            };
           }
-        } catch {
-          // Not valid JSON - treat as plain markdown text
-          const card = buildMarkdownCard(content);
-          await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card));
-          logger.debug({ chatId, contentLength: content.length }, 'User markdown card sent (converted)');
+        } catch (parseError) {
+          // Invalid JSON - return error for LLM to fix
+          logger.error({
+            chatId,
+            contentType: 'string',
+            parseError: parseError instanceof Error ? parseError.message : String(parseError),
+            contentPreview: content.substring(0, 500),
+          }, 'Card validation failed: invalid JSON');
+
+          return {
+            success: false,
+            error: `Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Parse failed'}`,
+            message: `❌ Content is not valid JSON. Expected a Feishu card object with: { config, header: { title }, elements: [] }`,
+          };
         }
       } else {
-        // Invalid object - fallback to text message
-        const fallbackText = JSON.stringify(content, null, 2);
-        await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: fallbackText }));
-        logger.warn({ chatId, reason: 'invalid_card_structure' }, 'Invalid card format, sent as text instead');
+        // Invalid type (not object or string) - return error
+        const actualType = content === null ? 'null' : typeof content;
+        logger.error({
+          chatId,
+          contentType: actualType,
+          contentPreview: JSON.stringify(content).substring(0, 500),
+        }, 'Card validation failed: invalid content type');
+
+        return {
+          success: false,
+          error: `Invalid content type: expected object or string, got ${actualType}`,
+          message: `❌ Invalid content type. Expected Feishu card object or JSON string.`,
+        };
       }
     }
 
@@ -374,11 +420,22 @@ export async function send_file_to_feishu(params: {
 
     // Parse error object for Feishu-specific details
     if (error && typeof error === 'object') {
-      const err = error as any;
+      const err = error as Error & {
+        code?: number | string;
+        msg?: string;
+        response?: {
+          data?: Array<{
+            code?: number;
+            msg?: string;
+            log_id?: string;
+            troubleshooter?: string;
+          }> | unknown;
+        };
+      };
 
       // Try to extract from response data (Feishu API error format)
       if (err.response?.data) {
-        const data = err.response.data;
+        const {data} = err.response;
         if (Array.isArray(data) && data[0]) {
           feishuCode = data[0].code;
           feishuMsg = data[0].msg;
@@ -388,7 +445,7 @@ export async function send_file_to_feishu(params: {
       }
 
       // Fallback to error properties
-      if (!feishuCode) {
+      if (!feishuCode && typeof err.code === 'number') {
         feishuCode = err.code;
       }
       if (!feishuMsg) {
@@ -413,7 +470,7 @@ export async function send_file_to_feishu(params: {
     let errorDetails = `❌ Failed to send file: ${errorMessage}`;
 
     if (feishuCode) {
-      errorDetails += `\n\n**Feishu API Error Details:**`;
+      errorDetails += '\n\n**Feishu API Error Details:**';
       errorDetails += `\n- **Code:** ${feishuCode}`;
       if (feishuMsg) {
         errorDetails += `\n- **Message:** ${feishuMsg}`;

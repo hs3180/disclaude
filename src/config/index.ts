@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig } from './loader.js';
-import type { DisclaudeConfig } from './types.js';
+import type { DisclaudeConfig, ConfigValidationError } from './types.js';
 
 // Export constants and types
 export * from './constants.js';
@@ -44,16 +44,14 @@ export class Config {
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
 
   // GLM configuration (from config file)
+  // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
-  static readonly GLM_MODEL = fileConfigOnly.glm?.model || fileConfigOnly.agent?.model || 'glm-4.7';
+  static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
   static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
   // Anthropic Claude configuration (from env for fallback)
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || 'claude-3-5-sonnet-20241022';
-
-  // Agent execution timeout (default: 5 minutes)
-  static readonly TASK_TIMEOUT_MS = fileConfigOnly.agent?.taskTimeoutMs || 300000;
+  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -131,11 +129,61 @@ export class Config {
   }
 
   /**
+   * Validate required configuration fields.
+   * Ensures all required fields are present before returning config.
+   *
+   * @throws Error if required configuration is missing
+   */
+  private static validateRequiredConfig(): void {
+    const errors: ConfigValidationError[] = [];
+
+    // GLM configuration validation
+    if (this.GLM_API_KEY) {
+      if (!this.GLM_MODEL) {
+        errors.push({
+          field: 'glm.model',
+          message: 'glm.model is required when GLM API key is configured',
+        });
+      }
+    }
+
+    // Anthropic configuration validation
+    if (this.ANTHROPIC_API_KEY) {
+      if (!this.CLAUDE_MODEL) {
+        errors.push({
+          field: 'agent.model',
+          message: 'agent.model is required when ANTHROPIC_API_KEY is set',
+        });
+      }
+    }
+
+    // At least one API key must be configured
+    if (!this.GLM_API_KEY && !this.ANTHROPIC_API_KEY) {
+      errors.push({
+        field: 'apiKey',
+        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml',
+      });
+    }
+
+    if (errors.length > 0) {
+      const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n');
+      logger.error({ errors }, 'Configuration validation failed');
+      throw new Error(
+        `Configuration validation failed:\n\n${messages}\n\n` +
+        `Please update your disclaude.config.yaml file:\n` +
+        `  glm:\n` +
+        `    apiKey: \"your-key\"\n` +
+        `    model: \"glm-5\"`
+      );
+    }
+  }
+
+  /**
    * Get agent configuration based on available API keys.
    * Prefers GLM if configured, otherwise falls back to Anthropic.
    *
    * @returns Agent configuration with API key and model
-   * @throws Error if no API key is configured
+   * @throws Error if no API key is configured or model is missing
    */
   static getAgentConfig(): {
     apiKey: string;
@@ -143,6 +191,9 @@ export class Config {
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
   } {
+    // Validate required configuration first
+    this.validateRequiredConfig();
+
     // Prefer GLM if configured
     if (this.GLM_API_KEY) {
       logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
@@ -155,18 +206,12 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    if (this.ANTHROPIC_API_KEY) {
-      logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
-      return {
-        apiKey: this.ANTHROPIC_API_KEY,
-        model: this.CLAUDE_MODEL,
-        provider: 'anthropic',
-      };
-    }
-
-    const error = new Error('No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY env var');
-    logger.error({ err: error }, 'Configuration error');
-    throw error;
+    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    return {
+      apiKey: this.ANTHROPIC_API_KEY,
+      model: this.CLAUDE_MODEL,
+      provider: 'anthropic',
+    };
   }
 
   /**
@@ -194,15 +239,6 @@ export class Config {
    */
   static getMcpServersConfig(): Record<string, import('./types.js').McpServerConfig> | undefined {
     return fileConfigOnly.tools?.mcpServers;
-  }
-
-  /**
-   * Get the task execution timeout in milliseconds.
-   *
-   * @returns Timeout in milliseconds (default: 300000 = 5 minutes)
-   */
-  static getTaskTimeout(): number {
-    return this.TASK_TIMEOUT_MS;
   }
 
   /**

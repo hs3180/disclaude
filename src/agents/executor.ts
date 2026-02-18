@@ -6,21 +6,23 @@
  * - Direct task execution based on Evaluator's evaluation.md
  * - Outputs execution.md and optionally final_result.md
  * - Yields progress events for real-time reporting
- * - Uses Config for unified configuration
+ *
+ * Extends BaseAgent to inherit:
+ * - SDK configuration building
+ * - GLM logging
+ * - Error handling
  */
+
 import * as fs from 'fs/promises';
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { createAgentSdkOptions, parseSDKMessage } from '../utils/sdk.js';
 import type { ParsedSDKMessage } from '../types/agent.js';
-import { Config } from '../config/index.js';
-import { createLogger } from '../utils/logger.js';
-import { AgentExecutionError, TimeoutError, formatError } from '../utils/errors.js';
 import { TaskFileManager } from '../task/file-manager.js';
+import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
  * Executor configuration.
+ * Extends BaseAgentConfig with Executor-specific options.
  */
-export interface ExecutorConfig {
+export interface ExecutorConfig extends BaseAgentConfig {
   /**
    * Abort signal for cancellation.
    */
@@ -72,35 +74,30 @@ export interface TaskResult {
  * Output files:
  * - execution.md: Created in each iteration directory
  * - final_result.md: Created when task is complete
+ *
+ * Extends BaseAgent to inherit common functionality while adding
+ * Executor-specific features like TaskProgressEvent yielding.
  */
-export class Executor {
-  private readonly apiKey: string;
-  private readonly model: string;
-  private readonly apiBaseUrl?: string;
-  private readonly provider: 'anthropic' | 'glm';
-  private logger: ReturnType<typeof createLogger>;
+export class Executor extends BaseAgent {
   private readonly config: ExecutorConfig;
   private fileManager: TaskFileManager;
 
   constructor(config: ExecutorConfig) {
+    super(config);
     this.config = config;
-
-    // Get agent configuration from Config
-    const agentConfig = Config.getAgentConfig();
-
-    this.apiKey = agentConfig.apiKey;
-    this.model = agentConfig.model;
-    this.apiBaseUrl = agentConfig.apiBaseUrl;
-    this.provider = agentConfig.provider;
     this.fileManager = new TaskFileManager();
 
-    // Create logger
-    this.logger = createLogger('Executor', { model: this.model });
+    this.logger.debug(
+      {
+        provider: this.provider,
+        model: this.model,
+      },
+      'Executor initialized'
+    );
+  }
 
-    this.logger.debug({
-      provider: agentConfig.provider,
-      model: this.model,
-    }, 'Executor initialized');
+  protected getAgentName(): string {
+    return 'Executor';
   }
 
   /**
@@ -146,68 +143,28 @@ export class Executor {
     const prompt = this.buildTaskPrompt(taskId, iteration, evaluationContent);
 
     // Log execution start
-    this.logger.debug({
-      workspaceDir,
-      taskId,
-      iteration,
-      promptLength: prompt.length,
-      evaluationLength: evaluationContent.length,
-    }, 'Starting task execution');
+    this.logger.debug(
+      {
+        workspaceDir,
+        taskId,
+        iteration,
+        promptLength: prompt.length,
+        evaluationLength: evaluationContent.length,
+      },
+      'Starting task execution'
+    );
 
-    // Prepare SDK options
-    const sdkOptions = createAgentSdkOptions({
-      apiKey: this.apiKey,
-      model: this.model,
-      apiBaseUrl: this.apiBaseUrl,
-      permissionMode: 'bypassPermissions',
+    // Prepare SDK options using BaseAgent's createSdkOptions
+    const sdkOptions = this.createSdkOptions({
       cwd: workspaceDir,
     });
 
     let output = '';
     let error: string | undefined;
 
-    // Get task timeout from Config (default: 5 minutes)
-    const ITERATOR_TIMEOUT_MS = Config.getTaskTimeout();
-
-    this.logger.debug({
-      timeoutMs: ITERATOR_TIMEOUT_MS,
-      timeoutMinutes: Math.round(ITERATOR_TIMEOUT_MS / 60000),
-    }, 'Executor timeout configured');
-
     try {
-      // Execute task with agent
-      const generator = query({ prompt, options: sdkOptions });
-      const iterator = generator[Symbol.asyncIterator]();
-
-      while (true) {
-        // Race between next message and timeout
-        const nextPromise = iterator.next();
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Iterator timeout')), ITERATOR_TIMEOUT_MS)
-        );
-
-        const result = await Promise.race([nextPromise, timeoutPromise]) as IteratorResult<unknown>;
-
-        if (result.done) {
-          break;
-        }
-
-        const message = result.value as SDKMessage;
-        const parsed = parseSDKMessage(message);
-
-        // GLM-specific logging to monitor streaming behavior
-        if (this.provider === 'glm') {
-          this.logger.debug({
-            provider: 'GLM',
-            messageType: parsed.type,
-            contentLength: parsed.content?.length || 0,
-            toolName: parsed.metadata?.toolName,
-            stopReason: (message as any).stop_reason,
-            stopSequence: (message as any).stop_sequence,
-            rawMessagePreview: JSON.stringify(message).substring(0, 500),
-          }, 'SDK message received (GLM)');
-        }
-
+      // Execute task using BaseAgent's queryOnce
+      for await (const { parsed } of this.queryOnce(prompt, sdkOptions)) {
         // Collect all content-producing messages
         if (['text', 'tool_use', 'tool_progress', 'tool_result', 'status', 'result'].includes(parsed.type)) {
           output += parsed.content;
@@ -221,11 +178,14 @@ export class Executor {
           };
 
           // Log with full content (as per logging guidelines)
-          this.logger.debug({
-            content: parsed.content,
-            contentLength: parsed.content.length,
-            messageType: parsed.type,
-          }, 'Executor output');
+          this.logger.debug(
+            {
+              content: parsed.content,
+              contentLength: parsed.content.length,
+              messageType: parsed.type,
+            },
+            'Executor output'
+          );
         } else if (parsed.type === 'error') {
           error = parsed.content; // Error message is in content
           this.logger.error({ error: parsed.content }, 'Executor error');
@@ -256,30 +216,11 @@ export class Executor {
         output,
         error,
       };
-
     } catch (err) {
-      const isTimeout = err instanceof Error && err.message === 'Iterator timeout';
-      error = err instanceof Error ? err.message : String(err);
-
-      if (isTimeout) {
-        const timeoutError = new TimeoutError(
-          'Task execution timeout - operation took longer than expected',
-          ITERATOR_TIMEOUT_MS,
-          'executeTask'
-        );
-        this.logger.warn({ err: formatError(timeoutError) }, 'Executor iterator timeout - task may be incomplete');
-        error = timeoutError.message;
-      } else {
-        const agentError = new AgentExecutionError(
-          'Task execution failed',
-          {
-            cause: err instanceof Error ? err : new Error(String(err)),
-            agent: 'Executor',
-            recoverable: true,
-          }
-        );
-        this.logger.error({ err: formatError(agentError) }, 'Task execution failed');
-      }
+      // Use BaseAgent's handleIteratorError for consistent error handling
+      const errorMessage = this.handleIteratorError(err, 'executeTask');
+      // handleIteratorError always returns string content
+      error = typeof errorMessage.content === 'string' ? errorMessage.content : String(errorMessage.content);
 
       // Create execution.md even on error
       try {
@@ -341,7 +282,7 @@ export class Executor {
     parts.push('');
     parts.push(`**Required**: \`${executionPath}\``);
     parts.push('```markdown');
-    parts.push('# Execution: Iteration ' + iteration);
+    parts.push(`# Execution: Iteration ${iteration}`);
     parts.push('');
     parts.push('## Summary');
     parts.push('(What you did)');

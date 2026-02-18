@@ -35,7 +35,7 @@ export interface LoggerConfig {
   /** Fields to redact from logs */
   redact?: string[];
   /** Additional metadata to include in all logs */
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -153,7 +153,7 @@ async function setupFileLogging(
 
     // Dynamic import of pino-roll (no types available)
      
-    const pinoRoll = (await import('pino-roll')) as any;
+    const pinoRoll = (await import('pino-roll')) as unknown as (file: string, options: unknown) => NodeJS.WritableStream;
 
     // Combined log file with rotation
     const logFile = path.join(logsPath, 'disclaude-combined.log');
@@ -287,7 +287,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
  */
 export function createLogger(
   context: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 ): Logger {
   // Ensure root logger is initialized
   if (!rootLogger) {

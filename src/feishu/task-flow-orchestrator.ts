@@ -25,14 +25,6 @@ export interface MessageCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
 }
 
-export interface TaskFlowContext {
-  chatId: string;
-  messageId: string;
-  text: string;
-  sender?: { sender_type?: string; sender_id?: { open_id?: string; union_id?: string; user_id?: string } };
-  conversationHistory?: string;
-}
-
 export class TaskFlowOrchestrator {
   private taskTracker: TaskTracker;
   private messageCallbacks: MessageCallbacks;
@@ -55,22 +47,22 @@ export class TaskFlowOrchestrator {
    * Execute dialogue phase for a task.
    *
    * This is called by the start_dialogue tool after Pilot creates Task.md.
+   * The dialogue runs asynchronously in the background.
    *
    * @param chatId - Feishu chat ID
    * @param messageId - Unique message identifier
    * @param text - Original user request
-   * @returns Promise that resolves when dialogue completes
    */
-  async executeDialoguePhase(
+  executeDialoguePhase(
     chatId: string,
     messageId: string,
     text: string
-  ): Promise<void> {
+  ): void {
     const taskPath = this.taskTracker.getDialogueTaskPath(messageId);
     const agentConfig = Config.getAgentConfig();
 
     // Run dialogue asynchronously in background
-    const dialogueTask = this.runDialogue(chatId, messageId, text, taskPath, agentConfig)
+    void this.runDialogue(chatId, messageId, text, taskPath, agentConfig)
       .catch((error) => {
         this.logger.error({ err: error, chatId, messageId }, 'Async dialogue failed');
         // Send error notification to user
@@ -84,9 +76,6 @@ export class TaskFlowOrchestrator {
         this.runningDialogueTasks.delete(messageId);
         this.logger.debug({ messageId }, 'Async dialogue task completed and cleaned up');
       });
-
-    // Track the running task
-    this.runningDialogueTasks.set(messageId, dialogueTask);
 
     this.logger.info({ messageId, chatId }, 'Dialogue phase started async');
   }

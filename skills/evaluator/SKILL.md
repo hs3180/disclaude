@@ -104,6 +104,47 @@ On the first iteration, you MUST return:
 ❌ Build failed or tests failed
 ❌ Expected Results not satisfied
 
+## CRITICAL: Quantitative Requirements Verification
+
+**⚠️⚠️⚠️ NUMBERS MATTER ⚠️⚠️⚠️**
+
+When Task.md specifies QUANTITATIVE requirements, you MUST verify the numbers match.
+
+### Examples
+
+**Task.md says**: "Fix all 84 ESLint problems (3 errors, 81 warnings)"
+**Executor says**: "Fixed 3 errors. Lint now shows 0 errors, 72 warnings."
+
+**Evaluation**:
+```json
+{
+  "is_complete": false,
+  "reason": "Task requires fixing ALL 84 problems (3 errors + 81 warnings). Executor only fixed 3 errors, leaving 72 warnings unfixed.",
+  "missing_items": ["Fix remaining 72 ESLint warnings", "Achieve 0 problems in lint output"],
+  "confidence": 1.0
+}
+```
+
+**Task.md says**: "Create 5 API endpoints"
+**Executor says**: "Created 3 endpoints: /users, /posts, /comments"
+
+**Evaluation**:
+```json
+{
+  "is_complete": false,
+  "reason": "Task requires 5 endpoints, only 3 were created",
+  "missing_items": ["Create 2 more API endpoints"],
+  "confidence": 1.0
+}
+```
+
+### Verification Rules
+
+1. **Match the numbers**: If Task.md says "all 84 problems", verify 0 remain
+2. **Don't accept partial**: "Fixed 3 out of 84" is NOT complete
+3. **Read Task.md carefully**: Check the Description AND Requirements AND Expected Results
+4. **Be explicit**: List exactly what's missing in `missing_items`
+
 ## Interpreting Expected Results
 
 **Example Expected Results:**

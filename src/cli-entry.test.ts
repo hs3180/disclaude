@@ -54,14 +54,14 @@ describe('CLI Entry Point', () => {
 
     it('should detect feishu platform', () => {
       const args = ['feishu'];
-      const platform = args[0];
+      const [platform] = args;
 
       expect(platform).toBe('feishu');
     });
 
     it('should detect missing platform argument', () => {
       const args: string[] = [];
-      const platform = args[0];
+      const [platform] = args;
 
       expect(platform).toBeUndefined();
     });

@@ -17,36 +17,6 @@ export const DEDUPLICATION = {
 } as const;
 
 /**
- * Long task configuration
- */
-export const LONG_TASK = {
-  /** Default timeout for long tasks (milliseconds) */
-  DEFAULT_TASK_TIMEOUT_MS: 24 * 60 * 60 * 1000, // 24 hours
-
-  /** Maximum number of concurrent long tasks per chat */
-  MAX_CONCURRENT_TASKS_PER_CHAT: 1,
-} as const;
-
-/**
- * Throttling constants
- */
-export const THROTTLING = {
-  /** Minimum interval between progress messages (milliseconds) */
-  PROGRESS_MESSAGE_INTERVAL_MS: 2000, // 2 seconds
-} as const;
-
-/**
- * File deduplication configuration
- */
-export const FILE_DEDUPLICATION = {
-  /** Directory for deduplication records */
-  DEDUPE_DIR: './dedupe-records',
-
-  /** Maximum number of records to keep per chat */
-  MAX_RECORDS_PER_CHAT: 100,
-} as const;
-
-/**
  * Dialogue/Agent loop configuration
  */
 export const DIALOGUE = {

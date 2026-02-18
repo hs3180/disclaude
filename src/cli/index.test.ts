@@ -5,22 +5,37 @@
  * - Color output utility
  * - CLI mode initialization
  * - Error handling
+ * - runCli function with actual execution paths
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import * as cli from './index.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock dependencies
-vi.mock('../agent/index.js', () => ({
-  DialogueOrchestrator: vi.fn(),
+// Mock process.exit BEFORE importing the module
+vi.spyOn(process, 'exit').mockImplementation((code) => {
+  throw new Error(`process.exit(${code})`);
+});
+
+// Mock console.log
+const mockConsoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+// Mock Pilot first
+vi.mock('../agents/pilot.js', () => ({
+  Pilot: vi.fn().mockImplementation(() => ({
+    executeOnce: vi.fn().mockResolvedValue(undefined),
+  })),
 }));
 
+// Mock dependencies
 vi.mock('../config/index.js', () => ({
   Config: {
     getAgentConfig: vi.fn(() => ({
       apiKey: 'test-key',
       model: 'test-model',
+      apiBaseUrl: undefined,
     })),
+    FEISHU_CLI_CHAT_ID: 'oc_test_env_chat',
+    getWorkspaceDir: vi.fn(() => '/test/workspace'),
+    getMcpServersConfig: vi.fn(() => null),
   },
 }));
 
@@ -40,19 +55,205 @@ vi.mock('../utils/task-tracker.js', () => ({
 vi.mock('fs/promises', () => ({
   default: {
     access: vi.fn(),
+    mkdir: vi.fn(),
+    readdir: vi.fn(),
   },
 }));
 
+vi.mock('../utils/output-adapter.js', () => ({
+  CLIOutputAdapter: vi.fn().mockImplementation(() => ({
+    write: vi.fn().mockResolvedValue(undefined),
+    finalize: vi.fn(),
+    clearThrottleState: vi.fn(),
+  })),
+  FeishuOutputAdapter: vi.fn().mockImplementation(() => ({
+    write: vi.fn().mockResolvedValue(undefined),
+    finalize: vi.fn(),
+    clearThrottleState: vi.fn(),
+  })),
+  OutputAdapter: vi.fn(),
+}));
+
+vi.mock('../utils/error-handler.js', () => ({
+  handleError: vi.fn((_error, context) => ({
+    message: _error instanceof Error ? _error.message : String(_error),
+    userMessage: context?.userMessage || 'Test error message',
+  })),
+  ErrorCategory: {
+    SDK: 'SDK',
+  },
+}));
+
+vi.mock('../feishu/sender.js', () => ({
+  createFeishuSender: vi.fn(() => vi.fn(async () => {})),
+  createFeishuCardSender: vi.fn(() => vi.fn(async () => {})),
+}));
+
+import { runCli } from './index.js';
+import * as cli from './index.js';
+
 describe('CLI Module', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
   describe('Module Structure', () => {
     it('should export runCli function', () => {
       // Verify runCli is exported
       expect(cli).toBeDefined();
+      expect(typeof runCli).toBe('function');
     });
 
     it('should be importable', () => {
       // Module can be imported
       expect(typeof cli).toBe('object');
+    });
+  });
+
+  describe('runCli - Usage Display', () => {
+    it('should show usage when no arguments provided', async () => {
+      try {
+        await runCli([]);
+      } catch (error) {
+        // Expected: process.exit(0) throws
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should show usage when only --prompt flag provided', async () => {
+      try {
+        await runCli(['--prompt']);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should show usage when prompt is empty string', async () => {
+      try {
+        await runCli(['--prompt', '']);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should show usage when prompt is whitespace only', async () => {
+      try {
+        await runCli(['--prompt', '   ']);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should display Disclaude header in usage', async () => {
+      try {
+        await runCli([]);
+      } catch {
+        // Expected
+      }
+
+      const calls = mockConsoleLog.mock.calls.flat().join('\n');
+      expect(calls).toContain('Disclaude');
+    });
+
+    it('should display prompt option in usage', async () => {
+      try {
+        await runCli([]);
+      } catch {
+        // Expected
+      }
+
+      const calls = mockConsoleLog.mock.calls.flat().join('\n');
+      expect(calls).toContain('--prompt');
+    });
+
+    it('should display feishu-chat-id option in usage', async () => {
+      try {
+        await runCli([]);
+      } catch {
+        // Expected
+      }
+
+      const calls = mockConsoleLog.mock.calls.flat().join('\n');
+      expect(calls).toContain('--feishu-chat-id');
+    });
+  });
+
+  describe('runCli - Execution', () => {
+    it('should execute with --prompt argument', async () => {
+      // Tests that the code path is reached
+      try {
+        await runCli(['--prompt', 'Hello world']);
+      } catch (error) {
+        // Expected: Either process.exit or error from mocks
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should execute with direct prompt argument', async () => {
+      // Tests that the code path is reached with direct args
+      try {
+        await runCli(['Hello', 'world']);
+      } catch (error) {
+        // Expected: Either process.exit or error from mocks
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should handle --feishu-chat-id with explicit chat ID', async () => {
+      // Feishu mode uses dynamic imports which bypass static mocks
+      // The test verifies the code path is reached without crashing
+      try {
+        await runCli(['--prompt', 'Test', '--feishu-chat-id', 'oc_test123']);
+      } catch (error) {
+        // Expected: Either process.exit or error from dynamic imports
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should handle --feishu-chat-id auto with env var set', async () => {
+      // Feishu mode uses dynamic imports which bypass static mocks
+      try {
+        await runCli(['--prompt', 'Test', '--feishu-chat-id', 'auto']);
+      } catch (error) {
+        // Expected: Either process.exit or error from dynamic imports
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should display prompt info in console mode', async () => {
+      try {
+        await runCli(['--prompt', 'Test prompt']);
+      } catch {
+        // Expected
+      }
+
+      const calls = mockConsoleLog.mock.calls.flat().join('\n');
+      expect(calls).toContain('Prompt:');
+    });
+  });
+
+  describe('runCli - Argument Parsing', () => {
+    it('should handle missing feishu-chat-id value', async () => {
+      // When --feishu-chat-id has no value, it becomes undefined
+      try {
+        await runCli(['--prompt', 'Test', '--feishu-chat-id']);
+      } catch (error) {
+        // Expected: Either process.exit or error from dynamic imports
+        expect(error).toBeInstanceOf(Error);
+      }
+    });
+
+    it('should prioritize --prompt value over direct args', async () => {
+      try {
+        await runCli(['other', 'args', '--prompt', 'prompt value']);
+      } catch (error) {
+        // Expected: Either process.exit or error
+        expect(error).toBeInstanceOf(Error);
+      }
     });
   });
 

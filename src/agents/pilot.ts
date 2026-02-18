@@ -23,14 +23,19 @@
  *                    ↓
  *              SDK output → Callbacks → Platform (Feishu/CLI)
  * ```
+ *
+ * Extends BaseAgent to inherit:
+ * - SDK configuration building
+ * - Iterator timeout handling
+ * - GLM logging
+ * - Error handling
  */
 
 import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
-import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
 import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { taskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
-import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
+import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -61,7 +66,10 @@ export interface PilotCallbacks {
 
 /**
  * Configuration options for Pilot.
- * Follows same pattern as EvaluatorConfig and ReporterConfig.
+ *
+ * Note: apiKey, model, apiBaseUrl, and permissionMode are optional.
+ * If not provided, they will be fetched from Config.getAgentConfig().
+ * This maintains backward compatibility with existing code.
  */
 export interface PilotConfig {
   /** API key (if not provided, uses Config.getAgentConfig()) */
@@ -70,7 +78,7 @@ export interface PilotConfig {
   model?: string;
   /** API base URL (if not provided, uses Config.getAgentConfig()) */
   apiBaseUrl?: string;
-  /** Permission mode (default: 'bypassPermissions' for bot mode) */
+  /** Permission mode (default: 'bypassPermissions' for all modes) */
   permissionMode?: 'default' | 'bypassPermissions';
   /**
    * Callback functions for platform-specific operations.
@@ -123,14 +131,12 @@ interface PerChatIdState {
  * Manages conversational AI interactions via streaming SDK queries.
  * Each chatId gets its own persistent Agent instance that maintains
  * conversation context across multiple messages.
+ *
+ * Extends BaseAgent to inherit common functionality while adding
+ * Pilot-specific features like per-chatId state management.
  */
-export class Pilot {
-  readonly apiKey: string;
-  readonly model: string;
-  readonly apiBaseUrl?: string;
-  readonly permissionMode: 'default' | 'bypassPermissions';
+export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
-  private readonly logger = createLogger('Pilot');
   private readonly isCliMode: boolean;
 
   // Per-chatId Agent states
@@ -143,12 +149,18 @@ export class Pilot {
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: PilotConfig) {
-    // Get API config from Config if not provided
+    // Get API config from Config if not provided (backward compatibility)
     const agentConfig = Config.getAgentConfig();
-    this.apiKey = config.apiKey || agentConfig.apiKey;
-    this.model = config.model || agentConfig.model;
-    this.apiBaseUrl = config.apiBaseUrl || agentConfig.apiBaseUrl;
-    this.permissionMode = config.permissionMode ?? (config.isCliMode ? 'default' : 'bypassPermissions');
+
+    // Build BaseAgentConfig with required fields
+    const baseConfig: BaseAgentConfig = {
+      apiKey: config.apiKey || agentConfig.apiKey,
+      model: config.model || agentConfig.model,
+      apiBaseUrl: config.apiBaseUrl || agentConfig.apiBaseUrl,
+      permissionMode: config.permissionMode ?? 'bypassPermissions',
+    };
+
+    super(baseConfig);
 
     this.callbacks = config.callbacks;
     this.isCliMode = config.isCliMode ?? false;
@@ -159,6 +171,10 @@ export class Pilot {
     if (!this.isCliMode) {
       this.startCleanupTimer();
     }
+  }
+
+  protected getAgentName(): string {
+    return 'Pilot';
   }
 
   /**
@@ -181,24 +197,6 @@ export class Pilot {
   ): Promise<void> {
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-    // Build SDK options using instance properties (consistent with Evaluator/Reporter)
-    const sdkOptions: Record<string, unknown> = {
-      cwd: Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode,
-      disallowedTools: ['AskUserQuestion'],
-      settingSources: ['project'],
-    };
-
-    // Set environment
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, Config.getGlobalEnv());
-
-    // Set model
-    if (this.model) {
-      sdkOptions.model = this.model;
-    }
-
     // Add MCP servers for task tools
     const mcpServers: Record<string, unknown> = {
       'task-skill': taskSkillSdkMcpServer,
@@ -218,7 +216,11 @@ export class Pilot {
       }
     }
 
-    sdkOptions.mcpServers = mcpServers;
+    // Build SDK options using BaseAgent's createSdkOptions
+    const sdkOptions = this.createSdkOptions({
+      disallowedTools: ['AskUserQuestion'],
+      mcpServers,
+    });
 
     // Build enhanced content with context
     const enhancedContent = this.buildEnhancedContent(chatId, {
@@ -233,17 +235,8 @@ export class Pilot {
     const pendingWriteFiles = new Set<string>();
 
     try {
-      // Create query with direct string prompt (not generator)
-      const queryInstance = query({
-        prompt: enhancedContent,
-        options: sdkOptions,
-      });
-
-      // Process SDK messages synchronously
-      for await (const message of queryInstance) {
-        // Parse and process the message
-        const parsed = parseSDKMessage(message);
-
+      // Use BaseAgent's queryOnce for one-shot query with timeout protection
+      for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
         // Check for completion - result type means query is done
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
@@ -381,12 +374,40 @@ export class Pilot {
 
   /**
    * Build enhanced content with Feishu context.
+   *
+   * **IMPORTANT**: For skill commands (messages starting with `/`):
+   * - Keep the command at START for SDK skill detection
+   * - Append minimal context AFTER the command for skill to extract
+   * - Do NOT wrap with system prompt template
    */
   private buildEnhancedContent(chatId: string, msg: QueuedMessage): string {
+    // Check if this is a skill command (starts with /)
+    const isSkillCommand = msg.text.trimStart().startsWith('/');
+
+    if (isSkillCommand) {
+      // For skill commands: command first, then minimal context for skill to use
+      const contextInfo = msg.senderOpenId
+        ? `
+
+---
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
+**Sender Open ID:** ${msg.senderOpenId}`
+        : `
+
+---
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}`;
+
+      return `${msg.text}${contextInfo}`;
+    }
+
+    // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       return `You are responding in a Feishu chat.
 
 **Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
 
 ---
@@ -415,6 +436,7 @@ ${msg.text}`;
     return `You are responding in a Feishu chat.
 
 **Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
 
 When using send_file_to_feishu or send_user_feedback, use this Chat ID.
 
@@ -486,24 +508,6 @@ ${msg.text}`;
 
     state.started = true;
 
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-    // Build SDK options using instance properties (consistent with Evaluator/Reporter)
-    const sdkOptions: Record<string, unknown> = {
-      cwd: Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode,
-      disallowedTools: ['AskUserQuestion'],
-      settingSources: ['project'],
-    };
-
-    // Set environment
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, Config.getGlobalEnv());
-
-    // Set model
-    if (this.model) {
-      sdkOptions.model = this.model;
-    }
-
     // Add MCP servers for task tools
     // Start with internal SDK MCP servers
     const mcpServers: Record<string, unknown> = {
@@ -529,25 +533,27 @@ ${msg.text}`;
       }
     }
 
-    sdkOptions.mcpServers = mcpServers;
+    // Build SDK options using BaseAgent's createSdkOptions
+    const sdkOptions = this.createSdkOptions({
+      disallowedTools: ['AskUserQuestion'],
+      mcpServers,
+    });
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with streaming input');
 
     try {
-      // Create query with streaming input generator
-      state.queryInstance = query({
-        prompt: this.messageGenerator(chatId),
-        options: sdkOptions,
-      });
+      // Create streaming query using BaseAgent's createQueryStream
+      const { query: queryInstance, iterator } = this.createQueryStream(
+        this.messageGenerator(chatId),
+        sdkOptions
+      );
+      state.queryInstance = queryInstance;
 
       // Process SDK messages
-      for await (const message of state.queryInstance) {
+      for await (const { parsed } of iterator) {
         if (state.closed) {
           break;
         }
-
-        // Parse and process the message
-        const parsed = parseSDKMessage(message);
 
         // Update activity timestamp
         state.lastActivity = Date.now();
@@ -662,20 +668,6 @@ ${msg.text}`;
   hasActiveStream(chatId: string): boolean {
     const state = this.states.get(chatId);
     return state?.started === true && state.closed === false;
-  }
-
-  /**
-   * Get the number of pending messages in the queue for a chatId.
-   *
-   * @param chatId - Platform-specific chat identifier
-   * @returns Number of pending messages
-   */
-  getQueueLength(chatId: string): number {
-    const state = this.states.get(chatId);
-    if (!state) {
-      return 0;
-    }
-    return state.messageQueue.length > 0 ? 1 : 0;
   }
 
   /**

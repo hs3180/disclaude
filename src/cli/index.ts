@@ -11,6 +11,14 @@ import { Pilot } from '../agents/pilot.js';
 const logger = createLogger('CLI');
 
 /**
+ * Extended output adapter with optional lifecycle methods.
+ */
+interface ExtendedOutputAdapter extends OutputAdapter {
+  finalize?: () => void;
+  clearThrottleState?: () => void;
+}
+
+/**
  * ANSI color codes for terminal output.
  */
 const colors = {
@@ -46,7 +54,7 @@ async function executeOnce(
   const chatId = feishuChatId || 'cli-console';
 
   // Create output adapter
-  let adapter: OutputAdapter;
+  let adapter: ExtendedOutputAdapter;
 
   if (feishuChatId) {
     // Feishu mode: Use FeishuOutputAdapter
@@ -73,18 +81,22 @@ async function executeOnce(
   }
 
   // Create Pilot instance
+  const agentConfig = Config.getAgentConfig();
   const pilot = new Pilot({
+    apiKey: agentConfig.apiKey,
+    model: agentConfig.model,
+    apiBaseUrl: agentConfig.apiBaseUrl,
     isCliMode: true,
     callbacks: {
       sendMessage: async (_chatId: string, msg: string) => {
-        adapter.write(msg);
+        await adapter.write(msg);
       },
       sendCard: async (_chatId: string, card: Record<string, unknown>) => {
         const cardJson = JSON.stringify(card, null, 2);
-        adapter.write(cardJson);
+        await adapter.write(cardJson);
       },
       sendFile: async (_chatId: string, filePath: string) => {
-        adapter.write(`\n📎 File created: ${filePath}\n`);
+        await adapter.write(`\n📎 File created: ${filePath}\n`);
       },
     },
   });
@@ -94,11 +106,11 @@ async function executeOnce(
     await pilot.executeOnce(chatId, prompt, messageId);
 
     // Finalize output adapter if needed
-    if ('finalize' in adapter) {
-      (adapter as any).finalize();
+    if (adapter.finalize) {
+      adapter.finalize();
     }
-    if ('clearThrottleState' in adapter) {
-      (adapter as any).clearThrottleState();
+    if (adapter.clearThrottleState) {
+      adapter.clearThrottleState();
     }
 
     logger.info('CLI execution complete');

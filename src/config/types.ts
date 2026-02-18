@@ -17,18 +17,19 @@ export interface WorkspaceConfig {
 
 /**
  * Agent configuration section.
+ *
+ * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
+ * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** Model identifier */
-  model?: string;
   /** API provider preference (anthropic, glm) */
   provider?: 'anthropic' | 'glm';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
-  /** Task execution timeout in milliseconds (default: 300000 = 5 minutes) */
-  taskTimeoutMs?: number;
+  /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
+  model?: string;
 }
 
 /**
@@ -52,11 +53,14 @@ export interface FeishuConfig {
 
 /**
  * GLM (Zhipu AI) API configuration section.
+ *
+ * When using GLM provider, both apiKey and model are REQUIRED.
+ * Fallback defaults are intentionally removed for strict configuration.
  */
 export interface GlmConfig {
   /** API key (overrides GLM_API_KEY env var) */
   apiKey?: string;
-  /** Model identifier (overrides GLM_MODEL env var) */
+  /** Model identifier - REQUIRED when apiKey is set */
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
@@ -142,4 +146,14 @@ export interface LoadedConfig extends DisclaudeConfig {
   _source?: string;
   /** Whether config was loaded from file */
   _fromFile: boolean;
+}
+
+/**
+ * Configuration validation error.
+ */
+export interface ConfigValidationError {
+  /** Field path that failed validation (e.g., 'glm.model') */
+  field: string;
+  /** Human-readable error message */
+  message: string;
 }

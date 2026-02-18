@@ -3,8 +3,6 @@
  *
  * This module handles copying skills from the package installation directory
  * to the workspace's .claude directory, enabling SDK to load them via settingSources.
- *
- * Additionally, it copies and updates the configuration file to the workspace.
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -116,108 +114,4 @@ async function copyDirectory(source: string, target: string): Promise<void> {
       await fs.copyFile(sourcePath, targetPath);
     }
   }
-}
-
-/**
- * Verify that skills are set up in workspace.
- *
- * @returns true if .claude/skills exists in workspace
- */
-export async function verifySkillsSetup(): Promise<boolean> {
-  try {
-    const workspaceDir = Config.getWorkspaceDir();
-    const skillsDir = path.join(workspaceDir, '.claude', 'skills');
-
-    await fs.access(skillsDir);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Copy and update configuration file to workspace.
- *
- * This function copies the configuration file from the package root to the
- * workspace directory, updating the workspace.dir path to point to the
- * actual workspace location.
- *
- * The workspace config file helps SDK and other tools understand the
- * project structure without requiring global configuration.
- *
- * @returns Promise<boolean> True if config was copied successfully
- */
-export async function copyConfigToWorkspace(): Promise<boolean> {
-  try {
-    const workspaceDir = Config.getWorkspaceDir();
-
-    // Source config file (in package root)
-    const packageRoot = process.cwd();
-    const sourceConfig = path.join(packageRoot, 'disclaude.config.yaml');
-
-    // Target config file (in workspace)
-    const targetConfig = path.join(workspaceDir, 'disclaude.config.yaml');
-
-    logger.debug({
-      sourceConfig,
-      targetConfig,
-      workspaceDir,
-    }, 'Copying config to workspace');
-
-    // Check if source config exists
-    try {
-      await fs.access(sourceConfig);
-    } catch {
-      logger.warn({ sourceConfig }, 'Source config file not found, skipping copy');
-      return false;
-    }
-
-    // Read source config
-    const configContent = await fs.readFile(sourceConfig, 'utf-8');
-
-    // Update workspace.dir in config
-    const updatedConfig = updateWorkspaceDirInConfig(configContent, workspaceDir);
-
-    // Write updated config to workspace
-    await fs.writeFile(targetConfig, updatedConfig, 'utf-8');
-
-    logger.info({ targetConfig }, 'Config copied and updated in workspace');
-    return true;
-
-  } catch (error) {
-    const err = error as Error;
-    logger.error({ err }, 'Failed to copy config to workspace');
-    return false;
-  }
-}
-
-/**
- * Update workspace directory in configuration content.
- *
- * This function replaces the workspace.dir value with the actual workspace path.
- * It handles both quoted and unquoted values.
- *
- * @param configContent - Original YAML configuration content
- * @param workspaceDir - New workspace directory path
- * @returns Updated configuration content
- */
-function updateWorkspaceDirInConfig(configContent: string, workspaceDir: string): string {
-  // Pattern to match workspace.dir: "path" or workspace.dir: path
-  // This regex handles:
-  // - workspace.dir: "/some/path"
-  // - workspace.dir: '/some/path'
-  // - workspace.dir: /some/path
-  const pattern = /(workspace\s*:\s*\n\s*dir\s*:\s*)(["']?)([^\s"']+)?\2/g;
-
-  const updated = configContent.replace(pattern, (_match, prefix, _quote, _oldValue) => {
-    // Always use quoted format for consistency
-    return `${prefix}"${workspaceDir}"`;
-  });
-
-  // Log if any changes were made
-  if (updated !== configContent) {
-    logger.debug({ workspaceDir }, 'Updated workspace.dir in config');
-  }
-
-  return updated;
 }

@@ -30,62 +30,40 @@
  * - File attachments (reports, logs, etc.)
  */
 
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
-import { Config } from '../config/index.js';
-import type { AgentMessage, AgentInput } from '../types/agent.js';
+import type { AgentMessage } from '../types/agent.js';
+import type { ReporterContext } from '../types/reporter.js';
+import type { TaskProgressEvent } from './executor.js';
 import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
-import { createLogger } from '../utils/logger.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
-import { AgentExecutionError, formatError } from '../utils/errors.js';
-
-/**
- * Input type for Reporter queries.
- */
-export type ReporterInput = AgentInput;
+import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
  * Reporter agent configuration.
  */
-export interface ReporterConfig {
-  apiKey: string;
-  model: string;
-  apiBaseUrl?: string;
-  permissionMode?: 'default' | 'bypassPermissions';
-}
-
-/**
- * Type for permission mode.
- */
-export type ReporterPermissionMode = 'default' | 'bypassPermissions';
+export interface ReporterConfig extends BaseAgentConfig {}
 
 /**
  * Reporter - Communication and instruction generation specialist.
+ *
+ * Extends BaseAgent to inherit:
+ * - SDK configuration
+ * - GLM logging
+ * - Error handling
  */
-export class Reporter {
-  readonly apiKey: string;
-  readonly model: string;
-  readonly apiBaseUrl?: string;
-  readonly permissionMode: ReporterPermissionMode;
-  protected skill?: ParsedSkill;
-  protected initialized = false;
-  private readonly provider: 'anthropic' | 'glm';
-
-  private readonly logger = createLogger('Reporter');
+export class Reporter extends BaseAgent {
+  private skill?: ParsedSkill;
 
   constructor(config: ReporterConfig) {
-    this.apiKey = config.apiKey;
-    this.model = config.model;
-    this.apiBaseUrl = config.apiBaseUrl;
-    this.permissionMode = config.permissionMode || 'bypassPermissions';
+    super(config);
+  }
 
-    // Detect provider from API base URL
-    const agentConfig = Config.getAgentConfig();
-    this.provider = agentConfig.provider;
+  protected getAgentName(): string {
+    return 'Reporter';
   }
 
   /**
    * Initialize the Reporter agent.
+   * Loads the reporter skill which defines allowed tools.
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
@@ -94,103 +72,161 @@ export class Reporter {
 
     // Load skill (required)
     this.skill = await loadSkillOrThrow('reporter');
-    this.logger.debug({
-      skillName: this.skill.name,
-      toolCount: this.skill.allowedTools.length,
-    }, 'Reporter skill loaded');
+    this.logger.debug(
+      {
+        skillName: this.skill.name,
+        toolCount: this.skill.allowedTools.length,
+      },
+      'Reporter skill loaded'
+    );
 
     this.initialized = true;
     this.logger.debug('Reporter initialized');
   }
 
   /**
-   * Query the Reporter agent with streaming response.
+   * Generate Executor instructions and user feedback (streaming).
    *
-   * @param input - Prompt or message array
-   * @returns Async iterable of agent messages
+   * Streams messages directly from SDK for real-time user feedback.
+   *
+   * @param taskMdContent - Full Task.md content
+   * @param iteration - Current iteration number
+   * @param workerOutput - Executor's output from previous iteration (if any)
+   * @param evaluationContent - Evaluation result from Evaluator
+   * @yields Agent messages in real-time
    */
-  async *queryStream(input: ReporterInput): AsyncIterable<AgentMessage> {
+  async *report(
+    taskMdContent: string,
+    iteration: number,
+    workerOutput: string | undefined,
+    evaluationContent: string
+  ): AsyncIterable<AgentMessage> {
+    const prompt = Reporter.buildReportPrompt(taskMdContent, iteration, workerOutput, evaluationContent);
+
     if (!this.initialized) {
       await this.initialize();
     }
 
-    // Create SDK options for Reporter
-    // Skill is required, so allowedTools is always defined
-    const allowedTools = this.skill!.allowedTools;
-    // Note: task_done is intentionally NOT included (Evaluator's job)
+    // Skill is required, so allowedTools is always defined after initialize()
+    if (!this.skill) {
+      throw new Error('Reporter skill not initialized - call initialize() first');
+    }
 
-    const sdkOptions: Record<string, unknown> = {
-      cwd: Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode,
-      allowedTools,
-      settingSources: ['project'],
+    // Note: task_done is intentionally NOT included (Evaluator's job)
+    const sdkOptions = this.createSdkOptions({
+      allowedTools: this.skill.allowedTools,
       mcpServers: {
         'feishu-context': feishuSdkMcpServer,
       },
-    };
-
-    // Set environment
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, Config.getGlobalEnv());
-
-    // Set model
-    if (this.model) {
-      sdkOptions.model = this.model;
-    }
-
-    // Reporter does NOT have a timeout limit.
-    // Rationale:
-    // 1. Reporter is invoked during Executor execution to provide user feedback
-    // 2. Timeout errors mislead users into thinking the task failed
-    // 3. The task has already completed by the time Reporter is called for 'complete' events
-    // 4. SDK has its own timeout mechanisms for API calls
+    });
 
     try {
-      const queryResult = query({ prompt: input, options: sdkOptions as any });
-      const iterator = queryResult[Symbol.asyncIterator]();
-
-      while (true) {
-        const result = await iterator.next();
-
-        if (result.done) {
-          break;
-        }
-
-        const message = result.value as SDKMessage;
-        const parsed = parseSDKMessage(message);
-
-        // GLM-specific logging to monitor streaming behavior
-        if (this.provider === 'glm') {
-          this.logger.debug({
-            provider: 'GLM',
-            messageType: parsed.type,
-            contentLength: parsed.content?.length || 0,
-            toolName: parsed.metadata?.toolName,
-            stopReason: (message as any).stop_reason,
-            stopSequence: (message as any).stop_sequence,
-            rawMessagePreview: JSON.stringify(message).substring(0, 500),
-          }, 'SDK message received (GLM)');
-        }
-
-        // Yield formatted message
-        yield {
-          content: parsed.content,
-          role: 'assistant',
-          messageType: parsed.type,
-          metadata: parsed.metadata,
-        };
+      for await (const { parsed } of this.queryOnce(prompt, sdkOptions)) {
+        yield this.formatMessage(parsed);
       }
     } catch (error) {
-      const agentError = new AgentExecutionError(
-        'Reporter query failed',
-        {
-          cause: error instanceof Error ? error : new Error(String(error)),
-          agent: 'Reporter',
-          recoverable: true,
-        }
+      yield this.handleIteratorError(error, 'report');
+    }
+  }
+
+  /**
+   * Send simple feedback to user (streaming).
+   *
+   * Used for real-time progress updates (start/complete/error events).
+   * This is a simplified version that accepts a raw prompt string.
+   *
+   * @param prompt - Raw prompt string for the Reporter
+   * @yields Agent messages in real-time
+   */
+  async *sendFeedback(prompt: string): AsyncIterable<AgentMessage> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    // Skill is required, so allowedTools is always defined after initialize()
+    if (!this.skill) {
+      throw new Error('Reporter skill not initialized - call initialize() first');
+    }
+
+    const sdkOptions = this.createSdkOptions({
+      allowedTools: this.skill.allowedTools,
+      mcpServers: {
+        'feishu-context': feishuSdkMcpServer,
+      },
+    });
+
+    try {
+      for await (const { parsed } of this.queryOnce(prompt, sdkOptions)) {
+        yield this.formatMessage(parsed);
+      }
+    } catch (error) {
+      yield this.handleIteratorError(error, 'sendFeedback');
+    }
+  }
+
+  /**
+   * Process a single Executor event and yield messages.
+   *
+   * This is the core interface for IterationBridge to consume Executor events.
+   * All Executor events flow through this method:
+   * - 'output' events are processed to provide chatId and tool usage instructions
+   * - 'start', 'complete', 'error' events trigger Reporter to generate feedback
+   *
+   * @param event - Executor progress event
+   * @param context - Reporter context (taskId, iteration, chatId)
+   * @yields AgentMessage - Processed messages
+   *
+   * @example
+   * ```typescript
+   * const context = { taskId: 'task-123', iteration: 1, chatId: 'oc_xxx' };
+   * for await (const event of executor.executeTask(...)) {
+   *   yield* reporter.processEvent(event, context);
+   * }
+   * ```
+   */
+  async *processEvent(
+    event: TaskProgressEvent,
+    context: ReporterContext
+  ): AsyncGenerator<AgentMessage> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    // All events go through Reporter to get chatId and tool instructions
+    yield* this.handleReporterEvent(event, context);
+  }
+
+  /**
+   * Handle all events by generating appropriate prompts and invoking Reporter.
+   *
+   * @param event - Any Executor event
+   * @param context - Reporter context
+   * @yields AgentMessage - Reporter-generated messages
+   */
+  private async *handleReporterEvent(
+    event: TaskProgressEvent,
+    context: ReporterContext
+  ): AsyncGenerator<AgentMessage> {
+    const prompt = Reporter.buildEventFeedbackPrompt({
+      event,
+      taskId: context.taskId,
+      iteration: context.iteration,
+      chatId: context.chatId,
+    });
+
+    if (!prompt) return;
+
+    try {
+      for await (const msg of this.sendFeedback(prompt)) {
+        yield msg;
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, eventType: event.type, taskId: context.taskId },
+        'Reporter event handling failed'
       );
-      this.logger.error({ err: formatError(agentError) }, 'Reporter query failed');
       yield {
-        content: `❌ Reporter error: ${error instanceof Error ? error.message : String(error)}`,
+        content: `⚠️ Reporter error: ${error instanceof Error ? error.message : String(error)}`,
         role: 'assistant',
         messageType: 'error',
       };
@@ -198,29 +234,224 @@ export class Reporter {
   }
 
   /**
-   * Generate Executor instructions and user feedback.
+   * Build feedback prompt for any Executor event.
    *
-   * @param taskMdContent - Full Task.md content
-   * @param iteration - Current iteration number
-   * @param workerOutput - Executor's output from previous iteration (if any)
-   * @param evaluation - Evaluation result from Evaluator
-   * @returns Generated messages
+   * Used by IterationBridge for real-time user feedback during task execution.
+   * This is a static method so it can be called without instantiating Reporter.
+   *
+   * @param params - Event details including the full TaskProgressEvent
+   * @returns Prompt string for the Reporter
    */
-  async report(
-    taskMdContent: string,
-    iteration: number,
-    workerOutput: string | undefined,
-    evaluationContent: string
-  ): Promise<AgentMessage[]> {
-    const prompt = Reporter.buildReportPrompt(taskMdContent, iteration, workerOutput, evaluationContent);
-    const messages: AgentMessage[] = [];
+  static buildEventFeedbackPrompt(params: {
+    event: TaskProgressEvent;
+    taskId: string;
+    iteration: number;
+    chatId?: string;
+  }): string {
+    const { event, taskId, iteration, chatId } = params;
 
-    // Collect all messages from queryStream
-    for await (const msg of this.queryStream(prompt)) {
-      messages.push(msg);
+    switch (event.type) {
+      case 'output':
+        return Reporter.buildOutputPrompt(event, taskId, iteration, chatId);
+      case 'start':
+        return Reporter.buildStartPrompt(event, taskId, iteration, chatId);
+      case 'complete':
+        return Reporter.buildCompletePrompt(event, taskId, iteration, chatId);
+      case 'error':
+        return Reporter.buildErrorPrompt(event, taskId, iteration, chatId);
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Build prompt for output events (Executor progress updates).
+   */
+  private static buildOutputPrompt(
+    event: TaskProgressEvent & { type: 'output' },
+    taskId: string,
+    iteration: number,
+    chatId?: string
+  ): string {
+    if (!chatId) {
+      // No chatId - return minimal prompt for CLI mode
+      return `## Progress Update
+
+**Content**: ${event.content.substring(0, 500)}${event.content.length > 500 ? '...' : ''}`;
     }
 
-    return messages;
+    // Escape content for safe inclusion in prompt
+    const escapedContent = event.content.replace(/`/g, '\\`').substring(0, 1000);
+
+    return `## Progress Update
+
+**Task ID**: ${taskId}
+**Iteration**: ${iteration}
+**Message Type**: ${event.messageType}
+
+**Content**:
+\`\`\`
+${escapedContent}
+\`\`\`
+
+---
+
+## 🎯 Your Task
+
+Send this progress update to the user using \`send_user_feedback\`:
+
+1. **Summarize** the progress in a concise, user-friendly way
+2. **Use the tool** to send feedback:
+
+\`\`\`
+send_user_feedback({
+  format: "text",
+  content: "Your summary here",
+  chatId: "${chatId}"
+})
+\`\`\`
+
+**Chat ID**: \`${chatId}\`
+
+**⚠️ IMPORTANT**:
+- You MUST use the send_user_feedback tool
+- Keep the message concise and informative
+- Do NOT just output text - use the tool!`;
+  }
+
+  /**
+   * Build prompt for start events.
+   */
+  private static buildStartPrompt(
+    event: TaskProgressEvent & { type: 'start' },
+    taskId: string,
+    iteration: number,
+    chatId?: string
+  ): string {
+    if (!chatId) {
+      return `## Task Started
+
+**Task ID**: ${taskId}
+**Iteration**: ${iteration}
+**Task**: ${event.title}
+
+Inform the user that task execution has started.`;
+    }
+
+    return `## Task Started
+
+**Task ID**: ${taskId}
+**Iteration**: ${iteration}
+**Task**: ${event.title}
+
+---
+
+## 🎯 Your Task
+
+Send a start notification to the user using \`send_user_feedback\`:
+
+\`\`\`
+send_user_feedback({
+  format: "text",
+  content: "⚡ Task started: ${event.title}",
+  chatId: "${chatId}"
+})
+\`\`\`
+
+**Chat ID**: \`${chatId}\`
+
+**⚠️ IMPORTANT**: You MUST use the send_user_feedback tool. Do not just output text.`;
+  }
+
+  /**
+   * Build prompt for complete events.
+   */
+  private static buildCompletePrompt(
+    event: TaskProgressEvent & { type: 'complete' },
+    taskId: string,
+    _iteration: number,
+    chatId?: string
+  ): string {
+    if (!chatId) {
+      return `## Task Completed
+
+**Task ID**: ${taskId}
+**Summary File**: ${event.summaryFile}
+
+Send a completion message to the user.`;
+    }
+
+    return `## Task Completed
+
+**Task ID**: ${taskId}
+**Summary File**: ${event.summaryFile}
+**Files Created**: ${event.files.join(', ') || 'None'}
+
+The task execution has completed successfully.
+
+---
+
+## 🎯 Your Task
+
+1. **Check for report files** in the task directory (files ending in \`.md\` that are summaries/reports)
+2. **Send report files** using \`send_file_to_feishu\` if any exist
+3. **Send completion message** using \`send_user_feedback\`
+
+Example:
+\`\`\`
+send_user_feedback({
+  format: "text",
+  content: "✅ Task completed successfully!",
+  chatId: "${chatId}"
+})
+\`\`\`
+
+**Chat ID**: \`${chatId}\`
+
+**⚠️ IMPORTANT**: You MUST use the tools. Do not just output text.`;
+  }
+
+  /**
+   * Build prompt for error events.
+   */
+  private static buildErrorPrompt(
+    event: TaskProgressEvent & { type: 'error' },
+    taskId: string,
+    _iteration: number,
+    chatId?: string
+  ): string {
+    if (!chatId) {
+      return `## Task Failed
+
+**Error**: ${event.error}
+
+Report the error to the user.`;
+    }
+
+    const escapedError = event.error.replace(/"/g, '\\"');
+
+    return `## Task Failed
+
+**Task ID**: ${taskId}
+**Error**: ${event.error}
+
+---
+
+## 🎯 Your Task
+
+Send error feedback to the user using \`send_user_feedback\`:
+
+\`\`\`
+send_user_feedback({
+  format: "text",
+  content: "❌ Task execution failed: ${escapedError}",
+  chatId: "${chatId}"
+})
+\`\`\`
+
+**Chat ID**: \`${chatId}\`
+
+**⚠️ IMPORTANT**: You MUST use the send_user_feedback tool. Do not just output text.`;
   }
 
   /**
@@ -294,13 +525,5 @@ You ONLY format and communicate feedback to users.
 `;
 
     return prompt;
-  }
-
-  /**
-   * Cleanup resources.
-   */
-  cleanup(): void {
-    this.logger.debug('Reporter cleaned up');
-    this.initialized = false;
   }
 }

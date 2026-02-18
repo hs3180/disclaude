@@ -18,7 +18,7 @@ declare module 'pino-roll' {
   }
 
   interface PinoRoll extends Transform {
-    constructor: any;
+    constructor: (...args: unknown[]) => PinoRoll;
   }
 
   interface PinoRollStatic {

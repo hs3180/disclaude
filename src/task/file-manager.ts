@@ -31,20 +31,6 @@ import { createLogger } from '../utils/logger.js';
 const logger = createLogger('TaskFileManager', {});
 
 /**
- * Parsed Task.md metadata.
- */
-export interface TaskMetadata {
-  /** Task ID (messageId) */
-  messageId: string;
-  /** Chat ID */
-  chatId: string;
-  /** User ID (optional) */
-  userId?: string;
-  /** User's original request */
-  userRequest: string;
-}
-
-/**
  * Task file manager for unified markdown file operations.
  */
 export class TaskFileManager {
@@ -505,53 +491,4 @@ export class TaskFileManager {
   getFinalResultPath(taskId: string): string {
     return path.join(this.getTaskDir(taskId), 'final_result.md');
   }
-}
-
-/**
- * Parse Task.md content to extract metadata.
- *
- * Extracts:
- * - Task ID (messageId)
- * - Chat ID
- * - User ID (optional)
- * - User's original request (from "## Original Request" section)
- *
- * @param taskMdContent - Full Task.md content
- * @returns Parsed task metadata
- */
-export function parseTaskMd(taskMdContent: string): TaskMetadata {
-  // Extract Task ID (messageId) from "**Task ID**: ..." or "**Task ID**: ..." line
-  const taskIdMatch = taskMdContent.match(/\*?\*?Task ID\*?\*?:\s*([^\n]+)/i);
-  const messageId = taskIdMatch ? taskIdMatch[1].trim() : '';
-
-  // Extract Chat ID from "**Chat ID**: ..." line
-  const chatIdMatch = taskMdContent.match(/\*?\*?Chat ID\*?\*?:\s*([^\n]+)/i);
-  const chatId = chatIdMatch ? chatIdMatch[1].trim() : '';
-
-  // Extract User ID from "**User ID**: ..." line (optional)
-  const userIdMatch = taskMdContent.match(/\*?\*?User ID\*?\*?:\s*([^\n]+)/i);
-  const userId = userIdMatch ? userIdMatch[1].trim() : undefined;
-
-  // Extract Original Request from "## Original Request" section
-  // The request is in a code block after this section
-  const originalRequestSectionMatch = taskMdContent.match(/##\s*Original\s*Request\s*\n([\s\S]*?)(?=##|\Z)/);
-  let userRequest = '';
-
-  if (originalRequestSectionMatch && originalRequestSectionMatch[1]) {
-    // Extract content from code block (``` or ~~~)
-    const codeBlockMatch = originalRequestSectionMatch[1].match(/```[\s\S]*?\n([\s\S]*?)```|~~~[\s\S]*?\n([\s\S]*?)~~~/);
-    if (codeBlockMatch) {
-      userRequest = (codeBlockMatch[1] || codeBlockMatch[2] || '').trim();
-    } else {
-      // Fallback: use the entire section content without leading/trailing whitespace
-      userRequest = originalRequestSectionMatch[1].trim();
-    }
-  }
-
-  return {
-    messageId,
-    chatId,
-    userId,
-    userRequest,
-  };
 }

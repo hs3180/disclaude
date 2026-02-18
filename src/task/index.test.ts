@@ -100,10 +100,6 @@ describe('Task Module Exports', () => {
     it('should export IterationBridgeConfig type', () => {
       expect(TaskModule).toBeDefined();
     });
-
-    it('should export IterationResult type', () => {
-      expect(TaskModule).toBeDefined();
-    });
   });
 
   describe('Module Structure', () => {

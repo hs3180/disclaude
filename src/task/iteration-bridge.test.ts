@@ -8,17 +8,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IterationBridge } from './iteration-bridge.js';
-import type { IterationBridgeConfig } from './iteration-bridge.js';
+import { IterationBridge, type IterationBridgeConfig } from './iteration-bridge.js';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
 
 // Create mock instances that will be used in tests
-let mockEvaluatorInstance: any;
+let mockEvaluatorInstance: Record<string, unknown>;
 
 // Mock Evaluator and Executor classes
 vi.mock('../agents/evaluator.js', () => ({
   Evaluator: vi.fn().mockImplementation(() => {
-    return (globalThis as any).mockEvaluatorInstance;
+    return (globalThis as unknown as { mockEvaluatorInstance: Record<string, unknown> }).mockEvaluatorInstance;
   }),
 }));
 
@@ -33,15 +32,24 @@ vi.mock('../agents/executor.js', () => ({
   })),
 }));
 
-vi.mock('../agents/reporter.js', () => ({
-  Reporter: vi.fn().mockImplementation(() => ({
+vi.mock('../agents/reporter.js', () => {
+  const MockReporter = vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
-    queryStream: vi.fn().mockImplementation(async function* () {
+    sendFeedback: vi.fn().mockImplementation(async function* () {
+      yield { content: 'Reporter output', role: 'assistant', messageType: 'text' };
+    }),
+    processEvent: vi.fn().mockImplementation(async function* () {
       yield { content: 'Reporter output', role: 'assistant', messageType: 'text' };
     }),
     cleanup: vi.fn(),
-  })),
-}));
+  }));
+
+  // Add static method as a regular function (not a mock)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (MockReporter as any).buildEventFeedbackPrompt = vi.fn().mockReturnValue('Mock prompt for event feedback');
+
+  return { Reporter: MockReporter };
+});
 
 vi.mock('./file-manager.js', () => ({
   TaskFileManager: vi.fn().mockImplementation(() => ({
@@ -88,14 +96,14 @@ describe('IterationBridge (File-Driven Architecture)', () => {
         yield { content: 'Mock evaluation response', role: 'assistant', messageType: 'text' };
       })()),
       cleanup: vi.fn(),
-      evaluate: vi.fn().mockImplementation(async function* (this: any, _taskId: string, _iteration: number) {
+      evaluate: vi.fn().mockImplementation(async function* (_taskId: string, _iteration: number) {
         yield { content: 'Evaluating...', role: 'assistant', messageType: 'text' };
         yield { content: 'Evaluation complete', role: 'assistant', messageType: 'text' };
       }),
     };
 
     // Store on globalThis so mock can access it
-    (globalThis as any).mockEvaluatorInstance = mockEvaluatorInstance;
+    (globalThis as unknown as { mockEvaluatorInstance: Record<string, unknown> }).mockEvaluatorInstance = mockEvaluatorInstance;
   });
 
   describe('constructor', () => {
@@ -122,7 +130,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
     it('should stream Evaluator output', async () => {
       bridge = new IterationBridge(config);
 
-      const messages: any[] = [];
+      const messages: unknown[] = [];
       for await (const msg of bridge.runIterationStreaming()) {
         messages.push(msg);
       }
@@ -139,7 +147,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
           // Consume first message only
           break;
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore errors for this test
       }
 

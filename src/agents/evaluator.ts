@@ -18,38 +18,24 @@
  * - Evaluator's evaluation.md is used for tracking evaluation history and guiding Executor
  */
 
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
-import { createLogger } from '../utils/logger.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { TaskFileManager } from '../task/file-manager.js';
-import { AgentExecutionError, TimeoutError, formatError } from '../utils/errors.js';
-
-// Logger instance - used via this.logger in class methods
+import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
- * Input type for Evaluator queries.
+ * Evaluator-specific configuration.
  */
-export type EvaluatorInput = AgentInput;
-
-/**
- * Evaluator agent configuration.
- */
-export interface EvaluatorConfig {
-  apiKey: string;
-  model: string;
-  apiBaseUrl?: string;
-  permissionMode?: 'default' | 'bypassPermissions';
+export interface EvaluatorConfig extends BaseAgentConfig {
   /** Optional subdirectory for task files (e.g., 'regular' for CLI tasks) */
   subdirectory?: string;
 }
 
 /**
- * Type for permission mode.
+ * Input type for Evaluator queries.
  */
-export type EvaluatorPermissionMode = 'default' | 'bypassPermissions';
+export type EvaluatorInput = AgentInput;
 
 /**
  * Evaluator - Task completion evaluation specialist.
@@ -58,33 +44,28 @@ export type EvaluatorPermissionMode = 'default' | 'bypassPermissions';
  * - No JSON output - writes evaluation.md directly
  * - No structured result parsing
  * - File-driven workflow
+ *
+ * Extends BaseAgent to inherit:
+ * - SDK configuration
+ * - GLM logging
+ * - Error handling
  */
-export class Evaluator {
-  readonly apiKey: string;
-  readonly model: string;
-  readonly apiBaseUrl?: string;
-  readonly permissionMode: EvaluatorPermissionMode;
-  protected skill?: ParsedSkill;
-  protected initialized = false;
+export class Evaluator extends BaseAgent {
+  private skill?: ParsedSkill;
   private fileManager: TaskFileManager;
-  private readonly provider: 'anthropic' | 'glm';
-
-  private readonly logger = createLogger('Evaluator');
 
   constructor(config: EvaluatorConfig) {
-    this.apiKey = config.apiKey;
-    this.model = config.model;
-    this.apiBaseUrl = config.apiBaseUrl;
-    this.permissionMode = config.permissionMode || 'bypassPermissions';
+    super(config);
     this.fileManager = new TaskFileManager(Config.getWorkspaceDir(), config.subdirectory);
+  }
 
-    // Detect provider from API base URL
-    const agentConfig = Config.getAgentConfig();
-    this.provider = agentConfig.provider;
+  protected getAgentName(): string {
+    return 'Evaluator';
   }
 
   /**
    * Initialize the Evaluator agent.
+   * Loads the evaluator skill which defines allowed tools.
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
@@ -93,10 +74,13 @@ export class Evaluator {
 
     // Load skill (required)
     this.skill = await loadSkillOrThrow('evaluator');
-    this.logger.debug({
-      skillName: this.skill.name,
-      toolCount: this.skill.allowedTools.length,
-    }, 'Evaluator skill loaded');
+    this.logger.debug(
+      {
+        skillName: this.skill.name,
+        toolCount: this.skill.allowedTools.length,
+      },
+      'Evaluator skill loaded'
+    );
 
     this.initialized = true;
     this.logger.debug('Evaluator initialized');
@@ -113,100 +97,23 @@ export class Evaluator {
       await this.initialize();
     }
 
-    // Create SDK options for Evaluator
-    // Skill is required, so allowedTools is always defined
-    const allowedTools = this.skill!.allowedTools;
-    // Note: send_user_feedback, send_file_to_feishu are intentionally NOT included (Reporter's job)
-
-    const sdkOptions: Record<string, unknown> = {
-      cwd: Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode,
-      allowedTools,
-      settingSources: ['project'],
-      // No MCP servers needed - Evaluator only uses file reading/writing tools
-    };
-
-    // Set environment
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, Config.getGlobalEnv());
-
-    // Set model
-    if (this.model) {
-      sdkOptions.model = this.model;
+    // Skill is required, so allowedTools is always defined after initialize()
+    if (!this.skill) {
+      throw new Error('Evaluator skill not initialized - call initialize() first');
     }
 
-    const ITERATOR_TIMEOUT_MS = 30000; // 30 seconds timeout for iterator
+    // Note: send_user_feedback, send_file_to_feishu are intentionally NOT included (Reporter's job)
+    const sdkOptions = this.createSdkOptions({
+      allowedTools: this.skill.allowedTools,
+      // No MCP servers needed - Evaluator only uses file reading/writing tools
+    });
 
     try {
-      // Query SDK with timeout protection
-      const queryResult = query({ prompt: input, options: sdkOptions as any });
-      const iterator = queryResult[Symbol.asyncIterator]();
-
-      while (true) {
-        // Race between next message and timeout
-        const nextPromise = iterator.next();
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Iterator timeout')), ITERATOR_TIMEOUT_MS)
-        );
-
-        const result = await Promise.race([nextPromise, timeoutPromise]) as IteratorResult<unknown>;
-
-        if (result.done) {
-          break;
-        }
-
-        const message = result.value as SDKMessage;
-        const parsed = parseSDKMessage(message);
-
-        // GLM-specific logging to monitor streaming behavior
-        if (this.provider === 'glm') {
-          this.logger.debug({
-            provider: 'GLM',
-            messageType: parsed.type,
-            contentLength: parsed.content?.length || 0,
-            toolName: parsed.metadata?.toolName,
-            stopReason: (message as any).stop_reason,
-            stopSequence: (message as any).stop_sequence,
-            rawMessagePreview: JSON.stringify(message).substring(0, 500),
-          }, 'SDK message received (GLM)');
-        }
-
-        // Yield formatted message
-        yield {
-          content: parsed.content,
-          role: 'assistant',
-          messageType: parsed.type,
-          metadata: parsed.metadata,
-        };
+      for await (const { parsed } of this.queryOnce(input, sdkOptions)) {
+        yield this.formatMessage(parsed);
       }
     } catch (error) {
-      if (error instanceof Error && error.message === 'Iterator timeout') {
-        const timeoutError = new TimeoutError(
-          'Evaluator query timeout - unable to complete evaluation',
-          ITERATOR_TIMEOUT_MS,
-          'queryStream'
-        );
-        this.logger.warn({ err: formatError(timeoutError) }, 'Iterator timeout - returning partial results');
-        yield {
-          content: '⚠️ Query timeout - unable to complete evaluation',
-          role: 'assistant',
-          messageType: 'error',
-        };
-      } else {
-        const agentError = new AgentExecutionError(
-          'Evaluator query failed',
-          {
-            cause: error instanceof Error ? error : new Error(String(error)),
-            agent: 'Evaluator',
-            recoverable: true,
-          }
-        );
-        this.logger.error({ err: formatError(agentError) }, 'Evaluator query failed');
-        yield {
-          content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
-          role: 'assistant',
-          messageType: 'error',
-        };
-      }
+      yield this.handleIteratorError(error, 'query');
     }
   }
 
@@ -220,30 +127,33 @@ export class Evaluator {
    * @param iteration - Current iteration number
    * @returns Async iterable of agent messages
    */
-  async *evaluate(
-    taskId: string,
-    iteration: number
-  ): AsyncIterable<AgentMessage> {
+  async *evaluate(taskId: string, iteration: number): AsyncIterable<AgentMessage> {
     // Ensure iteration directory exists
     await this.fileManager.createIteration(taskId, iteration);
 
     // Build the prompt
     const prompt = this.buildEvaluationPrompt(taskId, iteration);
 
-    this.logger.debug({
-      taskId,
-      iteration,
-    }, 'Starting evaluation');
+    this.logger.debug(
+      {
+        taskId,
+        iteration,
+      },
+      'Starting evaluation'
+    );
 
     // Stream messages from queryStream
     for await (const msg of this.queryStream(prompt)) {
       yield msg;
     }
 
-    this.logger.debug({
-      taskId,
-      iteration,
-    }, 'Evaluation completed');
+    this.logger.debug(
+      {
+        taskId,
+        iteration,
+      },
+      'Evaluation completed'
+    );
   }
 
   /**
@@ -328,13 +238,5 @@ When ANY condition is true:
 **Now start your evaluation.**`;
 
     return prompt;
-  }
-
-  /**
-   * Cleanup resources.
-   */
-  cleanup(): void {
-    this.logger.debug('Evaluator cleaned up');
-    this.initialized = false;
   }
 }

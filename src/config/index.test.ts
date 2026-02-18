@@ -209,18 +209,28 @@ describe('Config', () => {
 
   describe('getAgentConfig()', () => {
     it('should throw error when no API key is configured', () => {
-      // Temporarily clear API keys
+      // This test assumes no API keys are set in the test environment
       const originalGlmKey = Config.GLM_API_KEY;
       const originalAnthropicKey = Config.ANTHROPIC_API_KEY;
 
-      // This test assumes no API keys are set in the test environment
-      // In a real scenario, you'd need to mock the Config class or use dependency injection
-
       if (!originalGlmKey && !originalAnthropicKey) {
         expect(() => {
-          // Create a fresh instance by accessing the static method
           Config.getAgentConfig();
         }).toThrow('No API key configured');
+      }
+    });
+
+    it('should throw error when GLM API key is set but model is missing', () => {
+      // This would require mocking the config, which is not straightforward
+      // The actual validation is tested by the current config file
+      const originalGlmKey = Config.GLM_API_KEY;
+      const originalGlmModel = Config.GLM_MODEL;
+
+      // If GLM key exists but model doesn't, should throw
+      if (originalGlmKey && !originalGlmModel) {
+        expect(() => {
+          Config.getAgentConfig();
+        }).toThrow('glm.model is required');
       }
     });
 
@@ -236,7 +246,7 @@ describe('Config', () => {
         expect(['anthropic', 'glm']).toContain(agentConfig.provider);
       } catch (error) {
         // If no API key is configured, this is expected
-        expect((error as Error).message).toContain('No API key configured');
+        expect((error as Error).message).toContain('Configuration validation failed');
       }
     });
 
@@ -250,7 +260,7 @@ describe('Config', () => {
         }
       } catch (error) {
         // If no API key is configured, this is expected
-        expect((error as Error).message).toContain('No API key configured');
+        expect((error as Error).message).toContain('Configuration validation failed');
       }
     });
 
@@ -263,18 +273,20 @@ describe('Config', () => {
         }
       } catch (error) {
         // If no API key is configured, this is expected
-        expect((error as Error).message).toContain('No API key configured');
+        expect((error as Error).message).toContain('Configuration validation failed');
       }
     });
   });
 
   describe('Default Values', () => {
-    it('should have default CLAUDE_MODEL', () => {
-      expect(Config.CLAUDE_MODEL).toBeTruthy();
+    it('CLAUDE_MODEL may be empty (no fallback)', () => {
+      // After strict config changes, CLAUDE_MODEL can be empty if not configured
+      expect(typeof Config.CLAUDE_MODEL).toBe('string');
     });
 
-    it('should have default GLM_MODEL', () => {
-      expect(Config.GLM_MODEL).toBeTruthy();
+    it('GLM_MODEL may be empty (no fallback)', () => {
+      // After strict config changes, GLM_MODEL can be empty if not configured
+      expect(typeof Config.GLM_MODEL).toBe('string');
     });
 
     it('should have default GLM_API_BASE_URL', () => {

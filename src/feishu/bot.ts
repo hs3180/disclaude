@@ -17,6 +17,7 @@ import { FileHandler } from './file-handler.js';
 import { MessageSender } from './message-sender.js';
 import { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
+import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
 
 const execAsync = promisify(exec);
 
@@ -103,7 +104,11 @@ export class FeishuBot extends EventEmitter {
     setTaskFlowOrchestrator(this.taskFlowOrchestrator);
 
     // Initialize Pilot with Feishu-specific callbacks
+    const agentConfig = Config.getAgentConfig();
     this.pilot = new Pilot({
+      apiKey: agentConfig.apiKey,
+      model: agentConfig.model,
+      apiBaseUrl: agentConfig.apiBaseUrl,
       callbacks: {
         sendMessage: this.sendMessage.bind(this),
         sendCard: this.sendCard.bind(this),
@@ -138,7 +143,12 @@ export class FeishuBot extends EventEmitter {
     if (!this.messageSender) {
       this.getClient(); // Initialize messageSender
     }
-    await this.messageSender!.sendText(chatId, text);
+    // After getClient(), messageSender is guaranteed to be initialized
+    const sender = this.messageSender;
+    if (!sender) {
+      throw new Error('MessageSender not initialized');
+    }
+    await sender.sendText(chatId, text);
   }
 
   /**
@@ -157,7 +167,12 @@ export class FeishuBot extends EventEmitter {
     if (!this.messageSender) {
       this.getClient(); // Initialize messageSender
     }
-    await this.messageSender!.sendCard(chatId, card, description);
+    // After getClient(), messageSender is guaranteed to be initialized
+    const sender = this.messageSender;
+    if (!sender) {
+      throw new Error('MessageSender not initialized');
+    }
+    await sender.sendCard(chatId, card, description);
   }
 
   /**
@@ -171,7 +186,12 @@ export class FeishuBot extends EventEmitter {
     if (!this.messageSender) {
       this.getClient(); // Initialize messageSender
     }
-    await this.messageSender!.sendFile(chatId, filePath);
+    // After getClient(), messageSender is guaranteed to be initialized
+    const sender = this.messageSender;
+    if (!sender) {
+      throw new Error('MessageSender not initialized');
+    }
+    await sender.sendFile(chatId, filePath);
   }
 
 
@@ -212,12 +232,12 @@ export class FeishuBot extends EventEmitter {
    * @param sender - Message sender info (contains open_id for @ mentions)
    * @returns Accumulated response content
    */
-  private async handleDirectChat(
+  private handleDirectChat(
     chatId: string,
     text: string,
     messageId: string,
     sender?: { sender_type?: string; sender_id?: unknown }
-  ): Promise<string> {
+  ): string {
     // Clear attachments after processing (they were already notified via buildFileUploadPrompt)
     if (attachmentManager.hasAttachments(chatId)) {
       attachmentManager.clearAttachments(chatId);
@@ -236,7 +256,7 @@ export class FeishuBot extends EventEmitter {
   /**
    * Handle incoming message event from WebSocket.
    */
-  private async handleMessageReceive(data: any): Promise<void> {
+  private async handleMessageReceive(data: FeishuEventData): Promise<void> {
     if (!this.running) { return; }
 
     // Ensure client is initialized before processing any message
@@ -245,7 +265,7 @@ export class FeishuBot extends EventEmitter {
 
     // Feishu event structure: data.event contains both sender and message
     // See: https://open.feishu.cn/document/server-docs/im-v1/message/events/receive_v1
-    const event = data.event || data;
+    const event = (data.event || data) as FeishuMessageEvent;
     const { message, sender } = event;
 
     if (!message) { return; }
@@ -342,7 +362,7 @@ ${uploadPrompt}`;
         // Log to file upload to message history (this also marks message as processed)
         await messageLogger.logIncomingMessage(
           message_id,
-          sender?.sender_id || 'unknown',
+          this.extractOpenId(sender) || 'unknown',
           chat_id,
           `[File uploaded: ${latestAttachment.fileName}]`,
           message_type,
@@ -415,7 +435,7 @@ ${uploadPrompt}`;
     // Log to persistent MD file (replaces in-memory history)
     await messageLogger.logIncomingMessage(
       message_id,
-      sender?.sender_id || 'unknown',
+      this.extractOpenId(sender) || 'unknown',
       chat_id,
       text,
       message_type,
@@ -469,9 +489,9 @@ ${uploadPrompt}`;
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
-      'im.message.receive_v1': async (data: any) => {
+      'im.message.receive_v1': async (data: unknown) => {
         try {
-          await this.handleMessageReceive(data);
+          await this.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
           this.logger.error({ err: error }, 'Failed to handle message receive');
         }

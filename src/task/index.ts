@@ -35,7 +35,6 @@ export {
 export {
   IterationBridge,
   type IterationBridgeConfig,
-  type IterationResult,
 } from './iteration-bridge.js';
 
 // Supporting modules

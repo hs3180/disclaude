@@ -9,7 +9,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
-import type { DisclaudeConfig, LoadedConfig, ConfigFileInfo } from './types.js';
+import type { DisclaudeConfig, LoadedConfig, ConfigFileInfo, ConfigValidationError } from './types.js';
 
 const logger = createLogger('ConfigLoader');
 
@@ -152,4 +152,47 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   return true;
+}
+
+/**
+ * Validate required configuration fields.
+ * Called early to provide clear error messages about missing required fields.
+ *
+ * @param config - Configuration to validate
+ * @returns Validation result with errors if any
+ */
+export function validateRequiredConfig(config: DisclaudeConfig): {
+  valid: boolean;
+  errors: ConfigValidationError[];
+} {
+  const errors: ConfigValidationError[] = [];
+
+  // If GLM API key is configured, model must also be configured
+  if (config.glm?.apiKey && !config.glm?.model) {
+    errors.push({
+      field: 'glm.model',
+      message: 'glm.model is required when glm.apiKey is set',
+    });
+  }
+
+  // If GLM model is configured, API key must also be configured
+  if (config.glm?.model && !config.glm?.apiKey) {
+    errors.push({
+      field: 'glm.apiKey',
+      message: 'glm.apiKey is required when glm.model is set',
+    });
+  }
+
+  // If Anthropic API key is configured (from env), agent.model should be set
+  if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
+    errors.push({
+      field: 'agent.model',
+      message: 'agent.model is required when ANTHROPIC_API_KEY env var is set',
+    });
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
 }

@@ -5,6 +5,53 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Pilot, type PilotCallbacks } from './pilot.js';
 
+// Mock the SDK to avoid unhandled errors
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: vi.fn().mockReturnValue({
+    async *[Symbol.asyncIterator]() {
+      // Yield a simple message and end
+      yield { type: 'text', content: 'Test response' };
+    },
+    close: vi.fn(),
+  }),
+  tool: vi.fn(),
+  createSdkMcpServer: vi.fn(() => ({})),
+}));
+
+// Mock config
+vi.mock('../config/index.js', () => ({
+  Config: {
+    getWorkspaceDir: vi.fn(() => '/test/workspace'),
+    getAgentConfig: vi.fn(() => ({
+      apiKey: 'test-key',
+      model: 'test-model',
+      provider: 'anthropic',
+    })),
+    getGlobalEnv: vi.fn(() => ({})),
+    getMcpServersConfig: vi.fn(() => null),
+  },
+}));
+
+// Mock utils
+vi.mock('../utils/sdk.js', () => ({
+  parseSDKMessage: vi.fn((msg) => ({
+    type: msg.type || 'text',
+    content: msg.content || '',
+    metadata: {},
+  })),
+  buildSdkEnv: vi.fn(() => ({})),
+}));
+
+// Mock logger
+vi.mock('../utils/logger.js', () => ({
+  createLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
+
 describe('Pilot (Streaming Input)', () => {
   let mockCallbacks: PilotCallbacks;
   let pilot: Pilot;
@@ -18,6 +65,8 @@ describe('Pilot (Streaming Input)', () => {
     };
     // Use short idle timeout for testing
     pilot = new Pilot({
+      apiKey: 'test-api-key',
+      model: 'test-model',
       callbacks: mockCallbacks,
       sessionIdleTimeout: 1000, // 1 second for testing
     });
@@ -167,21 +216,6 @@ describe('Pilot (Streaming Input)', () => {
 
       // State should be active after creation
       expect(pilot.hasActiveStream('chat-123')).toBe(true);
-    });
-  });
-
-  describe('getQueueLength', () => {
-    it('should return 0 when no state exists', () => {
-      expect(pilot.getQueueLength('chat-123')).toBe(0);
-    });
-
-    it('should return 0 or 1 when state exists', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      // Queue length is 0 or 1 based on pending messages
-      const length = pilot.getQueueLength('chat-123');
-      expect(length).toBeGreaterThanOrEqual(0);
-      expect(length).toBeLessThanOrEqual(1);
     });
   });
 
@@ -357,6 +391,112 @@ describe('Pilot (Streaming Input)', () => {
 
       // Messages should be in queue (they may have been consumed by the generator)
       expect(state?.messageQueue).toBeDefined();
+    });
+  });
+
+  describe('executeOnce', () => {
+    it('should be an instance method', () => {
+      // executeOnce is an instance method, not static
+      expect(typeof pilot.executeOnce).toBe('function');
+    });
+
+    it('should create CLI pilot instance', () => {
+      const cliPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+        isCliMode: true,
+      });
+
+      expect(cliPilot['isCliMode']).toBe(true);
+    });
+
+    it('should accept all parameters', () => {
+      const cliPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+        isCliMode: true,
+      });
+
+      // Test that the method exists and can be called
+      expect(typeof cliPilot.executeOnce).toBe('function');
+    });
+  });
+
+  describe('CLI Mode', () => {
+    it('should support isCliMode option', () => {
+      const cliPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+        isCliMode: true,
+      });
+
+      expect(cliPilot['isCliMode']).toBe(true);
+    });
+
+    it('should default isCliMode to false', () => {
+      const defaultPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+      });
+
+      expect(defaultPilot['isCliMode']).toBe(false);
+    });
+  });
+
+  describe('Session Idle Timeout', () => {
+    it('should accept custom sessionIdleTimeout', () => {
+      const customPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+        sessionIdleTimeout: 60000,
+      });
+
+      expect(customPilot['sessionIdleTimeout']).toBe(60000);
+    });
+
+    it('should use default sessionIdleTimeout when not specified', () => {
+      const defaultPilot = new Pilot({
+        apiKey: 'test-api-key',
+        model: 'test-model',
+        callbacks: mockCallbacks,
+      });
+
+      // Default is 30 minutes (1800000 ms)
+      expect(defaultPilot['sessionIdleTimeout']).toBe(1800000);
+    });
+  });
+
+  describe('Config Fallback', () => {
+    it('should use Config.getAgentConfig when apiKey not provided', () => {
+      const fallbackPilot = new Pilot({
+        callbacks: mockCallbacks,
+      });
+
+      // apiKey should be fetched from Config (mocked to return 'test-key')
+      expect(fallbackPilot['apiKey']).toBe('test-key');
+    });
+
+    it('should use Config.getAgentConfig when model not provided', () => {
+      const fallbackPilot = new Pilot({
+        callbacks: mockCallbacks,
+      });
+
+      // model should be fetched from Config (mocked to return 'test-model')
+      expect(fallbackPilot['model']).toBe('test-model');
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle errors in processMessage gracefully', () => {
+      // processMessage should not throw even if internal operations fail
+      expect(() => {
+        pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      }).not.toThrow();
     });
   });
 });

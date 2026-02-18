@@ -165,11 +165,11 @@ function delayMs(ms: number): Promise<void> {
  * @param defaultOptions - Default retry options
  * @returns Wrapped function with retry logic
  */
-export function withRetry<T extends (...args: any[]) => any>(
+export function withRetry<T extends (...args: unknown[]) => Promise<unknown>>(
   operation: T,
   defaultOptions: RetryOptions = {}
 ): T {
-  return (async (...args: Parameters<T>) => {
+  return ((...args: Parameters<T>) => {
     return retry(() => operation(...args), defaultOptions);
   }) as T;
 }

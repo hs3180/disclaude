@@ -43,7 +43,7 @@ describe('Feishu Module Exports', () => {
       expect(module).toBeDefined();
     });
 
-    it('should allow imports from feishu/index', async () => {
+    it('should allow imports from feishu/index', () => {
       const importPath = './feishu/index.js';
       expect(importPath).toContain('index');
     });

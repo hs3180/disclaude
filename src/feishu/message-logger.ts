@@ -85,13 +85,13 @@ export class MessageLogger {
           while ((match = regex.exec(content)) !== null) {
             this.processedMessageIds.add(match[1].trim());
           }
-        } catch (error) {
-          console.error(`[MessageLogger] Failed to read ${file}:`, error);
+        } catch (_error) {
+          console.error(`[MessageLogger] Failed to read ${file}:`, _error);
         }
       }
 
       console.log(`[MessageLogger] Loaded ${this.processedMessageIds.size} message IDs into memory`);
-    } catch (error) {
+    } catch (_error) {
       // Directory doesn't exist yet, that's fine
       console.log('[MessageLogger] No existing chat files found, starting fresh');
     }
@@ -238,11 +238,11 @@ ${entry.content}
     } catch (error) {
       // Log error but don't throw - allow message processing to continue
       // Logging failure should not block the bot from responding
-      const err = error as Error;
+      const err = error as Error & { code?: string; path?: string };
       console.error('[MessageLogger] Failed to append to log:', {
         message: err.message,
-        code: (err as any).code,
-        path: (err as any).path,
+        code: err.code,
+        path: err.path,
         chatId: entry.chatId,
       });
     }
@@ -272,7 +272,7 @@ ${entry.content}
 
     try {
       return await fs.readFile(logPath, 'utf-8');
-    } catch (error) {
+    } catch (_error) {
       return '';
     }
   }

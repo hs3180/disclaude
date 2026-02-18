@@ -69,9 +69,3 @@ export interface AgentOptions {
  * This enables Streaming Input Mode for multi-turn conversation support.
  */
 export type AgentInput = string | AsyncIterable<SDKUserMessage>;
-
-/**
- * Conversation history for multi-turn context.
- * Used to maintain conversation state across multiple turns.
- */
-export type ConversationHistory = SDKUserMessage[];

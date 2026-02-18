@@ -33,6 +33,33 @@ export interface UploadResult {
 }
 
 /**
+ * Feishu upload API response types.
+ */
+interface ImageUploadResponse {
+  image_key?: string;
+}
+
+interface FileUploadResponse {
+  file_key?: string;
+}
+
+/**
+ * Extended error type with Feishu API response details.
+ */
+interface FeishuApiError extends Error {
+  code?: number | string;
+  msg?: string;
+  response?: {
+    data?: Array<{
+      code?: number;
+      msg?: string;
+      log_id?: string;
+      troubleshooter?: string;
+    }> | unknown;
+  };
+}
+
+/**
  * Detect file type from extension.
  *
  * @param filePath - Path to the file
@@ -86,19 +113,20 @@ export async function uploadFile(
       chatId
     }, 'Uploading file to Feishu');
 
-    let response: any;
+    let fileKey: string;
 
     if (fileType === 'image') {
       // Use image upload API for images
       // Note: Must use Stream, not Buffer, due to SDK's form-data dependency
       const fileStream = fsStream.createReadStream(filePath);
-      response = await client.im.image.create({
+      const response = await client.im.image.create({
         data: {
           image: fileStream,
           image_type: 'message',
         },
-      });
+      }) as unknown as ImageUploadResponse;
       logger.debug({ imageKey: response?.image_key }, 'Image uploaded');
+      fileKey = response?.image_key || '';
     } else {
       // Use file upload API for other types
       // Note: file_type must be one of: 'mp4', 'opus', 'pdf', 'doc', 'xls', 'ppt', 'stream'
@@ -112,18 +140,18 @@ export async function uploadFile(
       // Create a readable stream for the file
       const fileStream = fsStream.createReadStream(filePath);
 
-      response = await client.im.file.create({
+      const response = await client.im.file.create({
         data: {
           file_type: apiFileType,
           file_name: fileName,
           file: fileStream,
         },
-      });
+      }) as unknown as FileUploadResponse;
       logger.debug({ fileKey: response?.file_key, apiFileType }, 'File uploaded');
+      fileKey = response?.file_key || '';
     }
 
-    // Extract file_key from response (different APIs use different field names)
-    const fileKey = response?.image_key || response?.file_key;
+    // Validate file_key
 
     if (!fileKey) {
       throw new Error('No file_key returned from upload API');
@@ -225,7 +253,7 @@ export async function sendFileMessage(
       },
       data: {
         receive_id: chatId,
-        msg_type: msgType as any,
+        msg_type: msgType as 'text' | 'post' | 'image' | 'file' | 'audio' | 'media',
         content,
       },
     });
@@ -247,11 +275,11 @@ export async function sendFileMessage(
 
     // Check if error has Feishu API response details
     if (error && typeof error === 'object') {
-      const err = error as any;
+      const err = error as FeishuApiError;
 
       // Try to extract from response data
       if (err.response?.data) {
-        const data = err.response.data;
+        const {data} = err.response;
         if (Array.isArray(data) && data[0]) {
           errorCode = data[0].code;
           errorMsg = data[0].msg;
@@ -261,7 +289,7 @@ export async function sendFileMessage(
       }
 
       // Fallback to error properties
-      if (!errorCode) {
+      if (!errorCode && typeof err.code === 'number') {
         errorCode = err.code;
       }
       if (!errorMsg) {
@@ -294,7 +322,7 @@ export async function sendFileMessage(
     ].filter(Boolean).join('\n');
 
     const feishuError = errorCode ? [
-      `\n**Feishu API Error:**`,
+      '\n**Feishu API Error:**',
       `Code: ${errorCode}`,
       errorMsg ? `Message: ${errorMsg}` : undefined,
       logId ? `Log ID: ${logId}` : undefined,
