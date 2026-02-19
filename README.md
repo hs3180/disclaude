@@ -74,7 +74,7 @@ glm:
 # Agent/AI Configuration
 agent:
   provider: "glm"          # Options: "glm" or "anthropic"
-  model: "glm-4.7"         # Model to use
+  model: "glm-5"           # Model to use
   permissionMode: "bypassPermissions"  # Auto-approve tool actions
 ```
 
