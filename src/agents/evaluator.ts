@@ -2,20 +2,22 @@
  * Evaluator - Task completion evaluation specialist.
  *
  * **Single Responsibility**: Evaluate if a task is complete and output evaluation.md.
+ * When task is COMPLETE, also creates final_result.md to signal completion.
  *
- * **Output**: Creates `evaluation.md` in the iteration directory.
- * The file contains the evaluation result - no JSON parsing needed.
+ * **Output**:
+ * - `evaluation.md` in the iteration directory (always)
+ * - `final_result.md` in the task directory (when status=COMPLETE)
  *
  * **Tools Available**:
  * - Read, Grep, Glob: For reading task files and verifying completion
- * - Write: For creating evaluation.md
+ * - Write: For creating evaluation.md and final_result.md
  *
  * **Tools NOT Available (intentionally restricted)**:
  * - send_user_feedback: Reporter's job, not Evaluator's
  *
  * **Completion Detection**:
- * - Task completion is determined by the presence of final_result.md (created by Executor)
- * - Evaluator's evaluation.md is used for tracking evaluation history and guiding Executor
+ * - Evaluator creates final_result.md when it determines the task is COMPLETE
+ * - The system detects completion by checking for final_result.md presence
  */
 
 import { Config } from '../config/index.js';
@@ -231,9 +233,26 @@ When ANY condition is true:
 
 ## Important Notes
 
-- Write the file to \`${evaluationPath}\`
+- Write the evaluation file to \`${evaluationPath}\`
 - Do NOT output JSON - write markdown directly
-- Task completion is detected by final_result.md (created by Executor)
+- **When status=COMPLETE**: You MUST also create \`final_result.md\` to signal task completion
+
+**If status is COMPLETE, also create final_result.md:**
+
+Create this file: \`${this.fileManager.getFinalResultPath(taskId)}\`
+
+\`\`\`markdown
+# Final Result
+
+Task completed successfully.
+
+## Summary
+(Brief summary of what was accomplished)
+
+## Deliverables
+- Deliverable 1
+- Deliverable 2
+\`\`\`
 
 **Now start your evaluation.**`;
 
