@@ -208,7 +208,7 @@ export class Evaluator extends BaseAgent {
 [COMPLETE | NEED_EXECUTE]
 
 ## Assessment
-（你的评估理由）
+(Your evaluation reasoning)
 
 ## Next Actions (only if NEED_EXECUTE)
 - Action 1
