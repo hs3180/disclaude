@@ -3,17 +3,18 @@
  *
  * **Architecture (File-Driven - Direct Evaluator → Executor):**
  * - Phase 1: Evaluator evaluates task completion and writes evaluation.md
- * - Phase 2: If final_result.md not present, Executor executes the task
+ * - Phase 2: If status=COMPLETE, Evaluator also writes final_result.md (ends loop)
+ * - Phase 3: If final_result.md not present, Executor executes the task
  *
  * **Key Components:**
- * - **Evaluator** (Phase 1): Writes evaluation.md to iteration directory
- * - **Executor** (Phase 2): Reads evaluation.md, executes, writes execution.md
+ * - **Evaluator** (Phase 1): Writes evaluation.md, and final_result.md if complete
+ * - **Executor** (Phase 3): Reads evaluation.md, executes, writes execution.md
  *
  * **File-Driven Architecture:**
  * - No JSON parsing - all communication via markdown files
  * - No Planner layer - Executor executes tasks directly
  * - No subtask concept - Single task execution
- * - Completion detected via final_result.md presence
+ * - Completion detected via final_result.md presence (created by Evaluator)
  *
  * **Stream-Based Event Processing:**
  * - Executor events flow directly to Reporter via processEvent()
@@ -49,9 +50,9 @@ export interface IterationBridgeConfig {
  * IterationBridge - Simplified Evaluator-Executor communication for a single iteration.
  *
  * File-driven architecture:
- * - Evaluator writes evaluation.md
- * - Executor reads evaluation.md and writes execution.md + final_result.md
- * - Completion detected by checking final_result.md existence
+ * - Evaluator writes evaluation.md (always) and final_result.md (when COMPLETE)
+ * - Executor reads evaluation.md and writes execution.md
+ * - Completion detected by checking final_result.md existence after Evaluator phase
  */
 export class IterationBridge {
   readonly evaluatorConfig: EvaluatorConfig;

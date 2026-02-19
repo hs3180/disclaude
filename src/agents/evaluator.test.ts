@@ -64,6 +64,7 @@ vi.mock('../task/file-manager.js', () => ({
     getTaskSpecPath: vi.fn(() => '/test/workspace/tasks/task_123/task.md'),
     getEvaluationPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/evaluation.md'),
     getExecutionPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/execution.md'),
+    getFinalResultPath: vi.fn(() => '/test/workspace/tasks/task_123/final_result.md'),
   })),
 }));
 

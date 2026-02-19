@@ -6,7 +6,7 @@
  *
  * {task_id}/
  *   ├── task.md
- *   ├── final_result.md (created by Executor when task is complete)
+ *   ├── final_result.md (created by Evaluator when task is COMPLETE)
  *   └── iterations/
  *       ├── iter-1/
  *       │   ├── evaluation.md (created by Evaluator)
@@ -463,7 +463,7 @@ export class TaskFileManager {
   /**
    * Check if final_result.md exists in the task directory.
    *
-   * This file is created by the Executor when it successfully completes a task.
+   * This file is created by the Evaluator when it determines the task is COMPLETE.
    * Its presence indicates that the task is complete.
    *
    * @param taskId - Task identifier

@@ -4,7 +4,7 @@
  * Simplified architecture:
  * - No subtask concept
  * - Direct task execution based on Evaluator's evaluation.md
- * - Outputs execution.md and optionally final_result.md
+ * - Outputs execution.md only (final_result.md is created by Evaluator)
  * - Yields progress events for real-time reporting
  *
  * Extends BaseAgent to inherit:
@@ -73,7 +73,8 @@ export interface TaskResult {
  *
  * Output files:
  * - execution.md: Created in each iteration directory
- * - final_result.md: Created when task is complete
+ *
+ * Note: final_result.md is created by Evaluator when task is COMPLETE.
  *
  * Extends BaseAgent to inherit common functionality while adding
  * Executor-specific features like TaskProgressEvent yielding.
@@ -103,7 +104,7 @@ export class Executor extends BaseAgent {
   /**
    * Execute a task with a fresh agent.
    *
-   * Reads evaluation.md for guidance and creates execution.md + final_result.md.
+   * Reads evaluation.md for guidance and creates execution.md.
    *
    * Yields progress events during execution:
    * - 'start': When the task begins
@@ -198,9 +199,6 @@ export class Executor extends BaseAgent {
       // Find all created files
       const files = await this.findCreatedFiles(workspaceDir);
 
-      // Check if final_result.md was created by the agent
-      // (used for logging, actual completion check is in IterationBridge)
-
       // Yield complete event
       yield {
         type: 'complete',
@@ -250,7 +248,6 @@ export class Executor extends BaseAgent {
   private buildTaskPrompt(taskId: string, iteration: number, evaluationContent: string): string {
     const taskMdPath = this.fileManager.getTaskSpecPath(taskId);
     const executionPath = this.fileManager.getExecutionPath(taskId, iteration);
-    const finalResultPath = this.fileManager.getFinalResultPath(taskId);
 
     const parts: string[] = [];
 
@@ -278,7 +275,7 @@ export class Executor extends BaseAgent {
     parts.push('');
     parts.push(`1. Read the task specification: \`${taskMdPath}\``);
     parts.push('2. Execute the task based on the requirements and evaluation guidance');
-    parts.push('3. When complete, create the following files:');
+    parts.push('3. When complete, create the following file:');
     parts.push('');
     parts.push(`**Required**: \`${executionPath}\``);
     parts.push('```markdown');
@@ -294,17 +291,6 @@ export class Executor extends BaseAgent {
     parts.push('## Files Modified');
     parts.push('- file1.ts');
     parts.push('- file2.ts');
-    parts.push('```');
-    parts.push('');
-    parts.push(`**If task is complete**: \`${finalResultPath}\``);
-    parts.push('```markdown');
-    parts.push('# Final Result');
-    parts.push('');
-    parts.push('Task completed successfully.');
-    parts.push('');
-    parts.push('## Deliverables');
-    parts.push('- Deliverable 1');
-    parts.push('- Deliverable 2');
     parts.push('```');
     parts.push('');
     parts.push('---');
