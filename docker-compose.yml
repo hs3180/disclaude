@@ -32,6 +32,9 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
+      # GitHub token for git operations (clone private repos, create PRs, etc.)
+      # Create at: https://github.com/settings/tokens
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
       # Note: CDP endpoint for Playwright MCP is configured in disclaude.config.yaml
       # via the --cdp-endpoint argument, not as an environment variable.
       # For network_mode: host, use: http://localhost:9222
