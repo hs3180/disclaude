@@ -32,12 +32,10 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
-      # CDP endpoint configuration (for Playwright MCP browser tool)
-      # When using network_mode: host, use localhost
-      - PLAYWRIGHT_CDP_ENDPOINT=ws://localhost:9222
-      # For Docker Desktop (Mac/Windows) without network_mode: host, use:
-      # - PLAYWRIGHT_CDP_ENDPOINT=ws://host.docker.internal:9222
-      # And uncomment extra_hosts below
+      # Note: CDP endpoint for Playwright MCP is configured in disclaude.config.yaml
+      # via the --cdp-endpoint argument, not as an environment variable.
+      # For network_mode: host, use: http://localhost:9222
+      # For Docker Desktop, use: http://host.docker.internal:9222
 
     # For Docker Desktop on Mac/Windows, uncomment this and remove network_mode: host
     # extra_hosts:
