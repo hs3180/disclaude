@@ -244,27 +244,3 @@ export async function loadSkillOrThrow(skillName: string): Promise<ParsedSkill> 
   return result.skill;
 }
 
-/**
- * Get MCP server configuration for a skill.
- *
- * Some skills need MCP servers.
- * This can be extended or made configurable via skill frontmatter in the future.
- *
- * @param skillName - Name of the skill
- * @returns MCP server configuration or undefined
- */
-export function getSkillMcpServers(skillName: string): Record<string, unknown> | undefined {
-  // Note: 'worker' skill reference kept for backward compatibility
-  // Executor agent (not a skill) may need Playwright MCP server
-  if (skillName === 'worker') {
-    return {
-      playwright: {
-        type: 'stdio',
-        command: 'npx',
-        args: ['@playwright/mcp@latest'],
-      },
-    };
-  }
-
-  return undefined;
-}

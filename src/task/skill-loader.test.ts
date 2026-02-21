@@ -13,7 +13,6 @@ import * as fs from 'fs/promises';
 import {
   loadSkill,
   loadSkillOrThrow,
-  getSkillMcpServers,
 } from './skill-loader.js';
 
 // Mock fs module
@@ -216,31 +215,5 @@ description: Test
     vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('ENOENT'));
 
     await expect(loadSkillOrThrow('missing-skill')).rejects.toThrow('missing-skill');
-  });
-});
-
-describe('getSkillMcpServers', () => {
-  it('should return playwright config for worker skill', () => {
-    const config = getSkillMcpServers('worker');
-
-    expect(config).toBeDefined();
-    expect(config?.playwright).toBeDefined();
-    expect(config?.playwright).toEqual({
-      type: 'stdio',
-      command: 'npx',
-      args: ['@playwright/mcp@latest'],
-    });
-  });
-
-  it('should return undefined for non-worker skills', () => {
-    const config = getSkillMcpServers('manager');
-
-    expect(config).toBeUndefined();
-  });
-
-  it('should return undefined for task skill (uses task-skill MCP)', () => {
-    const config = getSkillMcpServers('task');
-
-    expect(config).toBeUndefined();
   });
 });

@@ -6,7 +6,7 @@
  * - Arrays are readonly (as const)
  *
  * NOTE: MCP tools (e.g., Playwright, Feishu context) are NOT included here.
- * Individual agents configure MCP servers via getSkillMcpServers() in skill-loader.ts.
+ * MCP servers should be configured via disclaude.config.yaml under tools.mcpServers.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -63,11 +63,10 @@ describe('Tool Configuration', () => {
   });
 
   describe('Architecture Notes', () => {
-    it('documents that MCP tools are configured per-agent', () => {
+    it('documents that MCP tools are configured via config file', () => {
       // This test documents the architecture decision:
       // - MCP tools are NOT in ALLOWED_TOOLS
-      // - Individual agents configure MCP servers via getSkillMcpServers()
-      // - See skill-loader.ts for Executor's Playwright configuration
+      // - MCP servers are configured via disclaude.config.yaml under tools.mcpServers
       expect(ALLOWED_TOOLS).not.toContain('mcp__playwright__browser_navigate');
       expect(ALLOWED_TOOLS).not.toContain('mcp__feishu_context__get_user_info');
     });

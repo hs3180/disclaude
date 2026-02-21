@@ -4,7 +4,7 @@
  * This module defines the allowed tools and agent subagents for SDK integration.
  *
  * NOTE: MCP tools (e.g., Playwright, Feishu context) are NOT included here.
- * Individual agents configure MCP servers via getSkillMcpServers() in skill-loader.ts.
+ * MCP servers should be configured via disclaude.config.yaml under tools.mcpServers.
  */
 
 /**
