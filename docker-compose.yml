@@ -1,0 +1,80 @@
+# =============================================================================
+# Disclaude Docker Compose Configuration
+# =============================================================================
+#
+# Usage:
+#   cp disclaude.config.example.yaml disclaude.config.yaml
+#   # Edit disclaude.config.yaml with your API keys and settings
+#   docker compose up -d
+#
+#   # View logs
+#   docker compose logs -f
+#
+#   # Stop
+#   docker compose down
+#
+# =============================================================================
+
+services:
+  disclaude:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: disclaude:latest
+    container_name: disclaude-feishu
+    restart: unless-stopped
+
+    # Network mode: host allows container to access host's CDP endpoint
+    # Alternative: use extra_hosts for host.docker.internal (see comments below)
+    network_mode: host
+
+    # Environment variables (optional overrides)
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      # CDP endpoint configuration (for Playwright MCP browser tool)
+      # When using network_mode: host, use localhost
+      - PLAYWRIGHT_CDP_ENDPOINT=ws://localhost:9222
+      # For Docker Desktop (Mac/Windows) without network_mode: host, use:
+      # - PLAYWRIGHT_CDP_ENDPOINT=ws://host.docker.internal:9222
+      # And uncomment extra_hosts below
+
+    # For Docker Desktop on Mac/Windows, uncomment this and remove network_mode: host
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+    # Mount configuration file (required)
+    volumes:
+      # Mount your configuration file with API keys
+      - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
+
+      # Persist workspace directory
+      - ./workspace:/app/workspace
+
+      # Persist logs
+      - ./logs:/app/logs
+
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

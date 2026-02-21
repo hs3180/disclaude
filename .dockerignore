@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Documentation
+*.md
+!CLAUDE.md
+
+# Configuration (should be mounted as volume)
+disclaude.config.yaml
+.disclauderc
+.env
+
+# Logs
+logs/
+*.log
+
+# PM2
+.pm2/
+
+# Claude Code
+.claude/
+
+# Playwright MCP
+.playwright-mcp/
+.mcp.json
+
+# Task records
+tasks/
+
+# Workspace (mounted as volume)
+workspace/*
+
+# Build output (will be generated in container)
+dist/
+
+# Docker files
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Misc
+*.orig
+repl.history
