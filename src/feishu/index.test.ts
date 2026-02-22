@@ -6,34 +6,29 @@ import { describe, it, expect } from 'vitest';
 
 describe('Feishu Module Exports', () => {
   describe('Module Structure', () => {
-    it('should export FeishuBot class', async () => {
+    it('should export MessageSender class', async () => {
       const module = await import('./index.js');
-      expect(module.FeishuBot).toBeDefined();
+      expect(module.MessageSender).toBeDefined();
     });
 
-    it('should re-export from bot.ts', async () => {
+    it('should export FileHandler class', async () => {
       const module = await import('./index.js');
-      expect(Object.keys(module)).toContain('FeishuBot');
+      expect(module.FileHandler).toBeDefined();
     });
 
-    it('should have .js extension in import', () => {
-      const path = './bot.js';
-      expect(path.endsWith('.js')).toBe(true);
-    });
-  });
-
-  describe('FeishuBot Export', () => {
-    it('should export FeishuBot as named export', async () => {
-      const { FeishuBot } = await import('./index.js');
-      expect(FeishuBot).toBeDefined();
-      expect(typeof FeishuBot).toBe('function');
-    });
-
-    it('should be the only export', async () => {
+    it('should export TaskFlowOrchestrator class', async () => {
       const module = await import('./index.js');
-      const exports = Object.keys(module);
-      expect(exports.length).toBeGreaterThanOrEqual(1);
-      expect(exports).toContain('FeishuBot');
+      expect(module.TaskFlowOrchestrator).toBeDefined();
+    });
+
+    it('should export attachmentManager', async () => {
+      const module = await import('./index.js');
+      expect(module.attachmentManager).toBeDefined();
+    });
+
+    it('should export messageLogger', async () => {
+      const module = await import('./index.js');
+      expect(module.messageLogger).toBeDefined();
     });
   });
 
