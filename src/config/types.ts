@@ -140,12 +140,27 @@ export interface TransportConfig {
 }
 
 /**
+ * Run mode for the application.
+ * - single: Single process mode (default, backward compatible)
+ * - comm: Communication Node only (Feishu WebSocket handler)
+ * - exec: Execution Node only (Pilot/Agent handler)
+ */
+export type RunMode = 'single' | 'comm' | 'exec';
+
+/**
  * Main configuration interface.
  *
  * This represents the structure of disclaude.config.yaml.
  * All fields are optional - environment variables take precedence.
  */
 export interface DisclaudeConfig {
+  /**
+   * Run mode for the application.
+   * - single: Single process mode (default, backward compatible)
+   * - comm: Communication Node only (Feishu WebSocket handler)
+   * - exec: Execution Node only (Pilot/Agent handler)
+   */
+  mode?: RunMode;
   /** Workspace settings */
   workspace?: WorkspaceConfig;
   /** Agent/AI model settings */

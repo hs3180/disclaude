@@ -196,17 +196,62 @@ Edit `ecosystem.config.cjs`:
 
 ## Usage
 
-### Starting the Bot
+### CLI Commands
 
 ```bash
-# Feishu/Lark mode (production)
-disclaude feishu
+# Show help
+disclaude
+disclaude --help
 
-# CLI mode (one-shot query, no Feishu needed)
+# Single process mode (all-in-one, default)
+disclaude start
+disclaude start --mode single
+
+# Distributed mode - Communication Node (Feishu WebSocket)
+disclaude start --mode comm --port 3001
+
+# Distributed mode - Execution Node (Pilot Agent)
+disclaude start --mode exec --communication-url http://localhost:3001
+
+# CLI prompt mode (one-shot query, no Feishu needed)
 disclaude --prompt "List all TypeScript files"
+```
 
-# Combined
-disclaude --prompt "Read src/agent/client.ts" | head -20
+### Run Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `single` | All-in-one process | Development, small deployments |
+| `comm` | Communication Node only | Distributed deployments |
+| `exec` | Execution Node only | Scale agent processing independently |
+
+### Distributed Deployment
+
+For production, you can split the Communication and Execution nodes:
+
+```bash
+# Terminal 1: Communication Node (handles Feishu)
+disclaude start --mode comm --port 3001
+
+# Terminal 2: Execution Node (handles Agent)
+disclaude start --mode exec --communication-url http://localhost:3001
+```
+
+Or configure in `disclaude.config.yaml`:
+
+```yaml
+mode: "comm"  # or "exec"
+
+transport:
+  type: "http"
+  http:
+    execution:
+      host: "localhost"
+      port: 3001
+    communication:
+      callbackHost: "localhost"
+      callbackPort: 3002
+      executionUrl: "http://localhost:3001"
 ```
 
 ### Feishu Commands
@@ -288,25 +333,46 @@ disclaude/
 
 ## Architecture
 
+### Single Process Mode (default)
+
 ```
 ┌─────────────────────────────────────────────────────┐
-│              Claude Agent SDK                        │
-│     (Anthropic or GLM with MCP Servers)              │
-└────────────────────┬────────────────────────────────┘
-                     │
-        ┌────────────┴────────────┐
-        │     Output Adapter      │
-        │     (CLI / Feishu)      │
-        └────────────┬────────────┘
-                     │
-        ┌────────────┴────────────┐
-        │                         │
-┌───────▼──────┐         ┌────────▼────────┐
-│  Feishu/Lark │         │      CLI        │
-│  Bot (WS)    │         │     Mode        │
-│  + Throttling│         │   + Colors      │
-└──────────────┘         └─────────────────┘
+│              Single Process                          │
+│  ┌─────────────┐    ┌─────────────┐                 │
+│  │ Communication│◄──►│  Execution  │                │
+│  │    Node     │    │    Node     │                 │
+│  │  (Feishu)   │    │  (Pilot)    │                 │
+│  └──────┬──────┘    └──────┬──────┘                 │
+│         │                  │                        │
+└─────────┼──────────────────┼────────────────────────┘
+          │                  │
+   ┌──────▼──────┐    ┌──────▼──────┐
+   │   Feishu    │    │Claude Agent │
+   │  WebSocket  │    │    SDK      │
+   └─────────────┘    └─────────────┘
 ```
+
+### Distributed Mode
+
+```
+┌──────────────────────────┐       ┌──────────────────────────┐
+│   Communication Node     │       │    Execution Node        │
+│  ┌────────────────────┐  │  HTTP │  ┌────────────────────┐  │
+│  │  Feishu WebSocket  │  │◄─────►│  │   Pilot Agent      │  │
+│  │  + HTTP Server     │  │       │  │   + HTTP Client    │  │
+│  └────────────────────┘  │       │  └────────────────────┘  │
+└──────────────────────────┘       └──────────────────────────┘
+         │                                    │
+  ┌──────▼──────┐                     ┌──────▼──────┐
+  │   Feishu    │                     │Claude Agent │
+  │   Cloud     │                     │    SDK      │
+  └─────────────┘                     └─────────────┘
+```
+
+This separation enables:
+- Independent scaling of Feishu handling and Agent processing
+- Multiple Execution Nodes for load balancing
+- Zero-downtime deployments
 
 ## Troubleshooting
 
