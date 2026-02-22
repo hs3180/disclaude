@@ -9,41 +9,13 @@ import { Config } from './config/index.js';
 import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
 import { handleError, ErrorCategory } from './utils/error-handler.js';
 import { setupSkillsInWorkspace } from './utils/skills-setup.js';
+import { parseGlobalArgs } from './utils/cli-args.js';
 import { runCommunicationNode, runExecutionNode, runCli } from './runners/index.js';
 import packageJson from '../package.json' with { type: 'json' };
-import type { RunMode } from './config/types.js';
 
 // Increase max listeners to prevent memory leak warnings
 // We register multiple process event handlers across the codebase
 process.setMaxListeners(20);
-
-/**
- * Parse command line arguments.
- */
-function parseArgs(): { mode: RunMode | null; promptMode: boolean; promptArgs: string[] } {
-  const args = process.argv.slice(2);
-
-  // Check for prompt mode
-  const promptIndex = args.indexOf('--prompt');
-  if (promptIndex !== -1) {
-    return { mode: null, promptMode: true, promptArgs: args };
-  }
-
-  // Check for start command with mode (required)
-  if (args[0] === 'start') {
-    const modeIndex = args.indexOf('--mode');
-    if (modeIndex !== -1 && args[modeIndex + 1]) {
-      const mode = args[modeIndex + 1] as RunMode;
-      if (['comm', 'exec'].includes(mode)) {
-        return { mode, promptMode: false, promptArgs: [] };
-      }
-    }
-    // No valid mode provided
-    return { mode: null, promptMode: false, promptArgs: [] };
-  }
-
-  return { mode: null, promptMode: false, promptArgs: args };
-}
 
 /**
  * Show help message.
@@ -95,7 +67,8 @@ async function main(): Promise<void> {
     }
   });
 
-  const { mode, promptMode, promptArgs } = parseArgs();
+  const globalArgs = parseGlobalArgs();
+  const { mode, promptMode, promptArgs } = globalArgs;
 
   logger.info({
     mode,

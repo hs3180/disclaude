@@ -5,48 +5,12 @@
  * and communicates with Communication Node via HTTP.
  */
 
-import { Config } from '../config/index.js';
 import { HttpTransport } from '../transport/index.js';
 import { ExecutionNode } from '../nodes/index.js';
 import { createLogger } from '../utils/logger.js';
+import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
 
 const logger = createLogger('ExecRunner');
-
-interface ExecRunnerConfig {
-  communicationUrl: string;
-  port?: number;
-  authToken?: string;
-}
-
-/**
- * Parse command line arguments for Execution Node.
- */
-function parseArgs(): ExecRunnerConfig {
-  const args = process.argv.slice(2);
-  const transportConfig = Config.getTransportConfig();
-
-  let communicationUrl = transportConfig.http?.communication?.executionUrl ||
-                         process.env.COMMUNICATION_URL ||
-                         'http://localhost:3001';
-  let port = transportConfig.http?.execution?.port ||
-             parseInt(process.env.PORT || '3001', 10);
-  let authToken = transportConfig.http?.authToken || process.env.AUTH_TOKEN;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--communication-url' && args[i + 1]) {
-      communicationUrl = args[i + 1];
-      i++;
-    } else if (args[i] === '--port' && args[i + 1]) {
-      port = parseInt(args[i + 1], 10);
-      i++;
-    } else if (args[i] === '--auth-token' && args[i + 1]) {
-      authToken = args[i + 1];
-      i++;
-    }
-  }
-
-  return { communicationUrl, port, authToken };
-}
 
 /**
  * Run Execution Node (Pilot/Agent handler with HTTP client).
@@ -55,20 +19,23 @@ function parseArgs(): ExecRunnerConfig {
  * 1. Receives tasks from Communication Node
  * 2. Executes tasks via Pilot Agent
  * 3. Sends results back to Communication Node
+ *
+ * @param config - Optional configuration (uses CLI args if not provided)
  */
-export async function runExecutionNode(): Promise<void> {
-  const config = parseArgs();
+export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
+  const globalArgs = parseGlobalArgs();
+  const runnerConfig = config || getExecNodeConfig(globalArgs);
 
   logger.info({
     config: {
-      ...config,
-      authToken: config.authToken ? '***' : undefined
+      ...runnerConfig,
+      authToken: runnerConfig.authToken ? '***' : undefined
     }
   }, 'Starting Execution Node');
 
   console.log('Initializing Execution Node...');
   console.log(`Mode: Execution (Pilot Agent + HTTP Client)`);
-  console.log(`Communication URL: ${config.communicationUrl}`);
+  console.log(`Communication URL: ${runnerConfig.communicationUrl}`);
   console.log();
 
   // Increase max listeners
@@ -77,8 +44,8 @@ export async function runExecutionNode(): Promise<void> {
   // Create HTTP Transport (Client mode)
   const transport = new HttpTransport({
     mode: 'execution',
-    communicationUrl: config.communicationUrl,
-    authToken: config.authToken,
+    communicationUrl: runnerConfig.communicationUrl,
+    authToken: runnerConfig.authToken,
   });
 
   // Create Execution Node (handles Pilot/Agent)
@@ -89,7 +56,7 @@ export async function runExecutionNode(): Promise<void> {
 
   // Start Transport
   await transport.start();
-  logger.info(`Execution Node connecting to ${config.communicationUrl}`);
+  logger.info(`Execution Node connecting to ${runnerConfig.communicationUrl}`);
 
   // Start Execution Node (registers handlers)
   await execNode.start();
@@ -111,3 +78,6 @@ export async function runExecutionNode(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
+
+// Re-export type for external use
+export type { ExecNodeConfig };

@@ -12,6 +12,7 @@ import { CLIOutputAdapter, FeishuOutputAdapter, OutputAdapter } from '../utils/o
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
+import { parseGlobalArgs, getCliModeConfig, type CliModeConfig } from '../utils/cli-args.js';
 import type { MessageContent } from '../transport/index.js';
 
 const logger = createLogger('CLIRunner');
@@ -22,15 +23,6 @@ const logger = createLogger('CLIRunner');
 interface ExtendedOutputAdapter extends OutputAdapter {
   finalize?: () => void;
   clearThrottleState?: () => void;
-}
-
-/**
- * CLI runner configuration.
- */
-interface CLIRunnerConfig {
-  prompt: string;
-  feishuChatId?: string;
-  port?: number;
 }
 
 /**
@@ -60,8 +52,8 @@ function color(text: string, colorName: keyof typeof colors): string {
  *
  * @param config - CLI runner configuration
  */
-export async function runCliMode(config: CLIRunnerConfig): Promise<void> {
-  const { prompt, feishuChatId, port = 3001 } = config;
+export async function runCliMode(config: CliModeConfig): Promise<void> {
+  const { prompt, feishuChatId, port } = config;
 
   // Create unique IDs for this CLI session
   const messageId = `cli-${Date.now()}`;
@@ -198,25 +190,11 @@ export async function runCliMode(config: CLIRunnerConfig): Promise<void> {
  * Parse CLI arguments and run CLI mode.
  */
 export async function runCli(args: string[]): Promise<void> {
-  // Parse --prompt argument
-  const promptIndex = args.indexOf('--prompt');
-  const prompt = promptIndex !== -1 && args[promptIndex + 1]
-    ? args[promptIndex + 1]
-    : args.join(' ');
+  const globalArgs = parseGlobalArgs(args);
+  const cliConfig = getCliModeConfig(globalArgs);
 
-  // Parse --feishu-chat-id argument
-  const feishuChatIdIndex = args.indexOf('--feishu-chat-id');
-  let feishuChatId = feishuChatIdIndex !== -1 && args[feishuChatIdIndex + 1]
-    ? args[feishuChatIdIndex + 1]
-    : undefined;
-
-  // Parse --port argument
-  const portIndex = args.indexOf('--port');
-  const port = portIndex !== -1 && args[portIndex + 1]
-    ? parseInt(args[portIndex + 1], 10)
-    : 3001;
-
-  // Special value "auto" means use environment variable
+  // Handle feishu-chat-id "auto" special value
+  let feishuChatId = cliConfig?.feishuChatId || globalArgs.feishuChatId;
   let chatIdSource: 'cli' | 'env' | undefined;
 
   if (feishuChatId === 'auto') {
@@ -232,7 +210,7 @@ export async function runCli(args: string[]): Promise<void> {
   }
 
   // Show usage if no prompt provided
-  if (!prompt || prompt.trim() === '' || prompt === '--prompt') {
+  if (!cliConfig || !cliConfig.prompt.trim()) {
     console.log('');
     console.log(color('═══════════════════════════════════════════════════════', 'cyan'));
     console.log(color('  Disclaude - CLI Mode', 'bold'));
@@ -256,7 +234,7 @@ export async function runCli(args: string[]): Promise<void> {
   // Display prompt info (only in console mode)
   if (!feishuChatId) {
     console.log('');
-    console.log(color('Prompt:', 'bold'), prompt);
+    console.log(color('Prompt:', 'bold'), cliConfig.prompt);
     console.log(color('───────────────────────────────────', 'dim'));
     console.log('');
   } else {
@@ -269,7 +247,11 @@ export async function runCli(args: string[]): Promise<void> {
   }
 
   try {
-    await runCliMode({ prompt, feishuChatId, port });
+    await runCliMode({
+      prompt: cliConfig.prompt,
+      feishuChatId,
+      port: cliConfig.port,
+    });
     process.exit(0);
   } catch (error) {
     const enriched = handleError(error, {
@@ -286,3 +268,6 @@ export async function runCli(args: string[]): Promise<void> {
     process.exit(1);
   }
 }
+
+// Re-export type for external use
+export type { CliModeConfig };
