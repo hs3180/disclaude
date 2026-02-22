@@ -5,12 +5,11 @@
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
  */
-import { runCli } from './cli/index.js';
 import { Config } from './config/index.js';
 import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
 import { handleError, ErrorCategory } from './utils/error-handler.js';
 import { setupSkillsInWorkspace } from './utils/skills-setup.js';
-import { runCommunicationNode, runExecutionNode } from './runners/index.js';
+import { runCommunicationNode, runExecutionNode, runCli } from './runners/index.js';
 import packageJson from '../package.json' with { type: 'json' };
 import type { RunMode } from './config/types.js';
 
@@ -59,7 +58,7 @@ function showHelp(): void {
   console.log('Usage:');
   console.log('  disclaude start --mode comm           Communication Node (Feishu WebSocket)');
   console.log('  disclaude start --mode exec           Execution Node (Pilot Agent)');
-  console.log('  disclaude --prompt <msg>              Execute single prompt in CLI');
+  console.log('  disclaude --prompt <msg>              Execute single prompt (auto-starts both nodes)');
   console.log('');
   console.log('Options:');
   console.log('  --mode <comm|exec>                    Select run mode (required for start)');
@@ -75,12 +74,12 @@ function showHelp(): void {
   console.log('  # Execution Node (handles Agent tasks)');
   console.log('  disclaude start --mode exec --communication-url http://localhost:3001');
   console.log('');
-  console.log('  # CLI prompt mode');
+  console.log('  # CLI prompt mode (starts both nodes automatically)');
   console.log('  disclaude --prompt "What is the weather today?"');
   console.log('');
-  console.log('For local development, run both nodes in separate terminals:');
-  console.log('  Terminal 1: disclaude start --mode comm');
-  console.log('  Terminal 2: disclaude start --mode exec');
+  console.log('For production deployment, run both nodes in separate processes:');
+  console.log('  Process 1: disclaude start --mode comm');
+  console.log('  Process 2: disclaude start --mode exec');
   console.log('');
 }
 

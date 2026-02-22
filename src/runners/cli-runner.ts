@@ -1,18 +1,20 @@
 /**
- * CLI mode for Disclaude.
- * Executes a single prompt from command line arguments and exits.
+ * CLI Runner.
  *
- * Uses Transport abstraction for consistency with the bot architecture.
+ * Runs both Communication and Execution nodes in a single process for CLI mode.
+ * After the prompt is executed, both nodes are terminated.
  */
+
 import { Config } from '../config/index.js';
-import { CLIOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
+import { HttpTransport } from '../transport/index.js';
+import { CommunicationNode, ExecutionNode } from '../nodes/index.js';
+import { CLIOutputAdapter, FeishuOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
+import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
-import { LocalTransport } from '../transport/index.js';
-import { ExecutionNode } from '../nodes/index.js';
 import type { MessageContent } from '../transport/index.js';
 
-const logger = createLogger('CLI');
+const logger = createLogger('CLIRunner');
 
 /**
  * Extended output adapter with optional lifecycle methods.
@@ -20,6 +22,15 @@ const logger = createLogger('CLI');
 interface ExtendedOutputAdapter extends OutputAdapter {
   finalize?: () => void;
   clearThrottleState?: () => void;
+}
+
+/**
+ * CLI runner configuration.
+ */
+interface CLIRunnerConfig {
+  prompt: string;
+  feishuChatId?: string;
+  port?: number;
 }
 
 /**
@@ -45,29 +56,24 @@ function color(text: string, colorName: keyof typeof colors): string {
 }
 
 /**
- * Execute a single prompt and exit.
- * Uses Transport abstraction with LocalTransport for CLI mode.
+ * Run CLI mode - starts both nodes and executes a single prompt.
  *
- * @param prompt - The user prompt to execute
- * @param feishuChatId - Optional Feishu chat ID to send output to (instead of console)
+ * @param config - CLI runner configuration
  */
-async function executeOnce(
-  prompt: string,
-  feishuChatId?: string
-): Promise<void> {
-  // Create unique messageId for CLI session
+export async function runCliMode(config: CLIRunnerConfig): Promise<void> {
+  const { prompt, feishuChatId, port = 3001 } = config;
+
+  // Create unique IDs for this CLI session
   const messageId = `cli-${Date.now()}`;
   const chatId = feishuChatId || 'cli-console';
+
+  logger.info({ prompt: prompt.slice(0, 100), feishuChatId, port }, 'Starting CLI mode');
 
   // Create output adapter
   let adapter: ExtendedOutputAdapter;
 
   if (feishuChatId) {
     // Feishu mode: Use FeishuOutputAdapter
-    const { FeishuOutputAdapter } = await import('../utils/output-adapter.js');
-    const { createFeishuSender, createFeishuCardSender } = await import('../feishu/sender.js');
-
-    // Create sender functions (they return async functions)
     const sendMessageFn = createFeishuSender();
     const sendCardFn = createFeishuCardSender();
 
@@ -86,11 +92,34 @@ async function executeOnce(
     adapter = new CLIOutputAdapter();
   }
 
-  // Create LocalTransport for CLI mode
-  const transport = new LocalTransport();
+  // Create Communication Transport (HTTP Server)
+  const commTransport = new HttpTransport({
+    mode: 'communication',
+    port,
+    host: 'localhost',
+  });
 
-  // Register message handler to output messages via adapter
-  transport.onMessage(async (content: MessageContent) => {
+  // Create Execution Transport (HTTP Client)
+  const execTransport = new HttpTransport({
+    mode: 'execution',
+    communicationUrl: `http://localhost:${port}`,
+  });
+
+  // Create Communication Node (handles task routing)
+  const commNode = new CommunicationNode({
+    transport: commTransport,
+    appId: Config.FEISHU_APP_ID || '',
+    appSecret: Config.FEISHU_APP_SECRET || '',
+  });
+
+  // Create Execution Node (handles Agent tasks)
+  const execNode = new ExecutionNode({
+    transport: execTransport,
+    isCliMode: true,
+  });
+
+  // Register message handler for output
+  commTransport.onMessage(async (content: MessageContent) => {
     switch (content.type) {
       case 'text':
         if (content.text) {
@@ -109,19 +138,19 @@ async function executeOnce(
     }
   });
 
-  // Create Execution Node (handles Pilot/Agent)
-  const execNode = new ExecutionNode({
-    transport,
-    isCliMode: true, // CLI mode uses blocking executeOnce
-  });
-
   try {
-    // Start Transport
-    await transport.start();
-    logger.debug('Transport started');
+    // Start Communication Node (HTTP Server)
+    await commTransport.start();
+    await commNode.start();
+    logger.info({ port }, 'Communication Node started');
 
-    // Send task to Execution Node
-    const response = await transport.sendTask({
+    // Start Execution Node (HTTP Client)
+    await execTransport.start();
+    await execNode.start();
+    logger.info('Execution Node started');
+
+    // Send task to Communication Node (which routes to Execution Node)
+    const response = await commTransport.sendTask({
       taskId: messageId,
       chatId,
       message: prompt,
@@ -140,15 +169,7 @@ async function executeOnce(
       adapter.clearThrottleState();
     }
 
-    // Stop Transport and Execution Node
-    await execNode.stop();
-    await transport.stop();
-
     logger.info('CLI execution complete');
-
-    // Explicitly exit - MCP servers and other resources may keep process alive
-    // OS will clean up resources
-    process.exit(0);
   } catch (error) {
     const enriched = handleError(error, {
       category: ErrorCategory.SDK,
@@ -162,32 +183,43 @@ async function executeOnce(
     console.log('');
     console.log(color(`Error: ${enriched.userMessage || enriched.message}`, 'red'));
     console.log('');
-    process.exit(1);
+  } finally {
+    // Stop both nodes
+    logger.info('Stopping nodes...');
+    await execNode.stop();
+    await execTransport.stop();
+    await commNode.stop();
+    await commTransport.stop();
+    logger.info('Nodes stopped');
   }
 }
 
 /**
- * Run CLI mode with command line prompt.
+ * Parse CLI arguments and run CLI mode.
  */
 export async function runCli(args: string[]): Promise<void> {
   // Parse --prompt argument
   const promptIndex = args.indexOf('--prompt');
   const prompt = promptIndex !== -1 && args[promptIndex + 1]
     ? args[promptIndex + 1]
-    : args.join(' '); // Fallback to direct argument
+    : args.join(' ');
 
-  // Parse --feishu-chat-id argument (optional)
-  // Only use this parameter to enable Feishu mode, not environment variable
+  // Parse --feishu-chat-id argument
   const feishuChatIdIndex = args.indexOf('--feishu-chat-id');
   let feishuChatId = feishuChatIdIndex !== -1 && args[feishuChatIdIndex + 1]
     ? args[feishuChatIdIndex + 1]
     : undefined;
 
+  // Parse --port argument
+  const portIndex = args.indexOf('--port');
+  const port = portIndex !== -1 && args[portIndex + 1]
+    ? parseInt(args[portIndex + 1], 10)
+    : 3001;
+
   // Special value "auto" means use environment variable
   let chatIdSource: 'cli' | 'env' | undefined;
 
   if (feishuChatId === 'auto') {
-    // Use environment variable when --feishu-chat-id auto is specified
     if (Config.FEISHU_CLI_CHAT_ID) {
       feishuChatId = Config.FEISHU_CLI_CHAT_ID;
       chatIdSource = 'env';
@@ -207,19 +239,16 @@ export async function runCli(args: string[]): Promise<void> {
     console.log(color('═════════════════════════════════════════════════════════', 'cyan'));
     console.log('');
     console.log(color('Usage:', 'bold'));
-    console.log(`  node dist/index.js --prompt ${color('<your prompt here>', 'yellow')}`);
-    console.log(`  npm start -- --prompt ${color('<your prompt here>', 'yellow')}`);
+    console.log(`  disclaude --prompt ${color('<your prompt here>', 'yellow')}`);
     console.log('');
     console.log(color('Options:', 'bold'));
     console.log(`  --feishu-chat-id ${color('<chat_id|auto>', 'yellow')}  Send output to Feishu chat`);
     console.log(`                         ${color('auto', 'cyan')} = Use FEISHU_CLI_CHAT_ID env var`);
-    console.log('');
-    console.log(color('Environment Variables:', 'bold'));
-    console.log('  FEISHU_CLI_CHAT_ID    Chat ID used when --feishu-chat-id auto is specified');
+    console.log(`  --port ${color('<port>', 'yellow')}                Port for internal communication (default: 3001)`);
     console.log('');
     console.log(color('Example:', 'bold'));
-    console.log(`  npm start -- --prompt ${color('"Create a hello world file"', 'yellow')}`);
-    console.log(`  npm start -- --prompt ${color('"Analyze code"', 'yellow')} --feishu-chat-id ${color('oc_xxx', 'yellow')}`);
+    console.log(`  disclaude --prompt ${color('"Create a hello world file"', 'yellow')}`);
+    console.log(`  disclaude --prompt ${color('"Analyze code"', 'yellow')} --feishu-chat-id ${color('oc_xxx', 'yellow')}`);
     console.log('');
     process.exit(0);
   }
@@ -231,18 +260,17 @@ export async function runCli(args: string[]): Promise<void> {
     console.log(color('───────────────────────────────────', 'dim'));
     console.log('');
   } else {
-    // Show chat_id source
     const sourceLabels: Record<string, string> = {
       cli: 'command line argument',
       env: 'environment variable (--feishu-chat-id auto)',
     };
     const sourceLabel = chatIdSource ? sourceLabels[chatIdSource] : 'unknown';
-
     logger.info({ chatId: feishuChatId, source: sourceLabel }, 'Using Feishu chat');
   }
 
   try {
-    await executeOnce(prompt, feishuChatId);
+    await runCliMode({ prompt, feishuChatId, port });
+    process.exit(0);
   } catch (error) {
     const enriched = handleError(error, {
       category: ErrorCategory.SDK,

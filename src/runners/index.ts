@@ -4,7 +4,9 @@
  * This module provides entry points for:
  * - Communication Node (comm): Feishu WebSocket handler with HTTP server
  * - Execution Node (exec): Pilot/Agent handler with HTTP client
+ * - CLI Mode: Runs both nodes for single prompt execution
  */
 
 export { runCommunicationNode } from './communication-runner.js';
 export { runExecutionNode } from './execution-runner.js';
+export { runCli, runCliMode } from './cli-runner.js';
