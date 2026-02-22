@@ -86,11 +86,11 @@ describe('cli-args', () => {
       expect(result.port).toBe(4000);
     });
 
-    it('should parse execution-url argument', () => {
-      const args = ['start', '--mode', 'comm', '--execution-url', 'ws://example.com:3002'];
+    it('should parse comm-url argument', () => {
+      const args = ['start', '--mode', 'exec', '--comm-url', 'ws://example.com:3001'];
       const result = parseGlobalArgs(args);
 
-      expect(result.executionUrl).toBe('ws://example.com:3002');
+      expect(result.commUrl).toBe('ws://example.com:3001');
     });
 
     it('should parse feishu-chat-id argument', () => {
@@ -111,9 +111,9 @@ describe('cli-args', () => {
       const args: string[] = [];
       const result = parseGlobalArgs(args);
 
-      expect(result.port).toBe(3002);
+      expect(result.port).toBe(3001);
       expect(result.host).toBe('0.0.0.0');
-      expect(result.executionUrl).toBe('ws://localhost:3002');
+      expect(result.commUrl).toBe('ws://localhost:3001');
     });
 
     it('should handle multiple arguments', () => {
@@ -137,15 +137,16 @@ describe('cli-args', () => {
         mode: 'comm',
         promptMode: false,
         promptArgs: [],
-        port: 3002,
+        port: 3001,
         host: 'localhost',
-        executionUrl: 'ws://localhost:3002',
+        commUrl: 'ws://localhost:3001',
         authToken: 'test-token',
       };
 
       const config = getCommNodeConfig(globalArgs);
 
-      expect(config.executionUrl).toBe('ws://localhost:3002');
+      expect(config.port).toBe(3001);
+      expect(config.host).toBe('localhost');
       expect(config.authToken).toBe('test-token');
     });
   });
@@ -156,15 +157,15 @@ describe('cli-args', () => {
         mode: 'exec',
         promptMode: false,
         promptArgs: [],
-        port: 3002,
+        port: 3001,
         host: 'localhost',
-        executionUrl: 'ws://localhost:3002',
+        commUrl: 'ws://localhost:3001',
         authToken: 'test-token',
       };
 
       const config = getExecNodeConfig(globalArgs);
 
-      expect(config.port).toBe(3002);
+      expect(config.commUrl).toBe('ws://localhost:3001');
       expect(config.authToken).toBe('test-token');
     });
   });
@@ -175,9 +176,9 @@ describe('cli-args', () => {
         mode: null,
         promptMode: false,
         promptArgs: [],
-        port: 3002,
+        port: 3001,
         host: 'localhost',
-        executionUrl: 'ws://localhost:3002',
+        commUrl: 'ws://localhost:3001',
       };
 
       const config = getCliModeConfig(globalArgs);
@@ -192,7 +193,7 @@ describe('cli-args', () => {
         promptArgs: ['--prompt', 'test prompt', '--port', '4000'],
         port: 4000,
         host: 'localhost',
-        executionUrl: 'ws://localhost:4000',
+        commUrl: 'ws://localhost:4000',
         feishuChatId: 'oc_test',
       };
 
@@ -209,9 +210,9 @@ describe('cli-args', () => {
         mode: null,
         promptMode: true,
         promptArgs: ['hello', 'world'],
-        port: 3002,
+        port: 3001,
         host: 'localhost',
-        executionUrl: 'ws://localhost:3002',
+        commUrl: 'ws://localhost:3001',
       };
 
       const config = getCliModeConfig(globalArgs);
@@ -224,9 +225,9 @@ describe('cli-args', () => {
         mode: null,
         promptMode: true,
         promptArgs: ['--prompt'],
-        port: 3002,
+        port: 3001,
         host: 'localhost',
-        executionUrl: 'ws://localhost:3002',
+        commUrl: 'ws://localhost:3001',
       };
 
       const config = getCliModeConfig(globalArgs);

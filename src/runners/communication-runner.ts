@@ -2,7 +2,7 @@
  * Communication Node Runner.
  *
  * Runs the Communication Node which handles Feishu WebSocket connections
- * and forwards prompts to Execution Node via WebSocket.
+ * and runs a WebSocket server for Execution Node connections.
  */
 
 import { Config } from '../config/index.js';
@@ -17,7 +17,7 @@ const logger = createLogger('CommRunner');
  *
  * This starts the Communication Node which:
  * 1. Handles Feishu WebSocket connections
- * 2. Connects to Execution Node via WebSocket
+ * 2. Runs WebSocket server for Execution Node connections
  * 3. Forwards prompts and receives feedback via WebSocket
  *
  * @param config - Optional configuration (uses CLI args if not provided)
@@ -28,13 +28,14 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
 
   logger.info({
     config: {
-      executionUrl: runnerConfig.executionUrl,
+      port: runnerConfig.port,
+      host: runnerConfig.host,
       authToken: runnerConfig.authToken ? '***' : undefined
     }
   }, 'Starting Communication Node');
 
   console.log('Initializing Communication Node...');
-  console.log(`Mode: Communication (Feishu → Execution WebSocket)`);
+  console.log(`Mode: Communication (Feishu + WebSocket Server)`);
   console.log();
 
   // Validate Feishu configuration
@@ -47,7 +48,8 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
 
   // Create Communication Node
   const commNode = new CommunicationNode({
-    executionUrl: runnerConfig.executionUrl,
+    port: runnerConfig.port,
+    host: runnerConfig.host,
     appId: Config.FEISHU_APP_ID,
     appSecret: Config.FEISHU_APP_SECRET,
   });
@@ -58,7 +60,8 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   logger.info('Communication Node started successfully');
   console.log('✓ Communication Node ready');
   console.log();
-  console.log(`Execution Node: ${runnerConfig.executionUrl}`);
+  console.log(`WebSocket Server: ws://${runnerConfig.host}:${runnerConfig.port}`);
+  console.log('Waiting for Execution Node to connect...');
   console.log();
 
   // Handle shutdown

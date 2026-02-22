@@ -34,23 +34,23 @@ function showHelp(): void {
   console.log('');
   console.log('Options:');
   console.log('  --mode <comm|exec>                    Select run mode (required for start)');
-  console.log('  --port <port>                         Port for exec mode (default: 3002)');
-  console.log('  --execution-url <url>                 Execution Node URL for comm mode (default: ws://localhost:3002)');
+  console.log('  --port <port>                         Port for comm mode (default: 3001)');
+  console.log('  --comm-url <url>                      Communication Node URL for exec mode (default: ws://localhost:3001)');
   console.log('  --feishu-chat-id <id>                 Send CLI output to Feishu chat');
   console.log('');
   console.log('Examples:');
-  console.log('  # Execution Node (handles Agent tasks, starts first)');
-  console.log('  disclaude start --mode exec --port 3002');
+  console.log('  # Communication Node (handles Feishu connection, starts first)');
+  console.log('  disclaude start --mode comm --port 3001');
   console.log('');
-  console.log('  # Communication Node (handles Feishu connection)');
-  console.log('  disclaude start --mode comm --execution-url ws://localhost:3002');
+  console.log('  # Execution Node (handles Agent tasks)');
+  console.log('  disclaude start --mode exec --comm-url ws://localhost:3001');
   console.log('');
   console.log('  # CLI prompt mode');
   console.log('  disclaude --prompt "What is the weather today?"');
   console.log('');
   console.log('For production deployment, run both nodes in separate processes:');
-  console.log('  Process 1: disclaude start --mode exec');
-  console.log('  Process 2: disclaude start --mode comm');
+  console.log('  Process 1: disclaude start --mode comm');
+  console.log('  Process 2: disclaude start --mode exec');
   console.log('');
 }
 

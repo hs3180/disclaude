@@ -17,12 +17,12 @@ export interface GlobalArgs {
   promptMode: boolean;
   /** Arguments for prompt mode */
   promptArgs: string[];
-  /** Port for execution node (default: 3002) */
+  /** Port for communication node (default: 3001) */
   port: number;
   /** Host for communication node */
   host: string;
-  /** Execution Node WebSocket URL for comm mode */
-  executionUrl: string;
+  /** Communication Node WebSocket URL for exec mode */
+  commUrl: string;
   /** Feishu chat ID for output */
   feishuChatId?: string;
   /** Authentication token */
@@ -33,8 +33,10 @@ export interface GlobalArgs {
  * Communication Node configuration.
  */
 export interface CommNodeConfig {
-  /** Execution Node WebSocket URL */
-  executionUrl: string;
+  /** Port for WebSocket server */
+  port: number;
+  /** Host for WebSocket server */
+  host: string;
   /** Authentication token */
   authToken?: string;
 }
@@ -43,8 +45,8 @@ export interface CommNodeConfig {
  * Execution Node configuration.
  */
 export interface ExecNodeConfig {
-  /** Port for WebSocket server */
-  port: number;
+  /** Communication Node WebSocket URL */
+  commUrl: string;
   /** Authentication token */
   authToken?: string;
 }
@@ -88,8 +90,9 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const transportConfig = Config.getTransportConfig();
 
   // Default values
-  const defaultPort = parseInt(process.env.EXEC_PORT || '3002', 10);
-  const defaultExecUrl = process.env.EXECUTION_URL || 'ws://localhost:3002';
+  const defaultPort = parseInt(process.env.PORT || '3001', 10);
+  const defaultHost = process.env.HOST || '0.0.0.0';
+  const defaultCommUrl = process.env.COMM_URL || 'ws://localhost:3001';
   const defaultAuthToken = transportConfig.http?.authToken || process.env.AUTH_TOKEN;
 
   // Parse prompt mode
@@ -107,8 +110,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
 
   // Parse other arguments
   const port = parseIntArg(parseArgValue(args, '--port'), defaultPort);
-  const host = parseArgValue(args, '--host') || '0.0.0.0';
-  const executionUrl = parseArgValue(args, '--execution-url') || defaultExecUrl;
+  const host = parseArgValue(args, '--host') || defaultHost;
+  const commUrl = parseArgValue(args, '--comm-url') || defaultCommUrl;
   const feishuChatId = parseArgValue(args, '--feishu-chat-id');
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
 
@@ -121,7 +124,7 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
     promptArgs,
     port,
     host,
-    executionUrl,
+    commUrl,
     feishuChatId,
     authToken,
   };
@@ -132,7 +135,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
  */
 export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
   return {
-    executionUrl: globalArgs.executionUrl,
+    port: globalArgs.port,
+    host: globalArgs.host,
     authToken: globalArgs.authToken,
   };
 }
@@ -142,7 +146,7 @@ export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
  */
 export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
   return {
-    port: globalArgs.port,
+    commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,
   };
 }

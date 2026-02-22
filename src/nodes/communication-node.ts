@@ -2,10 +2,12 @@
  * Communication Node - Handles Feishu communication.
  *
  * This module manages the Feishu bot and forwards prompts to Execution Node via WebSocket.
+ * It runs a WebSocket server that Execution Nodes connect to.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import WebSocket from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
+import http from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
@@ -26,14 +28,14 @@ const logger = createLogger('CommunicationNode');
  * Configuration for Communication Node.
  */
 export interface CommunicationNodeConfig {
-  /** URL of Execution Node WebSocket (e.g., ws://localhost:3002) */
-  executionUrl: string;
+  /** Port for WebSocket server (default: 3001) */
+  port: number;
+  /** Host for WebSocket server */
+  host?: string;
   /** Feishu App ID */
   appId?: string;
   /** Feishu App Secret */
   appSecret?: string;
-  /** Reconnect interval in ms */
-  reconnectInterval?: number;
 }
 
 /**
@@ -61,22 +63,24 @@ interface FeedbackMessage {
  *
  * Responsibilities:
  * - Receives messages from Feishu
- * - Forwards prompts to Execution Node via WebSocket
+ * - Runs WebSocket server for Execution Nodes to connect
+ * - Forwards prompts to connected Execution Node via WebSocket
  * - Receives feedback from Execution Node via WebSocket
  * - Sends messages to Feishu users
  */
 export class CommunicationNode extends EventEmitter {
-  private executionUrl: string;
+  private port: number;
+  private host: string;
   private appId: string;
   private appSecret: string;
-  private reconnectInterval: number;
 
   private client?: lark.Client;
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
+  private httpServer?: http.Server;
+  private wss?: WebSocketServer;
   private execWs?: WebSocket;
   private running = false;
-  private reconnectTimer?: NodeJS.Timeout;
 
   // Track processed message IDs to prevent duplicate processing
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
@@ -95,10 +99,10 @@ export class CommunicationNode extends EventEmitter {
 
   constructor(config: CommunicationNodeConfig) {
     super();
-    this.executionUrl = config.executionUrl;
+    this.port = config.port;
+    this.host = config.host || '0.0.0.0';
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
-    this.reconnectInterval = config.reconnectInterval || 3000;
     this.taskTracker = new TaskTracker();
 
     // Initialize FileHandler
@@ -133,63 +137,66 @@ export class CommunicationNode extends EventEmitter {
     // Register TaskFlowOrchestrator for task skill MCP tool access
     setTaskFlowOrchestrator(this.taskFlowOrchestrator);
 
-    logger.info({ executionUrl: this.executionUrl }, 'CommunicationNode created');
+    logger.info({ port: this.port, host: this.host }, 'CommunicationNode created');
   }
 
   /**
-   * Connect to Execution Node via WebSocket.
+   * Start WebSocket server for Execution Node connections.
    */
-  private connectToExecutionNode(): void {
-    if (this.execWs?.readyState === WebSocket.OPEN) {
-      return;
-    }
+  private startWebSocketServer(): void {
+    // Create HTTP server for health check and WebSocket upgrade
+    this.httpServer = http.createServer((req, res) => {
+      if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
 
-    logger.info({ url: this.executionUrl }, 'Connecting to Execution Node...');
+    // Create WebSocket server
+    this.wss = new WebSocketServer({ server: this.httpServer });
 
-    this.execWs = new WebSocket(this.executionUrl);
+    this.wss.on('connection', (ws, req) => {
+      const clientIp = req.socket.remoteAddress;
+      logger.info({ clientIp }, 'Execution Node connected');
 
-    this.execWs.on('open', () => {
-      logger.info('Connected to Execution Node');
+      // Store the connection
+      if (this.execWs && this.execWs.readyState === WebSocket.OPEN) {
+        logger.warn('Closing previous Execution Node connection');
+        this.execWs.close();
+      }
+      this.execWs = ws;
+
+      ws.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString()) as FeedbackMessage;
+          this.handleFeedback(message);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to parse feedback');
+        }
+      });
+
+      ws.on('close', () => {
+        logger.info({ clientIp }, 'Execution Node disconnected');
+        if (this.execWs === ws) {
+          this.execWs = undefined;
+        }
+        this.emit('exec:disconnected');
+      });
+
+      ws.on('error', (error) => {
+        logger.error({ err: error }, 'WebSocket error');
+      });
+
       this.emit('exec:connected');
     });
 
-    this.execWs.on('message', (data) => {
-      try {
-        const message = JSON.parse(data.toString()) as FeedbackMessage;
-        this.handleFeedback(message);
-      } catch (error) {
-        logger.error({ err: error }, 'Failed to parse feedback');
-      }
+    // Start server
+    this.httpServer.listen(this.port, this.host, () => {
+      logger.info({ port: this.port, host: this.host }, 'WebSocket server started');
     });
-
-    this.execWs.on('close', () => {
-      logger.info('Disconnected from Execution Node');
-      this.emit('exec:disconnected');
-
-      // Reconnect if still running
-      if (this.running) {
-        this.scheduleReconnect();
-      }
-    });
-
-    this.execWs.on('error', (error) => {
-      logger.error({ err: error }, 'WebSocket error');
-    });
-  }
-
-  /**
-   * Schedule reconnection to Execution Node.
-   */
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-    }
-
-    this.reconnectTimer = setTimeout(() => {
-      if (this.running) {
-        this.connectToExecutionNode();
-      }
-    }, this.reconnectInterval);
   }
 
   /**
@@ -197,27 +204,12 @@ export class CommunicationNode extends EventEmitter {
    */
   private async sendPrompt(message: PromptMessage): Promise<void> {
     if (!this.execWs || this.execWs.readyState !== WebSocket.OPEN) {
-      logger.warn('Not connected to Execution Node, reconnecting...');
-      this.connectToExecutionNode();
-
-      // Wait for connection
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Connection timeout'));
-        }, 5000);
-
-        this.once('exec:connected', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      }).catch(async (error) => {
-        logger.error({ err: error }, 'Failed to connect to Execution Node');
-        await this.sendMessage(message.chatId, '❌ 无法连接到执行节点');
-        throw error;
-      });
+      logger.warn('No Execution Node connected');
+      await this.sendMessage(message.chatId, '❌ 没有可用的执行节点');
+      throw new Error('No Execution Node connected');
     }
 
-    this.execWs!.send(JSON.stringify(message));
+    this.execWs.send(JSON.stringify(message));
     logger.info({ chatId: message.chatId, messageId: message.messageId }, 'Prompt sent to Execution Node');
   }
 
@@ -488,7 +480,7 @@ export class CommunicationNode extends EventEmitter {
     if (text.trim() === '/status') {
       const status = this.running ? 'Running' : 'Stopped';
       const execConnected = this.execWs?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
-      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution Node: ${execConnected}\nURL: ${this.executionUrl}`);
+      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution Node: ${execConnected}\nWebSocket Server: ws://${this.host}:${this.port}`);
       return;
     }
 
@@ -513,8 +505,8 @@ export class CommunicationNode extends EventEmitter {
 
     this.running = true;
 
-    // Connect to Execution Node
-    this.connectToExecutionNode();
+    // Start WebSocket server for Execution Node connections
+    this.startWebSocketServer();
 
     // Initialize message logger
     await messageLogger.init();
@@ -553,7 +545,8 @@ export class CommunicationNode extends EventEmitter {
     logger.info('CommunicationNode started');
     console.log('✓ Communication Node ready');
     console.log();
-    console.log(`Execution Node: ${this.executionUrl}`);
+    console.log(`WebSocket Server: ws://${this.host}:${this.port}`);
+    console.log('Waiting for Execution Node to connect...');
   }
 
   /**
@@ -564,16 +557,22 @@ export class CommunicationNode extends EventEmitter {
 
     this.running = false;
 
-    // Clear reconnect timer
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
-    }
-
-    // Close WebSocket connection to Execution Node
+    // Close WebSocket connection from Execution Node
     if (this.execWs) {
       this.execWs.close();
       this.execWs = undefined;
+    }
+
+    // Close WebSocket server
+    if (this.wss) {
+      this.wss.close();
+      this.wss = undefined;
+    }
+
+    // Close HTTP server
+    if (this.httpServer) {
+      this.httpServer.close();
+      this.httpServer = undefined;
     }
 
     this.wsClient = undefined;

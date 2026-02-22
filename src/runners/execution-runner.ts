@@ -2,11 +2,10 @@
  * Execution Node Runner.
  *
  * Runs the Execution Node which handles Pilot/Agent tasks.
- * Listens on WebSocket for prompt execution requests from Communication Node.
+ * Connects to Communication Node via WebSocket as a client.
  */
 
-import { WebSocketServer, WebSocket } from 'ws';
-import http from 'node:http';
+import WebSocket from 'ws';
 import { Config } from '../config/index.js';
 import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
 import { createLogger } from '../utils/logger.js';
@@ -35,9 +34,9 @@ interface FeedbackMessage {
 }
 
 /**
- * Run Execution Node (Pilot Agent with WebSocket server).
+ * Run Execution Node (Pilot Agent with WebSocket client).
  *
- * Listens for prompt execution requests from Communication Node via WebSocket.
+ * Connects to Communication Node via WebSocket and handles prompt execution requests.
  *
  * @param config - Optional configuration (uses CLI args if not provided)
  */
@@ -45,40 +44,40 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   const globalArgs = parseGlobalArgs();
   const runnerConfig = config || getExecNodeConfig(globalArgs);
 
-  // Use port from config or default to 3002
-  const port = runnerConfig.port || 3002;
-  const host = '0.0.0.0';
+  // Get comm URL from config
+  const commUrl = runnerConfig.commUrl;
+  const reconnectInterval = 3000;
+  let ws: WebSocket | undefined;
+  let running = true;
+  let reconnectTimer: NodeJS.Timeout | undefined;
 
-  logger.info({ port }, 'Starting Execution Node');
+  logger.info({ commUrl }, 'Starting Execution Node');
 
   console.log('Initializing Execution Node...');
-  console.log(`Mode: Execution (Pilot Agent + WebSocket Server)`);
-  console.log(`Port: ${port}`);
+  console.log(`Mode: Execution (Pilot Agent + WebSocket Client)`);
+  console.log(`Comm URL: ${commUrl}`);
   console.log();
 
   // Get agent configuration
   const agentConfig = Config.getAgentConfig();
 
-  // Track active connections by chatId
-  const activeConnections = new Map<string, WebSocket>();
-
-  // Create HTTP server for health check
-  const httpServer = http.createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', mode: 'execution' }));
-    } else {
-      res.writeHead(404);
-      res.end();
+  /**
+   * Connect to Communication Node via WebSocket.
+   */
+  function connectToCommNode(): void {
+    if (ws?.readyState === WebSocket.OPEN) {
+      return;
     }
-  });
 
-  // Create WebSocket server
-  const wss = new WebSocketServer({ server: httpServer });
+    logger.info({ url: commUrl }, 'Connecting to Communication Node...');
 
-  wss.on('connection', (ws, req) => {
-    const clientIp = req.socket.remoteAddress;
-    logger.info({ clientIp }, 'WebSocket client connected');
+    ws = new WebSocket(commUrl);
+
+    ws.on('open', () => {
+      logger.info('Connected to Communication Node');
+      console.log('✓ Connected to Communication Node');
+      console.log();
+    });
 
     ws.on('message', async (data) => {
       try {
@@ -92,12 +91,9 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
         const { chatId, prompt, messageId, senderOpenId } = message;
         logger.info({ chatId, messageId, promptLength: prompt.length }, 'Received prompt');
 
-        // Track connection by chatId
-        activeConnections.set(chatId, ws);
-
         // Send feedback function
         const sendFeedback = (feedback: FeedbackMessage) => {
-          if (ws.readyState === WebSocket.OPEN) {
+          if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(feedback));
           }
         };
@@ -134,8 +130,6 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
           const err = error as Error;
           logger.error({ err, chatId }, 'Execution failed');
           sendFeedback({ type: 'error', chatId, error: err.message });
-        } finally {
-          activeConnections.delete(chatId);
         }
       } catch (error) {
         logger.error({ err: error }, 'Failed to process message');
@@ -143,45 +137,55 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     });
 
     ws.on('close', () => {
-      logger.info({ clientIp }, 'WebSocket client disconnected');
+      logger.info('Disconnected from Communication Node');
+      console.log('Disconnected from Communication Node');
+
+      // Reconnect if still running
+      if (running) {
+        scheduleReconnect();
+      }
     });
 
     ws.on('error', (error) => {
       logger.error({ err: error }, 'WebSocket error');
     });
-  });
+  }
 
-  // Start server
-  await new Promise<void>((resolve) => {
-    httpServer.listen(port, host, () => resolve());
-  });
+  /**
+   * Schedule reconnection to Communication Node.
+   */
+  function scheduleReconnect(): void {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
 
-  logger.info({ port, host }, 'Execution Node listening');
-  console.log('✓ Execution Node ready');
-  console.log();
-  console.log('WebSocket server:');
-  console.log(`  ws://${host}:${port}`);
-  console.log();
-  console.log('HTTP endpoints:');
-  console.log('  GET /health - Health check');
-  console.log();
+    reconnectTimer = setTimeout(() => {
+      if (running) {
+        connectToCommNode();
+      }
+    }, reconnectInterval);
+  }
+
+  // Start connection
+  connectToCommNode();
 
   // Handle shutdown
   const shutdown = async () => {
     logger.info('Shutting down Execution Node...');
     console.log('\nShutting down Execution Node...');
 
-    // Close all WebSocket connections
-    for (const [chatId, ws] of activeConnections) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    }
-    activeConnections.clear();
+    running = false;
 
-    // Close servers
-    wss.close();
-    httpServer.close();
+    // Clear reconnect timer
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
+
+    // Close WebSocket connection
+    if (ws) {
+      ws.close();
+      ws = undefined;
+    }
 
     process.exit(0);
   };

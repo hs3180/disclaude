@@ -102,14 +102,14 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
 
   // Create Pilot callbacks for output
   const callbacks: PilotCallbacks = {
-    sendMessage: async (chatId: string, text: string) => {
+    sendMessage: async (_chatId: string, text: string) => {
       await adapter.write(text);
     },
-    sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
+    sendCard: async (_chatId: string, card: Record<string, unknown>, _description?: string) => {
       const cardJson = JSON.stringify(card, null, 2);
       await adapter.write(cardJson);
     },
-    sendFile: async (chatId: string, filePath: string) => {
+    sendFile: async (_chatId: string, filePath: string) => {
       await adapter.write(`\n📎 File created: ${filePath}\n`);
     },
   };
