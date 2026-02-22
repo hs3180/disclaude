@@ -6,10 +6,13 @@
  *
  * Usage:
  * ```typescript
- * import { LocalTransport, type ITransport, type TaskRequest } from './transport/index.js';
+ * import { LocalTransport, HttpTransport, type ITransport, type TaskRequest } from './transport/index.js';
  *
- * // Create transport
- * const transport = new LocalTransport();
+ * // Single-process mode
+ * const localTransport = new LocalTransport();
+ *
+ * // Distributed mode
+ * const httpTransport = new HttpTransport({ mode: 'execution', port: 3001 });
  *
  * // Use transport
  * await transport.start();
@@ -20,3 +23,4 @@
 
 export * from './types.js';
 export { LocalTransport } from './local-transport.js';
+export { HttpTransport, type HttpTransportConfig } from './http-transport.js';

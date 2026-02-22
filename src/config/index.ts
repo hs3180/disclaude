@@ -246,6 +246,15 @@ export class Config {
   }
 
   /**
+   * Get transport configuration.
+   *
+   * @returns Transport configuration object
+   */
+  static getTransportConfig(): import('./types.js').TransportConfig {
+    return fileConfigOnly.transport || { type: 'local' };
+  }
+
+  /**
    * Get logging configuration.
    *
    * @returns Logging configuration object

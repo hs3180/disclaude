@@ -106,6 +106,40 @@ export interface ToolsConfig {
 }
 
 /**
+ * HTTP transport configuration.
+ */
+export interface HttpTransportConfig {
+  /** Execution Node server configuration */
+  execution?: {
+    /** Server host */
+    host?: string;
+    /** Server port */
+    port?: number;
+  };
+  /** Communication Node callback configuration */
+  communication?: {
+    /** Callback server host */
+    callbackHost?: string;
+    /** Callback server port */
+    callbackPort?: number;
+    /** Execution Node URL */
+    executionUrl?: string;
+  };
+  /** Authentication token for securing requests */
+  authToken?: string;
+}
+
+/**
+ * Transport configuration section.
+ */
+export interface TransportConfig {
+  /** Transport mode: local (single process) or http (distributed) */
+  type?: 'local' | 'http';
+  /** HTTP transport configuration (only used when type is 'http') */
+  http?: HttpTransportConfig;
+}
+
+/**
  * Main configuration interface.
  *
  * This represents the structure of disclaude.config.yaml.
@@ -124,6 +158,8 @@ export interface DisclaudeConfig {
   logging?: LoggingConfig;
   /** Tool configuration */
   tools?: ToolsConfig;
+  /** Transport configuration */
+  transport?: TransportConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
