@@ -1,13 +1,11 @@
 /**
  * Communication Node - Handles Feishu communication.
  *
- * This module manages the Feishu bot and forwards prompts to Execution Node via HTTP.
- * It also runs an HTTP server to receive callbacks from Execution Node.
+ * This module manages the Feishu bot and forwards prompts to Execution Node via WebSocket.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import http from 'node:http';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
@@ -28,60 +26,57 @@ const logger = createLogger('CommunicationNode');
  * Configuration for Communication Node.
  */
 export interface CommunicationNodeConfig {
-  /** URL of Execution Node (e.g., http://localhost:3002) */
+  /** URL of Execution Node WebSocket (e.g., ws://localhost:3002) */
   executionUrl: string;
   /** Feishu App ID */
   appId?: string;
   /** Feishu App Secret */
   appSecret?: string;
-  /** Port for callback server */
-  callbackPort?: number;
-  /** Host for callback server */
-  callbackHost?: string;
+  /** Reconnect interval in ms */
+  reconnectInterval?: number;
 }
 
 /**
- * Request body for executing prompt on Execution Node.
+ * WebSocket message types.
  */
-interface ExecuteRequest {
+interface PromptMessage {
+  type: 'prompt';
   chatId: string;
   prompt: string;
   messageId: string;
   senderOpenId?: string;
 }
 
-/**
- * Callback message from Execution Node.
- */
-interface CallbackMessage {
+interface FeedbackMessage {
+  type: 'text' | 'card' | 'file' | 'done' | 'error';
   chatId: string;
-  type: 'text' | 'card' | 'file';
   text?: string;
   card?: Record<string, unknown>;
   filePath?: string;
+  error?: string;
 }
 
 /**
- * Communication Node - Manages Feishu bot and HTTP communication with Execution Node.
+ * Communication Node - Manages Feishu bot and WebSocket communication with Execution Node.
  *
  * Responsibilities:
  * - Receives messages from Feishu
- * - Forwards prompts to Execution Node via HTTP POST /execute
- * - Receives message callbacks from Execution Node via HTTP POST /callback
+ * - Forwards prompts to Execution Node via WebSocket
+ * - Receives feedback from Execution Node via WebSocket
  * - Sends messages to Feishu users
  */
 export class CommunicationNode extends EventEmitter {
   private executionUrl: string;
   private appId: string;
   private appSecret: string;
-  private callbackPort: number;
-  private callbackHost: string;
+  private reconnectInterval: number;
 
   private client?: lark.Client;
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
-  private callbackServer?: http.Server;
+  private execWs?: WebSocket;
   private running = false;
+  private reconnectTimer?: NodeJS.Timeout;
 
   // Track processed message IDs to prevent duplicate processing
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
@@ -103,8 +98,7 @@ export class CommunicationNode extends EventEmitter {
     this.executionUrl = config.executionUrl;
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
-    this.callbackPort = config.callbackPort || 3001;
-    this.callbackHost = config.callbackHost || '0.0.0.0';
+    this.reconnectInterval = config.reconnectInterval || 3000;
     this.taskTracker = new TaskTracker();
 
     // Initialize FileHandler
@@ -143,78 +137,121 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Send prompt to Execution Node via HTTP.
+   * Connect to Execution Node via WebSocket.
    */
-  private async sendPromptToExecution(request: ExecuteRequest): Promise<{ success: boolean; error?: string }> {
-    return new Promise((resolve) => {
-      const body = JSON.stringify(request);
-      const url = new URL(`${this.executionUrl}/execute`);
+  private connectToExecutionNode(): void {
+    if (this.execWs?.readyState === WebSocket.OPEN) {
+      return;
+    }
 
-      const req = http.request(
-        {
-          hostname: url.hostname,
-          port: url.port || 80,
-          path: url.pathname,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(body),
-          },
-          timeout: 300000, // 5 minutes for long-running tasks
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            try {
-              const result = JSON.parse(data);
-              resolve(result);
-            } catch {
-              resolve({ success: false, error: 'Invalid response from Execution Node' });
-            }
-          });
-        }
-      );
+    logger.info({ url: this.executionUrl }, 'Connecting to Execution Node...');
 
-      req.on('error', (err) => {
-        logger.error({ err, chatId: request.chatId }, 'Failed to send prompt to Execution Node');
-        resolve({ success: false, error: err.message });
-      });
+    this.execWs = new WebSocket(this.executionUrl);
 
-      req.on('timeout', () => {
-        req.destroy();
-        resolve({ success: false, error: 'Request timeout' });
-      });
+    this.execWs.on('open', () => {
+      logger.info('Connected to Execution Node');
+      this.emit('exec:connected');
+    });
 
-      req.write(body);
-      req.end();
+    this.execWs.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString()) as FeedbackMessage;
+        this.handleFeedback(message);
+      } catch (error) {
+        logger.error({ err: error }, 'Failed to parse feedback');
+      }
+    });
+
+    this.execWs.on('close', () => {
+      logger.info('Disconnected from Execution Node');
+      this.emit('exec:disconnected');
+
+      // Reconnect if still running
+      if (this.running) {
+        this.scheduleReconnect();
+      }
+    });
+
+    this.execWs.on('error', (error) => {
+      logger.error({ err: error }, 'WebSocket error');
     });
   }
 
   /**
-   * Handle callback messages from Execution Node.
+   * Schedule reconnection to Execution Node.
    */
-  private async handleCallback(message: CallbackMessage): Promise<void> {
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    this.reconnectTimer = setTimeout(() => {
+      if (this.running) {
+        this.connectToExecutionNode();
+      }
+    }, this.reconnectInterval);
+  }
+
+  /**
+   * Send prompt to Execution Node via WebSocket.
+   */
+  private async sendPrompt(message: PromptMessage): Promise<void> {
+    if (!this.execWs || this.execWs.readyState !== WebSocket.OPEN) {
+      logger.warn('Not connected to Execution Node, reconnecting...');
+      this.connectToExecutionNode();
+
+      // Wait for connection
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, 5000);
+
+        this.once('exec:connected', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      }).catch(async (error) => {
+        logger.error({ err: error }, 'Failed to connect to Execution Node');
+        await this.sendMessage(message.chatId, '❌ 无法连接到执行节点');
+        throw error;
+      });
+    }
+
+    this.execWs!.send(JSON.stringify(message));
+    logger.info({ chatId: message.chatId, messageId: message.messageId }, 'Prompt sent to Execution Node');
+  }
+
+  /**
+   * Handle feedback from Execution Node.
+   */
+  private async handleFeedback(message: FeedbackMessage): Promise<void> {
+    const { chatId, type, text, card, filePath, error } = message;
+
     try {
-      switch (message.type) {
+      switch (type) {
         case 'text':
-          if (message.text) {
-            await this.sendMessage(message.chatId, message.text);
+          if (text) {
+            await this.sendMessage(chatId, text);
           }
           break;
         case 'card':
-          await this.sendCard(message.chatId, message.card || {});
+          await this.sendCard(chatId, card || {});
           break;
         case 'file':
-          if (message.filePath) {
-            await this.sendFileToUser(message.chatId, message.filePath);
+          if (filePath) {
+            await this.sendFileToUser(chatId, filePath);
           }
           break;
-        default:
-          logger.warn({ type: message.type }, 'Unknown callback message type');
+        case 'done':
+          logger.info({ chatId }, 'Execution completed');
+          break;
+        case 'error':
+          logger.error({ chatId, error }, 'Execution error');
+          await this.sendMessage(chatId, `❌ 执行错误: ${error || 'Unknown error'}`);
+          break;
       }
-    } catch (error) {
-      logger.error({ err: error, message }, 'Failed to handle callback');
+    } catch (err) {
+      logger.error({ err, message }, 'Failed to handle feedback');
     }
   }
 
@@ -366,16 +403,13 @@ export class CommunicationNode extends EventEmitter {
         );
 
         // Send prompt to Execution Node
-        const response = await this.sendPromptToExecution({
+        await this.sendPrompt({
+          type: 'prompt',
           chatId: chat_id,
           prompt: enhancedPrompt,
           messageId: `${message_id}-file`,
           senderOpenId: this.extractOpenId(sender),
         });
-
-        if (!response.success) {
-          await this.sendMessage(chat_id, `❌ 任务发送失败: ${response.error || 'Unknown error'}`);
-        }
       }
       return;
     }
@@ -453,21 +487,19 @@ export class CommunicationNode extends EventEmitter {
     // Handle /status command
     if (text.trim() === '/status') {
       const status = this.running ? 'Running' : 'Stopped';
-      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution URL: ${this.executionUrl}`);
+      const execConnected = this.execWs?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
+      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution Node: ${execConnected}\nURL: ${this.executionUrl}`);
       return;
     }
 
     // Send prompt to Execution Node
-    const response = await this.sendPromptToExecution({
+    await this.sendPrompt({
+      type: 'prompt',
       chatId: chat_id,
       prompt: text,
       messageId: message_id,
       senderOpenId: this.extractOpenId(sender),
     });
-
-    if (!response.success) {
-      await this.sendMessage(chat_id, `❌ 任务发送失败: ${response.error || 'Unknown error'}`);
-    }
   }
 
   /**
@@ -481,61 +513,8 @@ export class CommunicationNode extends EventEmitter {
 
     this.running = true;
 
-    // Create callback server
-    this.callbackServer = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
-      const url = new URL(req.url || '/', `http://localhost:${this.callbackPort}`);
-      const path = url.pathname;
-
-      // Set CORS headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-
-      if (req.method === 'POST' && path === '/callback') {
-        // Handle callback from Execution Node
-        let body = '';
-        req.on('data', (chunk) => (body += chunk.toString()));
-        req.on('end', async () => {
-          try {
-            const message = JSON.parse(body) as CallbackMessage;
-            await this.handleCallback(message);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true }));
-          } catch (error) {
-            logger.error({ err: error }, 'Failed to parse callback');
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Invalid request body' }));
-          }
-        });
-        return;
-      }
-
-      if (req.method === 'GET' && path === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
-        return;
-      }
-
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
-    });
-
-    // Start callback server
-    await new Promise<void>((resolve) => {
-      this.callbackServer!.listen(this.callbackPort, this.callbackHost, () => resolve());
-    });
-
-    logger.info({ port: this.callbackPort, host: this.callbackHost }, 'Callback server started');
-    console.log(`Callback server listening on http://${this.callbackHost}:${this.callbackPort}`);
-    console.log('Endpoints:');
-    console.log('  POST /callback - Receive messages from Execution Node');
-    console.log('  GET  /health   - Health check');
+    // Connect to Execution Node
+    this.connectToExecutionNode();
 
     // Initialize message logger
     await messageLogger.init();
@@ -572,6 +551,9 @@ export class CommunicationNode extends EventEmitter {
     await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
 
     logger.info('CommunicationNode started');
+    console.log('✓ Communication Node ready');
+    console.log();
+    console.log(`Execution Node: ${this.executionUrl}`);
   }
 
   /**
@@ -581,14 +563,20 @@ export class CommunicationNode extends EventEmitter {
     if (!this.running) return;
 
     this.running = false;
-    this.wsClient = undefined;
 
-    if (this.callbackServer) {
-      await new Promise<void>((resolve) => {
-        this.callbackServer!.close(() => resolve());
-      });
-      this.callbackServer = undefined;
+    // Clear reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
     }
+
+    // Close WebSocket connection to Execution Node
+    if (this.execWs) {
+      this.execWs.close();
+      this.execWs = undefined;
+    }
+
+    this.wsClient = undefined;
 
     logger.info('CommunicationNode stopped');
   }

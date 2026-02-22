@@ -2,7 +2,7 @@
  * Communication Node Runner.
  *
  * Runs the Communication Node which handles Feishu WebSocket connections
- * and forwards prompts to Execution Node via HTTP.
+ * and forwards prompts to Execution Node via WebSocket.
  */
 
 import { Config } from '../config/index.js';
@@ -17,8 +17,8 @@ const logger = createLogger('CommRunner');
  *
  * This starts the Communication Node which:
  * 1. Handles Feishu WebSocket connections
- * 2. Forwards prompts to Execution Node via HTTP POST /execute
- * 3. Sends responses back to Feishu users
+ * 2. Connects to Execution Node via WebSocket
+ * 3. Forwards prompts and receives feedback via WebSocket
  *
  * @param config - Optional configuration (uses CLI args if not provided)
  */
@@ -34,9 +34,7 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   }, 'Starting Communication Node');
 
   console.log('Initializing Communication Node...');
-  console.log(`Mode: Communication (Feishu WebSocket + HTTP Callback)`);
-  console.log(`Port: ${runnerConfig.port}`);
-  console.log(`Host: ${runnerConfig.host}`);
+  console.log(`Mode: Communication (Feishu WebSocket → Execution WebSocket)`);
   console.log();
 
   // Validate Feishu configuration
@@ -47,16 +45,14 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   // Increase max listeners
   process.setMaxListeners(20);
 
-  // Get execution node URL from config
-  const executionUrl = runnerConfig.executionUrl || `http://localhost:${(runnerConfig.port || 3001) + 1}`;
+  // Get execution node WebSocket URL
+  const executionUrl = runnerConfig.executionUrl || 'ws://localhost:3002';
 
-  // Create Communication Node with execution URL
+  // Create Communication Node
   const commNode = new CommunicationNode({
     executionUrl,
     appId: Config.FEISHU_APP_ID,
     appSecret: Config.FEISHU_APP_SECRET,
-    callbackPort: runnerConfig.port,
-    callbackHost: runnerConfig.host,
   });
 
   // Start Communication Node
@@ -65,7 +61,7 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   logger.info('Communication Node started successfully');
   console.log('✓ Communication Node ready');
   console.log();
-  console.log(`Forwarding prompts to: ${executionUrl}/execute`);
+  console.log(`Connected to Execution Node: ${executionUrl}`);
   console.log();
 
   // Handle shutdown
