@@ -31,6 +31,9 @@ import type {
   TaskHandler,
   MessageContent,
   MessageHandler,
+  ControlCommand,
+  ControlResponse,
+  ControlHandler,
 } from './types.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -40,10 +43,12 @@ import { createLogger } from '../utils/logger.js';
  * It maintains handlers for both directions:
  * - taskHandler: Called when sendTask() is invoked (Execution Node handler)
  * - messageHandler: Called when sendMessage() is invoked (Communication Node handler)
+ * - controlHandler: Called when sendControl() is invoked (Execution Node handler)
  */
 export class LocalTransport implements ITransport {
   private taskHandler?: TaskHandler;
   private messageHandler?: MessageHandler;
+  private controlHandler?: ControlHandler;
   private running = false;
   private logger = createLogger('LocalTransport');
 
@@ -120,6 +125,48 @@ export class LocalTransport implements ITransport {
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
     this.logger.debug('Message handler registered');
+  }
+
+  /**
+   * Send a control command - directly calls the registered control handler.
+   */
+  async sendControl(command: ControlCommand): Promise<ControlResponse> {
+    if (!this.running) {
+      this.logger.warn('Transport not started, control command may fail');
+    }
+
+    if (!this.controlHandler) {
+      this.logger.error({ type: command.type }, 'No control handler registered');
+      return {
+        success: false,
+        error: 'No control handler registered',
+        type: command.type,
+      };
+    }
+
+    this.logger.debug({ type: command.type, chatId: command.chatId }, 'Sending control command');
+
+    try {
+      const response = await this.controlHandler(command);
+      this.logger.debug({ type: command.type, success: response.success }, 'Control command completed');
+      return response;
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error({ err, type: command.type }, 'Control handler error');
+      return {
+        success: false,
+        error: err.message,
+        type: command.type,
+      };
+    }
+  }
+
+  /**
+   * Register a control handler - called by Execution Node.
+   */
+  onControl(handler: ControlHandler): void {
+    this.controlHandler = handler;
+    this.logger.debug('Control handler registered');
   }
 
   /**

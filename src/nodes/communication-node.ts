@@ -22,6 +22,7 @@ import { MessageSender } from '../feishu/message-sender.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
 import type { ITransport, TaskRequest, MessageContent } from '../transport/index.js';
+import type { ControlCommand } from '../transport/types.js';
 import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
 
 /**
@@ -364,10 +365,46 @@ export class CommunicationNode extends EventEmitter {
 
     // Handle special commands
     if (text.trim() === '/reset') {
-      // Send reset task to Execution Node
-      // For now, we need direct access - this will be refactored later
       this.logger.info({ chatId: chat_id }, 'Reset command triggered');
-      await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
+
+      // Send reset control command to Execution Node
+      const controlCommand: ControlCommand = {
+        type: 'reset',
+        chatId: chat_id,
+      };
+      const response = await this.transport.sendControl(controlCommand);
+
+      if (response.success) {
+        await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
+      } else {
+        await this.sendMessage(chat_id, `❌ 重置失败: ${response.error || 'Unknown error'}`);
+      }
+      return;
+    }
+
+    // Handle /restart command
+    if (text.trim() === '/restart') {
+      this.logger.info({ chatId: chat_id }, 'Restart command triggered');
+
+      await this.sendMessage(chat_id, '🔄 **正在重启服务...**\n\nPM2 服务即将重启，请稍候。');
+
+      // Send restart control command
+      const controlCommand: ControlCommand = {
+        type: 'restart',
+        chatId: chat_id,
+      };
+      await this.transport.sendControl(controlCommand);
+
+      // Execute PM2 restart
+      try {
+        const { exec } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execAsync = promisify(exec);
+        await execAsync('pm2 restart disclaude-feishu');
+        this.logger.info('PM2 service restarted successfully');
+      } catch (error) {
+        this.logger.error({ err: error }, 'Failed to restart PM2 service');
+      }
       return;
     }
 

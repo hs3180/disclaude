@@ -12,7 +12,7 @@
 import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import type { ITransport, TaskRequest, TaskResponse, MessageContent } from '../transport/index.js';
+import type { ITransport, TaskRequest, TaskResponse, MessageContent, ControlCommand, ControlResponse } from '../transport/index.js';
 
 /**
  * Configuration for Execution Node.
@@ -92,6 +92,9 @@ export class ExecutionNode {
 
     // Register task handler with Transport
     this.transport.onTask(this.handleTask.bind(this));
+
+    // Register control handler with Transport
+    this.transport.onControl(this.handleControl.bind(this));
 
     this.logger.info({ isCliMode: this.isCliMode }, 'ExecutionNode created');
   }
@@ -189,5 +192,53 @@ export class ExecutionNode {
   resetAll(): void {
     this.pilot.resetAll();
     this.logger.info('ExecutionNode reset');
+  }
+
+  /**
+   * Handle incoming control command from Transport.
+   */
+  private async handleControl(command: ControlCommand): Promise<ControlResponse> {
+    this.logger.info(
+      { type: command.type, chatId: command.chatId },
+      'Received control command'
+    );
+
+    try {
+      switch (command.type) {
+        case 'reset':
+          this.pilot.resetAll();
+          this.logger.info({ chatId: command.chatId }, 'Reset command executed');
+          return {
+            success: true,
+            type: command.type,
+          };
+
+        case 'restart':
+          // Restart is typically handled at the process level (PM2)
+          // Here we just reset and let the caller know
+          this.pilot.resetAll();
+          this.logger.info({ chatId: command.chatId }, 'Restart command executed (reset performed)');
+          return {
+            success: true,
+            type: command.type,
+          };
+
+        default:
+          this.logger.warn({ type: command.type }, 'Unknown control command');
+          return {
+            success: false,
+            error: `Unknown control command: ${command.type}`,
+            type: command.type,
+          };
+      }
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error({ err, type: command.type }, 'Control command failed');
+      return {
+        success: false,
+        error: err.message,
+        type: command.type,
+      };
+    }
   }
 }

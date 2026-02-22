@@ -43,6 +43,35 @@ export interface TaskResponse {
 export type MessageContentType = 'text' | 'card' | 'file';
 
 /**
+ * Control command types for node-to-node communication.
+ */
+export type ControlCommandType = 'reset' | 'restart';
+
+/**
+ * Control command sent from Communication Node to Execution Node.
+ */
+export interface ControlCommand {
+  /** Command type */
+  type: ControlCommandType;
+  /** Platform-specific chat ID */
+  chatId: string;
+  /** Optional additional data */
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Response from executing a control command.
+ */
+export interface ControlResponse {
+  /** Whether the command was executed successfully */
+  success: boolean;
+  /** Error message if success is false */
+  error?: string;
+  /** Command type */
+  type: ControlCommandType;
+}
+
+/**
  * Message to be sent to the user via Communication Node.
  */
 export interface MessageContent {
@@ -94,6 +123,12 @@ export type TaskHandler = (request: TaskRequest) => Promise<TaskResponse>;
 export type MessageHandler = (content: MessageContent) => Promise<void>;
 
 /**
+ * Handler for processing control commands.
+ * Used by Execution Node to receive control commands.
+ */
+export type ControlHandler = (command: ControlCommand) => Promise<ControlResponse>;
+
+/**
  * Transport interface for node communication.
  *
  * This is the core abstraction that allows Communication Node and
@@ -137,6 +172,23 @@ export interface ITransport {
    * @param handler - Function to handle messages
    */
   onMessage(handler: MessageHandler): void;
+
+  /**
+   * Send a control command to the Execution Node.
+   * Called by Communication Node.
+   *
+   * @param command - Control command to send
+   * @returns Response indicating if command was executed
+   */
+  sendControl(command: ControlCommand): Promise<ControlResponse>;
+
+  /**
+   * Register a handler for incoming control commands.
+   * Called by Execution Node.
+   *
+   * @param handler - Function to handle control commands
+   */
+  onControl(handler: ControlHandler): void;
 
   /**
    * Initialize the transport.
