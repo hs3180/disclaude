@@ -6,36 +6,38 @@
  *
  * Architecture:
  * ```
- * Communication Node                    Execution Node
- *      │                                     │
- *      │  POST /task ────────────────────────►
- *      │  { chatId, message, ... }           │
- *      │                                     │
- *      ◄───────────────────────── POST /callback/message
- *      │  { chatId, type, text, ... }        │
+ * Communication Node (Server)              Execution Node (Client)
+ *      │                                         │
+ *      ◄─────────────────────────── POST /task ───
+ *      │  { chatId, message, ... }               │
+ *      │                                         │
+ *      │  POST /callback ────────────────────────►
+ *      │  { chatId, type, text, ... }            │
  * ```
+ *
+ * Communication Node runs HTTP server, Execution Node connects as client.
+ * This allows Execution Node to be deployed anywhere and connect to
+ * the Communication Node.
  *
  * Usage:
  * ```typescript
- * // Execution Node (Server)
- * const transport = new HttpTransport({ mode: 'execution', port: 3001 });
+ * // Communication Node (Server)
+ * const transport = new HttpTransport({ mode: 'communication', port: 3001 });
  * transport.onTask(async (request) => {
- *   // Process task
+ *   // Process incoming task
  *   return { success: true, taskId: request.taskId };
  * });
  * await transport.start();
  *
- * // Communication Node (Client)
+ * // Execution Node (Client)
  * const transport = new HttpTransport({
- *   mode: 'communication',
- *   executionUrl: 'http://localhost:3001',
- *   callbackPort: 3002,
+ *   mode: 'execution',
+ *   communicationUrl: 'http://localhost:3001',
  * });
  * transport.onMessage(async (content) => {
- *   // Send to Feishu
+ *   // Handle message callback
  * });
  * await transport.start();
- * const response = await transport.sendTask({ ... });
  * ```
  */
 
@@ -59,23 +61,17 @@ import type {
  * Configuration for HttpTransport.
  */
 export interface HttpTransportConfig {
-  /** Transport mode: 'execution' (server) or 'communication' (client) */
-  mode: 'execution' | 'communication';
+  /** Transport mode: 'communication' (server) or 'execution' (client) */
+  mode: 'communication' | 'execution';
 
-  /** Port for Execution Node server (default: 3001) */
+  /** Port for Communication Node server (default: 3001) */
   port?: number;
 
-  /** Host for Execution Node server (default: 'localhost') */
+  /** Host for Communication Node server (default: '0.0.0.0' for external access) */
   host?: string;
 
-  /** URL of Execution Node (required for communication mode) */
-  executionUrl?: string;
-
-  /** Port for callback server in communication mode (default: port + 1) */
-  callbackPort?: number;
-
-  /** Host for callback server in communication mode */
-  callbackHost?: string;
+  /** URL of Communication Node (required for execution mode) */
+  communicationUrl?: string;
 
   /** Request timeout in ms (default: 30000) */
   timeout?: number;
@@ -85,7 +81,7 @@ export interface HttpTransportConfig {
 }
 
 /**
- * HTTP request body for task submission.
+ * HTTP request body for task submission (from Feishu).
  */
 interface TaskRequestBody {
   taskId: string;
@@ -97,7 +93,7 @@ interface TaskRequestBody {
 }
 
 /**
- * HTTP request body for message callback.
+ * HTTP request body for message callback (from Execution Node).
  */
 interface MessageCallbackBody {
   chatId: string;
@@ -109,7 +105,7 @@ interface MessageCallbackBody {
 }
 
 /**
- * HTTP request body for control command.
+ * HTTP request body for control command (from Feishu).
  */
 interface ControlRequestBody {
   type: 'reset' | 'restart';
@@ -120,45 +116,44 @@ interface ControlRequestBody {
 /**
  * HttpTransport implements ITransport for distributed deployment.
  *
- * In execution mode:
- * - Starts HTTP server to receive tasks
- * - Sends messages via POST callbacks to communication node
- *
  * In communication mode:
- * - Sends tasks via HTTP POST to execution node
- * - Starts HTTP server to receive message callbacks
+ * - Starts HTTP server to receive tasks from Feishu
+ * - Receives message callbacks from Execution Node via POST
+ *
+ * In execution mode:
+ * - Connects to Communication Node as HTTP client
+ * - Sends messages via HTTP POST to Communication Node
  */
 export class HttpTransport implements ITransport {
-  private config: HttpTransportConfig;
+  private config: Required<Omit<HttpTransportConfig, 'communicationUrl' | 'authToken'>> & {
+    communicationUrl?: string;
+    authToken?: string;
+  };
   private taskHandler?: TaskHandler;
   private messageHandler?: MessageHandler;
   private controlHandler?: ControlHandler;
   private running = false;
   private logger = createLogger('HttpTransport');
 
-  // HTTP servers
-  private mainServer?: http.Server;
-  private callbackServer?: http.Server;
+  // HTTP server for communication mode
+  private server?: http.Server;
 
   constructor(config: HttpTransportConfig) {
     this.config = {
-      port: 3001,
-      host: 'localhost',
-      timeout: 30000,
-      ...config,
+      mode: config.mode,
+      port: config.port ?? 3001,
+      host: config.host ?? '0.0.0.0',
+      timeout: config.timeout ?? 30000,
+      communicationUrl: config.communicationUrl,
+      authToken: config.authToken,
     };
-
-    // Set default callback port
-    if (!this.config.callbackPort) {
-      this.config.callbackPort = (this.config.port || 3001) + 1;
-    }
 
     this.logger.info(
       {
         mode: this.config.mode,
         port: this.config.port,
-        callbackPort: this.config.callbackPort,
-        executionUrl: this.config.executionUrl,
+        host: this.config.host,
+        communicationUrl: this.config.communicationUrl,
       },
       'HttpTransport created'
     );
@@ -173,11 +168,10 @@ export class HttpTransport implements ITransport {
       return;
     }
 
-    if (this.config.mode === 'execution') {
-      await this.startExecutionServer();
-    } else {
-      await this.startCallbackServer();
+    if (this.config.mode === 'communication') {
+      await this.startServer();
     }
+    // Execution mode doesn't need a server, just connects as client
 
     this.running = true;
     this.logger.info({ mode: this.config.mode }, 'HttpTransport started');
@@ -193,170 +187,136 @@ export class HttpTransport implements ITransport {
 
     this.running = false;
 
-    // Stop servers
-    const stopServer = (server: http.Server | undefined): Promise<void> => {
-      return new Promise((resolve) => {
-        if (server) {
-          server.close(() => resolve());
-        } else {
-          resolve();
-        }
+    if (this.server) {
+      await new Promise<void>((resolve) => {
+        this.server!.close(() => resolve());
       });
-    };
-
-    await Promise.all([
-      stopServer(this.mainServer),
-      stopServer(this.callbackServer),
-    ]);
+    }
 
     this.logger.info('HttpTransport stopped');
   }
 
+  // ==================== ITransport Interface ====================
+
   /**
-   * Send a task to the Execution Node.
-   * Only available in communication mode.
+   * Send a task request.
+   *
+   * In communication mode: Not used (tasks come from Feishu via HTTP)
+   * In execution mode: Not applicable (Execution Node receives tasks)
    */
   async sendTask(request: TaskRequest): Promise<TaskResponse> {
-    if (this.config.mode !== 'communication') {
-      this.logger.error('sendTask called in execution mode');
-      return {
-        success: false,
-        error: 'sendTask not available in execution mode',
-        taskId: request.taskId,
-      };
-    }
-
-    if (!this.config.executionUrl) {
-      this.logger.error('Execution URL not configured');
-      return {
-        success: false,
-        error: 'Execution URL not configured',
-        taskId: request.taskId,
-      };
-    }
-
-    try {
-      const response = await this.httpPost(
-        `${this.config.executionUrl}/task`,
-        {
-          taskId: request.taskId,
-          chatId: request.chatId,
-          message: request.message,
-          messageId: request.messageId,
-          senderOpenId: request.senderOpenId,
-          context: request.context,
-        }
-      );
-
-      return response as TaskResponse;
-    } catch (error) {
-      const err = error as Error;
-      this.logger.error({ err, taskId: request.taskId }, 'Failed to send task');
-      return {
-        success: false,
-        error: err.message,
-        taskId: request.taskId,
-      };
-    }
+    // This method is for compatibility with ITransport
+    // In HTTP mode, tasks flow differently:
+    // - Communication mode: receives tasks via HTTP server
+    // - Execution mode: doesn't send tasks
+    this.logger.warn('sendTask called in HTTP mode - tasks flow via HTTP');
+    return {
+      success: false,
+      error: 'sendTask not applicable in HTTP mode',
+      taskId: request.taskId,
+    };
   }
 
   /**
    * Register a handler for incoming tasks.
-   * Only available in execution mode.
+   * In communication mode, this handles tasks from Feishu (received via HTTP).
    */
   onTask(handler: TaskHandler): void {
-    if (this.config.mode !== 'execution') {
-      this.logger.warn('onTask called in communication mode - handler will not be used');
-    }
     this.taskHandler = handler;
     this.logger.debug('Task handler registered');
   }
 
   /**
-   * Send a message to the Communication Node.
-   * Only available in execution mode.
+   * Send a message.
+   *
+   * In communication mode: Receives from Execution Node via HTTP POST
+   * In execution mode: POSTs to Communication Node
    */
   async sendMessage(content: MessageContent): Promise<void> {
-    if (this.config.mode !== 'execution') {
-      this.logger.error('sendMessage called in communication mode');
-      throw new Error('sendMessage not available in communication mode');
-    }
+    if (this.config.mode === 'execution') {
+      // Execution mode: POST to Communication Node
+      if (!this.config.communicationUrl) {
+        this.logger.error('Communication URL not configured');
+        throw new Error('Communication URL not configured');
+      }
 
-    if (!this.messageHandler) {
-      // In HTTP mode, we need to POST to callback URL
-      // For now, we'll use the handler if registered
-      this.logger.warn('No message handler registered for HTTP callback');
-      return;
+      await this.httpPost(`${this.config.communicationUrl}/callback`, {
+        chatId: content.chatId,
+        type: content.type,
+        text: content.text,
+        card: content.card,
+        filePath: content.filePath,
+        description: content.description,
+      });
+    } else {
+      // Communication mode: call registered handler
+      if (!this.messageHandler) {
+        this.logger.warn('No message handler registered');
+        return;
+      }
+      await this.messageHandler(content);
     }
-
-    // In single-process mode with HTTP transport, call the handler directly
-    // In true distributed mode, this should POST to communication node's callback URL
-    await this.messageHandler(content);
   }
 
   /**
    * Register a handler for incoming messages.
-   * Only available in communication mode.
+   * In communication mode, this handles messages from Execution Node.
    */
   onMessage(handler: MessageHandler): void {
-    if (this.config.mode !== 'communication') {
-      this.logger.warn('onMessage called in execution mode - handler will not be used');
-    }
     this.messageHandler = handler;
     this.logger.debug('Message handler registered');
   }
 
   /**
-   * Send a control command to the Execution Node.
-   * Only available in communication mode.
+   * Send a control command.
+   *
+   * In communication mode: handles /reset locally
+   * In execution mode: receives from Communication Node
    */
   async sendControl(command: ControlCommand): Promise<ControlResponse> {
-    if (this.config.mode !== 'communication') {
-      return {
-        success: false,
-        error: 'sendControl not available in execution mode',
-        type: command.type,
-      };
-    }
+    if (this.config.mode === 'communication') {
+      // Communication mode: handle locally
+      if (!this.controlHandler) {
+        return {
+          success: false,
+          error: 'No control handler registered',
+          type: command.type,
+        };
+      }
+      return await this.controlHandler(command);
+    } else {
+      // Execution mode: POST to Communication Node
+      if (!this.config.communicationUrl) {
+        return {
+          success: false,
+          error: 'Communication URL not configured',
+          type: command.type,
+        };
+      }
 
-    if (!this.config.executionUrl) {
-      return {
-        success: false,
-        error: 'Execution URL not configured',
-        type: command.type,
-      };
-    }
-
-    try {
-      const response = await this.httpPost(
-        `${this.config.executionUrl}/control`,
-        {
+      try {
+        const response = await this.httpPost(`${this.config.communicationUrl}/control`, {
           type: command.type,
           chatId: command.chatId,
           data: command.data,
-        }
-      );
-
-      return response as ControlResponse;
-    } catch (error) {
-      const err = error as Error;
-      this.logger.error({ err, type: command.type }, 'Failed to send control command');
-      return {
-        success: false,
-        error: err.message,
-        type: command.type,
-      };
+        });
+        return response as ControlResponse;
+      } catch (error) {
+        const err = error as Error;
+        return {
+          success: false,
+          error: err.message,
+          type: command.type,
+        };
+      }
     }
   }
 
   /**
    * Register a handler for incoming control commands.
-   * Only available in execution mode.
+   * In communication mode, this handles /reset commands.
    */
   onControl(handler: ControlHandler): void {
-    if (this.config.mode !== 'execution') {
-      this.logger.warn('onControl called in communication mode - handler will not be used');
-    }
     this.controlHandler = handler;
     this.logger.debug('Control handler registered');
   }
@@ -371,23 +331,23 @@ export class HttpTransport implements ITransport {
   // ==================== Private Methods ====================
 
   /**
-   * Start HTTP server for Execution Node.
+   * Start HTTP server for Communication Node.
    */
-  private async startExecutionServer(): Promise<void> {
+  private async startServer(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.mainServer = http.createServer((req, res) => {
-        this.handleExecutionRequest(req, res);
+      this.server = http.createServer((req, res) => {
+        this.handleRequest(req, res);
       });
 
-      this.mainServer.on('error', (err) => {
-        this.logger.error({ err }, 'Execution server error');
+      this.server.on('error', (err) => {
+        this.logger.error({ err }, 'Server error');
         reject(err);
       });
 
-      this.mainServer.listen(this.config.port, this.config.host, () => {
+      this.server.listen(this.config.port, this.config.host, () => {
         this.logger.info(
           { port: this.config.port, host: this.config.host },
-          'Execution server listening'
+          'Communication server listening'
         );
         resolve();
       });
@@ -395,34 +355,9 @@ export class HttpTransport implements ITransport {
   }
 
   /**
-   * Start HTTP callback server for Communication Node.
+   * Handle incoming HTTP request.
    */
-  private async startCallbackServer(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.callbackServer = http.createServer((req, res) => {
-        this.handleCallbackRequest(req, res);
-      });
-
-      this.callbackServer.on('error', (err) => {
-        this.logger.error({ err }, 'Callback server error');
-        reject(err);
-      });
-
-      const port = this.config.callbackPort!;
-      this.callbackServer.listen(port, this.config.host, () => {
-        this.logger.info(
-          { port, host: this.config.host },
-          'Callback server listening'
-        );
-        resolve();
-      });
-    });
-  }
-
-  /**
-   * Handle incoming HTTP request for Execution Node.
-   */
-  private async handleExecutionRequest(
+  private async handleRequest(
     req: IncomingMessage,
     res: ServerResponse
   ): Promise<void> {
@@ -456,11 +391,13 @@ export class HttpTransport implements ITransport {
     try {
       if (req.method === 'POST' && path === '/task') {
         await this.handleTaskRequest(req, res);
+      } else if (req.method === 'POST' && path === '/callback') {
+        await this.handleCallbackRequest(req, res);
       } else if (req.method === 'POST' && path === '/control') {
         await this.handleControlRequest(req, res);
       } else if (req.method === 'GET' && path === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', mode: 'execution' }));
+        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -474,59 +411,7 @@ export class HttpTransport implements ITransport {
   }
 
   /**
-   * Handle incoming HTTP request for Communication Node callback.
-   */
-  private async handleCallbackRequest(
-    req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
-    const url = new URL(req.url || '/', `http://${req.headers.host}`);
-    const path = url.pathname;
-
-    this.logger.debug({ method: req.method, path }, 'Received callback request');
-
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-    // Handle preflight
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    // Verify auth token if configured
-    if (this.config.authToken) {
-      const authHeader = req.headers.authorization;
-      if (authHeader !== `Bearer ${this.config.authToken}`) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-    }
-
-    try {
-      if (req.method === 'POST' && path === '/callback/message') {
-        await this.handleMessageCallback(req, res);
-      } else if (req.method === 'GET' && path === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
-      } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
-      }
-    } catch (error) {
-      const err = error as Error;
-      this.logger.error({ err, path }, 'Callback handler error');
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
-    }
-  }
-
-  /**
-   * Handle task request on Execution Node.
+   * Handle task request from Execution Node.
    */
   private async handleTaskRequest(
     req: IncomingMessage,
@@ -579,7 +464,52 @@ export class HttpTransport implements ITransport {
   }
 
   /**
-   * Handle control request on Execution Node.
+   * Handle message callback from Execution Node.
+   */
+  private async handleCallbackRequest(
+    req: IncomingMessage,
+    res: ServerResponse
+  ): Promise<void> {
+    const body = await this.readJsonBody<MessageCallbackBody>(req);
+
+    if (!body) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid request body' }));
+      return;
+    }
+
+    this.logger.info(
+      { chatId: body.chatId, type: body.type },
+      'Received message callback via HTTP'
+    );
+
+    if (!this.messageHandler) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No message handler registered' }));
+      return;
+    }
+
+    try {
+      await this.messageHandler({
+        chatId: body.chatId,
+        type: body.type,
+        text: body.text,
+        card: body.card,
+        filePath: body.filePath,
+        description: body.description,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (error) {
+      const err = error as Error;
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  /**
+   * Handle control request from Execution Node.
    */
   private async handleControlRequest(
     req: IncomingMessage,
@@ -625,51 +555,6 @@ export class HttpTransport implements ITransport {
         error: err.message,
         type: body.type,
       }));
-    }
-  }
-
-  /**
-   * Handle message callback on Communication Node.
-   */
-  private async handleMessageCallback(
-    req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
-    const body = await this.readJsonBody<MessageCallbackBody>(req);
-
-    if (!body) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid request body' }));
-      return;
-    }
-
-    this.logger.info(
-      { chatId: body.chatId, type: body.type },
-      'Received message callback via HTTP'
-    );
-
-    if (!this.messageHandler) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'No message handler registered' }));
-      return;
-    }
-
-    try {
-      await this.messageHandler({
-        chatId: body.chatId,
-        type: body.type,
-        text: body.text,
-        card: body.card,
-        filePath: body.filePath,
-        description: body.description,
-      });
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
-    } catch (error) {
-      const err = error as Error;
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
     }
   }
 

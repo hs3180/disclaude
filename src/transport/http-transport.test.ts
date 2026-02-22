@@ -7,13 +7,13 @@ import { HttpTransport } from './http-transport.js';
 import type { TaskRequest, TaskResponse, MessageContent, ControlCommand, ControlResponse } from './types.js';
 
 describe('HttpTransport', () => {
-  describe('Execution Mode', () => {
+  describe('Communication Mode (Server)', () => {
     let transport: HttpTransport;
 
     beforeEach(() => {
       transport = new HttpTransport({
-        mode: 'execution',
-        port: 3101, // Use non-standard port for tests
+        mode: 'communication',
+        port: 3201, // Use non-standard port for tests
       });
     });
 
@@ -21,7 +21,7 @@ describe('HttpTransport', () => {
       await transport.stop();
     });
 
-    it('should be created with execution mode', () => {
+    it('should be created with communication mode', () => {
       expect(transport).toBeDefined();
     });
 
@@ -42,6 +42,12 @@ describe('HttpTransport', () => {
       // Handler registered without error
     });
 
+    it('should register message handler', () => {
+      const handler = vi.fn() as (content: MessageContent) => Promise<void>;
+      transport.onMessage(handler);
+      // Handler registered without error
+    });
+
     it('should register control handler', () => {
       const handler = vi.fn().mockResolvedValue({
         success: true,
@@ -51,18 +57,38 @@ describe('HttpTransport', () => {
       // Handler registered without error
     });
 
-    it('should warn on sendMessage in execution mode without handler', async () => {
-      await transport.start();
+    it('should handle messages via registered handler', async () => {
+      const handler = vi.fn() as (content: MessageContent) => Promise<void>;
+      transport.onMessage(handler);
+
       const content: MessageContent = {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
       };
-      // Should not throw, just warn
-      await expect(transport.sendMessage(content)).resolves.toBeUndefined();
+
+      await transport.sendMessage(content);
+      expect(handler).toHaveBeenCalledWith(content);
     });
 
-    it('should return error for sendTask in execution mode', async () => {
+    it('should handle control commands via registered handler', async () => {
+      const handler = vi.fn().mockResolvedValue({
+        success: true,
+        type: 'reset',
+      }) as (command: ControlCommand) => Promise<ControlResponse>;
+      transport.onControl(handler);
+
+      const command: ControlCommand = {
+        type: 'reset',
+        chatId: 'chat-1',
+      };
+
+      const response = await transport.sendControl(command);
+      expect(response.success).toBe(true);
+      expect(handler).toHaveBeenCalledWith(command);
+    });
+
+    it('should return error for sendTask in HTTP mode', async () => {
       await transport.start();
       const request: TaskRequest = {
         taskId: 'test-1',
@@ -72,29 +98,17 @@ describe('HttpTransport', () => {
       };
       const response = await transport.sendTask(request);
       expect(response.success).toBe(false);
-      expect(response.error).toContain('not available in execution mode');
-    });
-
-    it('should return error for sendControl in execution mode', async () => {
-      await transport.start();
-      const command: ControlCommand = {
-        type: 'reset',
-        chatId: 'chat-1',
-      };
-      const response = await transport.sendControl(command);
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('not available in execution mode');
+      expect(response.error).toContain('not applicable');
     });
   });
 
-  describe('Communication Mode', () => {
+  describe('Execution Mode (Client)', () => {
     let transport: HttpTransport;
 
     beforeEach(() => {
       transport = new HttpTransport({
-        mode: 'communication',
-        executionUrl: 'http://localhost:3101',
-        callbackPort: 3102,
+        mode: 'execution',
+        communicationUrl: 'http://localhost:3201',
       });
     });
 
@@ -102,40 +116,44 @@ describe('HttpTransport', () => {
       await transport.stop();
     });
 
-    it('should be created with communication mode', () => {
+    it('should be created with execution mode', () => {
       expect(transport).toBeDefined();
     });
 
-    it('should start and stop successfully', async () => {
+    it('should start without server (client only)', async () => {
       await transport.start();
       expect(transport.isRunning()).toBe(true);
-
-      await transport.stop();
-      expect(transport.isRunning()).toBe(false);
     });
 
-    it('should register message handler', () => {
-      const handler = vi.fn() as (content: MessageContent) => Promise<void>;
-      transport.onMessage(handler);
-      // Handler registered without error
-    });
-
-    it('should return error for sendTask without execution URL', async () => {
+    it('should throw error when sending message without communication URL', async () => {
       const noUrlTransport = new HttpTransport({
-        mode: 'communication',
-        callbackPort: 3103,
+        mode: 'execution',
       });
       await noUrlTransport.start();
 
-      const request: TaskRequest = {
-        taskId: 'test-1',
+      const content: MessageContent = {
         chatId: 'chat-1',
-        message: 'Hello',
-        messageId: 'msg-1',
+        type: 'text',
+        text: 'Hello',
       };
-      const response = await noUrlTransport.sendTask(request);
+      await expect(noUrlTransport.sendMessage(content)).rejects.toThrow('Communication URL not configured');
+
+      await noUrlTransport.stop();
+    });
+
+    it('should return error for sendControl without communication URL', async () => {
+      const noUrlTransport = new HttpTransport({
+        mode: 'execution',
+      });
+      await noUrlTransport.start();
+
+      const command: ControlCommand = {
+        type: 'reset',
+        chatId: 'chat-1',
+      };
+      const response = await noUrlTransport.sendControl(command);
       expect(response.success).toBe(false);
-      expect(response.error).toContain('Execution URL not configured');
+      expect(response.error).toContain('Communication URL not configured');
 
       await noUrlTransport.stop();
     });
@@ -143,13 +161,16 @@ describe('HttpTransport', () => {
 
   describe('HTTP Server', () => {
     let transport: HttpTransport;
-    const testPort = 3111;
+    let testPort: number;
 
-    beforeEach(() => {
+    beforeEach(async () => {
+      // Use unique port for each test
+      testPort = 3110 + Math.floor(Math.random() * 100);
       transport = new HttpTransport({
-        mode: 'execution',
+        mode: 'communication',
         port: testPort,
       });
+      await transport.start();
     });
 
     afterEach(async () => {
@@ -157,26 +178,20 @@ describe('HttpTransport', () => {
     });
 
     it('should respond to health check', async () => {
-      await transport.start();
-
       const response = await fetch(`http://localhost:${testPort}/health`);
       expect(response.status).toBe(200);
 
       const data = await response.json();
       expect(data.status).toBe('ok');
-      expect(data.mode).toBe('execution');
+      expect(data.mode).toBe('communication');
     });
 
     it('should return 404 for unknown paths', async () => {
-      await transport.start();
-
       const response = await fetch(`http://localhost:${testPort}/unknown`);
       expect(response.status).toBe(404);
     });
 
     it('should handle task request', async () => {
-      await transport.start();
-
       // Register handler
       transport.onTask(async (request) => ({
         success: true,
@@ -200,9 +215,27 @@ describe('HttpTransport', () => {
       expect(data.taskId).toBe('test-1');
     });
 
-    it('should handle control request', async () => {
-      await transport.start();
+    it('should handle callback request', async () => {
+      // Register message handler
+      const handler = vi.fn() as (content: MessageContent) => Promise<void>;
+      transport.onMessage(handler);
 
+      const response = await fetch(`http://localhost:${testPort}/callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: 'chat-1',
+          type: 'text',
+          text: 'Hello from Execution Node',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.success).toBe(true);
+    });
+
+    it('should handle control request', async () => {
       // Register handler
       transport.onControl(async (command) => ({
         success: true,
@@ -225,8 +258,6 @@ describe('HttpTransport', () => {
     });
 
     it('should return 500 when no task handler registered', async () => {
-      await transport.start();
-
       const response = await fetch(`http://localhost:${testPort}/task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -246,12 +277,23 @@ describe('HttpTransport', () => {
   });
 
   describe('Authentication', () => {
-    const testPort = 3121;
     const authToken = 'test-secret-token';
+    let testPort: number;
+    let transport: HttpTransport;
+
+    beforeEach(async () => {
+      testPort = 3220 + Math.floor(Math.random() * 100);
+    });
+
+    afterEach(async () => {
+      if (transport) {
+        await transport.stop();
+      }
+    });
 
     it('should reject requests without auth token when configured', async () => {
-      const transport = new HttpTransport({
-        mode: 'execution',
+      transport = new HttpTransport({
+        mode: 'communication',
         port: testPort,
         authToken,
       });
@@ -270,13 +312,11 @@ describe('HttpTransport', () => {
       });
 
       expect(response.status).toBe(401);
-
-      await transport.stop();
     });
 
     it('should accept requests with correct auth token', async () => {
-      const transport = new HttpTransport({
-        mode: 'execution',
+      transport = new HttpTransport({
+        mode: 'communication',
         port: testPort,
         authToken,
       });
@@ -305,8 +345,6 @@ describe('HttpTransport', () => {
       expect(response.status).toBe(200);
       const data = await response.json();
       expect(data.success).toBe(true);
-
-      await transport.stop();
     });
   });
 });

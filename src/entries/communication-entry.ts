@@ -1,53 +1,46 @@
 /**
- * Communication Node Entry Point.
+ * Communication Node Entry Point (HTTP Server).
  *
- * This is the standalone entry point for running just the Communication Node.
- * It connects to Feishu and forwards tasks to an Execution Node via HTTP.
+ * This is the standalone entry point for running the Communication Node.
+ * It starts an HTTP server that receives tasks from Feishu and processes them.
  *
  * Usage:
  * ```bash
- * node dist/communication-entry.js --execution-url http://localhost:3001
+ * node dist/communication-entry.js --port 3001
  * ```
  *
  * Environment Variables:
- * - FEISHU_APP_ID: Feishu App ID
- * - FEISHU_APP_SECRET: Feishu App Secret
- * - EXECUTION_URL: URL of the Execution Node
- * - CALLBACK_PORT: Port for receiving callbacks (default: 3002)
+ * - PORT: Server port (default: 3001)
+ * - HOST: Server host (default: 0.0.0.0)
  * - AUTH_TOKEN: Optional authentication token
  */
 
 import { Config } from '../config/index.js';
 import { HttpTransport } from '../transport/index.js';
-import { CommunicationNode } from '../nodes/index.js';
+import { ExecutionNode } from '../nodes/index.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('CommunicationEntry');
 
 interface CommunicationEntryConfig {
-  executionUrl: string;
-  callbackPort: number;
-  callbackHost: string;
+  port: number;
+  host: string;
   authToken?: string;
 }
 
 function parseArgs(): CommunicationEntryConfig {
   const args = process.argv.slice(2);
 
-  let executionUrl = process.env.EXECUTION_URL || 'http://localhost:3001';
-  let callbackPort = parseInt(process.env.CALLBACK_PORT || '3002', 10);
-  let callbackHost = process.env.CALLBACK_HOST || 'localhost';
+  let port = parseInt(process.env.PORT || '3001', 10);
+  let host = process.env.HOST || '0.0.0.0';
   let authToken = process.env.AUTH_TOKEN;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--execution-url' && args[i + 1]) {
-      executionUrl = args[i + 1];
+    if (args[i] === '--port' && args[i + 1]) {
+      port = parseInt(args[i + 1], 10);
       i++;
-    } else if (args[i] === '--callback-port' && args[i + 1]) {
-      callbackPort = parseInt(args[i + 1], 10);
-      i++;
-    } else if (args[i] === '--callback-host' && args[i + 1]) {
-      callbackHost = args[i + 1];
+    } else if (args[i] === '--host' && args[i + 1]) {
+      host = args[i + 1];
       i++;
     } else if (args[i] === '--auth-token' && args[i + 1]) {
       authToken = args[i + 1];
@@ -55,58 +48,53 @@ function parseArgs(): CommunicationEntryConfig {
     }
   }
 
-  return { executionUrl, callbackPort, callbackHost, authToken };
+  return { port, host, authToken };
 }
 
 async function main(): Promise<void> {
   const config = parseArgs();
 
-  logger.info(
-    {
-      config: {
-        ...config,
-        authToken: config.authToken ? '***' : undefined,
-      },
-    },
-    'Starting Communication Node'
-  );
+  logger.info({ config: { ...config, authToken: config.authToken ? '***' : undefined } }, 'Starting Communication Node');
 
-  // Validate Feishu credentials
-  if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
-    logger.error('Feishu credentials not configured. Set FEISHU_APP_ID and FEISHU_APP_SECRET environment variables.');
+  // Validate configuration
+  const agentConfig = Config.getAgentConfig();
+  if (!agentConfig.apiKey) {
+    logger.error('No API key configured. Set ANTHROPIC_API_KEY or GLM_API_KEY environment variable.');
     process.exit(1);
   }
 
-  // Create HTTP Transport
+  // Create HTTP Transport (Server mode)
   const transport = new HttpTransport({
     mode: 'communication',
-    executionUrl: config.executionUrl,
-    callbackPort: config.callbackPort,
-    callbackHost: config.callbackHost,
+    port: config.port,
+    host: config.host,
     authToken: config.authToken,
   });
 
-  // Create Communication Node
-  const commNode = new CommunicationNode({
+  // Create Execution Node (handles tasks locally with Pilot)
+  const execNode = new ExecutionNode({
     transport,
-    appId: Config.FEISHU_APP_ID,
-    appSecret: Config.FEISHU_APP_SECRET,
+    isCliMode: false,
   });
 
-  // Start Transport
+  // Start Transport (HTTP Server)
   await transport.start();
-  logger.info(`Callback server listening on http://${config.callbackHost}:${config.callbackPort}`);
-  logger.info(`Forwarding tasks to ${config.executionUrl}`);
+  logger.info(`Communication Node listening on http://${config.host}:${config.port}`);
+  logger.info('Endpoints:');
+  logger.info('  POST /task     - Receive tasks from Feishu');
+  logger.info('  POST /callback - Receive messages from Execution Node');
+  logger.info('  POST /control  - Receive control commands');
+  logger.info('  GET  /health   - Health check');
 
-  // Start Communication Node (connects to Feishu)
-  await commNode.start();
+  // Start Execution Node (registers handlers)
+  await execNode.start();
 
   logger.info('Communication Node started successfully');
 
   // Handle shutdown
   const shutdown = async () => {
     logger.info('Shutting down Communication Node...');
-    await commNode.stop();
+    await execNode.stop();
     await transport.stop();
     process.exit(0);
   };
