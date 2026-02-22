@@ -1,19 +1,29 @@
 /**
  * CLI Runner.
  *
- * Runs both Communication and Execution nodes in a single process for CLI mode.
- * After the prompt is executed, both nodes are terminated.
+ * Runs Communication and Execution nodes as separate child processes.
+ * After the prompt is executed, both processes are terminated.
+ *
+ * Architecture:
+ * ```
+ * CLI Runner (Parent Process)
+ *    │
+ *    ├── Child Process 1: Communication Node (HTTP Server)
+ *    │       └── Listens on port for HTTP requests
+ *    │
+ *    └── Child Process 2: Execution Node (HTTP Client)
+ *            └── Connects to Communication Node
+ * ```
  */
 
+import { spawn, ChildProcess } from 'node:child_process';
+import http from 'node:http';
 import { Config } from '../config/index.js';
-import { HttpTransport } from '../transport/index.js';
-import { CommunicationNode, ExecutionNode } from '../nodes/index.js';
 import { CLIOutputAdapter, FeishuOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import { parseGlobalArgs, getCliModeConfig, type CliModeConfig } from '../utils/cli-args.js';
-import type { MessageContent } from '../transport/index.js';
 
 const logger = createLogger('CLIRunner');
 
@@ -48,7 +58,87 @@ function color(text: string, colorName: keyof typeof colors): string {
 }
 
 /**
- * Run CLI mode - starts both nodes and executes a single prompt.
+ * Wait for server to be ready by checking health endpoint.
+ */
+async function waitForServer(port: number, maxAttempts = 50): Promise<boolean> {
+  const url = `http://localhost:${port}/health`;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.get(url, (res) => {
+          if (res.statusCode === 200) {
+            resolve();
+          } else {
+            reject(new Error(`Status ${res.statusCode}`));
+          }
+        });
+        req.on('error', reject);
+        req.setTimeout(500, () => {
+          req.destroy();
+          reject(new Error('Timeout'));
+        });
+      });
+      return true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  return false;
+}
+
+/**
+ * Send task to Communication Node via HTTP.
+ */
+async function sendTaskViaHttp(
+  port: number,
+  task: { taskId: string; chatId: string; message: string; messageId: string }
+): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(task);
+
+    const req = http.request(
+      {
+        hostname: 'localhost',
+        port,
+        path: '/task',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+        timeout: 300000, // 5 minutes for long-running tasks
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            resolve(result);
+          } catch {
+            resolve({ success: false, error: 'Invalid response from server' });
+          }
+        });
+      }
+    );
+
+    req.on('error', (err) => {
+      resolve({ success: false, error: err.message });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ success: false, error: 'Request timeout' });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Run CLI mode - spawns two child processes for comm and exec nodes.
  *
  * @param config - CLI runner configuration
  */
@@ -84,65 +174,73 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     adapter = new CLIOutputAdapter();
   }
 
-  // Create Communication Transport (HTTP Server)
-  const commTransport = new HttpTransport({
-    mode: 'communication',
-    port,
-    host: 'localhost',
-  });
-
-  // Create Execution Transport (HTTP Client)
-  const execTransport = new HttpTransport({
-    mode: 'execution',
-    communicationUrl: `http://localhost:${port}`,
-  });
-
-  // Create Communication Node (handles task routing)
-  const commNode = new CommunicationNode({
-    transport: commTransport,
-    appId: Config.FEISHU_APP_ID || '',
-    appSecret: Config.FEISHU_APP_SECRET || '',
-  });
-
-  // Create Execution Node (handles Agent tasks)
-  const execNode = new ExecutionNode({
-    transport: execTransport,
-    isCliMode: true,
-  });
-
-  // Register message handler for output
-  commTransport.onMessage(async (content: MessageContent) => {
-    switch (content.type) {
-      case 'text':
-        if (content.text) {
-          await adapter.write(content.text);
-        }
-        break;
-      case 'card':
-        const cardJson = JSON.stringify(content.card, null, 2);
-        await adapter.write(cardJson);
-        break;
-      case 'file':
-        if (content.filePath) {
-          await adapter.write(`\n📎 File created: ${content.filePath}\n`);
-        }
-        break;
-    }
-  });
+  let commProcess: ChildProcess | null = null;
+  let execProcess: ChildProcess | null = null;
 
   try {
-    // Start Communication Node (HTTP Server)
-    await commTransport.start();
-    await commNode.start();
-    logger.info({ port }, 'Communication Node started');
+    // Spawn Communication Node
+    logger.info({ port }, 'Starting Communication Node...');
+    commProcess = spawn(
+      process.execPath,
+      [process.argv[1] || 'dist/cli-entry.js', 'start', '--mode', 'comm', '--port', String(port)],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      }
+    );
 
-    // Start Execution Node (HTTP Client)
-    await execTransport.start();
-    await execNode.start();
-    logger.info('Execution Node started');
+    commProcess.stdout?.on('data', (data) => {
+      const output = data.toString().trim();
+      if (output) logger.debug({ source: 'comm', output });
+    });
 
-    // Send task to Communication Node (which routes to Execution Node)
-    const response = await commTransport.sendTask({
+    commProcess.stderr?.on('data', (data) => {
+      const output = data.toString().trim();
+      if (output) logger.debug({ source: 'comm', error: output });
+    });
+
+    // Wait for Communication Node to be ready
+    const commReady = await waitForServer(port);
+    if (!commReady) {
+      throw new Error('Communication Node failed to start');
+    }
+    logger.info('Communication Node ready');
+
+    // Spawn Execution Node
+    logger.info('Starting Execution Node...');
+    execProcess = spawn(
+      process.execPath,
+      [
+        process.argv[1] || 'dist/cli-entry.js',
+        'start',
+        '--mode',
+        'exec',
+        '--communication-url',
+        `http://localhost:${port}`,
+      ],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      }
+    );
+
+    execProcess.stdout?.on('data', (data) => {
+      const output = data.toString().trim();
+      if (output) logger.debug({ source: 'exec', output });
+    });
+
+    execProcess.stderr?.on('data', (data) => {
+      const output = data.toString().trim();
+      if (output) logger.debug({ source: 'exec', error: output });
+    });
+
+    // Wait a bit for Execution Node to connect
+    await new Promise((r) => setTimeout(r, 500));
+    logger.info('Execution Node ready');
+
+    // Send task to Communication Node via HTTP
+    logger.info({ taskId: messageId }, 'Sending task...');
+    const response = await sendTaskViaHttp(port, {
       taskId: messageId,
       chatId,
       message: prompt,
@@ -175,13 +273,21 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     console.log('');
     console.log(color(`Error: ${enriched.userMessage || enriched.message}`, 'red'));
     console.log('');
+    throw error;
   } finally {
-    // Stop both nodes
+    // Stop both child processes
     logger.info('Stopping nodes...');
-    await execNode.stop();
-    await execTransport.stop();
-    await commNode.stop();
-    await commTransport.stop();
+
+    if (execProcess) {
+      execProcess.kill('SIGTERM');
+      execProcess = null;
+    }
+
+    if (commProcess) {
+      commProcess.kill('SIGTERM');
+      commProcess = null;
+    }
+
     logger.info('Nodes stopped');
   }
 }
