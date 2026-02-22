@@ -1,12 +1,10 @@
 /**
  * CLI entry point for Disclaude.
  *
- * Supports three modes:
- * - single: Single process mode (default, backward compatible)
- * - comm: Communication Node only (Feishu WebSocket handler)
- * - exec: Execution Node only (Pilot/Agent handler)
+ * Supports two modes:
+ * - comm: Communication Node (Feishu WebSocket handler)
+ * - exec: Execution Node (Pilot/Agent handler)
  */
-import { runFeishu } from './bots.js';
 import { runCli } from './cli/index.js';
 import { Config } from './config/index.js';
 import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
@@ -23,34 +21,29 @@ process.setMaxListeners(20);
 /**
  * Parse command line arguments.
  */
-function parseArgs(): { mode: RunMode; promptMode: boolean; promptArgs: string[] } {
+function parseArgs(): { mode: RunMode | null; promptMode: boolean; promptArgs: string[] } {
   const args = process.argv.slice(2);
 
   // Check for prompt mode
   const promptIndex = args.indexOf('--prompt');
   if (promptIndex !== -1) {
-    return { mode: 'single', promptMode: true, promptArgs: args };
+    return { mode: null, promptMode: true, promptArgs: args };
   }
 
-  // Check for start command with mode
+  // Check for start command with mode (required)
   if (args[0] === 'start') {
     const modeIndex = args.indexOf('--mode');
     if (modeIndex !== -1 && args[modeIndex + 1]) {
       const mode = args[modeIndex + 1] as RunMode;
-      if (['single', 'comm', 'exec'].includes(mode)) {
+      if (['comm', 'exec'].includes(mode)) {
         return { mode, promptMode: false, promptArgs: [] };
       }
     }
-    // Default mode for 'start' command
-    return { mode: 'single', promptMode: false, promptArgs: [] };
+    // No valid mode provided
+    return { mode: null, promptMode: false, promptArgs: [] };
   }
 
-  // Legacy: 'feishu' command is equivalent to 'start --mode single'
-  if (args[0] === 'feishu') {
-    return { mode: 'single', promptMode: false, promptArgs: [] };
-  }
-
-  return { mode: 'single', promptMode: false, promptArgs: args };
+  return { mode: null, promptMode: false, promptArgs: args };
 }
 
 /**
@@ -64,32 +57,30 @@ function showHelp(): void {
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Usage:');
-  console.log('  disclaude start                       Start in single process mode (default)');
-  console.log('  disclaude start --mode single         Single process mode (Feishu + Agent)');
-  console.log('  disclaude start --mode comm           Communication Node only (Feishu)');
-  console.log('  disclaude start --mode exec           Execution Node only (Agent)');
+  console.log('  disclaude start --mode comm           Communication Node (Feishu WebSocket)');
+  console.log('  disclaude start --mode exec           Execution Node (Pilot Agent)');
   console.log('  disclaude --prompt <msg>              Execute single prompt in CLI');
   console.log('');
   console.log('Options:');
-  console.log('  --mode <single|comm|exec>             Select run mode');
-  console.log('  --port <port>                         Port for comm/exec mode (default: 3001)');
+  console.log('  --mode <comm|exec>                    Select run mode (required for start)');
+  console.log('  --port <port>                         Port for comm mode (default: 3001)');
   console.log('  --host <host>                         Host for comm mode (default: 0.0.0.0)');
   console.log('  --communication-url <url>             Communication Node URL for exec mode');
   console.log('  --feishu-chat-id <id>                 Send CLI output to Feishu chat');
   console.log('');
   console.log('Examples:');
-  console.log('  # Single process mode (all-in-one)');
-  console.log('  disclaude start');
-  console.log('  disclaude start --mode single');
-  console.log('');
-  console.log('  # Distributed mode - Communication Node');
+  console.log('  # Communication Node (handles Feishu connection)');
   console.log('  disclaude start --mode comm --port 3001');
   console.log('');
-  console.log('  # Distributed mode - Execution Node');
+  console.log('  # Execution Node (handles Agent tasks)');
   console.log('  disclaude start --mode exec --communication-url http://localhost:3001');
   console.log('');
   console.log('  # CLI prompt mode');
   console.log('  disclaude --prompt "What is the weather today?"');
+  console.log('');
+  console.log('For local development, run both nodes in separate terminals:');
+  console.log('  Terminal 1: disclaude start --mode comm');
+  console.log('  Terminal 2: disclaude start --mode exec');
   console.log('');
 }
 
@@ -145,12 +136,22 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
-    // Validate unknown command
-    const validCommands = ['start', 'feishu', '--prompt', '--help', '-h'];
-    if (!validCommands.includes(process.argv[2])) {
+    // Validate command
+    if (process.argv[2] !== 'start') {
       handleError(new Error(`Unknown command "${process.argv[2]}"`), {
         category: ErrorCategory.VALIDATION,
-        userMessage: `Unknown command "${process.argv[2]}"`
+        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <comm|exec>"`
+      }, {
+        log: true,
+        throwOnError: true
+      });
+    }
+
+    // Validate mode is provided
+    if (!mode) {
+      handleError(new Error('Mode is required'), {
+        category: ErrorCategory.VALIDATION,
+        userMessage: 'Mode is required. Use --mode <comm|exec>'
       }, {
         log: true,
         throwOnError: true
@@ -178,20 +179,6 @@ async function main(): Promise<void> {
 
     // Run based on mode
     switch (mode) {
-      case 'single':
-        // Validate Feishu config for single mode
-        if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
-          handleError(new Error('FEISHU_APP_ID and FEISHU_APP_SECRET are required'), {
-            category: ErrorCategory.CONFIGURATION,
-            userMessage: 'Feishu configuration is incomplete. Please set feishu.appId and feishu.appSecret in your disclaude.config.yaml file.'
-          }, {
-            log: true,
-            throwOnError: true
-          });
-        }
-        await runFeishu();
-        break;
-
       case 'comm':
         // Validate Feishu config for comm mode
         if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
@@ -213,7 +200,7 @@ async function main(): Promise<void> {
       default:
         handleError(new Error(`Unknown mode "${mode}"`), {
           category: ErrorCategory.VALIDATION,
-          userMessage: `Unknown mode "${mode}". Available modes: single, comm, exec`
+          userMessage: `Unknown mode "${mode}". Available modes: comm, exec`
         }, {
           log: true,
           throwOnError: true

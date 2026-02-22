@@ -16,15 +16,13 @@
 # Run Mode Configuration
 # -----------------------------------------------------------------------------
 # Run mode for the application:
-# - single: Single process mode (default, backward compatible)
-#   All components run in one process: Feishu WebSocket + Pilot Agent
-# - comm: Communication Node only
+# - comm: Communication Node
 #   Handles Feishu WebSocket and forwards tasks via HTTP
-# - exec: Execution Node only
+# - exec: Execution Node
 #   Handles Pilot Agent tasks received via HTTP
 #
-# Default: single
-mode: "single"
+# For local development, run both nodes in separate terminals.
+mode: "comm"  # or "exec"
 
 # -----------------------------------------------------------------------------
 # Workspace Configuration

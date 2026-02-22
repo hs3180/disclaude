@@ -286,9 +286,9 @@ export class Config {
   /**
    * Get the run mode from configuration.
    *
-   * @returns Run mode (defaults to 'single')
+   * @returns Run mode (defaults to 'comm')
    */
   static getRunMode(): RunMode {
-    return fileConfigOnly.mode || 'single';
+    return fileConfigOnly.mode || 'comm';
   }
 }
