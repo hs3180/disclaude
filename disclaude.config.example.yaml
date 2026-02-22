@@ -94,6 +94,39 @@ logging:
   rotate: false
 
 # -----------------------------------------------------------------------------
+# Transport Configuration
+# -----------------------------------------------------------------------------
+transport:
+  # Transport mode
+  # Options: local (single process), http (distributed)
+  # Default: local
+  type: "local"
+
+  # HTTP transport configuration (only used when type is "http")
+  http:
+    # Execution Node server configuration
+    execution:
+      # Server host
+      host: "localhost"
+
+      # Server port
+      port: 3001
+
+    # Communication Node callback server configuration
+    communication:
+      # Callback server host
+      callbackHost: "localhost"
+
+      # Callback server port (default: execution port + 1)
+      callbackPort: 3002
+
+      # Execution Node URL
+      executionUrl: "http://localhost:3001"
+
+    # Optional authentication token for securing requests
+    # authToken: "your-secret-token"
+
+# -----------------------------------------------------------------------------
 # Tools Configuration
 # -----------------------------------------------------------------------------
 tools:
