@@ -153,12 +153,6 @@ export type RunMode = 'comm' | 'exec';
  * All fields are optional - environment variables take precedence.
  */
 export interface DisclaudeConfig {
-  /**
-   * Run mode for the application.
-   * - comm: Communication Node (Feishu WebSocket handler)
-   * - exec: Execution Node (Pilot/Agent handler)
-   */
-  mode?: RunMode;
   /** Workspace settings */
   workspace?: WorkspaceConfig;
   /** Agent/AI model settings */

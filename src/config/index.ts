@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig } from './loader.js';
-import type { DisclaudeConfig, ConfigValidationError, RunMode } from './types.js';
+import type { DisclaudeConfig, ConfigValidationError } from './types.js';
 
 // Export constants and types
 export * from './constants.js';
@@ -281,14 +281,5 @@ export class Config {
    */
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
-  }
-
-  /**
-   * Get the run mode from configuration.
-   *
-   * @returns Run mode (defaults to 'comm')
-   */
-  static getRunMode(): RunMode {
-    return fileConfigOnly.mode || 'comm';
   }
 }
