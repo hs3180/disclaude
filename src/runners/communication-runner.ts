@@ -28,13 +28,13 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
 
   logger.info({
     config: {
-      ...runnerConfig,
+      executionUrl: runnerConfig.executionUrl,
       authToken: runnerConfig.authToken ? '***' : undefined
     }
   }, 'Starting Communication Node');
 
   console.log('Initializing Communication Node...');
-  console.log(`Mode: Communication (Feishu WebSocket → Execution WebSocket)`);
+  console.log(`Mode: Communication (Feishu → Execution WebSocket)`);
   console.log();
 
   // Validate Feishu configuration
@@ -45,12 +45,9 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   // Increase max listeners
   process.setMaxListeners(20);
 
-  // Get execution node WebSocket URL
-  const executionUrl = runnerConfig.executionUrl || 'ws://localhost:3002';
-
   // Create Communication Node
   const commNode = new CommunicationNode({
-    executionUrl,
+    executionUrl: runnerConfig.executionUrl,
     appId: Config.FEISHU_APP_ID,
     appSecret: Config.FEISHU_APP_SECRET,
   });
@@ -61,7 +58,7 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   logger.info('Communication Node started successfully');
   console.log('✓ Communication Node ready');
   console.log();
-  console.log(`Connected to Execution Node: ${executionUrl}`);
+  console.log(`Execution Node: ${runnerConfig.executionUrl}`);
   console.log();
 
   // Handle shutdown
