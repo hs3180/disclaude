@@ -1,14 +1,13 @@
 /**
  * Communication Node - Handles Feishu communication.
  *
- * This module manages the Feishu bot and connects it to the Transport layer,
- * allowing it to send tasks to the Execution Node and receive message callbacks.
- *
- * In single-process mode, this runs alongside the Execution Node.
- * In multi-process mode, this runs in a separate process.
+ * This module manages the Feishu bot and forwards prompts to Execution Node via HTTP.
+ * It also runs an HTTP server to receive callbacks from Execution Node.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
+import http from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION } from '../config/constants.js';
@@ -21,41 +20,68 @@ import { FileHandler } from '../feishu/file-handler.js';
 import { MessageSender } from '../feishu/message-sender.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
-import type { ITransport, TaskRequest, MessageContent } from '../transport/index.js';
-import type { ControlCommand } from '../transport/types.js';
 import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
+
+const logger = createLogger('CommunicationNode');
 
 /**
  * Configuration for Communication Node.
  */
 export interface CommunicationNodeConfig {
-  /** Transport layer for communication */
-  transport: ITransport;
+  /** URL of Execution Node (e.g., http://localhost:3002) */
+  executionUrl: string;
   /** Feishu App ID */
   appId?: string;
   /** Feishu App Secret */
   appSecret?: string;
+  /** Port for callback server */
+  callbackPort?: number;
+  /** Host for callback server */
+  callbackHost?: string;
 }
 
 /**
- * Communication Node - Manages Feishu bot and Transport connection.
+ * Request body for executing prompt on Execution Node.
+ */
+interface ExecuteRequest {
+  chatId: string;
+  prompt: string;
+  messageId: string;
+  senderOpenId?: string;
+}
+
+/**
+ * Callback message from Execution Node.
+ */
+interface CallbackMessage {
+  chatId: string;
+  type: 'text' | 'card' | 'file';
+  text?: string;
+  card?: Record<string, unknown>;
+  filePath?: string;
+}
+
+/**
+ * Communication Node - Manages Feishu bot and HTTP communication with Execution Node.
  *
  * Responsibilities:
  * - Receives messages from Feishu
- * - Sends tasks to Execution Node via Transport
- * - Receives message callbacks from Transport
+ * - Forwards prompts to Execution Node via HTTP POST /execute
+ * - Receives message callbacks from Execution Node via HTTP POST /callback
  * - Sends messages to Feishu users
  */
 export class CommunicationNode extends EventEmitter {
-  private transport: ITransport;
+  private executionUrl: string;
   private appId: string;
   private appSecret: string;
+  private callbackPort: number;
+  private callbackHost: string;
 
   private client?: lark.Client;
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
+  private callbackServer?: http.Server;
   private running = false;
-  private logger = createLogger('CommunicationNode');
 
   // Track processed message IDs to prevent duplicate processing
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
@@ -74,9 +100,11 @@ export class CommunicationNode extends EventEmitter {
 
   constructor(config: CommunicationNodeConfig) {
     super();
-    this.transport = config.transport;
+    this.executionUrl = config.executionUrl;
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
+    this.callbackPort = config.callbackPort || 3001;
+    this.callbackHost = config.callbackHost || '0.0.0.0';
     this.taskTracker = new TaskTracker();
 
     // Initialize FileHandler
@@ -84,14 +112,14 @@ export class CommunicationNode extends EventEmitter {
       attachmentManager,
       async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
         if (!this.client) {
-          this.logger.error({ fileKey }, 'Client not initialized for file download');
+          logger.error({ fileKey }, 'Client not initialized for file download');
           return { success: false };
         }
         try {
           const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId);
           return { success: true, filePath };
         } catch (error) {
-          this.logger.error({ err: error, fileKey, messageType }, 'File download failed');
+          logger.error({ err: error, fileKey, messageType }, 'File download failed');
           return { success: false };
         }
       }
@@ -105,56 +133,88 @@ export class CommunicationNode extends EventEmitter {
         sendCard: this.sendCard.bind(this),
         sendFile: this.sendFileToUser.bind(this),
       },
-      this.logger
+      logger
     );
 
     // Register TaskFlowOrchestrator for task skill MCP tool access
     setTaskFlowOrchestrator(this.taskFlowOrchestrator);
 
-    // Register message handler with Transport
-    this.transport.onMessage(this.handleTransportMessage.bind(this));
-
-    this.logger.info('CommunicationNode created');
+    logger.info({ executionUrl: this.executionUrl }, 'CommunicationNode created');
   }
 
   /**
-   * Handle messages from Execution Node via Transport.
+   * Send prompt to Execution Node via HTTP.
    */
-  private async handleTransportMessage(content: MessageContent): Promise<void> {
+  private async sendPromptToExecution(request: ExecuteRequest): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      const body = JSON.stringify(request);
+      const url = new URL(`${this.executionUrl}/execute`);
+
+      const req = http.request(
+        {
+          hostname: url.hostname,
+          port: url.port || 80,
+          path: url.pathname,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          },
+          timeout: 300000, // 5 minutes for long-running tasks
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              resolve(result);
+            } catch {
+              resolve({ success: false, error: 'Invalid response from Execution Node' });
+            }
+          });
+        }
+      );
+
+      req.on('error', (err) => {
+        logger.error({ err, chatId: request.chatId }, 'Failed to send prompt to Execution Node');
+        resolve({ success: false, error: err.message });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ success: false, error: 'Request timeout' });
+      });
+
+      req.write(body);
+      req.end();
+    });
+  }
+
+  /**
+   * Handle callback messages from Execution Node.
+   */
+  private async handleCallback(message: CallbackMessage): Promise<void> {
     try {
-      switch (content.type) {
+      switch (message.type) {
         case 'text':
-          if (content.text) {
-            await this.sendMessage(content.chatId, content.text);
+          if (message.text) {
+            await this.sendMessage(message.chatId, message.text);
           }
           break;
         case 'card':
-          await this.sendCard(content.chatId, content.card || {}, content.description);
+          await this.sendCard(message.chatId, message.card || {});
           break;
         case 'file':
-          if (content.filePath) {
-            await this.sendFileToUser(content.chatId, content.filePath);
+          if (message.filePath) {
+            await this.sendFileToUser(message.chatId, message.filePath);
           }
           break;
         default:
-          this.logger.warn({ type: content.type }, 'Unknown message type from Transport');
+          logger.warn({ type: message.type }, 'Unknown callback message type');
       }
     } catch (error) {
-      this.logger.error({ err: error, content }, 'Failed to handle Transport message');
-    }
-  }
-
-  /**
-   * Send a task to the Execution Node via Transport.
-   */
-  private async sendTaskToExecution(request: TaskRequest): Promise<void> {
-    const response = await this.transport.sendTask(request);
-    if (!response.success) {
-      this.logger.error({ taskId: request.taskId, error: response.error }, 'Task send failed');
-      await this.sendMessage(
-        request.chatId,
-        `❌ 任务发送失败: ${response.error || 'Unknown error'}`
-      );
+      logger.error({ err: error, message }, 'Failed to handle callback');
     }
   }
 
@@ -169,7 +229,7 @@ export class CommunicationNode extends EventEmitter {
       });
       this.messageSender = new MessageSender({
         client: this.client,
-        logger: this.logger,
+        logger,
       });
     }
     return this.client;
@@ -254,19 +314,19 @@ export class CommunicationNode extends EventEmitter {
     const { message_id, chat_id, content, message_type, create_time } = message;
 
     if (!message_id || !chat_id || !content || !message_type) {
-      this.logger.warn('Missing required message fields');
+      logger.warn('Missing required message fields');
       return;
     }
 
     // Deduplication
     if (messageLogger.isMessageProcessed(message_id)) {
-      this.logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+      logger.debug({ messageId: message_id }, 'Skipped duplicate message');
       return;
     }
 
     // Ignore bot messages
     if (sender?.sender_type === 'app') {
-      this.logger.debug('Skipped bot message');
+      logger.debug('Skipped bot message');
       return;
     }
 
@@ -274,7 +334,7 @@ export class CommunicationNode extends EventEmitter {
     if (create_time) {
       const messageAge = Date.now() - create_time;
       if (messageAge > this.MAX_MESSAGE_AGE) {
-        this.logger.debug({ messageId: message_id }, 'Skipped old message');
+        logger.debug({ messageId: message_id }, 'Skipped old message');
         return;
       }
     }
@@ -305,21 +365,24 @@ export class CommunicationNode extends EventEmitter {
           create_time
         );
 
-        // Send task to Execution Node
-        await this.sendTaskToExecution({
-          taskId: `${message_id}-file`,
+        // Send prompt to Execution Node
+        const response = await this.sendPromptToExecution({
           chatId: chat_id,
-          message: enhancedPrompt,
-          messageId: message_id,
+          prompt: enhancedPrompt,
+          messageId: `${message_id}-file`,
           senderOpenId: this.extractOpenId(sender),
         });
+
+        if (!response.success) {
+          await this.sendMessage(chat_id, `❌ 任务发送失败: ${response.error || 'Unknown error'}`);
+        }
       }
       return;
     }
 
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
-      this.logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
+      logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
       return;
     }
 
@@ -342,16 +405,16 @@ export class CommunicationNode extends EventEmitter {
         text = text.trim();
       }
     } catch {
-      this.logger.error('Failed to parse content');
+      logger.error('Failed to parse content');
       return;
     }
 
     if (!text) {
-      this.logger.debug('Skipped empty text');
+      logger.debug('Skipped empty text');
       return;
     }
 
-    this.logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
+    logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
 
     // Log message
     await messageLogger.logIncomingMessage(
@@ -363,59 +426,48 @@ export class CommunicationNode extends EventEmitter {
       create_time
     );
 
-    // Handle special commands
+    // Handle /reset command
     if (text.trim() === '/reset') {
-      this.logger.info({ chatId: chat_id }, 'Reset command triggered');
-
-      // Send reset control command to Execution Node
-      const controlCommand: ControlCommand = {
-        type: 'reset',
-        chatId: chat_id,
-      };
-      const response = await this.transport.sendControl(controlCommand);
-
-      if (response.success) {
-        await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
-      } else {
-        await this.sendMessage(chat_id, `❌ 重置失败: ${response.error || 'Unknown error'}`);
-      }
+      logger.info({ chatId: chat_id }, 'Reset command triggered');
+      await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
       return;
     }
 
     // Handle /restart command
     if (text.trim() === '/restart') {
-      this.logger.info({ chatId: chat_id }, 'Restart command triggered');
-
+      logger.info({ chatId: chat_id }, 'Restart command triggered');
       await this.sendMessage(chat_id, '🔄 **正在重启服务...**\n\nPM2 服务即将重启，请稍候。');
 
-      // Send restart control command
-      const controlCommand: ControlCommand = {
-        type: 'restart',
-        chatId: chat_id,
-      };
-      await this.transport.sendControl(controlCommand);
-
-      // Execute PM2 restart
       try {
         const { exec } = await import('node:child_process');
         const { promisify } = await import('node:util');
         const execAsync = promisify(exec);
         await execAsync('pm2 restart disclaude-feishu');
-        this.logger.info('PM2 service restarted successfully');
+        logger.info('PM2 service restarted successfully');
       } catch (error) {
-        this.logger.error({ err: error }, 'Failed to restart PM2 service');
+        logger.error({ err: error }, 'Failed to restart PM2 service');
       }
       return;
     }
 
-    // Send task to Execution Node
-    await this.sendTaskToExecution({
-      taskId: message_id,
+    // Handle /status command
+    if (text.trim() === '/status') {
+      const status = this.running ? 'Running' : 'Stopped';
+      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution URL: ${this.executionUrl}`);
+      return;
+    }
+
+    // Send prompt to Execution Node
+    const response = await this.sendPromptToExecution({
       chatId: chat_id,
-      message: text,
+      prompt: text,
       messageId: message_id,
       senderOpenId: this.extractOpenId(sender),
     });
+
+    if (!response.success) {
+      await this.sendMessage(chat_id, `❌ 任务发送失败: ${response.error || 'Unknown error'}`);
+    }
   }
 
   /**
@@ -423,14 +475,67 @@ export class CommunicationNode extends EventEmitter {
    */
   async start(): Promise<void> {
     if (this.running) {
-      this.logger.warn('CommunicationNode already running');
+      logger.warn('CommunicationNode already running');
       return;
     }
 
     this.running = true;
 
-    // Start Transport
-    await this.transport.start();
+    // Create callback server
+    this.callbackServer = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url || '/', `http://localhost:${this.callbackPort}`);
+      const path = url.pathname;
+
+      // Set CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/callback') {
+        // Handle callback from Execution Node
+        let body = '';
+        req.on('data', (chunk) => (body += chunk.toString()));
+        req.on('end', async () => {
+          try {
+            const message = JSON.parse(body) as CallbackMessage;
+            await this.handleCallback(message);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+          } catch (error) {
+            logger.error({ err: error }, 'Failed to parse callback');
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid request body' }));
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
+        return;
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found' }));
+    });
+
+    // Start callback server
+    await new Promise<void>((resolve) => {
+      this.callbackServer!.listen(this.callbackPort, this.callbackHost, () => resolve());
+    });
+
+    logger.info({ port: this.callbackPort, host: this.callbackHost }, 'Callback server started');
+    console.log(`Callback server listening on http://${this.callbackHost}:${this.callbackPort}`);
+    console.log('Endpoints:');
+    console.log('  POST /callback - Receive messages from Execution Node');
+    console.log('  GET  /health   - Health check');
 
     // Initialize message logger
     await messageLogger.init();
@@ -441,7 +546,7 @@ export class CommunicationNode extends EventEmitter {
         try {
           await this.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
-          this.logger.error({ err: error }, 'Failed to handle message receive');
+          logger.error({ err: error }, 'Failed to handle message receive');
         }
       },
       'im.message.message_read_v1': async () => {},
@@ -450,11 +555,11 @@ export class CommunicationNode extends EventEmitter {
 
     // Create WebSocket client
     const sdkLogger = {
-      error: (...msg: unknown[]) => this.logger.error({ context: 'LarkSDK' }, String(msg)),
-      warn: (...msg: unknown[]) => this.logger.warn({ context: 'LarkSDK' }, String(msg)),
-      info: (...msg: unknown[]) => this.logger.info({ context: 'LarkSDK' }, String(msg)),
-      debug: (...msg: unknown[]) => this.logger.debug({ context: 'LarkSDK' }, String(msg)),
-      trace: (...msg: unknown[]) => this.logger.trace({ context: 'LarkSDK' }, String(msg)),
+      error: (...msg: unknown[]) => logger.error({ context: 'LarkSDK' }, String(msg)),
+      warn: (...msg: unknown[]) => logger.warn({ context: 'LarkSDK' }, String(msg)),
+      info: (...msg: unknown[]) => logger.info({ context: 'LarkSDK' }, String(msg)),
+      debug: (...msg: unknown[]) => logger.debug({ context: 'LarkSDK' }, String(msg)),
+      trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
     };
 
     this.wsClient = new lark.WSClient({
@@ -466,7 +571,7 @@ export class CommunicationNode extends EventEmitter {
 
     await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
 
-    this.logger.info('CommunicationNode started');
+    logger.info('CommunicationNode started');
   }
 
   /**
@@ -477,8 +582,15 @@ export class CommunicationNode extends EventEmitter {
 
     this.running = false;
     this.wsClient = undefined;
-    await this.transport.stop();
-    this.logger.info('CommunicationNode stopped');
+
+    if (this.callbackServer) {
+      await new Promise<void>((resolve) => {
+        this.callbackServer!.close(() => resolve());
+      });
+      this.callbackServer = undefined;
+    }
+
+    logger.info('CommunicationNode stopped');
   }
 
   /**

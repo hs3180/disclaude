@@ -1,22 +1,21 @@
 /**
- * Nodes module - Communication and Execution nodes.
+ * Nodes module - Communication node.
  *
- * This module provides the node implementations for the distributed
- * architecture of disclaude.
+ * The Communication node handles Feishu WebSocket connections
+ * and forwards prompts to Execution Node via HTTP.
  *
- * Usage (single process mode):
+ * Usage:
  * ```typescript
- * import { LocalTransport, CommunicationNode, ExecutionNode } from './nodes/index.js';
+ * import { CommunicationNode } from './nodes/index.js';
  *
- * const transport = new LocalTransport();
- * const commNode = new CommunicationNode({ transport });
- * const execNode = new ExecutionNode({ transport });
+ * const commNode = new CommunicationNode({
+ *   executionUrl: 'http://localhost:3002',
+ *   appId: '...',
+ *   appSecret: '...',
+ * });
  *
- * await transport.start();
  * await commNode.start();
- * await execNode.start();
  * ```
  */
 
 export { CommunicationNode, type CommunicationNodeConfig } from './communication-node.js';
-export { ExecutionNode, type ExecutionNodeConfig } from './execution-node.js';

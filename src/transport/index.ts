@@ -1,26 +1,23 @@
 /**
- * Transport layer module.
+ * Transport layer types.
  *
- * Provides the abstraction for communication between Communication Node
- * and Execution Node.
+ * These types define the interfaces for message passing between nodes.
+ * The actual transport implementation is now done via direct HTTP calls.
  *
- * Usage:
- * ```typescript
- * import { LocalTransport, HttpTransport, type ITransport, type TaskRequest } from './transport/index.js';
- *
- * // Single-process mode
- * const localTransport = new LocalTransport();
- *
- * // Distributed mode
- * const httpTransport = new HttpTransport({ mode: 'execution', port: 3001 });
- *
- * // Use transport
- * await transport.start();
- * const response = await transport.sendTask(request);
- * await transport.stop();
+ * Architecture:
+ * ```
+ * Communication Node                    Execution Node
+ *     │                                     │
+ *     │  HTTP Server (:3001)                │  HTTP Server (:3002)
+ *     │  - POST /callback                   │  - POST /execute
+ *     │  - GET /health                      │  - GET /health
+ *     │                                     │
+ *     │  ──── POST /execute ────────────►   │
+ *     │  { chatId, prompt, ... }            │
+ *     │                                     │
+ *     │  ◄──── POST /callback ───────────   │
+ *     │  { chatId, type, text, ... }        │
  * ```
  */
 
 export * from './types.js';
-export { LocalTransport } from './local-transport.js';
-export { HttpTransport, type HttpTransportConfig } from './http-transport.js';
