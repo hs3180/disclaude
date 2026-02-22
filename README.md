@@ -232,23 +232,6 @@ disclaude start --mode comm --port 3001
 disclaude start --mode exec --communication-url http://localhost:3001
 ```
 
-Or configure in `disclaude.config.yaml`:
-
-```yaml
-mode: "comm"  # or "exec"
-
-transport:
-  type: "http"
-  http:
-    execution:
-      host: "localhost"
-      port: 3001
-    communication:
-      callbackHost: "localhost"
-      callbackPort: 3002
-      executionUrl: "http://localhost:3001"
-```
-
 ### Feishu Commands
 
 ```

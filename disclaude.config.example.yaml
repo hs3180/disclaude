@@ -13,18 +13,6 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Run Mode Configuration
-# -----------------------------------------------------------------------------
-# Run mode for the application:
-# - comm: Communication Node
-#   Handles Feishu WebSocket and forwards tasks via HTTP
-# - exec: Execution Node
-#   Handles Pilot Agent tasks received via HTTP
-#
-# For local development, run both nodes in separate terminals.
-mode: "comm"  # or "exec"
-
-# -----------------------------------------------------------------------------
 # Workspace Configuration
 # -----------------------------------------------------------------------------
 workspace:
