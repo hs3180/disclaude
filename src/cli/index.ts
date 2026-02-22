@@ -1,6 +1,10 @@
 /**
  * CLI mode for Disclaude.
  * Executes a single prompt from command line arguments and exits.
+ *
+ * Note: CLI mode uses Pilot directly without Transport abstraction,
+ * as it doesn't need the distributed architecture. The Transport layer
+ * is only used when running as a bot service (Feishu mode).
  */
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
