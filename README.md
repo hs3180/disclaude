@@ -203,14 +203,10 @@ Edit `ecosystem.config.cjs`:
 disclaude
 disclaude --help
 
-# Single process mode (all-in-one, default)
-disclaude start
-disclaude start --mode single
-
-# Distributed mode - Communication Node (Feishu WebSocket)
+# Communication Node (handles Feishu WebSocket connection)
 disclaude start --mode comm --port 3001
 
-# Distributed mode - Execution Node (Pilot Agent)
+# Execution Node (handles Agent tasks)
 disclaude start --mode exec --communication-url http://localhost:3001
 
 # CLI prompt mode (one-shot query, no Feishu needed)
@@ -221,13 +217,12 @@ disclaude --prompt "List all TypeScript files"
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| `single` | All-in-one process | Development, small deployments |
-| `comm` | Communication Node only | Distributed deployments |
-| `exec` | Execution Node only | Scale agent processing independently |
+| `comm` | Communication Node | Handles Feishu WebSocket, forwards tasks to Execution Node |
+| `exec` | Execution Node | Handles Pilot Agent, processes tasks from Communication Node |
 
-### Distributed Deployment
+### Local Development
 
-For production, you can split the Communication and Execution nodes:
+For local development, run both nodes in separate terminals:
 
 ```bash
 # Terminal 1: Communication Node (handles Feishu)
@@ -333,27 +328,6 @@ disclaude/
 
 ## Architecture
 
-### Single Process Mode (default)
-
-```
-┌─────────────────────────────────────────────────────┐
-│              Single Process                          │
-│  ┌─────────────┐    ┌─────────────┐                 │
-│  │ Communication│◄──►│  Execution  │                │
-│  │    Node     │    │    Node     │                 │
-│  │  (Feishu)   │    │  (Pilot)    │                 │
-│  └──────┬──────┘    └──────┬──────┘                 │
-│         │                  │                        │
-└─────────┼──────────────────┼────────────────────────┘
-          │                  │
-   ┌──────▼──────┐    ┌──────▼──────┐
-   │   Feishu    │    │Claude Agent │
-   │  WebSocket  │    │    SDK      │
-   └─────────────┘    └─────────────┘
-```
-
-### Distributed Mode
-
 ```
 ┌──────────────────────────┐       ┌──────────────────────────┐
 │   Communication Node     │       │    Execution Node        │
@@ -369,10 +343,11 @@ disclaude/
   └─────────────┘                     └─────────────┘
 ```
 
-This separation enables:
+This architecture enables:
 - Independent scaling of Feishu handling and Agent processing
 - Multiple Execution Nodes for load balancing
 - Zero-downtime deployments
+- Clear separation of concerns
 
 ## Troubleshooting
 

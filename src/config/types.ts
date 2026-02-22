@@ -141,11 +141,10 @@ export interface TransportConfig {
 
 /**
  * Run mode for the application.
- * - single: Single process mode (default, backward compatible)
- * - comm: Communication Node only (Feishu WebSocket handler)
- * - exec: Execution Node only (Pilot/Agent handler)
+ * - comm: Communication Node (Feishu WebSocket handler)
+ * - exec: Execution Node (Pilot/Agent handler)
  */
-export type RunMode = 'single' | 'comm' | 'exec';
+export type RunMode = 'comm' | 'exec';
 
 /**
  * Main configuration interface.
@@ -156,9 +155,8 @@ export type RunMode = 'single' | 'comm' | 'exec';
 export interface DisclaudeConfig {
   /**
    * Run mode for the application.
-   * - single: Single process mode (default, backward compatible)
-   * - comm: Communication Node only (Feishu WebSocket handler)
-   * - exec: Execution Node only (Pilot/Agent handler)
+   * - comm: Communication Node (Feishu WebSocket handler)
+   * - exec: Execution Node (Pilot/Agent handler)
    */
   mode?: RunMode;
   /** Workspace settings */
