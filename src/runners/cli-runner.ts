@@ -1,24 +1,25 @@
 /**
  * CLI Runner.
  *
- * Runs Communication and Execution nodes as separate child processes.
- * After the prompt is executed, both processes are terminated.
+ * For CLI mode, we directly use Execution Node (Pilot) without the Communication Node.
+ * This is simpler and more efficient for one-shot command execution.
  *
  * Architecture:
  * ```
- * CLI Runner (Parent Process)
+ * CLI Runner
  *    │
- *    ├── Child Process 1: Communication Node (HTTP Server)
- *    │       └── Listens on port for HTTP requests
- *    │
- *    └── Child Process 2: Execution Node (HTTP Client)
- *            └── Connects to Communication Node
+ *    └── Execution Node (Pilot Agent)
+ *            └── Processes the prompt directly
+ * ```
+ *
+ * For production Feishu bot mode, use the distributed architecture:
+ * ```
+ * Communication Node (HTTP Server) ←→ Execution Node (HTTP Client)
  * ```
  */
 
-import { spawn, ChildProcess } from 'node:child_process';
-import http from 'node:http';
 import { Config } from '../config/index.js';
+import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
 import { CLIOutputAdapter, FeishuOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 import { createLogger } from '../utils/logger.js';
@@ -58,98 +59,20 @@ function color(text: string, colorName: keyof typeof colors): string {
 }
 
 /**
- * Wait for server to be ready by checking health endpoint.
- */
-async function waitForServer(port: number, maxAttempts = 50): Promise<boolean> {
-  const url = `http://localhost:${port}/health`;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const req = http.get(url, (res) => {
-          if (res.statusCode === 200) {
-            resolve();
-          } else {
-            reject(new Error(`Status ${res.statusCode}`));
-          }
-        });
-        req.on('error', reject);
-        req.setTimeout(500, () => {
-          req.destroy();
-          reject(new Error('Timeout'));
-        });
-      });
-      return true;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
-  return false;
-}
-
-/**
- * Send task to Communication Node via HTTP.
- */
-async function sendTaskViaHttp(
-  port: number,
-  task: { taskId: string; chatId: string; message: string; messageId: string }
-): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(task);
-
-    const req = http.request(
-      {
-        hostname: 'localhost',
-        port,
-        path: '/task',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-        timeout: 300000, // 5 minutes for long-running tasks
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          try {
-            const result = JSON.parse(data);
-            resolve(result);
-          } catch {
-            resolve({ success: false, error: 'Invalid response from server' });
-          }
-        });
-      }
-    );
-
-    req.on('error', (err) => {
-      resolve({ success: false, error: err.message });
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ success: false, error: 'Request timeout' });
-    });
-
-    req.write(body);
-    req.end();
-  });
-}
-
-/**
- * Run CLI mode - spawns two child processes for comm and exec nodes.
+ * Run CLI mode - directly executes prompt via Pilot without Communication Node.
+ *
+ * This is the simplest mode for CLI usage - no child processes needed.
  *
  * @param config - CLI runner configuration
  */
 export async function runCliMode(config: CliModeConfig): Promise<void> {
-  const { prompt, feishuChatId, port } = config;
+  const { prompt, feishuChatId } = config;
 
   // Create unique IDs for this CLI session
   const messageId = `cli-${Date.now()}`;
   const chatId = feishuChatId || 'cli-console';
 
-  logger.info({ prompt: prompt.slice(0, 100), feishuChatId, port }, 'Starting CLI mode');
+  logger.info({ prompt: prompt.slice(0, 100), feishuChatId }, 'Starting CLI mode');
 
   // Create output adapter
   let adapter: ExtendedOutputAdapter;
@@ -174,82 +97,36 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     adapter = new CLIOutputAdapter();
   }
 
-  let commProcess: ChildProcess | null = null;
-  let execProcess: ChildProcess | null = null;
+  // Get agent configuration
+  const agentConfig = Config.getAgentConfig();
+
+  // Create Pilot callbacks for output
+  const callbacks: PilotCallbacks = {
+    sendMessage: async (chatId: string, text: string) => {
+      await adapter.write(text);
+    },
+    sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
+      const cardJson = JSON.stringify(card, null, 2);
+      await adapter.write(cardJson);
+    },
+    sendFile: async (chatId: string, filePath: string) => {
+      await adapter.write(`\n📎 File created: ${filePath}\n`);
+    },
+  };
+
+  // Create Pilot instance
+  const pilot = new Pilot({
+    apiKey: agentConfig.apiKey,
+    model: agentConfig.model,
+    apiBaseUrl: agentConfig.apiBaseUrl,
+    isCliMode: true,
+    callbacks,
+  });
 
   try {
-    // Spawn Communication Node
-    logger.info({ port }, 'Starting Communication Node...');
-    commProcess = spawn(
-      process.execPath,
-      [process.argv[1] || 'dist/cli-entry.js', 'start', '--mode', 'comm', '--port', String(port)],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
-      }
-    );
-
-    commProcess.stdout?.on('data', (data) => {
-      const output = data.toString().trim();
-      if (output) logger.debug({ source: 'comm', output });
-    });
-
-    commProcess.stderr?.on('data', (data) => {
-      const output = data.toString().trim();
-      if (output) logger.debug({ source: 'comm', error: output });
-    });
-
-    // Wait for Communication Node to be ready
-    const commReady = await waitForServer(port);
-    if (!commReady) {
-      throw new Error('Communication Node failed to start');
-    }
-    logger.info('Communication Node ready');
-
-    // Spawn Execution Node
-    logger.info('Starting Execution Node...');
-    execProcess = spawn(
-      process.execPath,
-      [
-        process.argv[1] || 'dist/cli-entry.js',
-        'start',
-        '--mode',
-        'exec',
-        '--communication-url',
-        `http://localhost:${port}`,
-      ],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
-      }
-    );
-
-    execProcess.stdout?.on('data', (data) => {
-      const output = data.toString().trim();
-      if (output) logger.debug({ source: 'exec', output });
-    });
-
-    execProcess.stderr?.on('data', (data) => {
-      const output = data.toString().trim();
-      if (output) logger.debug({ source: 'exec', error: output });
-    });
-
-    // Wait a bit for Execution Node to connect
-    await new Promise((r) => setTimeout(r, 500));
-    logger.info('Execution Node ready');
-
-    // Send task to Communication Node via HTTP
-    logger.info({ taskId: messageId }, 'Sending task...');
-    const response = await sendTaskViaHttp(port, {
-      taskId: messageId,
-      chatId,
-      message: prompt,
-      messageId,
-    });
-
-    if (!response.success) {
-      throw new Error(response.error || 'Task execution failed');
-    }
+    // Execute the prompt
+    logger.info({ taskId: messageId }, 'Executing prompt...');
+    await pilot.executeOnce(chatId, prompt, messageId);
 
     // Finalize output adapter if needed
     if (adapter.finalize) {
@@ -274,21 +151,6 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     console.log(color(`Error: ${enriched.userMessage || enriched.message}`, 'red'));
     console.log('');
     throw error;
-  } finally {
-    // Stop both child processes
-    logger.info('Stopping nodes...');
-
-    if (execProcess) {
-      execProcess.kill('SIGTERM');
-      execProcess = null;
-    }
-
-    if (commProcess) {
-      commProcess.kill('SIGTERM');
-      commProcess = null;
-    }
-
-    logger.info('Nodes stopped');
   }
 }
 
@@ -328,7 +190,6 @@ export async function runCli(args: string[]): Promise<void> {
     console.log(color('Options:', 'bold'));
     console.log(`  --feishu-chat-id ${color('<chat_id|auto>', 'yellow')}  Send output to Feishu chat`);
     console.log(`                         ${color('auto', 'cyan')} = Use FEISHU_CLI_CHAT_ID env var`);
-    console.log(`  --port ${color('<port>', 'yellow')}                Port for internal communication (default: 3001)`);
     console.log('');
     console.log(color('Example:', 'bold'));
     console.log(`  disclaude --prompt ${color('"Create a hello world file"', 'yellow')}`);
