@@ -1,12 +1,16 @@
 /**
  * CLI mode for Disclaude.
  * Executes a single prompt from command line arguments and exits.
+ *
+ * Uses Transport abstraction for consistency with the bot architecture.
  */
 import { Config } from '../config/index.js';
 import { CLIOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
 import { createLogger } from '../utils/logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
-import { Pilot } from '../agents/pilot.js';
+import { LocalTransport } from '../transport/index.js';
+import { ExecutionNode } from '../nodes/index.js';
+import type { MessageContent } from '../transport/index.js';
 
 const logger = createLogger('CLI');
 
@@ -42,6 +46,8 @@ function color(text: string, colorName: keyof typeof colors): string {
 
 /**
  * Execute a single prompt and exit.
+ * Uses Transport abstraction with LocalTransport for CLI mode.
+ *
  * @param prompt - The user prompt to execute
  * @param feishuChatId - Optional Feishu chat ID to send output to (instead of console)
  */
@@ -80,30 +86,51 @@ async function executeOnce(
     adapter = new CLIOutputAdapter();
   }
 
-  // Create Pilot instance
-  const agentConfig = Config.getAgentConfig();
-  const pilot = new Pilot({
-    apiKey: agentConfig.apiKey,
-    model: agentConfig.model,
-    apiBaseUrl: agentConfig.apiBaseUrl,
-    isCliMode: true,
-    callbacks: {
-      sendMessage: async (_chatId: string, msg: string) => {
-        await adapter.write(msg);
-      },
-      sendCard: async (_chatId: string, card: Record<string, unknown>) => {
-        const cardJson = JSON.stringify(card, null, 2);
+  // Create LocalTransport for CLI mode
+  const transport = new LocalTransport();
+
+  // Register message handler to output messages via adapter
+  transport.onMessage(async (content: MessageContent) => {
+    switch (content.type) {
+      case 'text':
+        if (content.text) {
+          await adapter.write(content.text);
+        }
+        break;
+      case 'card':
+        const cardJson = JSON.stringify(content.card, null, 2);
         await adapter.write(cardJson);
-      },
-      sendFile: async (_chatId: string, filePath: string) => {
-        await adapter.write(`\n📎 File created: ${filePath}\n`);
-      },
-    },
+        break;
+      case 'file':
+        if (content.filePath) {
+          await adapter.write(`\n📎 File created: ${content.filePath}\n`);
+        }
+        break;
+    }
+  });
+
+  // Create Execution Node (handles Pilot/Agent)
+  const execNode = new ExecutionNode({
+    transport,
+    isCliMode: true, // CLI mode uses blocking executeOnce
   });
 
   try {
-    // Process message through Pilot (CLI mode: waits for completion)
-    await pilot.executeOnce(chatId, prompt, messageId);
+    // Start Transport
+    await transport.start();
+    logger.debug('Transport started');
+
+    // Send task to Execution Node
+    const response = await transport.sendTask({
+      taskId: messageId,
+      chatId,
+      message: prompt,
+      messageId,
+    });
+
+    if (!response.success) {
+      throw new Error(response.error || 'Task execution failed');
+    }
 
     // Finalize output adapter if needed
     if (adapter.finalize) {
@@ -112,6 +139,10 @@ async function executeOnce(
     if (adapter.clearThrottleState) {
       adapter.clearThrottleState();
     }
+
+    // Stop Transport and Execution Node
+    await execNode.stop();
+    await transport.stop();
 
     logger.info('CLI execution complete');
 
