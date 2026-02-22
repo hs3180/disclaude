@@ -597,10 +597,13 @@ export const feishuSdkTools = [
         if (result.success) {
           return toolSuccess(result.message);
         } else {
-          return toolError(result.error || 'Unknown error');
+          // Return as soft error (not isError) to avoid SDK subprocess crash
+          // The agent can retry or continue with other operations
+          return toolSuccess(`⚠️ ${result.message}`);
         }
       } catch (error) {
-        return toolError(error instanceof Error ? error.message : String(error));
+        // Return as soft error to avoid SDK subprocess crash
+        return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   ),
@@ -617,10 +620,13 @@ export const feishuSdkTools = [
         if (result.success) {
           return toolSuccess(result.message);
         } else {
-          return toolError(result.error || 'Unknown error');
+          // Return as soft error (not isError) to avoid SDK subprocess crash
+          // The agent can continue with other operations
+          return toolSuccess(`⚠️ ${result.message}`);
         }
       } catch (error) {
-        return toolError(error instanceof Error ? error.message : String(error));
+        // Return as soft error to avoid SDK subprocess crash
+        return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   ),
