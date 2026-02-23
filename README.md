@@ -36,8 +36,10 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark) wit
 
 ## Requirements
 
-- **Node.js** >= 18.0.0
+- **Node.js** >= 18.0.0 (>= 20.0.0 recommended for development)
 - **npm** or **yarn** or **pnpm**
+
+> **Note**: Some transitive dependencies require Node.js >= 20. If you encounter issues with `npm install`, use Node.js 20+ or run `npm install --production=false`.
 
 ## Quick Start
 
@@ -47,6 +49,12 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark) wit
 git clone <repo-url>
 cd disclaude
 npm install
+```
+
+The project includes an `.npmrc` file that ensures devDependencies are installed correctly. If you still encounter issues, try:
+
+```bash
+npm install --production=false
 ```
 
 ### 2. Configure
