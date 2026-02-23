@@ -34,3 +34,11 @@ export const MESSAGE_LOGGING = {
   /** Regex to extract message IDs from MD files */
   MD_PARSE_REGEX: /message_id:\s*([^\)]+)/g,
 } as const;
+
+/**
+ * Reaction emoji constants for message feedback
+ */
+export const REACTIONS = {
+  /** Emoji to indicate the bot is typing/processing */
+  TYPING: 'Keyboard',
+} as const;
