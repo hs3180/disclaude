@@ -74,9 +74,18 @@ export class Config {
    * - cli-entry.js (bundled): dist/cli-entry.js -> skills (one level up)
    * - index.js (module): dist/config/index.js -> skills (two levels up)
    *
+   * When bundled as CommonJS, import.meta.url is undefined, so we use __dirname.
+   *
    * @returns Absolute path to the skills directory
    */
   private static getBuiltinSkillsDir(): string {
+    // In CommonJS bundling, import.meta.url is undefined
+    // Use process.cwd() as fallback and resolve from install directory
+    if (typeof import.meta.url === 'undefined') {
+      // When bundled as CJS, we're in /app and skills is at /app/skills
+      return '/app/skills';
+    }
+
     const moduleUrl = fileURLToPath(import.meta.url);
     const moduleDir = path.dirname(moduleUrl);
 

@@ -231,7 +231,8 @@ function main() {
 }
 
 // Start server if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Handle both ESM (import.meta.url) and CommonJS (undefined) bundling
+if (typeof import.meta.url === 'undefined' || import.meta.url === `file://${process.argv[1]}`) {
   try {
     main();
   } catch (error) {

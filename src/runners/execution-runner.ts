@@ -37,6 +37,7 @@ interface FeedbackMessage {
  * Run Execution Node (Pilot Agent with WebSocket client).
  *
  * Connects to Communication Node via WebSocket and handles prompt execution requests.
+ * Uses a shared Pilot instance to maintain conversation context across messages.
  *
  * @param config - Optional configuration (uses CLI args if not provided)
  */
@@ -60,6 +61,50 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
   // Get agent configuration
   const agentConfig = Config.getAgentConfig();
+
+  // Map to store active sendFeedback functions per chatId
+  // This allows callbacks to route messages to the correct WebSocket context
+  const activeFeedbackChannels = new Map<string, (feedback: FeedbackMessage) => void>();
+
+  /**
+   * Create a shared Pilot instance for all messages.
+   * This ensures conversation context is maintained across messages for each chatId.
+   *
+   * The callbacks use the activeFeedbackChannels map to find the correct
+   * WebSocket feedback function for each chatId.
+   */
+  const sharedPilot = new Pilot({
+    apiKey: agentConfig.apiKey,
+    model: agentConfig.model,
+    apiBaseUrl: agentConfig.apiBaseUrl,
+    isCliMode: false, // Enable persistent sessions for context retention
+    callbacks: {
+      sendMessage: async (chatId: string, text: string) => {
+        const sendFeedback = activeFeedbackChannels.get(chatId);
+        if (sendFeedback) {
+          sendFeedback({ type: 'text', chatId, text });
+        } else {
+          logger.warn({ chatId }, 'No active feedback channel for sendMessage');
+        }
+      },
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
+        const sendFeedback = activeFeedbackChannels.get(chatId);
+        if (sendFeedback) {
+          sendFeedback({ type: 'card', chatId, card, text: description });
+        } else {
+          logger.warn({ chatId }, 'No active feedback channel for sendCard');
+        }
+      },
+      sendFile: async (chatId: string, filePath: string) => {
+        const sendFeedback = activeFeedbackChannels.get(chatId);
+        if (sendFeedback) {
+          sendFeedback({ type: 'file', chatId, filePath });
+        } else {
+          logger.warn({ chatId }, 'No active feedback channel for sendFile');
+        }
+      },
+    },
+  });
 
   /**
    * Connect to Communication Node via WebSocket.
@@ -91,40 +136,24 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
         const { chatId, prompt, messageId, senderOpenId } = message;
         logger.info({ chatId, messageId, promptLength: prompt.length }, 'Received prompt');
 
-        // Send feedback function
+        // Create send feedback function for this message
         const sendFeedback = (feedback: FeedbackMessage) => {
           if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(feedback));
           }
         };
 
-        // Create Pilot callbacks that send feedback via WebSocket
-        const callbacks: PilotCallbacks = {
-          sendMessage: async (_, text: string) => {
-            sendFeedback({ type: 'text', chatId, text });
-          },
-          sendCard: async (_, card: Record<string, unknown>, description?: string) => {
-            sendFeedback({ type: 'card', chatId, card, text: description });
-          },
-          sendFile: async (_, filePath: string) => {
-            sendFeedback({ type: 'file', chatId, filePath });
-          },
-        };
-
-        // Create Pilot instance
-        const pilot = new Pilot({
-          apiKey: agentConfig.apiKey,
-          model: agentConfig.model,
-          apiBaseUrl: agentConfig.apiBaseUrl,
-          isCliMode: true,
-          callbacks,
-        });
+        // Register feedback channel for this chatId
+        activeFeedbackChannels.set(chatId, sendFeedback);
 
         try {
-          // Execute the prompt
-          await pilot.executeOnce(chatId, prompt, messageId, senderOpenId);
+          // Use processMessage for persistent session context
+          // This is non-blocking - it queues the message and returns immediately
+          sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId);
 
-          // Send done signal
+          // Send done signal after processing
+          // Note: Since processMessage is non-blocking, we send done immediately
+          // The actual response will come through the callbacks asynchronously
           sendFeedback({ type: 'done', chatId });
         } catch (error) {
           const err = error as Error;
@@ -139,6 +168,9 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     ws.on('close', () => {
       logger.info('Disconnected from Communication Node');
       console.log('Disconnected from Communication Node');
+
+      // Clear active feedback channels on disconnect
+      activeFeedbackChannels.clear();
 
       // Reconnect if still running
       if (running) {
@@ -186,6 +218,9 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       ws.close();
       ws = undefined;
     }
+
+    // Clear active feedback channels
+    activeFeedbackChannels.clear();
 
     process.exit(0);
   };
