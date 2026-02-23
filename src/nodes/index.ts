@@ -2,14 +2,14 @@
  * Nodes module - Communication node.
  *
  * The Communication node handles Feishu WebSocket connections
- * and runs a WebSocket server for Execution Node connections.
+ * and forwards prompts to Execution Node via HTTP.
  *
  * Usage:
  * ```typescript
  * import { CommunicationNode } from './nodes/index.js';
  *
  * const commNode = new CommunicationNode({
- *   port: 3001,
+ *   executionUrl: 'http://localhost:3002',
  *   appId: '...',
  *   appSecret: '...',
  * });
