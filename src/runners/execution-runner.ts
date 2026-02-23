@@ -3,6 +3,11 @@
  *
  * Runs the Execution Node which handles Pilot/Agent tasks.
  * Connects to Communication Node via WebSocket as a client.
+ *
+ * Request Queue:
+ * - Ensures sequential execution of prompts to prevent MCP transport conflicts
+ * - When a new prompt arrives while one is processing, it's queued and executed later
+ * - This prevents "Already connected to a transport" errors from concurrent requests
  */
 
 import WebSocket from 'ws';
@@ -50,6 +55,10 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   let ws: WebSocket | undefined;
   let running = true;
   let reconnectTimer: NodeJS.Timeout | undefined;
+
+  // Request queue to prevent concurrent MCP transport connections
+  // Each execution waits for the previous one to complete
+  let executionQueue = Promise.resolve();
 
   logger.info({ commUrl }, 'Starting Execution Node');
 
@@ -111,26 +120,33 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
           },
         };
 
-        // Create Pilot instance
-        const pilot = new Pilot({
-          apiKey: agentConfig.apiKey,
-          model: agentConfig.model,
-          apiBaseUrl: agentConfig.apiBaseUrl,
-          isCliMode: true,
-          callbacks,
+        // Queue the execution to prevent concurrent MCP transport connections
+        // This ensures only one executeOnce() runs at a time
+        executionQueue = executionQueue.then(async () => {
+          // Create a fresh Pilot instance for each execution
+          const pilot = new Pilot({
+            apiKey: agentConfig.apiKey,
+            model: agentConfig.model,
+            apiBaseUrl: agentConfig.apiBaseUrl,
+            isCliMode: true,
+            callbacks,
+          });
+
+          try {
+            // Execute the prompt
+            await pilot.executeOnce(chatId, prompt, messageId, senderOpenId);
+
+            // Send done signal
+            sendFeedback({ type: 'done', chatId });
+          } catch (error) {
+            const err = error as Error;
+            logger.error({ err, chatId }, 'Execution failed');
+            sendFeedback({ type: 'error', chatId, error: err.message });
+          }
+        }).catch((err) => {
+          // Catch any unhandled errors to keep the queue running
+          logger.error({ err, chatId }, 'Unhandled error in execution queue');
         });
-
-        try {
-          // Execute the prompt
-          await pilot.executeOnce(chatId, prompt, messageId, senderOpenId);
-
-          // Send done signal
-          sendFeedback({ type: 'done', chatId });
-        } catch (error) {
-          const err = error as Error;
-          logger.error({ err, chatId }, 'Execution failed');
-          sendFeedback({ type: 'error', chatId, error: err.message });
-        }
       } catch (error) {
         logger.error({ err: error }, 'Failed to process message');
       }
