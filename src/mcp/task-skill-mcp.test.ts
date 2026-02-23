@@ -74,7 +74,7 @@ describe('Task Skill MCP', () => {
   });
 
   describe('start_dialogue tool handler', () => {
-    it('should return error when orchestrator not registered', async () => {
+    it('should return soft error when orchestrator not registered', async () => {
       const { startDialogueTool } = await import('./task-skill-mcp.js');
 
       const result = await startDialogueTool.handler(
@@ -82,8 +82,10 @@ describe('Task Skill MCP', () => {
         undefined as any
       );
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error');
+      // Should return soft error (no isError flag) to allow agent to continue
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Failed to start dialogue');
+      expect(result.content[0].text).toContain('TaskFlowOrchestrator not registered');
     });
 
     it('should return success when orchestrator is registered', async () => {
