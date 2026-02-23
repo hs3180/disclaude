@@ -305,6 +305,7 @@ export class Pilot extends BaseAgent {
    * The message will be processed by the Agent instance for this chatId.
    *
    * If no Agent state exists for this chatId, one is created automatically.
+   * If the Agent loop is not healthy (closed or not started), it will be restarted.
    *
    * @param chatId - Platform-specific chat identifier
    * @param text - User's message text
@@ -319,7 +320,7 @@ export class Pilot extends BaseAgent {
   ): void {
     this.logger.debug({ chatId, messageId, textLength: text.length }, 'Processing message');
 
-    // Get or create state for this chatId
+    // Get or create state for this chatId (handles health check and restart)
     const state = this.getOrCreateState(chatId);
 
     // Update last activity
@@ -327,6 +328,14 @@ export class Pilot extends BaseAgent {
 
     // Push message to the queue
     state.messageQueue.push({ text, messageId, senderOpenId });
+
+    // Log health status for debugging
+    if (state.closed || !state.started) {
+      this.logger.warn(
+        { chatId, closed: state.closed, started: state.started },
+        'Loop not healthy, restart triggered by getOrCreateState'
+      );
+    }
 
     // Signal the generator that a new message is available
     if (state.messageResolver) {
@@ -337,16 +346,41 @@ export class Pilot extends BaseAgent {
   /**
    * Get or create a PerChatIdState for a chatId.
    *
-   * If a state already exists and is active, it's reused.
-   * If not, a new state is created and started.
+   * Handles three scenarios:
+   * 1. Existing state is active → reuse
+   * 2. Existing state is not started → start it
+   * 3. Existing state is closed → restart (preserve queued messages)
+   * 4. No existing state → create new
    */
   private getOrCreateState(chatId: string): PerChatIdState {
     const existing = this.states.get(chatId);
 
-    // Check if existing state is still active
-    if (existing && !existing.closed && existing.started) {
-      this.logger.debug({ chatId }, 'Reusing existing state');
-      return existing;
+    if (existing) {
+      // Already active → reuse
+      if (!existing.closed && existing.started) {
+        this.logger.debug({ chatId }, 'Reusing existing active state');
+        return existing;
+      }
+
+      // Exists but not started → start it
+      if (!existing.started && !existing.closed) {
+        this.logger.info({ chatId }, 'Starting existing idle state');
+        this.startAgentLoop(chatId).catch((err) => {
+          this.logger.error({ err, chatId }, 'Failed to start Agent loop');
+        });
+        return existing;
+      }
+
+      // Exists but closed → restart (preserve queued messages)
+      if (existing.closed) {
+        this.logger.info({ chatId }, 'Restarting closed state');
+        existing.closed = false;
+        existing.started = false;
+        this.startAgentLoop(chatId).catch((err) => {
+          this.logger.error({ err, chatId }, 'Failed to restart Agent loop');
+        });
+        return existing;
+      }
     }
 
     // Create new state
@@ -494,6 +528,10 @@ ${msg.text}`;
 
   /**
    * Main Agent loop - processes SDK messages.
+   *
+   * On completion or error, the state is marked as restartable (started=false, closed=false)
+   * to allow automatic recovery on the next processMessage call.
+   * Queued messages are preserved for the next session.
    */
   private async startAgentLoop(chatId: string): Promise<void> {
     const state = this.states.get(chatId);
@@ -501,12 +539,14 @@ ${msg.text}`;
       return;
     }
 
+    // Prevent duplicate starts
     if (state.started) {
       this.logger.warn({ chatId }, 'Agent loop already started');
       return;
     }
 
     state.started = true;
+    state.closed = false;
 
     // Add MCP servers for task tools
     // Start with internal SDK MCP servers
@@ -605,16 +645,18 @@ ${msg.text}`;
 
       this.logger.info({ chatId }, 'Agent loop completed normally');
 
-      // Remove state from map on completion
-      this.states.delete(chatId);
+      // Mark as restartable instead of deleting - preserve queue for next session
+      state.started = false;
+      // Keep closed=false to allow restart on next message
     } catch (error) {
       const err = error as Error;
       this.logger.error({ err, chatId }, 'Agent loop error');
 
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`);
 
-      // Remove state from map on error
-      this.states.delete(chatId);
+      // Mark as restartable instead of deleting - preserve queue for next session
+      state.started = false;
+      state.closed = false; // Allow restart
     }
   }
 
