@@ -10,7 +10,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
-import { DEDUPLICATION } from '../config/constants.js';
+import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { createLogger } from '../utils/logger.js';
 import { attachmentManager } from '../feishu/attachment-manager.js';
@@ -328,6 +328,18 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
+   * Add typing reaction to indicate processing started.
+   * Provides instant feedback to the user that their message is being handled.
+   *
+   * @param messageId - The message ID to add reaction to
+   */
+  private async addTypingReaction(messageId: string): Promise<void> {
+    if (this.messageSender) {
+      await this.messageSender.addReaction(messageId, REACTIONS.TYPING);
+    }
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -371,9 +383,7 @@ export class CommunicationNode extends EventEmitter {
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
       // Add typing reaction for file messages too
-      if (this.messageSender) {
-        await this.messageSender.addReaction(message_id, 'Keyboard');
-      }
+      await this.addTypingReaction(message_id);
 
       const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
       if (!result.success) {
@@ -448,11 +458,7 @@ export class CommunicationNode extends EventEmitter {
     logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
 
     // Add typing reaction to indicate processing started
-    // This provides instant feedback to the user
-    if (this.messageSender) {
-      // Use "Keyboard" emoji to indicate typing/processing
-      await this.messageSender.addReaction(message_id, 'Keyboard');
-    }
+    await this.addTypingReaction(message_id);
 
     // Log message
     await messageLogger.logIncomingMessage(
