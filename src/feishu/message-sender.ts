@@ -134,4 +134,34 @@ export class MessageSender {
       // Don't throw - file sending failure shouldn't break the main flow
     }
   }
+
+  /**
+   * Add a reaction emoji to a message.
+   * Used to provide instant feedback when the bot starts processing a message.
+   *
+   * @param messageId - The message ID to add reaction to
+   * @param emoji - Emoji type (e.g., 'Keyboard', 'Robot', 'CheckMark')
+   * @returns true if successful, false otherwise
+   */
+  async addReaction(messageId: string, emoji: string): Promise<boolean> {
+    try {
+      await this.client.im.messageReaction.create({
+        path: {
+          message_id: messageId,
+        },
+        data: {
+          reaction_type: {
+            emoji_type: emoji,
+          },
+        },
+      });
+
+      this.logger.debug({ messageId, emoji }, 'Reaction added');
+      return true;
+    } catch (error) {
+      // Log error but don't throw - reaction failure shouldn't break message processing
+      this.logger.warn({ err: error, messageId, emoji }, 'Failed to add reaction');
+      return false;
+    }
+  }
 }

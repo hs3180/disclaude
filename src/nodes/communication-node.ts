@@ -370,6 +370,11 @@ export class CommunicationNode extends EventEmitter {
 
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+      // Add typing reaction for file messages too
+      if (this.messageSender) {
+        await this.messageSender.addReaction(message_id, 'Keyboard');
+      }
+
       const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
       if (!result.success) {
         await this.sendMessage(
@@ -441,6 +446,13 @@ export class CommunicationNode extends EventEmitter {
     }
 
     logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
+
+    // Add typing reaction to indicate processing started
+    // This provides instant feedback to the user
+    if (this.messageSender) {
+      // Use "Keyboard" emoji to indicate typing/processing
+      await this.messageSender.addReaction(message_id, 'Keyboard');
+    }
 
     // Log message
     await messageLogger.logIncomingMessage(
