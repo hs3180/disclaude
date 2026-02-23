@@ -29,8 +29,9 @@ services:
     container_name: disclaude-comm
     restart: unless-stopped
 
-    # Command: run Communication Node
-    command: ["node", "dist/cli-entry.js", "start", "--mode", "comm"]
+    # Command: run Communication Node with PM2
+    # PM2 provides process management and logging support
+    command: ["pm2-runtime", "start", "ecosystem.config.docker.cjs", "--", "comm"]
 
     # Network mode: host allows container to access host's CDP endpoint
     network_mode: host
@@ -76,8 +77,9 @@ services:
     container_name: disclaude-exec
     restart: unless-stopped
 
-    # Command: run Execution Node, connect to Communication Node
-    command: ["node", "dist/cli-entry.js", "start", "--mode", "exec", "--comm-url", "ws://localhost:3001"]
+    # Command: run Execution Node with PM2
+    # PM2 provides process management and logging support
+    command: ["pm2-runtime", "start", "ecosystem.config.docker.cjs", "--", "exec"]
 
     # Network mode: host for local connection to comm node
     network_mode: host

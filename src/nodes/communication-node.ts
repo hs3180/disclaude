@@ -468,8 +468,15 @@ export class CommunicationNode extends EventEmitter {
         const { exec } = await import('node:child_process');
         const { promisify } = await import('node:util');
         const execAsync = promisify(exec);
-        await execAsync('pm2 restart disclaude-feishu');
-        logger.info('PM2 service restarted successfully');
+
+        // Detect Docker environment and use appropriate PM2 app name
+        // Docker: disclaude-docker (from ecosystem.config.docker.cjs)
+        // Local: disclaude-feishu (from ecosystem.config.cjs)
+        const isDocker = require('fs').existsSync('/.dockerenv');
+        const pm2AppName = isDocker ? 'disclaude-docker' : 'disclaude-feishu';
+
+        await execAsync(`pm2 restart ${pm2AppName}`);
+        logger.info({ pm2AppName, isDocker }, 'PM2 service restarted successfully');
       } catch (error) {
         logger.error({ err: error }, 'Failed to restart PM2 service');
       }

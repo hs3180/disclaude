@@ -97,6 +97,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get update && apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
+# Install PM2 globally for process management and logging
+RUN npm install -g pm2@latest
+
 # Copy built artifacts from builder and production dependencies from deps
 COPY --from=builder /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
@@ -119,12 +122,15 @@ RUN mkdir -p /app/workspace /app/logs /app/.claude && \
 # Set environment variables
 ENV NODE_ENV=production
 
-# Health check - check if the node process is running
+# Health check - check if PM2 process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pgrep -f "node.*cli-entry.js" > /dev/null || exit 1
+    CMD pm2 pid disclaude-docker > /dev/null 2>&1 || exit 1
 
 # Switch to non-root user
 USER disclaude
 
-# Default command: run Feishu bot (communication mode)
-CMD ["node", "dist/cli-entry.js", "start", "--mode", "comm"]
+# Default command: run with PM2 for process management and logging
+# Logs will be available at:
+#   - /app/logs/disclaude-combined.log (pino application logs)
+#   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
+CMD ["pm2-runtime", "start", "ecosystem.config.docker.cjs"]
