@@ -2,6 +2,10 @@
 # Disclaude Docker Compose Configuration
 # =============================================================================
 #
+# Architecture: Two-node distributed system
+# - Communication Node: Handles Feishu WebSocket connections
+# - Execution Node: Handles Pilot/Agent task execution
+#
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
 #   # Edit disclaude.config.yaml with your API keys and settings
@@ -16,46 +20,78 @@
 # =============================================================================
 
 services:
-  disclaude:
+  # Communication Node (Feishu WebSocket handler)
+  comm:
     build:
       context: .
       dockerfile: Dockerfile
     image: disclaude:latest
-    container_name: disclaude-feishu
+    container_name: disclaude-comm
     restart: unless-stopped
 
+    # Command: run Communication Node
+    command: ["node", "dist/cli-entry.js", "start", "--mode", "comm"]
+
     # Network mode: host allows container to access host's CDP endpoint
-    # Alternative: use extra_hosts for host.docker.internal (see comments below)
     network_mode: host
 
-    # Environment variables (optional overrides)
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
-      # GitHub token for git operations (clone private repos, create PRs, etc.)
-      # Create at: https://github.com/settings/tokens
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      # Note: CDP endpoint for Playwright MCP is configured in disclaude.config.yaml
-      # via the --cdp-endpoint argument, not as an environment variable.
-      # For network_mode: host, use: http://localhost:9222
-      # For Docker Desktop, use: http://host.docker.internal:9222
 
-    # For Docker Desktop on Mac/Windows, uncomment this and remove network_mode: host
-    # extra_hosts:
-    #   - "host.docker.internal:host-gateway"
-
-    # Mount configuration file (required)
     volumes:
-      # Mount your configuration file with API keys
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
-
-      # Persist workspace directory
       - ./workspace:/app/workspace
-
-      # Persist logs
       - ./logs:/app/logs
 
-    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Execution Node (Pilot/Agent handler)
+  exec:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: disclaude:latest
+    container_name: disclaude-exec
+    restart: unless-stopped
+
+    # Command: run Execution Node, connect to Communication Node
+    command: ["node", "dist/cli-entry.js", "start", "--mode", "exec", "--comm-url", "ws://localhost:3001"]
+
+    # Network mode: host for local connection to comm node
+    network_mode: host
+
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+
+    volumes:
+      - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
+      - ./workspace:/app/workspace
+      - ./logs:/app/logs
+
     deploy:
       resources:
         limits:
@@ -65,17 +101,20 @@ services:
           cpus: '0.5'
           memory: 512M
 
-    # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-    # Health check
     healthcheck:
       test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    # Depends on comm node
+    depends_on:
+      comm:
+        condition: service_healthy

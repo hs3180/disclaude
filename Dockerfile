@@ -126,5 +126,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Switch to non-root user
 USER disclaude
 
-# Default command: run Feishu bot directly (keeps container foreground)
-CMD ["node", "dist/cli-entry.js", "feishu"]
+# Default command: run Feishu bot (communication mode)
+CMD ["node", "dist/cli-entry.js", "start", "--mode", "comm"]
