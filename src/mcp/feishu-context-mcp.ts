@@ -571,16 +571,6 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
   };
 }
 
-/**
- * Helper to create an error tool result.
- */
-function toolError(errorMessage: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
-  return {
-    content: [{ type: 'text', text: `❌ Error: ${errorMessage}` }],
-    isError: true,
-  };
-}
-
 // SDK-compatible tools array
 export const feishuSdkTools = [
   tool(

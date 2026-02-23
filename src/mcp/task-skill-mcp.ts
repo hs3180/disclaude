@@ -62,16 +62,6 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 }
 
 /**
- * Helper to create an error tool result.
- */
-function toolError(errorMessage: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
-  return {
-    content: [{ type: 'text', text: `❌ Error: ${errorMessage}` }],
-    isError: true,
-  };
-}
-
-/**
  * Tool: start_dialogue
  *
  * Starts the Dialogue phase (Evaluator → Executor loop) after Pilot creates Task.md.
@@ -141,7 +131,9 @@ DO NOT call this tool multiple times for the same task.`,
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId }, 'start_dialogue failed');
 
-      return toolError(errorMessage);
+      // Return as soft error (not isError) to allow agent to continue and retry
+      // Include detailed error info for agent self-correction
+      return toolSuccess(`⚠️ Failed to start dialogue: ${errorMessage}\n\nPlease check:\n1. Task.md file exists and is valid\n2. Message ID and Chat ID are correct\n3. System is properly initialized`);
     }
   }
 );

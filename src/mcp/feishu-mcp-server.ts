@@ -86,12 +86,13 @@ async function send_file_to_feishu(args: { filePath: string; chatId: string }) {
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
+    // Return as soft error (no isError flag) to allow agent to continue
+    // Include detailed error info for agent self-correction
     return {
       content: [{
         type: 'text',
-        text: `❌ Failed to send file: ${errorMessage}`,
+        text: `⚠️ Failed to send file: ${errorMessage}\n\nPlease verify:\n- File path is correct and file exists\n- Chat ID is valid\n- Feishu credentials are configured`,
       }],
-      isError: true,
     };
   }
 }
