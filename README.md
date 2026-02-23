@@ -38,12 +38,31 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark) wit
 
 - **Node.js** >= 18.0.0 (>= 20.0.0 recommended for development)
 - **npm** or **yarn** or **pnpm**
+- **Claude CLI** (for Claude Agent SDK functionality)
 
 > **Note**: Some transitive dependencies require Node.js >= 20. If you encounter issues with `npm install`, use Node.js 20+ or run `npm install --production=false`.
 
+### Install Claude CLI
+
+Claude Agent SDK requires the Claude CLI to be installed on your system. Install it with one of the following methods:
+
+```bash
+# Using npm (recommended)
+npm install -g @anthropic-ai/claude-code
+
+# Or using the official installer
+curl -fsSL https://claude.ai/install.sh | sh
+```
+
+After installation, verify:
+
+```bash
+claude --version
+```
+
 ## Quick Start
 
-### 1. Install
+### 1. Install Dependencies
 
 ```bash
 git clone <repo-url>
@@ -57,7 +76,15 @@ The project includes an `.npmrc` file that ensures devDependencies are installed
 npm install --production=false
 ```
 
-### 2. Configure
+### 2. Install Claude CLI (Required)
+
+Make sure Claude CLI is installed (see [Requirements](#requirements) for installation instructions). Without it, you'll encounter errors like:
+
+```
+Error: Claude Code process exited with code 1
+```
+
+### 3. Configure
 
 Copy the example configuration file and customize it:
 
@@ -88,7 +115,7 @@ agent:
 
 For full configuration options (logging, MCP servers, etc.), see `disclaude.config.example.yaml`.
 
-### 3. Run
+### 4. Run
 
 ```bash
 # Development with auto-reload
