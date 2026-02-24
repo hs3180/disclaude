@@ -47,6 +47,8 @@ interface PromptMessage {
   prompt: string;
   messageId: string;
   senderOpenId?: string;
+  /** Parent message ID for thread replies */
+  parentId?: string;
 }
 
 interface CommandMessage {
@@ -62,6 +64,8 @@ interface FeedbackMessage {
   card?: Record<string, unknown>;
   filePath?: string;
   error?: string;
+  /** Parent message ID for thread replies */
+  parentId?: string;
 }
 
 /**
@@ -216,7 +220,7 @@ export class CommunicationNode extends EventEmitter {
     }
 
     this.execWs.send(JSON.stringify(message));
-    logger.info({ chatId: message.chatId, messageId: message.messageId }, 'Prompt sent to Execution Node');
+    logger.info({ chatId: message.chatId, messageId: message.messageId, parentId: message.parentId }, 'Prompt sent to Execution Node');
   }
 
   /**
@@ -237,21 +241,21 @@ export class CommunicationNode extends EventEmitter {
    * Handle feedback from Execution Node.
    */
   private async handleFeedback(message: FeedbackMessage): Promise<void> {
-    const { chatId, type, text, card, filePath, error } = message;
+    const { chatId, type, text, card, filePath, error, parentId } = message;
 
     try {
       switch (type) {
         case 'text':
           if (text) {
-            await this.sendMessage(chatId, text);
+            await this.sendMessage(chatId, text, parentId);
           }
           break;
         case 'card':
-          await this.sendCard(chatId, card || {});
+          await this.sendCard(chatId, card || {}, undefined, parentId);
           break;
         case 'file':
           if (filePath) {
-            await this.sendFileToUser(chatId, filePath);
+            await this.sendFileToUser(chatId, filePath, parentId);
           }
           break;
         case 'done':
@@ -259,7 +263,7 @@ export class CommunicationNode extends EventEmitter {
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');
-          await this.sendMessage(chatId, `❌ 执行错误: ${error || 'Unknown error'}`);
+          await this.sendMessage(chatId, `❌ 执行错误: ${error || 'Unknown error'}`, parentId);
           break;
       }
     } catch (err) {
@@ -319,8 +323,9 @@ export class CommunicationNode extends EventEmitter {
 
   /**
    * Send a file to Feishu user.
+   * Note: Thread replies for files require Issue #68 implementation.
    */
-  async sendFileToUser(chatId: string, filePath: string): Promise<void> {
+  async sendFileToUser(chatId: string, filePath: string, _parentId?: string): Promise<void> {
     if (!this.messageSender) {
       this.getClient();
     }
@@ -328,6 +333,7 @@ export class CommunicationNode extends EventEmitter {
     if (!sender) {
       throw new Error('MessageSender not initialized');
     }
+    // TODO: Pass parentId to sendFile when Issue #68 is implemented
     await sender.sendFile(chatId, filePath);
   }
 
@@ -373,7 +379,7 @@ export class CommunicationNode extends EventEmitter {
 
     if (!message) return;
 
-    const { message_id, chat_id, content, message_type, create_time } = message;
+    const { message_id, chat_id, content, message_type, create_time, parent_id } = message;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
@@ -437,6 +443,7 @@ export class CommunicationNode extends EventEmitter {
           prompt: enhancedPrompt,
           messageId: `${message_id}-file`,
           senderOpenId: this.extractOpenId(sender),
+          parentId: parent_id,
         });
       }
       return;
@@ -538,6 +545,7 @@ export class CommunicationNode extends EventEmitter {
       prompt: text,
       messageId: message_id,
       senderOpenId: this.extractOpenId(sender),
+      parentId: parent_id,
     });
   }
 
