@@ -60,6 +60,7 @@ vi.mock('../task/skill-loader.js', () => ({
 // Mock feishu-context-mcp
 vi.mock('../mcp/feishu-context-mcp.js', () => ({
   feishuSdkMcpServer: {},
+  createFeishuSdkMcpServer: vi.fn(() => ({})),
 }));
 
 describe('ReporterConfig type', () => {
@@ -177,8 +178,7 @@ describe('buildEventFeedbackPrompt', () => {
       taskId: 'task-123',
       iteration: 1,
     });
-    expect(prompt).toContain('Task Started');
-    expect(prompt).toContain('task-123');
+    expect(prompt).toContain('开始');
     expect(prompt).toContain('Test Task');
   });
 
@@ -189,7 +189,7 @@ describe('buildEventFeedbackPrompt', () => {
       iteration: 2,
       chatId: 'chat-456',
     });
-    expect(prompt).toContain('Task Completed');
+    expect(prompt).toContain('完成');
     expect(prompt).toContain('chat-456');
     expect(prompt).toContain('send_user_feedback');
   });
@@ -200,7 +200,7 @@ describe('buildEventFeedbackPrompt', () => {
       taskId: 'task-123',
       iteration: 2,
     });
-    expect(prompt).toContain('Task Completed');
+    expect(prompt).toContain('完成');
     // CLI mode doesn't require send_user_feedback
   });
 
@@ -211,7 +211,7 @@ describe('buildEventFeedbackPrompt', () => {
       iteration: 1,
       chatId: 'chat-456',
     });
-    expect(prompt).toContain('Task Failed');
+    expect(prompt).toContain('失败');
     expect(prompt).toContain('Something failed');
     expect(prompt).toContain('send_user_feedback');
   });
@@ -222,7 +222,7 @@ describe('buildEventFeedbackPrompt', () => {
       taskId: 'task-123',
       iteration: 1,
     });
-    expect(prompt).toContain('Task Failed');
+    expect(prompt).toContain('错误');
     expect(prompt).toContain('Something failed');
     expect(prompt).not.toContain('send_user_feedback');
   });
@@ -234,7 +234,7 @@ describe('buildEventFeedbackPrompt', () => {
       iteration: 1,
       chatId: 'chat-456',
     });
-    expect(prompt).toContain('Progress Update');
+    expect(prompt).toContain('进度');
     expect(prompt).toContain('chat-456');
     expect(prompt).toContain('send_user_feedback');
   });
@@ -245,7 +245,7 @@ describe('buildEventFeedbackPrompt', () => {
       taskId: 'task-123',
       iteration: 1,
     });
-    expect(prompt).toContain('Progress Update');
+    expect(prompt).toContain('Progress');
     expect(prompt).toContain('Progress update');
   });
 

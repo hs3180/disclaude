@@ -43,6 +43,20 @@ import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 export interface ReporterConfig extends BaseAgentConfig {}
 
 /**
+ * Content deduplication state for avoiding repetitive feedback.
+ */
+interface DeduplicationState {
+  /** Recent content hashes (for similarity detection) */
+  recentHashes: Set<string>;
+  /** Recent action keywords (e.g., "读取", "读取", "读取") */
+  recentActions: string[];
+  /** Timestamp of last output */
+  lastOutputTime: number;
+  /** Count of similar small actions (for batching) */
+  pendingSmallActions: number;
+}
+
+/**
  * Reporter - Communication and instruction generation specialist.
  *
  * Extends BaseAgent to inherit:
@@ -52,13 +66,87 @@ export interface ReporterConfig extends BaseAgentConfig {}
  */
 export class Reporter extends BaseAgent {
   private skill?: ParsedSkill;
+  private deduplicationState: DeduplicationState;
 
   constructor(config: ReporterConfig) {
     super(config);
+    this.deduplicationState = {
+      recentHashes: new Set(),
+      recentActions: [],
+      lastOutputTime: 0,
+      pendingSmallActions: 0,
+    };
   }
 
   protected getAgentName(): string {
     return 'Reporter';
+  }
+
+  /**
+   * Generate a simple hash for content deduplication.
+   * Focuses on action keywords rather than full content.
+   */
+  private static hashContent(content: string): string {
+    // Extract key action words
+    const actionPatterns = [
+      /读取|查看|打开|编辑|修改|创建|删除|写入|执行|运行|搜索|查找|安装|构建|测试/g,
+    ];
+    const actions = actionPatterns
+      .flatMap((p) => content.match(p) || [])
+      .slice(0, 5)
+      .join(',');
+
+    // Also include file paths if present
+    const filePaths = (content.match(/[\w/.-]+\.(ts|js|json|md|yaml|yml)/gi) || [])
+      .slice(0, 3)
+      .join(',');
+
+    return `${actions}|${filePaths}`;
+  }
+
+  /**
+   * Check if content should be skipped (duplicate or similar to recent).
+   * Returns true if should skip, false otherwise.
+   */
+  private shouldSkipContent(content: string): boolean {
+    const hash = Reporter.hashContent(content);
+    const now = Date.now();
+
+    // Skip if identical hash was seen recently (within 10s)
+    if (this.deduplicationState.recentHashes.has(hash)) {
+      if (now - this.deduplicationState.lastOutputTime < 10000) {
+        this.deduplicationState.pendingSmallActions++;
+        return true;
+      }
+    }
+
+    // Update state
+    this.deduplicationState.recentHashes.add(hash);
+    this.deduplicationState.lastOutputTime = now;
+
+    // Keep only last 10 hashes
+    if (this.deduplicationState.recentHashes.size > 10) {
+      const arr = Array.from(this.deduplicationState.recentHashes);
+      this.deduplicationState.recentHashes = new Set(arr.slice(-10));
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if there are pending batched actions to report.
+   */
+  hasPendingActions(): boolean {
+    return this.deduplicationState.pendingSmallActions > 0;
+  }
+
+  /**
+   * Get and reset pending action count.
+   */
+  getAndResetPendingActions(): number {
+    const count = this.deduplicationState.pendingSmallActions;
+    this.deduplicationState.pendingSmallActions = 0;
+    return count;
   }
 
   /**
@@ -199,6 +287,10 @@ export class Reporter extends BaseAgent {
   /**
    * Handle all events by generating appropriate prompts and invoking Reporter.
    *
+   * Implements deduplication for 'output' events (Issue #7):
+   * - Skips similar content within 10 seconds
+   * - Batches small actions for summary reporting
+   *
    * @param event - Any Executor event
    * @param context - Reporter context
    * @yields AgentMessage - Reporter-generated messages
@@ -207,6 +299,17 @@ export class Reporter extends BaseAgent {
     event: TaskProgressEvent,
     context: ReporterContext
   ): AsyncGenerator<AgentMessage> {
+    // Deduplication for output events (Issue #7)
+    if (event.type === 'output' && context.chatId) {
+      if (this.shouldSkipContent(event.content)) {
+        this.logger.debug(
+          { taskId: context.taskId, contentHash: Reporter.hashContent(event.content) },
+          'Skipping duplicate output event'
+        );
+        return;
+      }
+    }
+
     const prompt = Reporter.buildEventFeedbackPrompt({
       event,
       taskId: context.taskId,
@@ -266,192 +369,157 @@ export class Reporter extends BaseAgent {
 
   /**
    * Build prompt for output events (Executor progress updates).
+   *
+   * Optimized for concise feedback (Issue #7):
+   * - Shorter prompt template
+   * - Clear guidance for brief output
+   * - Action-oriented formatting
    */
   private static buildOutputPrompt(
     event: TaskProgressEvent & { type: 'output' },
-    taskId: string,
-    iteration: number,
+    _taskId: string,
+    _iteration: number,
     chatId?: string
   ): string {
     if (!chatId) {
       // No chatId - return minimal prompt for CLI mode
-      return `## Progress Update
+      return `## Progress
 
-**Content**: ${event.content.substring(0, 500)}${event.content.length > 500 ? '...' : ''}`;
+${event.content.substring(0, 300)}${event.content.length > 300 ? '...' : ''}`;
     }
 
-    // Escape content for safe inclusion in prompt
-    const escapedContent = event.content.replace(/`/g, '\\`').substring(0, 1000);
+    // Truncate content for brevity
+    const content = event.content.substring(0, 500);
 
-    return `## Progress Update
+    return `## 进度更新
 
-**Task ID**: ${taskId}
-**Iteration**: ${iteration}
-**Message Type**: ${event.messageType}
-
-**Content**:
-\`\`\`
-${escapedContent}
-\`\`\`
+${content}
 
 ---
 
-## 🎯 Your Task
+**发送反馈** (使用 send_user_feedback):
 
-Send this progress update to the user using \`send_user_feedback\`:
-
-1. **Summarize** the progress in a concise, user-friendly way
-2. **Use the tool** to send feedback:
-
-\`\`\`
-send_user_feedback({
-  format: "text",
-  content: "Your summary here",
-  chatId: "${chatId}"
-})
-\`\`\`
+**要求**:
+- 🎯 **精简** - 一句话说清楚做了什么
+- 📄 **格式** - 用 emoji + 简短描述，例如: \`📄 读取 src/foo.ts\`
+- ⚡ **合并** - 如果是连续的小操作，合并报告
 
 **Chat ID**: \`${chatId}\`
 
-**⚠️ IMPORTANT**:
-- You MUST use the send_user_feedback tool
-- Keep the message concise and informative
-- Do NOT just output text - use the tool!`;
+直接调用工具发送，不要输出额外文字。`;
   }
 
   /**
    * Build prompt for start events.
+   *
+   * Optimized for concise feedback (Issue #7).
    */
   private static buildStartPrompt(
     event: TaskProgressEvent & { type: 'start' },
-    taskId: string,
-    iteration: number,
+    _taskId: string,
+    _iteration: number,
     chatId?: string
   ): string {
     if (!chatId) {
-      return `## Task Started
-
-**Task ID**: ${taskId}
-**Iteration**: ${iteration}
-**Task**: ${event.title}
-
-Inform the user that task execution has started.`;
+      return `⚡ 开始: ${event.title}`;
     }
 
-    return `## Task Started
+    return `## 任务开始
 
-**Task ID**: ${taskId}
-**Iteration**: ${iteration}
-**Task**: ${event.title}
+**任务**: ${event.title}
 
 ---
 
-## 🎯 Your Task
-
-Send a start notification to the user using \`send_user_feedback\`:
+用 send_user_feedback 发送简短通知:
 
 \`\`\`
 send_user_feedback({
   format: "text",
-  content: "⚡ Task started: ${event.title}",
+  content: "⚡ ${event.title}",
   chatId: "${chatId}"
 })
 \`\`\`
 
 **Chat ID**: \`${chatId}\`
 
-**⚠️ IMPORTANT**: You MUST use the send_user_feedback tool. Do not just output text.`;
+直接调用工具。`;
   }
 
   /**
    * Build prompt for complete events.
+   *
+   * Optimized for concise feedback (Issue #7).
    */
   private static buildCompletePrompt(
     event: TaskProgressEvent & { type: 'complete' },
-    taskId: string,
+    _taskId: string,
     _iteration: number,
     chatId?: string
   ): string {
     if (!chatId) {
-      return `## Task Completed
-
-**Task ID**: ${taskId}
-**Summary File**: ${event.summaryFile}
-
-Send a completion message to the user.`;
+      return `✅ 完成: ${event.summaryFile}`;
     }
 
-    return `## Task Completed
+    const filesInfo = event.files.length > 0 ? `\n**文件**: ${event.files.join(', ')}` : '';
 
-**Task ID**: ${taskId}
-**Summary File**: ${event.summaryFile}
-**Files Created**: ${event.files.join(', ') || 'None'}
+    return `## 任务完成
 
-The task execution has completed successfully.
+**摘要**: ${event.summaryFile}${filesInfo}
 
 ---
 
-## 🎯 Your Task
+1. 如有报告文件，用 send_file_to_feishu 发送
+2. 用 send_user_feedback 发送完成通知
 
-1. **Check for report files** in the task directory (files ending in \`.md\` that are summaries/reports)
-2. **Send report files** using \`send_file_to_feishu\` if any exist
-3. **Send completion message** using \`send_user_feedback\`
-
-Example:
 \`\`\`
 send_user_feedback({
   format: "text",
-  content: "✅ Task completed successfully!",
+  content: "✅ 任务完成",
   chatId: "${chatId}"
 })
 \`\`\`
 
 **Chat ID**: \`${chatId}\`
 
-**⚠️ IMPORTANT**: You MUST use the tools. Do not just output text.`;
+直接调用工具。`;
   }
 
   /**
    * Build prompt for error events.
+   *
+   * Optimized for concise feedback (Issue #7).
    */
   private static buildErrorPrompt(
     event: TaskProgressEvent & { type: 'error' },
-    taskId: string,
+    _taskId: string,
     _iteration: number,
     chatId?: string
   ): string {
     if (!chatId) {
-      return `## Task Failed
-
-**Error**: ${event.error}
-
-Report the error to the user.`;
+      return `❌ 错误: ${event.error}`;
     }
 
     const escapedError = event.error.replace(/"/g, '\\"');
 
-    return `## Task Failed
+    return `## 任务失败
 
-**Task ID**: ${taskId}
-**Error**: ${event.error}
+**错误**: ${event.error}
 
 ---
 
-## 🎯 Your Task
-
-Send error feedback to the user using \`send_user_feedback\`:
+用 send_user_feedback 发送错误通知:
 
 \`\`\`
 send_user_feedback({
   format: "text",
-  content: "❌ Task execution failed: ${escapedError}",
+  content: "❌ ${escapedError}",
   chatId: "${chatId}"
 })
 \`\`\`
 
 **Chat ID**: \`${chatId}\`
 
-**⚠️ IMPORTANT**: You MUST use the send_user_feedback tool. Do not just output text.`;
+直接调用工具。`;
   }
 
   /**
