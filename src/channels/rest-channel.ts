@@ -142,8 +142,33 @@ export class RestChannel extends EventEmitter implements IChannel {
   }
 
   async sendMessage(message: OutgoingMessage): Promise<void> {
-    // For sync mode: buffer the response
     const messageId = this.chatToMessage.get(message.chatId);
+
+    // Handle 'done' type - task completion signal for sync mode
+    if (message.type === 'done') {
+      const pending = this.pendingResponses.get(message.chatId);
+      if (pending) {
+        // Get buffered response
+        const buffer = messageId ? this.responseBuffers.get(messageId) : undefined;
+        const responseText = buffer ? buffer.join('\n') : '';
+
+        // Clear timeout and resolve
+        clearTimeout(pending.timeout);
+        pending.resolve(responseText);
+
+        // Cleanup maps
+        this.pendingResponses.delete(message.chatId);
+        if (messageId) {
+          this.responseBuffers.delete(messageId);
+        }
+        this.chatToMessage.delete(message.chatId);
+
+        logger.debug({ chatId: message.chatId, messageId }, 'Task completed, sync response resolved');
+      }
+      return;
+    }
+
+    // For sync mode: buffer text responses
     if (messageId && message.type === 'text') {
       const buffer = this.responseBuffers.get(messageId);
       if (buffer) {

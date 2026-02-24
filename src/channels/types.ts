@@ -67,8 +67,12 @@ export interface MessageAttachment {
 
 /**
  * Outgoing message content types.
+ * - 'text': Text message
+ * - 'card': Interactive card (platform-specific)
+ * - 'file': File attachment
+ * - 'done': Task completion signal (for REST sync mode)
  */
-export type OutgoingContentType = 'text' | 'card' | 'file';
+export type OutgoingContentType = 'text' | 'card' | 'file' | 'done';
 
 /**
  * Outgoing message to be sent through a channel.
@@ -94,6 +98,12 @@ export interface OutgoingMessage {
 
   /** Parent message ID for thread replies */
   parentId?: string;
+
+  /** Task success status (for type 'done') */
+  success?: boolean;
+
+  /** Error message if task failed (for type 'done') */
+  error?: string;
 }
 
 /**
