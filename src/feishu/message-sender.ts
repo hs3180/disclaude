@@ -13,6 +13,7 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
+import path from 'path';
 import { buildTextContent } from './content-builder.js';
 import { messageLogger } from './message-logger.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
@@ -122,15 +123,25 @@ export class MessageSender {
         messageData.parent_id = parentId;
       }
 
-      await this.client.im.message.create({
+      const response = await this.client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
         },
         data: messageData,
       });
 
+      // Track outgoing bot message in history
+      const botMessageId = response?.data?.message_id;
+      if (botMessageId) {
+        // Log card content to persistent MD file
+        const cardContent = description
+          ? `[Card] ${description}\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``
+          : `[Interactive Card]\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``;
+        await messageLogger.logOutgoingMessage(botMessageId, chatId, cardContent);
+      }
+
       const desc = description ? ` (${description})` : '';
-      this.logger.debug({ chatId, description: desc, parentId }, 'Card sent');
+      this.logger.debug({ chatId, description: desc, parentId, botMessageId }, 'Card sent');
     } catch (error) {
       handleError(error, {
         category: ErrorCategory.API,
@@ -155,6 +166,16 @@ export class MessageSender {
     try {
       const { uploadAndSendFile } = await import('./file-uploader.js');
       const fileSize = await uploadAndSendFile(this.client, filePath, chatId);
+
+      // Log file message to persistent MD file
+      const fileName = path.basename(filePath);
+      const fileContent = `[File] ${fileName}\nPath: ${filePath}`;
+      await messageLogger.logOutgoingMessage(
+        `file_${Date.now()}`, // File messages may not have a message_id
+        chatId,
+        fileContent
+      );
+
       this.logger.info({ chatId, filePath, fileSize }, 'File sent to user');
     } catch (error) {
       this.logger.error({ err: error, filePath, chatId }, 'Failed to send file to user');
