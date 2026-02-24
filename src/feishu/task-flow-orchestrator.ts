@@ -20,8 +20,8 @@ import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
 
 export interface MessageCallbacks {
-  sendMessage: (chatId: string, text: string) => Promise<void>;
-  sendCard: (chatId: string, card: Record<string, unknown>) => Promise<void>;
+  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
+  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
   sendFile: (chatId: string, filePath: string) => Promise<void>;
 }
 
@@ -65,8 +65,8 @@ export class TaskFlowOrchestrator {
     void this.runDialogue(chatId, messageId, text, taskPath, agentConfig)
       .catch((error) => {
         this.logger.error({ err: error, chatId, messageId }, 'Async dialogue failed');
-        // Send error notification to user
-        this.messageCallbacks.sendMessage(chatId, `❌ 后台任务执行失败: ${error instanceof Error ? error.message : String(error)}`)
+        // Send error notification to user (as thread reply)
+        this.messageCallbacks.sendMessage(chatId, `❌ 后台任务执行失败: ${error instanceof Error ? error.message : String(error)}`, messageId)
           .catch((sendError) => {
             this.logger.error({ err: sendError }, 'Failed to send error notification');
           });
@@ -110,14 +110,15 @@ export class TaskFlowOrchestrator {
     });
 
     // Create output adapter for this chat
+    // Pass messageId as parentMessageId for thread replies
     const adapter = new FeishuOutputAdapter({
       sendMessage: async (id: string, msg: string) => {
         messageTracker.recordMessageSent();
-        await this.messageCallbacks.sendMessage(id, msg);
+        await this.messageCallbacks.sendMessage(id, msg, messageId);
       },
       sendCard: async (id: string, card: Record<string, unknown>) => {
         messageTracker.recordMessageSent();
-        await this.messageCallbacks.sendCard(id, card);
+        await this.messageCallbacks.sendCard(id, card, undefined, messageId);
       },
       chatId,
       sendFile: this.messageCallbacks.sendFile.bind(null, chatId),
@@ -167,7 +168,7 @@ export class TaskFlowOrchestrator {
       });
 
       const errorMsg = `❌ ${enriched.userMessage || enriched.message}`;
-      await this.messageCallbacks.sendMessage(chatId, errorMsg);
+      await this.messageCallbacks.sendMessage(chatId, errorMsg, messageId);
     } finally {
       // Clean up message tracking callback to prevent memory leaks
       const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
@@ -178,7 +179,7 @@ export class TaskFlowOrchestrator {
         const taskId = path.basename(taskPath, '.md');
         const warning = messageTracker.buildWarning(completionReason, taskId);
         this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
-        await this.messageCallbacks.sendMessage(chatId, warning);
+        await this.messageCallbacks.sendMessage(chatId, warning, messageId);
       }
     }
   }

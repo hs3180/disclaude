@@ -37,20 +37,33 @@ export class MessageSender {
    *
    * @param chatId - Target chat ID
    * @param text - Message text content
+   * @param parentId - Optional parent message ID for thread replies
    */
-  async sendText(chatId: string, text: string): Promise<void> {
+  async sendText(chatId: string, text: string, parentId?: string): Promise<void> {
     try {
       // Always use plain text format
       // Use content builder utility for consistent message formatting
+      const messageData: {
+        receive_id: string;
+        msg_type: string;
+        content: string;
+        parent_id?: string;
+      } = {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: buildTextContent(text),
+      };
+
+      // Add parent_id for thread replies if provided
+      if (parentId) {
+        messageData.parent_id = parentId;
+      }
+
       const response = await this.client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
         },
-        data: {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: buildTextContent(text),
-        },
+        data: messageData,
       });
 
       // Track outgoing bot message in history
@@ -64,7 +77,7 @@ export class MessageSender {
       // Defensive: Ensure text is valid before substring
       const safeText = text || '';
       const preview = safeText.length > 100 ? `${safeText.substring(0, 100)}...` : safeText;
-      this.logger.debug({ chatId, messageType: 'text', preview, botMessageId }, 'Message sent');
+      this.logger.debug({ chatId, messageType: 'text', preview, botMessageId, parentId }, 'Message sent');
     } catch (error) {
       handleError(error, {
         category: ErrorCategory.API,
@@ -84,26 +97,40 @@ export class MessageSender {
    * @param chatId - Target chat ID
    * @param card - Card JSON structure
    * @param description - Optional description for logging
+   * @param parentId - Optional parent message ID for thread replies
    */
   async sendCard(
     chatId: string,
     card: Record<string, unknown>,
-    description?: string
+    description?: string,
+    parentId?: string
   ): Promise<void> {
     try {
+      const messageData: {
+        receive_id: string;
+        msg_type: string;
+        content: string;
+        parent_id?: string;
+      } = {
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(card),
+      };
+
+      // Add parent_id for thread replies if provided
+      if (parentId) {
+        messageData.parent_id = parentId;
+      }
+
       await this.client.im.message.create({
         params: {
           receive_id_type: 'chat_id',
         },
-        data: {
-          receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify(card),
-        },
+        data: messageData,
       });
 
       const desc = description ? ` (${description})` : '';
-      this.logger.debug({ chatId, description: desc }, 'Card sent');
+      this.logger.debug({ chatId, description: desc, parentId }, 'Card sent');
     } catch (error) {
       handleError(error, {
         category: ErrorCategory.API,

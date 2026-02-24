@@ -45,16 +45,18 @@ export interface PilotCallbacks {
    * Send a text message to the user.
    * @param chatId - Platform-specific chat identifier
    * @param text - Message content
+   * @param parentMessageId - Optional parent message ID for thread replies
    */
-  sendMessage: (chatId: string, text: string) => Promise<void>;
+  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
 
   /**
    * Send an interactive card to the user.
    * @param chatId - Platform-specific chat identifier
    * @param card - Card JSON structure
    * @param description - Optional description for logging
+   * @param parentMessageId - Optional parent message ID for thread replies
    */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string) => Promise<void>;
+  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
 
   /**
    * Send a file to the user.
@@ -118,6 +120,8 @@ interface PerChatIdState {
   lastActivity: number;
   /** Whether the Agent loop has been started */
   started: boolean;
+  /** Current thread root message ID for replies (the latest user message) */
+  currentThreadRootId?: string;
 }
 
 /**
@@ -261,15 +265,16 @@ export class Pilot extends BaseAgent {
               this.logger.error({ err, filePath, chatId }, 'Failed to send file');
               await this.callbacks.sendMessage(
                 chatId,
-                `❌ Failed to send file: ${filePath}`
+                `❌ Failed to send file: ${filePath}`,
+                messageId // Use current message as thread root for CLI mode
               );
             }
           }
         }
 
-        // Send message content to callback
+        // Send message content to callback (with thread support)
         if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content);
+          await this.callbacks.sendMessage(chatId, parsed.content, messageId);
         }
       }
 
@@ -278,7 +283,7 @@ export class Pilot extends BaseAgent {
       const err = error as Error;
       this.logger.error({ err, chatId }, 'CLI query error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`);
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
       throw err;
     }
   }
@@ -310,6 +315,11 @@ export class Pilot extends BaseAgent {
 
     // Update last activity
     state.lastActivity = Date.now();
+
+    // Set this message as the current thread root for replies
+    // All bot responses will be threaded to this user message
+    state.currentThreadRootId = messageId;
+    this.logger.debug({ chatId, messageId }, 'Set current thread root for replies');
 
     // Push message to the queue
     state.messageQueue.push({ text, messageId, senderOpenId });
@@ -379,6 +389,7 @@ export class Pilot extends BaseAgent {
       closed: false,
       lastActivity: Date.now(),
       started: false,
+      currentThreadRootId: undefined,
     };
 
     this.states.set(chatId, state);
@@ -446,7 +457,9 @@ To notify the user in your FINAL response, use:
 
 ## Tools
 
-When using send_file_to_feishu or send_user_feedback, use Chat ID: \`${chatId}\`
+When using send_file_to_feishu or send_user_feedback, use:
+- Chat ID: \`${chatId}\`
+- parentMessageId: \`${msg.messageId}\` (for thread replies)
 
 --- User Message ---
 ${msg.text}`;
@@ -457,7 +470,9 @@ ${msg.text}`;
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 
-When using send_file_to_feishu or send_user_feedback, use this Chat ID.
+When using send_file_to_feishu or send_user_feedback, use:
+- Chat ID: \`${chatId}\`
+- parentMessageId: \`${msg.messageId}\` (for thread replies)
 
 --- User Message ---
 ${msg.text}`;
@@ -616,15 +631,16 @@ ${msg.text}`;
               this.logger.error({ err, filePath, chatId }, 'Failed to send file');
               await this.callbacks.sendMessage(
                 chatId,
-                `❌ Failed to send file: ${filePath}`
+                `❌ Failed to send file: ${filePath}`,
+                state.currentThreadRootId
               );
             }
           }
         }
 
-        // Send message content to callback
+        // Send message content to callback (with thread support)
         if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content);
+          await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
         }
       }
 
@@ -637,7 +653,7 @@ ${msg.text}`;
       const err = error as Error;
       this.logger.error({ err, chatId }, 'Agent loop error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`);
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentThreadRootId);
 
       // Mark as restartable instead of deleting - preserve queue for next session
       state.started = false;

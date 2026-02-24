@@ -267,7 +267,7 @@ export class CommunicationNode extends EventEmitter {
   /**
    * Send a text message to Feishu.
    */
-  async sendMessage(chatId: string, text: string): Promise<void> {
+  async sendMessage(chatId: string, text: string, parentMessageId?: string): Promise<void> {
     if (!this.messageSender) {
       this.getClient();
     }
@@ -275,7 +275,7 @@ export class CommunicationNode extends EventEmitter {
     if (!sender) {
       throw new Error('MessageSender not initialized');
     }
-    await sender.sendText(chatId, text);
+    await sender.sendText(chatId, text, parentMessageId);
   }
 
   /**
@@ -284,7 +284,8 @@ export class CommunicationNode extends EventEmitter {
   async sendCard(
     chatId: string,
     card: Record<string, unknown>,
-    description?: string
+    description?: string,
+    parentMessageId?: string
   ): Promise<void> {
     if (!this.messageSender) {
       this.getClient();
@@ -293,7 +294,7 @@ export class CommunicationNode extends EventEmitter {
     if (!sender) {
       throw new Error('MessageSender not initialized');
     }
-    await sender.sendCard(chatId, card, description);
+    await sender.sendCard(chatId, card, description, parentMessageId);
   }
 
   /**
