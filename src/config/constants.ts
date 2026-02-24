@@ -40,5 +40,5 @@ export const MESSAGE_LOGGING = {
  */
 export const REACTIONS = {
   /** Emoji to indicate the bot is typing/processing (👀 = 正在查看/处理中) */
-  TYPING: '👀',
+  TYPING: 'Typing',
 } as const;
