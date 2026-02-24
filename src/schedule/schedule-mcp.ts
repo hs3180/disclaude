@@ -75,7 +75,9 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 function formatCron(cron: string): string {
   // Simple cron explanation (cron format: minute hour day month weekday)
   const parts = cron.split(' ');
-  if (parts.length !== 5) return cron;
+  if (parts.length !== 5) {
+    return cron;
+  }
 
   const [min, hour, day, month, weekday] = parts;
 
@@ -141,14 +143,14 @@ notifications to the chat when it executes.`,
       });
 
       // Add to scheduler
-      await scheduler.addTask(task);
+      scheduler.addTask(task);
 
       const scheduleDesc = formatCron(cron);
       return toolSuccess(
-        `✅ 已创建定时任务「${name}」\n` +
-        `- 执行时间: ${scheduleDesc}\n` +
-        `- 任务 ID: ${task.id}\n\n` +
-        `任务已启动，将在指定时间自动执行。`
+        `✅ 已创建定时任务「${  name  }」\n` +
+        `- 执行时间: ${  scheduleDesc  }\n` +
+        `- 任务 ID: ${  task.id  }\n\n` +
+        '任务已启动，将在指定时间自动执行。'
       );
 
     } catch (error) {
@@ -232,20 +234,20 @@ Use list_schedules to find the task ID first.`,
       // Verify task belongs to this chat
       const task = await manager.get(id);
       if (!task) {
-        return toolSuccess(`❌ 未找到任务 ID: ${id}`);
+        return toolSuccess(`❌ 未找到任务 ID: ${  id}`);
       }
 
       if (task.chatId !== chatId) {
-        return toolSuccess(`❌ 无权删除此任务`);
+        return toolSuccess('❌ 无权删除此任务');
       }
 
       // Remove from scheduler
-      await scheduler.removeTask(id);
+      scheduler.removeTask(id);
 
       // Delete from storage
       await manager.delete(id);
 
-      return toolSuccess(`✅ 已删除定时任务「${task.name}」`);
+      return toolSuccess(`✅ 已删除定时任务「${  task.name  }」`);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -279,11 +281,11 @@ Use this to temporarily pause a task without deleting it.`,
       // Verify task belongs to this chat
       const task = await manager.get(id);
       if (!task) {
-        return toolSuccess(`❌ 未找到任务 ID: ${id}`);
+        return toolSuccess(`❌ 未找到任务 ID: ${  id}`);
       }
 
       if (task.chatId !== chatId) {
-        return toolSuccess(`❌ 无权修改此任务`);
+        return toolSuccess('❌ 无权修改此任务');
       }
 
       // Update status
@@ -291,13 +293,13 @@ Use this to temporarily pause a task without deleting it.`,
 
       // Update scheduler
       if (enabled) {
-        await scheduler.addTask({ ...task, enabled });
+        scheduler.addTask({ ...task, enabled });
       } else {
-        await scheduler.removeTask(id);
+        scheduler.removeTask(id);
       }
 
       const action = enabled ? '已启用' : '已暂停';
-      return toolSuccess(`✅ ${action}定时任务「${task.name}」`);
+      return toolSuccess(`✅ ${  action  }定时任务「${  task.name  }」`);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

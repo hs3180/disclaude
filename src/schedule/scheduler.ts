@@ -13,8 +13,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
-import type { Pilot } from '../agents/pilot.js';
-import type { PilotCallbacks } from '../agents/pilot.js';
+import type { Pilot, PilotCallbacks } from '../agents/pilot.js';
 
 const logger = createLogger('Scheduler');
 
@@ -99,11 +98,11 @@ export class Scheduler {
    * Stop the scheduler.
    * Stops all active cron jobs.
    */
-  async stop(): Promise<void> {
+  stop(): void {
     this.running = false;
 
     for (const [taskId, entry] of this.activeJobs) {
-      entry.job.stop();
+      void entry.job.stop();
       logger.debug({ taskId }, 'Stopped cron job');
     }
 
@@ -117,9 +116,9 @@ export class Scheduler {
    *
    * @param task - Task to add
    */
-  async addTask(task: ScheduledTask): Promise<void> {
+  addTask(task: ScheduledTask): void {
     // Remove existing job if any
-    await this.removeTask(task.id);
+    this.removeTask(task.id);
 
     if (!task.enabled) {
       logger.debug({ taskId: task.id }, 'Task is disabled, not scheduling');
@@ -147,10 +146,10 @@ export class Scheduler {
    *
    * @param taskId - Task ID to remove
    */
-  async removeTask(taskId: string): Promise<void> {
+  removeTask(taskId: string): void {
     const entry = this.activeJobs.get(taskId);
     if (entry) {
-      entry.job.stop();
+      void entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }

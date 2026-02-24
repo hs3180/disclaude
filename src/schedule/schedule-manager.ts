@@ -244,7 +244,7 @@ export class ScheduleManager {
    * @param enabled - New enabled status
    * @returns The updated task or undefined if not found
    */
-  async toggle(id: string, enabled: boolean): Promise<ScheduledTask | undefined> {
+  toggle(id: string, enabled: boolean): Promise<ScheduledTask | undefined> {
     return this.update(id, { enabled });
   }
 
