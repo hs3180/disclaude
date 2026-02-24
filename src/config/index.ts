@@ -264,6 +264,15 @@ export class Config {
   }
 
   /**
+   * Get channels configuration.
+   *
+   * @returns Channels configuration object
+   */
+  static getChannelsConfig(): import('./types.js').ChannelsConfig {
+    return fileConfigOnly.channels || {};
+  }
+
+  /**
    * Get logging configuration.
    *
    * @returns Logging configuration object

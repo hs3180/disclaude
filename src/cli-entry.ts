@@ -2,7 +2,7 @@
  * CLI entry point for Disclaude.
  *
  * Supports two modes:
- * - comm: Communication Node (Feishu WebSocket handler)
+ * - comm: Communication Node (multi-channel handler: Feishu, REST, etc.)
  * - exec: Execution Node (Pilot/Agent handler)
  */
 import { Config } from './config/index.js';
@@ -28,25 +28,36 @@ function showHelp(): void {
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Usage:');
-  console.log('  disclaude start --mode comm           Communication Node (Feishu WebSocket)');
+  console.log('  disclaude start --mode comm           Communication Node (Multi-channel)');
   console.log('  disclaude start --mode exec           Execution Node (Pilot Agent)');
   console.log('  disclaude --prompt <msg>              Execute single prompt');
   console.log('');
   console.log('Options:');
   console.log('  --mode <comm|exec>                    Select run mode (required for start)');
-  console.log('  --port <port>                         Port for comm mode (default: 3001)');
+  console.log('  --port <port>                         WebSocket port for comm mode (default: 3001)');
+  console.log('  --rest-port <port>                    REST API port for comm mode (default: 3000)');
+  console.log('  --no-rest                             Disable REST channel');
   console.log('  --comm-url <url>                      Communication Node URL for exec mode (default: ws://localhost:3001)');
   console.log('  --feishu-chat-id <id>                 Send CLI output to Feishu chat');
   console.log('');
+  console.log('Channels (Communication Node):');
+  console.log('  - Feishu: Enabled when feishu.appId and feishu.appSecret are configured');
+  console.log('  - REST:   Enabled by default on port 3000, use --no-rest to disable');
+  console.log('');
   console.log('Examples:');
-  console.log('  # Communication Node (handles Feishu connection, starts first)');
-  console.log('  disclaude start --mode comm --port 3001');
+  console.log('  # Communication Node (handles Feishu + REST, starts first)');
+  console.log('  disclaude start --mode comm --port 3001 --rest-port 3000');
   console.log('');
   console.log('  # Execution Node (handles Agent tasks)');
   console.log('  disclaude start --mode exec --comm-url ws://localhost:3001');
   console.log('');
   console.log('  # CLI prompt mode');
   console.log('  disclaude --prompt "What is the weather today?"');
+  console.log('');
+  console.log('REST API Endpoints (when REST channel is enabled):');
+  console.log('  POST /api/chat          Send message (streaming response)');
+  console.log('  POST /api/chat/sync     Send message (synchronous response)');
+  console.log('  GET  /api/health        Health check');
   console.log('');
   console.log('For production deployment, run both nodes in separate processes:');
   console.log('  Process 1: disclaude start --mode comm');
@@ -151,16 +162,20 @@ async function main(): Promise<void> {
     // Run based on mode
     switch (mode) {
       case 'comm':
-        // Validate Feishu config for comm mode
-        if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
-          handleError(new Error('FEISHU_APP_ID and FEISHU_APP_SECRET are required'), {
+        // Note: Feishu is optional now - REST channel can work without Feishu
+        const hasFeishu = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
+        const hasRest = globalArgs.enableRestChannel !== false;
+
+        if (!hasFeishu && !hasRest) {
+          handleError(new Error('No communication channel configured'), {
             category: ErrorCategory.CONFIGURATION,
-            userMessage: 'Communication Node requires Feishu configuration. Please set feishu.appId and feishu.appSecret in your disclaude.config.yaml file.'
+            userMessage: 'Communication Node requires at least one channel. Configure Feishu (feishu.appId and feishu.appSecret) or enable REST channel.'
           }, {
             log: true,
             throwOnError: true
           });
         }
+
         await runCommunicationNode();
         break;
 
