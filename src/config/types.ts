@@ -140,6 +140,42 @@ export interface TransportConfig {
 }
 
 /**
+ * REST channel configuration.
+ */
+export interface RestChannelConfig {
+  /** Enable/disable REST channel */
+  enabled?: boolean;
+  /** Server port for REST API */
+  port?: number;
+  /** Server host */
+  host?: string;
+  /** API prefix for all endpoints */
+  apiPrefix?: string;
+  /** Optional authentication token */
+  authToken?: string;
+  /** Enable CORS */
+  enableCors?: boolean;
+}
+
+/**
+ * Feishu channel configuration.
+ */
+export interface FeishuChannelConfig {
+  /** Enable/disable Feishu channel */
+  enabled?: boolean;
+}
+
+/**
+ * Channels configuration section.
+ */
+export interface ChannelsConfig {
+  /** REST API channel configuration */
+  rest?: RestChannelConfig;
+  /** Feishu channel configuration */
+  feishu?: FeishuChannelConfig;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -167,6 +203,8 @@ export interface DisclaudeConfig {
   tools?: ToolsConfig;
   /** Transport configuration */
   transport?: TransportConfig;
+  /** Channels configuration */
+  channels?: ChannelsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
