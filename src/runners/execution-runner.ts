@@ -5,11 +5,13 @@
  * Connects to Communication Node via WebSocket as a client.
  */
 
+import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
 import { Pilot } from '../agents/pilot.js';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
+import { ScheduleManager, Scheduler, setScheduleManager, setScheduler } from '../schedule/index.js';
 
 const logger = createLogger('ExecRunner');
 
@@ -119,6 +121,48 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       },
     },
   });
+
+  // Initialize Schedule Manager and Scheduler
+  const workspaceDir = Config.getWorkspaceDir();
+  const scheduleFilePath = path.join(workspaceDir, 'schedules.json');
+  const scheduleManager = new ScheduleManager(scheduleFilePath);
+  const scheduler = new Scheduler({
+    scheduleManager,
+    pilot: sharedPilot,
+    callbacks: {
+      sendMessage: async (chatId: string, text: string) => {
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'text', chatId, text });
+        } else {
+          // For scheduled tasks without active channel, we need a way to send
+          // This creates a temporary feedback function
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'text', chatId, text }));
+          }
+        }
+      },
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'card', chatId, card, text: description }));
+        }
+      },
+      sendFile: async (chatId: string, filePath: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
+        }
+      },
+    },
+  });
+
+  // Register with MCP tools
+  setScheduleManager(scheduleManager);
+  setScheduler(scheduler);
+
+  // Start scheduler
+  await scheduler.start();
+  console.log('✓ Scheduler started');
+  console.log();
 
   /**
    * Connect to Communication Node via WebSocket.
