@@ -43,20 +43,6 @@ import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 export interface ReporterConfig extends BaseAgentConfig {}
 
 /**
- * Content deduplication state for avoiding repetitive feedback.
- */
-interface DeduplicationState {
-  /** Recent content hashes (for similarity detection) */
-  recentHashes: Set<string>;
-  /** Recent action keywords (e.g., "读取", "读取", "读取") */
-  recentActions: string[];
-  /** Timestamp of last output */
-  lastOutputTime: number;
-  /** Count of similar small actions (for batching) */
-  pendingSmallActions: number;
-}
-
-/**
  * Reporter - Communication and instruction generation specialist.
  *
  * Extends BaseAgent to inherit:
@@ -66,87 +52,13 @@ interface DeduplicationState {
  */
 export class Reporter extends BaseAgent {
   private skill?: ParsedSkill;
-  private deduplicationState: DeduplicationState;
 
   constructor(config: ReporterConfig) {
     super(config);
-    this.deduplicationState = {
-      recentHashes: new Set(),
-      recentActions: [],
-      lastOutputTime: 0,
-      pendingSmallActions: 0,
-    };
   }
 
   protected getAgentName(): string {
     return 'Reporter';
-  }
-
-  /**
-   * Generate a simple hash for content deduplication.
-   * Focuses on action keywords rather than full content.
-   */
-  private static hashContent(content: string): string {
-    // Extract key action words
-    const actionPatterns = [
-      /读取|查看|打开|编辑|修改|创建|删除|写入|执行|运行|搜索|查找|安装|构建|测试/g,
-    ];
-    const actions = actionPatterns
-      .flatMap((p) => content.match(p) || [])
-      .slice(0, 5)
-      .join(',');
-
-    // Also include file paths if present
-    const filePaths = (content.match(/[\w/.-]+\.(ts|js|json|md|yaml|yml)/gi) || [])
-      .slice(0, 3)
-      .join(',');
-
-    return `${actions}|${filePaths}`;
-  }
-
-  /**
-   * Check if content should be skipped (duplicate or similar to recent).
-   * Returns true if should skip, false otherwise.
-   */
-  private shouldSkipContent(content: string): boolean {
-    const hash = Reporter.hashContent(content);
-    const now = Date.now();
-
-    // Skip if identical hash was seen recently (within 10s)
-    if (this.deduplicationState.recentHashes.has(hash)) {
-      if (now - this.deduplicationState.lastOutputTime < 10000) {
-        this.deduplicationState.pendingSmallActions++;
-        return true;
-      }
-    }
-
-    // Update state
-    this.deduplicationState.recentHashes.add(hash);
-    this.deduplicationState.lastOutputTime = now;
-
-    // Keep only last 10 hashes
-    if (this.deduplicationState.recentHashes.size > 10) {
-      const arr = Array.from(this.deduplicationState.recentHashes);
-      this.deduplicationState.recentHashes = new Set(arr.slice(-10));
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if there are pending batched actions to report.
-   */
-  hasPendingActions(): boolean {
-    return this.deduplicationState.pendingSmallActions > 0;
-  }
-
-  /**
-   * Get and reset pending action count.
-   */
-  getAndResetPendingActions(): number {
-    const count = this.deduplicationState.pendingSmallActions;
-    this.deduplicationState.pendingSmallActions = 0;
-    return count;
   }
 
   /**
@@ -287,10 +199,6 @@ export class Reporter extends BaseAgent {
   /**
    * Handle all events by generating appropriate prompts and invoking Reporter.
    *
-   * Implements deduplication for 'output' events (Issue #7):
-   * - Skips similar content within 10 seconds
-   * - Batches small actions for summary reporting
-   *
    * @param event - Any Executor event
    * @param context - Reporter context
    * @yields AgentMessage - Reporter-generated messages
@@ -299,17 +207,6 @@ export class Reporter extends BaseAgent {
     event: TaskProgressEvent,
     context: ReporterContext
   ): AsyncGenerator<AgentMessage> {
-    // Deduplication for output events (Issue #7)
-    if (event.type === 'output' && context.chatId) {
-      if (this.shouldSkipContent(event.content)) {
-        this.logger.debug(
-          { taskId: context.taskId, contentHash: Reporter.hashContent(event.content) },
-          'Skipping duplicate output event'
-        );
-        return;
-      }
-    }
-
     const prompt = Reporter.buildEventFeedbackPrompt({
       event,
       taskId: context.taskId,
