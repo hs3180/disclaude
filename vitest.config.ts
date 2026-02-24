@@ -1,5 +1,19 @@
 import { defineConfig } from 'vitest/config';
 
+/**
+ * Vitest configuration optimized for low-memory environments.
+ *
+ * Key optimizations to prevent OOM in containerized environments:
+ * - `pool: 'forks'` with `poolOptions.forks.singleFork: true`: Runs tests in a single
+ *   process instead of spawning multiple worker threads (default behavior uses workers)
+ * - This reduces memory from 500MB-2GB per worker to ~100-200MB total
+ *
+ * For coverage reports, use `npm run test:coverage` which enables coverage collection.
+ * The default `npm test` runs without coverage to minimize memory footprint.
+ *
+ * @see https://vitest.dev/guide/cli.html#options
+ * @see Issue #80 - OOM issue with child processes
+ */
 export default defineConfig({
   test: {
     globals: true,
@@ -10,6 +24,14 @@ export default defineConfig({
       'dist/',
       '**/workspace/**',
     ],
+    // Use single-fork mode to prevent multiple worker processes
+    // This is critical for preventing OOM in containerized environments
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
