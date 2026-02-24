@@ -1,8 +1,8 @@
 /**
  * Communication Node Runner.
  *
- * Runs the Communication Node which handles Feishu WebSocket connections
- * and runs a WebSocket server for Execution Node connections.
+ * Runs the Communication Node which handles multiple communication channels
+ * (Feishu, REST, etc.) and runs a WebSocket server for Execution Node connections.
  */
 
 import { Config } from '../config/index.js';
@@ -13,10 +13,10 @@ import { parseGlobalArgs, getCommNodeConfig, type CommNodeConfig } from '../util
 const logger = createLogger('CommRunner');
 
 /**
- * Run Communication Node (Feishu WebSocket handler).
+ * Run Communication Node (multi-channel handler).
  *
  * This starts the Communication Node which:
- * 1. Handles Feishu WebSocket connections
+ * 1. Handles multiple communication channels (Feishu, REST, etc.)
  * 2. Runs WebSocket server for Execution Node connections
  * 3. Forwards prompts and receives feedback via WebSocket
  *
@@ -30,28 +30,28 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
     config: {
       port: runnerConfig.port,
       host: runnerConfig.host,
-      authToken: runnerConfig.authToken ? '***' : undefined
+      authToken: runnerConfig.authToken ? '***' : undefined,
+      restPort: runnerConfig.restPort,
+      enableRestChannel: runnerConfig.enableRestChannel,
     }
   }, 'Starting Communication Node');
 
   console.log('Initializing Communication Node...');
-  console.log(`Mode: Communication (Feishu + WebSocket Server)`);
+  console.log('Mode: Communication (Multi-channel + WebSocket Server)');
   console.log();
-
-  // Validate Feishu configuration
-  if (!Config.FEISHU_APP_ID || !Config.FEISHU_APP_SECRET) {
-    throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET are required for Communication Node');
-  }
 
   // Increase max listeners
   process.setMaxListeners(20);
 
-  // Create Communication Node
+  // Create Communication Node with all channels
   const commNode = new CommunicationNode({
     port: runnerConfig.port,
     host: runnerConfig.host,
-    appId: Config.FEISHU_APP_ID,
-    appSecret: Config.FEISHU_APP_SECRET,
+    appId: Config.FEISHU_APP_ID || undefined,
+    appSecret: Config.FEISHU_APP_SECRET || undefined,
+    restPort: runnerConfig.restPort,
+    enableRestChannel: runnerConfig.enableRestChannel,
+    restAuthToken: runnerConfig.restAuthToken,
   });
 
   // Start Communication Node
@@ -61,6 +61,9 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   console.log('✓ Communication Node ready');
   console.log();
   console.log(`WebSocket Server: ws://${runnerConfig.host}:${runnerConfig.port}`);
+  if (runnerConfig.enableRestChannel) {
+    console.log(`REST API: http://${runnerConfig.host}:${runnerConfig.restPort || 3000}/api`);
+  }
   console.log('Waiting for Execution Node to connect...');
   console.log();
 

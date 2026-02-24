@@ -94,6 +94,47 @@ logging:
   rotate: false
 
 # -----------------------------------------------------------------------------
+# Channels Configuration (Communication Channels)
+# -----------------------------------------------------------------------------
+# Channels are communication pathways between users and the agent.
+# Multiple channels can be enabled simultaneously.
+channels:
+  # REST API Channel
+  # Provides a RESTful API for direct agent interaction
+  rest:
+    # Enable/disable REST channel
+    # Default: true
+    enabled: true
+
+    # Server port for REST API
+    # Default: 3000
+    port: 3000
+
+    # Server host
+    # Default: 0.0.0.0
+    host: "0.0.0.0"
+
+    # API prefix for all endpoints
+    # Default: /api
+    apiPrefix: "/api"
+
+    # Optional authentication token
+    # If set, requests must include: Authorization: Bearer <token>
+    # authToken: "your-secret-token"
+
+    # Enable CORS
+    # Default: true
+    enableCors: true
+
+  # Feishu/Lark Channel
+  # Uses the feishu configuration below for credentials
+  # (enabled automatically if feishu.appId and feishu.appSecret are set)
+  feishu:
+    # Enable/disable Feishu channel
+    # Default: true (if credentials are configured)
+    enabled: true
+
+# -----------------------------------------------------------------------------
 # Transport Configuration
 # -----------------------------------------------------------------------------
 transport:
