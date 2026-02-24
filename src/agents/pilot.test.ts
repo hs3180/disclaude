@@ -63,12 +63,10 @@ describe('Pilot (Streaming Input)', () => {
       sendCard: vi.fn(async () => {}),
       sendFile: vi.fn(async () => {}),
     };
-    // Use short idle timeout for testing
     pilot = new Pilot({
       apiKey: 'test-api-key',
       model: 'test-model',
       callbacks: mockCallbacks,
-      sessionIdleTimeout: 1000, // 1 second for testing
     });
   });
 
@@ -90,10 +88,6 @@ describe('Pilot (Streaming Input)', () => {
     it('should initialize states map', () => {
       expect(pilot['states']).toBeInstanceOf(Map);
       expect(pilot['states'].size).toBe(0);
-    });
-
-    it('should start cleanup timer', () => {
-      expect(pilot['cleanupTimer']).toBeDefined();
     });
   });
 
@@ -191,19 +185,6 @@ describe('Pilot (Streaming Input)', () => {
 
       expect(options.callbacks).toBeDefined();
     });
-
-    it('should accept optional sessionIdleTimeout', () => {
-      const options: { callbacks: PilotCallbacks; sessionIdleTimeout?: number } = {
-        callbacks: {
-          sendMessage: async () => {},
-          sendCard: async () => {},
-          sendFile: async () => {},
-        },
-        sessionIdleTimeout: 60000,
-      };
-
-      expect(options.sessionIdleTimeout).toBe(60000);
-    });
   });
 
   describe('hasActiveStream', () => {
@@ -284,28 +265,6 @@ describe('Pilot (Streaming Input)', () => {
 
       expect(pilot['states'].size).toBe(0);
     });
-
-    it('should stop cleanup timer', async () => {
-      await pilot.shutdown();
-
-      expect(pilot['cleanupTimer']).toBeUndefined();
-    });
-  });
-
-  describe('State Cleanup', () => {
-    it('should cleanup idle states after timeout', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['states'].size).toBe(1);
-
-      // Advance time past idle timeout
-      vi.advanceTimersByTime(1100);
-
-      // Trigger cleanup manually (since timer callback runs async)
-      pilot['cleanupIdleStates']();
-
-      // State should be marked for cleanup
-      // Note: The actual state.close() is async, so we just check the logic
-    });
   });
 
   describe('Design Principles', () => {
@@ -358,14 +317,14 @@ describe('Pilot (Streaming Input)', () => {
           sendCard: () => Promise<void>;
           sendFile: () => Promise<void>;
         };
-        sessionIdleTimeout?: number;
+        isCliMode?: boolean;
       } = {
         callbacks: {
           sendMessage: async () => {},
           sendCard: async () => {},
           sendFile: async () => {},
         },
-        sessionIdleTimeout: undefined,
+        isCliMode: false,
       };
 
       expect(options).toBeDefined();
@@ -444,30 +403,6 @@ describe('Pilot (Streaming Input)', () => {
       });
 
       expect(defaultPilot['isCliMode']).toBe(false);
-    });
-  });
-
-  describe('Session Idle Timeout', () => {
-    it('should accept custom sessionIdleTimeout', () => {
-      const customPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        sessionIdleTimeout: 60000,
-      });
-
-      expect(customPilot['sessionIdleTimeout']).toBe(60000);
-    });
-
-    it('should use default sessionIdleTimeout when not specified', () => {
-      const defaultPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-      });
-
-      // Default is 30 minutes (1800000 ms)
-      expect(defaultPilot['sessionIdleTimeout']).toBe(1800000);
     });
   });
 
