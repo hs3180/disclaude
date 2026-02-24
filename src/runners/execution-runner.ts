@@ -22,6 +22,8 @@ interface PromptMessage {
   prompt: string;
   messageId: string;
   senderOpenId?: string;
+  /** Parent message ID for thread replies */
+  parentId?: string;
 }
 
 interface CommandMessage {
@@ -37,6 +39,8 @@ interface FeedbackMessage {
   card?: Record<string, unknown>;
   filePath?: string;
   error?: string;
+  /** Parent message ID for thread replies */
+  parentId?: string;
 }
 
 /**
@@ -68,9 +72,13 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   // Get agent configuration
   const agentConfig = Config.getAgentConfig();
 
-  // Map to store active sendFeedback functions per chatId
-  // This allows callbacks to route messages to the correct WebSocket context
-  const activeFeedbackChannels = new Map<string, (feedback: FeedbackMessage) => void>();
+  // Map to store active feedback context per chatId
+  // Includes sendFeedback function and parentId for thread replies
+  interface FeedbackContext {
+    sendFeedback: (feedback: FeedbackMessage) => void;
+    parentId?: string;
+  }
+  const activeFeedbackChannels = new Map<string, FeedbackContext>();
 
   /**
    * Create a shared Pilot instance for all messages.
@@ -85,26 +93,26 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     apiBaseUrl: agentConfig.apiBaseUrl,
     isCliMode: false, // Enable persistent sessions for context retention
     callbacks: {
-      sendMessage: async (chatId: string, text: string) => {
-        const sendFeedback = activeFeedbackChannels.get(chatId);
-        if (sendFeedback) {
-          sendFeedback({ type: 'text', chatId, text });
+      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'text', chatId, text, parentId: parentMessageId || ctx.parentId });
         } else {
           logger.warn({ chatId }, 'No active feedback channel for sendMessage');
         }
       },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
-        const sendFeedback = activeFeedbackChannels.get(chatId);
-        if (sendFeedback) {
-          sendFeedback({ type: 'card', chatId, card, text: description });
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'card', chatId, card, text: description, parentId: parentMessageId || ctx.parentId });
         } else {
           logger.warn({ chatId }, 'No active feedback channel for sendCard');
         }
       },
       sendFile: async (chatId: string, filePath: string) => {
-        const sendFeedback = activeFeedbackChannels.get(chatId);
-        if (sendFeedback) {
-          sendFeedback({ type: 'file', chatId, filePath });
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'file', chatId, filePath, parentId: ctx.parentId });
         } else {
           logger.warn({ chatId }, 'No active feedback channel for sendFile');
         }
@@ -156,8 +164,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
         // Handle prompt messages
         if (message.type === 'prompt') {
-          const { chatId, prompt, messageId, senderOpenId } = message;
-          logger.info({ chatId, messageId, promptLength: prompt.length }, 'Received prompt');
+          const { chatId, prompt, messageId, senderOpenId, parentId } = message;
+          logger.info({ chatId, messageId, promptLength: prompt.length, parentId }, 'Received prompt');
 
           // Create send feedback function for this message
           const sendFeedback = (feedback: FeedbackMessage) => {
@@ -166,8 +174,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             }
           };
 
-          // Register feedback channel for this chatId
-          activeFeedbackChannels.set(chatId, sendFeedback);
+          // Register feedback channel for this chatId with parentId
+          activeFeedbackChannels.set(chatId, { sendFeedback, parentId });
 
           try {
             // Use processMessage for persistent session context
@@ -177,11 +185,11 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             // Send done signal after processing
             // Note: Since processMessage is non-blocking, we send done immediately
             // The actual response will come through the callbacks asynchronously
-            sendFeedback({ type: 'done', chatId });
+            sendFeedback({ type: 'done', chatId, parentId });
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');
-            sendFeedback({ type: 'error', chatId, error: err.message });
+            sendFeedback({ type: 'error', chatId, error: err.message, parentId });
           }
           return;
         }
