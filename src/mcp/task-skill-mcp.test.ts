@@ -50,26 +50,36 @@ describe('Task Skill MCP', () => {
     });
   });
 
-  describe('taskSkillSdkMcpServer', () => {
+  describe('createTaskSkillSdkMcpServer', () => {
     it('should be exported', async () => {
-      const { taskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
-      expect(taskSkillSdkMcpServer).toBeDefined();
+      const { createTaskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
+      expect(typeof createTaskSkillSdkMcpServer).toBe('function');
     });
 
-    it('should have correct name', async () => {
-      const { taskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
-      expect(taskSkillSdkMcpServer.name).toBe('task-skill');
+    it('should create server with correct name', async () => {
+      const { createTaskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
+      const server = createTaskSkillSdkMcpServer();
+      expect(server.name).toBe('task-skill');
     });
 
-    it('should have version', async () => {
-      const { taskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
-      expect((taskSkillSdkMcpServer as any).version).toBe('1.0.0');
+    it('should create server with version', async () => {
+      const { createTaskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
+      const server = createTaskSkillSdkMcpServer();
+      expect((server as any).version).toBe('1.0.0');
     });
 
-    it('should have tools', async () => {
-      const { taskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
-      expect(Array.isArray((taskSkillSdkMcpServer as any).tools)).toBe(true);
-      expect((taskSkillSdkMcpServer as any).tools.length).toBeGreaterThan(0);
+    it('should create server with tools', async () => {
+      const { createTaskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
+      const server = createTaskSkillSdkMcpServer();
+      expect(Array.isArray((server as any).tools)).toBe(true);
+      expect((server as any).tools.length).toBeGreaterThan(0);
+    });
+
+    it('should create new instance each call', async () => {
+      const { createTaskSkillSdkMcpServer } = await import('./task-skill-mcp.js');
+      const server1 = createTaskSkillSdkMcpServer();
+      const server2 = createTaskSkillSdkMcpServer();
+      expect(server1).not.toBe(server2);
     });
   });
 

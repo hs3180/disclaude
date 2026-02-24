@@ -310,17 +310,27 @@ Use this to temporarily pause a task without deleting it.`,
 );
 
 /**
- * SDK MCP Server for Schedule tools.
+ * SDK MCP Server factory for Schedule tools.
  *
- * Add this to mcpServers when creating Pilot queries.
+ * Each call creates a new MCP server instance with its own Protocol.
+ * This prevents transport conflicts when multiple Agent instances are active.
+ *
+ * Call this factory when creating Pilot queries:
+ * ```typescript
+ * mcpServers: {
+ *   'schedule': createScheduleSdkMcpServer(),
+ * }
+ * ```
  */
-export const scheduleSdkMcpServer = createSdkMcpServer({
-  name: 'schedule',
-  version: '1.0.0',
-  tools: [
-    createScheduleTool,
-    listSchedulesTool,
-    deleteScheduleTool,
-    toggleScheduleTool,
-  ],
-});
+export function createScheduleSdkMcpServer() {
+  return createSdkMcpServer({
+    name: 'schedule',
+    version: '1.0.0',
+    tools: [
+      createScheduleTool,
+      listSchedulesTool,
+      deleteScheduleTool,
+      toggleScheduleTool,
+    ],
+  });
+}

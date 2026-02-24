@@ -15,7 +15,7 @@
 export { ScheduleManager, type ScheduledTask, type CreateScheduleOptions, type ScheduleManagerOptions } from './schedule-manager.js';
 export { Scheduler, type SchedulerOptions } from './scheduler.js';
 export {
-  scheduleSdkMcpServer,
+  createScheduleSdkMcpServer,
   setScheduleManager,
   setScheduler,
 } from './schedule-mcp.js';
