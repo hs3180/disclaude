@@ -3,13 +3,13 @@
  *
  * The Pilot class manages conversational AI interactions using Claude Agent SDK's
  * streaming input mode. It maintains persistent Agent instances per chatId, allowing
- * for context persistence across multiple user messages.
+ * for context persistence across multiple user messages indefinitely.
  *
  * Key Features:
  * - Streaming Input Mode: Uses SDK's AsyncGenerator-based input for real-time interaction
  * - Per-chatId Agent Instances: Each chatId has its own persistent Agent instance
  * - Message Queue: Messages are queued and processed sequentially per chatId
- * - Automatic cleanup: Idle sessions are cleaned up after a timeout
+ * - Persistent Context: Session context persists until manual reset (/reset) or shutdown
  *
  * Architecture:
  * ```
@@ -85,11 +85,6 @@ export interface PilotConfig {
    */
   callbacks: PilotCallbacks;
   /**
-   * Maximum idle time before a session is cleaned up (ms).
-   * Default: 30 minutes
-   */
-  sessionIdleTimeout?: number;
-  /**
    * Whether running in CLI mode (vs Feishu bot mode).
    * CLI mode doesn't need Feishu MCP servers.
    */
@@ -130,7 +125,10 @@ interface PerChatIdState {
  *
  * Manages conversational AI interactions via streaming SDK queries.
  * Each chatId gets its own persistent Agent instance that maintains
- * conversation context across multiple messages.
+ * conversation context across multiple messages indefinitely.
+ *
+ * Session context is NOT automatically reset on inactivity - it persists
+ * until manually reset via /reset command or application shutdown.
  *
  * Extends BaseAgent to inherit common functionality while adding
  * Pilot-specific features like per-chatId state management.
@@ -141,12 +139,6 @@ export class Pilot extends BaseAgent {
 
   // Per-chatId Agent states
   private states = new Map<string, PerChatIdState>();
-
-  // Session idle timeout (default: 30 minutes)
-  private readonly sessionIdleTimeout: number;
-
-  // Cleanup interval timer
-  private cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: PilotConfig) {
     // Get API config from Config if not provided (backward compatibility)
@@ -164,13 +156,6 @@ export class Pilot extends BaseAgent {
 
     this.callbacks = config.callbacks;
     this.isCliMode = config.isCliMode ?? false;
-    this.sessionIdleTimeout = config.sessionIdleTimeout ?? 30 * 60 * 1000; // 30 minutes
-
-    // Start periodic cleanup only for service mode
-    // CLI mode doesn't need cleanup since executeOnce() doesn't use state
-    if (!this.isCliMode) {
-      this.startCleanupTimer();
-    }
   }
 
   protected getAgentName(): string {
@@ -661,47 +646,6 @@ ${msg.text}`;
   }
 
   /**
-   * Start periodic cleanup timer for idle sessions.
-   */
-  private startCleanupTimer(): void {
-    // Run cleanup every 5 minutes
-    this.cleanupTimer = setInterval(() => {
-      this.cleanupIdleStates();
-    }, 5 * 60 * 1000);
-  }
-
-  /**
-   * Cleanup states that have been idle for too long.
-   */
-  private cleanupIdleStates(): void {
-    const now = Date.now();
-    const toCleanup: string[] = [];
-
-    for (const [chatId, state] of this.states) {
-      const idleTime = now - state.lastActivity;
-
-      if (idleTime > this.sessionIdleTimeout) {
-        this.logger.info(
-          { chatId, idleTimeMs: idleTime, timeoutMs: this.sessionIdleTimeout },
-          'State idle timeout'
-        );
-        toCleanup.push(chatId);
-      }
-    }
-
-    // Close idle states
-    for (const chatId of toCleanup) {
-      const state = this.states.get(chatId);
-      if (state) {
-        state.closed = true;
-        if (state.queryInstance) {
-          state.queryInstance.close();
-        }
-      }
-    }
-  }
-
-  /**
    * Check if an Agent session is active for a chatId.
    *
    * @param chatId - Platform-specific chat identifier
@@ -789,12 +733,6 @@ ${msg.text}`;
   async shutdown(): Promise<void> {
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info('Shutting down Pilot');
-
-    // Stop cleanup timer
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = undefined;
-    }
 
     // Close all states
     for (const [, state] of this.states) {
