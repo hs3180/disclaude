@@ -11,7 +11,13 @@ import { Config } from '../config/index.js';
 import { Pilot } from '../agents/pilot.js';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
-import { ScheduleManager, Scheduler, setScheduleManager, setScheduler } from '../schedule/index.js';
+import {
+  ScheduleManager,
+  Scheduler,
+  ScheduleFileWatcher,
+  setScheduleManager,
+  setScheduler,
+} from '../schedule/index.js';
 
 const logger = createLogger('ExecRunner');
 
@@ -124,8 +130,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
   // Initialize Schedule Manager and Scheduler
   const workspaceDir = Config.getWorkspaceDir();
-  const scheduleFilePath = path.join(workspaceDir, 'schedules.json');
-  const scheduleManager = new ScheduleManager(scheduleFilePath);
+  const schedulesDir = path.join(workspaceDir, 'schedules');
+  const scheduleManager = new ScheduleManager({ schedulesDir });
   const scheduler = new Scheduler({
     scheduleManager,
     pilot: sharedPilot,
@@ -155,6 +161,26 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     },
   });
 
+  // Initialize file watcher for hot reload
+  let fileWatcher: ScheduleFileWatcher | undefined;
+  const initFileWatcher = () => {
+    fileWatcher = new ScheduleFileWatcher({
+      schedulesDir,
+      onFileAdded: (task) => {
+        logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
+        scheduler.addTask(task);
+      },
+      onFileChanged: (task) => {
+        logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
+        scheduler.addTask(task);
+      },
+      onFileRemoved: (taskId) => {
+        logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
+        scheduler.removeTask(taskId);
+      },
+    });
+  };
+
   // Register with MCP tools
   setScheduleManager(scheduleManager);
   setScheduler(scheduler);
@@ -162,6 +188,11 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   // Start scheduler
   await scheduler.start();
   console.log('✓ Scheduler started');
+
+  // Start file watcher for hot reload
+  initFileWatcher();
+  await fileWatcher?.start();
+  console.log('✓ Schedule file watcher started');
   console.log();
 
   /**
@@ -287,6 +318,12 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     console.log('\nShutting down Execution Node...');
 
     running = false;
+
+    // Stop file watcher
+    fileWatcher?.stop();
+
+    // Stop scheduler
+    scheduler.stop();
 
     // Clear reconnect timer
     if (reconnectTimer) {

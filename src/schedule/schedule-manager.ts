@@ -2,18 +2,18 @@
  * Schedule Manager - CRUD operations for scheduled tasks.
  *
  * Manages scheduled tasks that are triggered by cron expressions.
- * Tasks are persisted to JSON file and can be dynamically managed.
+ * Tasks are persisted as markdown files in the schedules/ directory.
  *
  * Features:
  * - CRUD operations for scheduled tasks
- * - JSON file persistence
+ * - File-based persistence (markdown with YAML frontmatter)
  * - Scope by chatId (each chat has its own tasks)
  */
 
-import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
+import { ScheduleFileScanner, type ScheduleFileTask } from './schedule-file-scanner.js';
 
 const logger = createLogger('ScheduleManager');
 
@@ -42,14 +42,6 @@ export interface ScheduledTask {
 }
 
 /**
- * Schedule storage structure.
- */
-interface ScheduleStorage {
-  version: string;
-  schedules: ScheduledTask[];
-}
-
-/**
  * Options for creating a new scheduled task.
  */
 export interface CreateScheduleOptions {
@@ -61,11 +53,19 @@ export interface CreateScheduleOptions {
 }
 
 /**
+ * ScheduleManager options.
+ */
+export interface ScheduleManagerOptions {
+  /** Directory for schedule files */
+  schedulesDir: string;
+}
+
+/**
  * ScheduleManager - Manages CRUD operations for scheduled tasks.
  *
  * Usage:
  * ```typescript
- * const manager = new ScheduleManager('./workspace/schedules.json');
+ * const manager = new ScheduleManager({ schedulesDir: './workspace/schedules' });
  *
  * // Create a task
  * const task = await manager.create({
@@ -86,61 +86,49 @@ export interface CreateScheduleOptions {
  * ```
  */
 export class ScheduleManager {
-  private filePath: string;
-  private cache: ScheduleStorage | null = null;
+  private fileScanner: ScheduleFileScanner;
+  private cache: Map<string, ScheduledTask> = new Map();
 
-  constructor(filePath: string) {
-    this.filePath = filePath;
-    logger.info({ filePath }, 'ScheduleManager initialized');
+  constructor(options: ScheduleManagerOptions) {
+    this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
+    logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized');
   }
 
   /**
-   * Load schedules from JSON file.
+   * Load schedules from files.
    * Uses cache if available.
    */
-  private async load(): Promise<ScheduleStorage> {
-    if (this.cache) {
-      return this.cache;
+  private async load(): Promise<void> {
+    if (this.cache.size > 0) {
+      return;
     }
-
-    try {
-      const content = await fs.readFile(this.filePath, 'utf-8');
-      this.cache = JSON.parse(content) as ScheduleStorage;
-      logger.debug({ count: this.cache.schedules.length }, 'Loaded schedules from file');
-      return this.cache;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        // File doesn't exist, create empty storage
-        this.cache = { version: '1.0.0', schedules: [] };
-        await this.save();
-        logger.info('Created new schedule storage file');
-        return this.cache;
-      }
-      throw error;
-    }
+    await this.reload();
   }
 
   /**
-   * Save schedules to JSON file.
+   * Force reload from files.
    */
-  private async save(): Promise<void> {
-    if (!this.cache) {
-      return;
+  async reload(): Promise<void> {
+    this.cache.clear();
+    const tasks = await this.fileScanner.scanAll();
+    for (const task of tasks) {
+      this.cache.set(task.id, task);
     }
-
-    // Ensure directory exists
-    const dir = path.dirname(this.filePath);
-    await fs.mkdir(dir, { recursive: true });
-
-    await fs.writeFile(this.filePath, JSON.stringify(this.cache, null, 2), 'utf-8');
-    logger.debug({ count: this.cache.schedules.length }, 'Saved schedules to file');
+    logger.debug({ count: this.cache.size }, 'Reloaded schedules from files');
   }
 
   /**
    * Invalidate cache (force reload on next operation).
    */
   invalidateCache(): void {
-    this.cache = null;
+    this.cache.clear();
+  }
+
+  /**
+   * Get the file scanner instance.
+   */
+  getFileScanner(): ScheduleFileScanner {
+    return this.fileScanner;
   }
 
   /**
@@ -150,10 +138,11 @@ export class ScheduleManager {
    * @returns The created task
    */
   async create(options: CreateScheduleOptions): Promise<ScheduledTask> {
-    const storage = await this.load();
+    await this.load();
 
+    const slug = this.generateSlug(options.name);
     const task: ScheduledTask = {
-      id: `schedule-${uuidv4().slice(0, 8)}`,
+      id: `schedule-${slug}`,
       name: options.name,
       cron: options.cron,
       prompt: options.prompt,
@@ -163,11 +152,28 @@ export class ScheduleManager {
       createdAt: new Date().toISOString(),
     };
 
-    storage.schedules.push(task);
-    await this.save();
+    // Write to file
+    await this.fileScanner.writeTask(task);
+
+    // Update cache
+    this.cache.set(task.id, task);
 
     logger.info({ taskId: task.id, name: task.name, chatId: task.chatId }, 'Created scheduled task');
     return task;
+  }
+
+  /**
+   * Generate a slug from task name.
+   */
+  private generateSlug(name: string): string {
+    const baseSlug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    // Add short UUID to ensure uniqueness
+    const shortId = uuidv4().slice(0, 8);
+    return `${baseSlug}-${shortId}`;
   }
 
   /**
@@ -177,8 +183,8 @@ export class ScheduleManager {
    * @returns The task or undefined if not found
    */
   async get(id: string): Promise<ScheduledTask | undefined> {
-    const storage = await this.load();
-    return storage.schedules.find(t => t.id === id);
+    await this.load();
+    return this.cache.get(id);
   }
 
   /**
@@ -188,8 +194,8 @@ export class ScheduleManager {
    * @returns Array of tasks for the chat
    */
   async listByChatId(chatId: string): Promise<ScheduledTask[]> {
-    const storage = await this.load();
-    return storage.schedules.filter(t => t.chatId === chatId);
+    await this.load();
+    return Array.from(this.cache.values()).filter(t => t.chatId === chatId);
   }
 
   /**
@@ -198,8 +204,8 @@ export class ScheduleManager {
    * @returns Array of all enabled tasks
    */
   async listEnabled(): Promise<ScheduledTask[]> {
-    const storage = await this.load();
-    return storage.schedules.filter(t => t.enabled);
+    await this.load();
+    return Array.from(this.cache.values()).filter(t => t.enabled);
   }
 
   /**
@@ -208,8 +214,8 @@ export class ScheduleManager {
    * @returns Array of all tasks
    */
   async listAll(): Promise<ScheduledTask[]> {
-    const storage = await this.load();
-    return storage.schedules;
+    await this.load();
+    return Array.from(this.cache.values());
   }
 
   /**
@@ -220,21 +226,26 @@ export class ScheduleManager {
    * @returns The updated task or undefined if not found
    */
   async update(id: string, updates: Partial<Omit<ScheduledTask, 'id' | 'createdAt'>>): Promise<ScheduledTask | undefined> {
-    const storage = await this.load();
-    const index = storage.schedules.findIndex(t => t.id === id);
+    await this.load();
 
-    if (index === -1) {
+    const task = this.cache.get(id);
+    if (!task) {
       return undefined;
     }
 
-    storage.schedules[index] = {
-      ...storage.schedules[index],
+    const updatedTask: ScheduledTask = {
+      ...task,
       ...updates,
     };
 
-    await this.save();
+    // Write to file
+    await this.fileScanner.writeTask(updatedTask);
+
+    // Update cache
+    this.cache.set(id, updatedTask);
+
     logger.info({ taskId: id, updates }, 'Updated scheduled task');
-    return storage.schedules[index];
+    return updatedTask;
   }
 
   /**
@@ -244,7 +255,7 @@ export class ScheduleManager {
    * @param enabled - New enabled status
    * @returns The updated task or undefined if not found
    */
-  toggle(id: string, enabled: boolean): Promise<ScheduledTask | undefined> {
+  async toggle(id: string, enabled: boolean): Promise<ScheduledTask | undefined> {
     return this.update(id, { enabled });
   }
 
@@ -264,15 +275,21 @@ export class ScheduleManager {
    * @returns true if deleted, false if not found
    */
   async delete(id: string): Promise<boolean> {
-    const storage = await this.load();
-    const index = storage.schedules.findIndex(t => t.id === id);
+    await this.load();
 
-    if (index === -1) {
+    const task = this.cache.get(id);
+    if (!task) {
       return false;
     }
 
-    storage.schedules.splice(index, 1);
-    await this.save();
+    // Delete file
+    const deleted = await this.fileScanner.deleteTask(id);
+    if (!deleted) {
+      return false;
+    }
+
+    // Remove from cache
+    this.cache.delete(id);
 
     logger.info({ taskId: id }, 'Deleted scheduled task');
     return true;
