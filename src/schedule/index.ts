@@ -12,7 +12,7 @@
 export { ScheduleManager, type ScheduledTask, type CreateScheduleOptions } from './schedule-manager.js';
 export { Scheduler, type SchedulerOptions } from './scheduler.js';
 export {
-  scheduleSdkMcpServer,
+  createScheduleSdkMcpServer,
   setScheduleManager,
   setScheduler,
 } from './schedule-mcp.js';

@@ -33,9 +33,9 @@
 
 import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
-import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
-import { taskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
-import { scheduleSdkMcpServer } from '../schedule/index.js';
+import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
+import { createTaskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
+import { createScheduleSdkMcpServer } from '../schedule/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
@@ -188,9 +188,10 @@ export class Pilot extends BaseAgent {
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
     // Add MCP servers for task tools
+    // Create new instances per Agent to prevent transport conflicts (issue #81)
     const mcpServers: Record<string, unknown> = {
-      'task-skill': taskSkillSdkMcpServer,
-      'schedule': scheduleSdkMcpServer,
+      'task-skill': createTaskSkillSdkMcpServer(),
+      'schedule': createScheduleSdkMcpServer(),
     };
 
     // CLI mode doesn't need Feishu MCP server
@@ -552,15 +553,16 @@ ${msg.text}`;
 
     // Add MCP servers for task tools
     // Start with internal SDK MCP servers
+    // Create new instances per Agent to prevent transport conflicts (issue #81)
     const mcpServers: Record<string, unknown> = {
-      'task-skill': taskSkillSdkMcpServer,
-      'schedule': scheduleSdkMcpServer,
+      'task-skill': createTaskSkillSdkMcpServer(),
+      'schedule': createScheduleSdkMcpServer(),
     };
 
     // Only add Feishu MCP server if NOT in CLI mode
     // CLI mode doesn't need Feishu integration (no Feishu API calls)
     if (!this.isCliMode) {
-      mcpServers['feishu-context'] = feishuSdkMcpServer;
+      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
     }
 
     // Merge configured external MCP servers from config file

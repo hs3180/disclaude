@@ -33,7 +33,7 @@
 import type { AgentMessage } from '../types/agent.js';
 import type { ReporterContext } from '../types/reporter.js';
 import type { TaskProgressEvent } from './executor.js';
-import { feishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
+import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
@@ -116,7 +116,7 @@ export class Reporter extends BaseAgent {
     const sdkOptions = this.createSdkOptions({
       allowedTools: this.skill.allowedTools,
       mcpServers: {
-        'feishu-context': feishuSdkMcpServer,
+        'feishu-context': createFeishuSdkMcpServer(),
       },
     });
 
@@ -151,7 +151,7 @@ export class Reporter extends BaseAgent {
     const sdkOptions = this.createSdkOptions({
       allowedTools: this.skill.allowedTools,
       mcpServers: {
-        'feishu-context': feishuSdkMcpServer,
+        'feishu-context': createFeishuSdkMcpServer(),
       },
     });
 

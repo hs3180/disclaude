@@ -648,38 +648,33 @@ export const feishuSdkTools = [
 ];
 
 /**
- * SDK MCP Server for Feishu context tools.
+ * SDK MCP Server factory for Feishu context tools.
  *
  * **Lifecycle:**
- * - This is a module-level singleton created once at process startup
- * - Persists for the lifetime of the application
- * - Shared across all Manager agent instances
- * - Does NOT need to be cleaned up between dialogues
+ * - Each call creates a new MCP server instance with its own Protocol
+ * - This prevents transport conflicts when multiple Agent instances are active
+ * - SDK automatically cleans up these instances when queries complete
  *
  * **Usage:**
- * Add this to the `mcpServers` SDK option when creating queries:
+ * Call this factory when creating queries:
  * ```typescript
  * query({
  *   prompt: "...",
  *   options: {
  *     mcpServers: {
- *       'feishu-context': feishuSdkMcpServer,
+ *       'feishu-context': createFeishuSdkMcpServer(),
  *     },
  *   },
  * })
  * ```
  *
- * **Memory Management:**
- * - The SDK creates per-query instances of this MCP server
- * - SDK automatically cleans up these instances when queries complete
- * - No manual cleanup required for the singleton itself
- * - Agent cleanup() methods clear session IDs, allowing SDK to release resources
- *
  * Creates an in-process MCP server that provides Feishu integration tools
  * to the Agent SDK.
  */
-export const feishuSdkMcpServer = createSdkMcpServer({
-  name: 'feishu-context',
-  version: '1.0.0',
-  tools: feishuSdkTools,
-});
+export function createFeishuSdkMcpServer() {
+  return createSdkMcpServer({
+    name: 'feishu-context',
+    version: '1.0.0',
+    tools: feishuSdkTools,
+  });
+}

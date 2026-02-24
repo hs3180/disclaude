@@ -139,28 +139,30 @@ DO NOT call this tool multiple times for the same task.`,
 );
 
 /**
- * SDK MCP Server for Task Skill tools.
+ * SDK MCP Server factory for Task Skill tools.
  *
  * **Lifecycle**:
- * - Module-level singleton created once at process startup
- * - Persists for lifetime of application
- * - Tools are ONLY available to agents that have them in allowed-tools
+ * - Each call creates a new MCP server instance
+ * - This allows each Agent instance to have its own isolated MCP Protocol
+ * - Prevents transport conflicts when multiple Agent instances are active
  *
  * **Usage**:
- * Add this to `mcpServers` SDK option when creating queries:
+ * Call this factory to create a new server instance when creating queries:
  * ```typescript
  * query({
  *   prompt: "...",
  *   options: {
  *     mcpServers: {
- *       'task-skill': taskSkillSdkMcpServer,
+ *       'task-skill': createTaskSkillSdkMcpServer(),
  *     },
  *   },
  * })
  * ```
  */
-export const taskSkillSdkMcpServer = createSdkMcpServer({
-  name: 'task-skill',
-  version: '1.0.0',
-  tools: [startDialogueTool],
-});
+export function createTaskSkillSdkMcpServer() {
+  return createSdkMcpServer({
+    name: 'task-skill',
+    version: '1.0.0',
+    tools: [startDialogueTool],
+  });
+}
