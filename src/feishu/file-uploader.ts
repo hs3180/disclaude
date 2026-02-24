@@ -189,12 +189,14 @@ export async function uploadFile(
  * @param client - Lark SDK client
  * @param chatId - Target chat ID
  * @param uploadResult - Upload result from uploadFile()
+ * @param parentId - Optional parent message ID for thread replies
  * @throws Error if sending fails
  */
 export async function sendFileMessage(
   client: lark.Client,
   chatId: string,
-  uploadResult: UploadResult
+  uploadResult: UploadResult,
+  parentId?: string
 ): Promise<void> {
   try {
     // Build message type and content based on file type
@@ -243,19 +245,32 @@ export async function sendFileMessage(
       uploadApiType: uploadResult.apiFileType,
       msgType,
       fileKey: uploadResult.fileKey,
-      fileName: uploadResult.fileName
+      fileName: uploadResult.fileName,
+      parentId,
     }, 'Sending file message to Feishu');
 
     // Send message
+    const messageData: {
+      receive_id: string;
+      msg_type: 'text' | 'post' | 'image' | 'file' | 'audio' | 'media';
+      content: string;
+      parent_id?: string;
+    } = {
+      receive_id: chatId,
+      msg_type: msgType as 'text' | 'post' | 'image' | 'file' | 'audio' | 'media',
+      content,
+    };
+
+    // Add parent_id for thread replies if provided
+    if (parentId) {
+      messageData.parent_id = parentId;
+    }
+
     const response = await client.im.message.create({
       params: {
         receive_id_type: 'chat_id',
       },
-      data: {
-        receive_id: chatId,
-        msg_type: msgType as 'text' | 'post' | 'image' | 'file' | 'audio' | 'media',
-        content,
-      },
+      data: messageData,
     });
 
     logger.info({
@@ -341,19 +356,21 @@ export async function sendFileMessage(
  * @param client - Lark SDK client
  * @param filePath - Local file path
  * @param chatId - Target chat ID
+ * @param parentId - Optional parent message ID for thread replies
  * @returns File size in bytes
  * @throws Error if any step fails
  */
 export async function uploadAndSendFile(
   client: lark.Client,
   filePath: string,
-  chatId: string
+  chatId: string,
+  parentId?: string
 ): Promise<number> {
   // Step 1: Upload file
   const uploadResult = await uploadFile(client, filePath, chatId);
 
   // Step 2: Send message
-  await sendFileMessage(client, chatId, uploadResult);
+  await sendFileMessage(client, chatId, uploadResult, parentId);
 
   return uploadResult.fileSize;
 }

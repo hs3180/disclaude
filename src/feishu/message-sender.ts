@@ -161,11 +161,12 @@ export class MessageSender {
    *
    * @param chatId - Target chat ID
    * @param filePath - Local file path to send
+   * @param parentId - Optional parent message ID for thread replies
    */
-  async sendFile(chatId: string, filePath: string): Promise<void> {
+  async sendFile(chatId: string, filePath: string, parentId?: string): Promise<void> {
     try {
       const { uploadAndSendFile } = await import('./file-uploader.js');
-      const fileSize = await uploadAndSendFile(this.client, filePath, chatId);
+      const fileSize = await uploadAndSendFile(this.client, filePath, chatId, parentId);
 
       // Log file message to persistent MD file
       const fileName = path.basename(filePath);
@@ -176,9 +177,9 @@ export class MessageSender {
         fileContent
       );
 
-      this.logger.info({ chatId, filePath, fileSize }, 'File sent to user');
+      this.logger.info({ chatId, filePath, fileSize, parentId }, 'File sent to user');
     } catch (error) {
-      this.logger.error({ err: error, filePath, chatId }, 'Failed to send file to user');
+      this.logger.error({ err: error, filePath, chatId, parentId }, 'Failed to send file to user');
       // Don't throw - file sending failure shouldn't break the main flow
     }
   }
