@@ -31,7 +31,7 @@ services:
 
     # Command: run Communication Node with PM2
     # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.config.docker.cjs", "--", "comm"]
+    command: ["pm2-runtime", "start", "ecosystem.comm.config.json"]
 
     # Network mode: host allows container to access host's CDP endpoint
     network_mode: host
@@ -40,6 +40,7 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - DISCLAUDE_MODE=comm
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
@@ -79,7 +80,7 @@ services:
 
     # Command: run Execution Node with PM2
     # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.config.docker.cjs", "--", "exec"]
+    command: ["pm2-runtime", "start", "ecosystem.exec.config.json"]
 
     # Network mode: host for local connection to comm node
     network_mode: host
@@ -88,6 +89,7 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - DISCLAUDE_MODE=exec
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro

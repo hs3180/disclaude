@@ -16,7 +16,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Dependencies
 # -----------------------------------------------------------------------------
-FROM node:18-bookworm-slim AS deps
+FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS deps
 WORKDIR /app
 
 # Install build dependencies for native modules
@@ -36,7 +36,7 @@ RUN npm ci --omit=dev && \
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
 # -----------------------------------------------------------------------------
-FROM node:18-bookworm-slim AS builder
+FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS builder
 WORKDIR /app
 
 # Install build dependencies
@@ -61,7 +61,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 3: Production Image
 # -----------------------------------------------------------------------------
-FROM node:18-bookworm-slim AS production
+FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS production
 WORKDIR /app
 
 # Install runtime dependencies and Playwright library dependencies
@@ -104,6 +104,10 @@ RUN npm install -g pm2@latest
 COPY --from=builder /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
+
+# Copy PM2 ecosystem configs for Docker (one for each mode)
+COPY --from=builder /app/ecosystem.comm.config.json ./
+COPY --from=builder /app/ecosystem.exec.config.json ./
 
 # Copy skills directory if it exists
 COPY --from=builder /app/skills ./skills

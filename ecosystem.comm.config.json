@@ -1,0 +1,18 @@
+{
+  "apps": [{
+    "name": "disclaude-docker",
+    "script": "dist/cli-entry.js",
+    "args": "start --mode comm",
+    "instances": 1,
+    "autorestart": true,
+    "watch": false,
+    "max_memory_restart": "1G",
+    "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
+    "error_file": "/app/logs/pm2-error.log",
+    "out_file": "/app/logs/pm2-out.log",
+    "merge_logs": true,
+    "env": {
+      "NODE_ENV": "production"
+    }
+  }]
+}
