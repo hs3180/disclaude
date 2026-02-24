@@ -291,4 +291,13 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get scheduler configuration from config file.
+   *
+   * @returns Scheduler configuration or undefined
+   */
+  static getSchedulerConfig(): import('./types.js').SchedulerConfig | undefined {
+    return fileConfigOnly.scheduler;
+  }
 }

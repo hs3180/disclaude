@@ -167,8 +167,44 @@ export interface DisclaudeConfig {
   tools?: ToolsConfig;
   /** Transport configuration */
   transport?: TransportConfig;
+  /** Scheduler configuration */
+  scheduler?: SchedulerConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+}
+
+/**
+ * Scheduled task configuration.
+ *
+ * Defines a periodic task that runs on a cron schedule.
+ */
+export interface ScheduleConfig {
+  /** Unique name for this scheduled task */
+  name: string;
+  /** Cron expression for scheduling (e.g., "0 9 * * *" for daily 9:00) */
+  cron: string;
+  /** Skill name to invoke */
+  skill?: string;
+  /** Arguments to pass to the skill or task */
+  args?: string;
+  /** Whether this schedule is enabled */
+  enabled?: boolean;
+  /** Feishu chat ID to send results to (optional) */
+  chatId?: string;
+  /** Timezone for the schedule (default: system timezone) */
+  timezone?: string;
+  /** Description of the schedule */
+  description?: string;
+}
+
+/**
+ * Scheduler configuration section.
+ */
+export interface SchedulerConfig {
+  /** Whether the scheduler is enabled */
+  enabled?: boolean;
+  /** List of scheduled tasks */
+  schedules?: ScheduleConfig[];
 }
 
 /**

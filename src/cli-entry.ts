@@ -4,6 +4,12 @@
  * Supports two modes:
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
+ *
+ * Supports schedule commands:
+ * - schedule:list - List all scheduled tasks
+ * - schedule:start - Start the scheduler
+ * - schedule:stop - Stop the scheduler
+ * - schedule:run - Manually run a scheduled task
  */
 import { Config } from './config/index.js';
 import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
@@ -11,6 +17,7 @@ import { handleError, ErrorCategory } from './utils/error-handler.js';
 import { setupSkillsInWorkspace } from './utils/skills-setup.js';
 import { parseGlobalArgs } from './utils/cli-args.js';
 import { runCommunicationNode, runExecutionNode, runCli } from './runners/index.js';
+import { getGlobalScheduler } from './scheduler/index.js';
 import packageJson from '../package.json' with { type: 'json' };
 
 // Increase max listeners to prevent memory leak warnings
@@ -31,6 +38,10 @@ function showHelp(): void {
   console.log('  disclaude start --mode comm           Communication Node (Feishu WebSocket)');
   console.log('  disclaude start --mode exec           Execution Node (Pilot Agent)');
   console.log('  disclaude --prompt <msg>              Execute single prompt');
+  console.log('  disclaude schedule:list               List all scheduled tasks');
+  console.log('  disclaude schedule:start              Start the scheduler');
+  console.log('  disclaude schedule:stop               Stop the scheduler');
+  console.log('  disclaude schedule:run <name>         Manually run a scheduled task');
   console.log('');
   console.log('Options:');
   console.log('  --mode <comm|exec>                    Select run mode (required for start)');
@@ -48,10 +59,134 @@ function showHelp(): void {
   console.log('  # CLI prompt mode');
   console.log('  disclaude --prompt "What is the weather today?"');
   console.log('');
+  console.log('  # Scheduler commands');
+  console.log('  disclaude schedule:list');
+  console.log('  disclaude schedule:start');
+  console.log('  disclaude schedule:run daily-report');
+  console.log('');
   console.log('For production deployment, run both nodes in separate processes:');
   console.log('  Process 1: disclaude start --mode comm');
   console.log('  Process 2: disclaude start --mode exec');
   console.log('');
+}
+
+/**
+ * Handle scheduler commands.
+ *
+ * @param command - Schedule command to execute
+ * @param args - Command arguments
+ */
+async function handleScheduleCommand(command: string, args: string[]): Promise<void> {
+  await initLogger();
+  const scheduler = getGlobalScheduler();
+
+  // Load scheduler configuration
+  const schedulerConfig = Config.getSchedulerConfig();
+  if (schedulerConfig) {
+    scheduler.loadSchedules(schedulerConfig);
+  }
+
+  switch (command) {
+    case 'schedule:list': {
+      console.log('');
+      console.log('═══════════════════════════════════════════════════');
+      console.log('  Scheduled Tasks');
+      console.log('═══════════════════════════════════════════════════');
+      console.log('');
+
+      const stats = scheduler.getTaskStats();
+
+      if (stats.length === 0) {
+        console.log('  No scheduled tasks configured.');
+        console.log('');
+        console.log('  Add schedules to your disclaude.config.yaml:');
+        console.log('');
+        console.log('  scheduler:');
+        console.log('    enabled: true');
+        console.log('    schedules:');
+        console.log('      - name: "daily-report"');
+        console.log('        cron: "0 9 * * *"');
+        console.log('        args: "Generate daily report"');
+        console.log('        enabled: true');
+        console.log('');
+      } else {
+        console.log(`  Total: ${stats.length} task(s)`);
+        console.log(`  Status: ${scheduler.isActive() ? 'Running' : 'Stopped'}`);
+        console.log('');
+
+        for (const stat of stats) {
+          console.log(`  Task: ${stat.name}`);
+          console.log(`    Runs: ${stat.runCount}`);
+          console.log(`    Status: ${stat.isRunning ? 'Running' : 'Idle'}`);
+          if (stat.lastRun) {
+            console.log(`    Last Run: ${stat.lastRun.toLocaleString()}`);
+          }
+          if (stat.nextRun) {
+            console.log(`    Next Run: ${stat.nextRun.toLocaleString()}`);
+          }
+          if (stat.lastError) {
+            console.log(`    Last Error: ${stat.lastError}`);
+          }
+          console.log('');
+        }
+      }
+      console.log('═══════════════════════════════════════════════════');
+      console.log('');
+      break;
+    }
+
+    case 'schedule:start': {
+      console.log('');
+      console.log('Starting scheduler...');
+
+      if (scheduler.isActive()) {
+        console.log('Scheduler is already running.');
+      } else {
+        scheduler.start();
+        console.log(`Scheduler started with ${scheduler.getScheduleCount()} task(s).`);
+      }
+      console.log('');
+      break;
+    }
+
+    case 'schedule:stop': {
+      console.log('');
+      console.log('Stopping scheduler...');
+
+      if (!scheduler.isActive()) {
+        console.log('Scheduler is not running.');
+      } else {
+        scheduler.stop();
+        console.log('Scheduler stopped.');
+      }
+      console.log('');
+      break;
+    }
+
+    case 'schedule:run': {
+      const taskName = args[0];
+      if (!taskName) {
+        console.error('Error: Task name is required.');
+        console.error('Usage: disclaude schedule:run <task-name>');
+        process.exit(1);
+      }
+
+      console.log(`Running task: ${taskName}`);
+      try {
+        await scheduler.runTask(taskName);
+        console.log('Task completed.');
+      } catch (error) {
+        const err = error as Error;
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+      break;
+    }
+
+    default:
+      console.error(`Unknown command: ${command}`);
+      process.exit(1);
+  }
 }
 
 /**
@@ -107,11 +242,19 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
+    // Handle schedule commands
+    const command = process.argv[2];
+    if (command === 'schedule:list' || command === 'schedule:start' ||
+        command === 'schedule:stop' || command === 'schedule:run') {
+      await handleScheduleCommand(command, process.argv.slice(3));
+      return;
+    }
+
     // Validate command
-    if (process.argv[2] !== 'start') {
-      handleError(new Error(`Unknown command "${process.argv[2]}"`), {
+    if (command !== 'start') {
+      handleError(new Error(`Unknown command "${command}"`), {
         category: ErrorCategory.VALIDATION,
-        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <comm|exec>"`
+        userMessage: `Unknown command "${command}". Use "disclaude start --mode <comm|exec>" or "disclaude schedule:*" commands`
       }, {
         log: true,
         throwOnError: true
