@@ -168,14 +168,20 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       schedulesDir,
       onFileAdded: (task) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
+        // Invalidate cache before adding to ensure fresh data
+        scheduleManager.invalidateCache();
         scheduler.addTask(task);
       },
       onFileChanged: (task) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
+        // Invalidate cache before updating to ensure fresh data
+        scheduleManager.invalidateCache();
         scheduler.addTask(task);
       },
       onFileRemoved: (taskId) => {
         logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
+        // Invalidate cache after removing to ensure consistency
+        scheduleManager.invalidateCache();
         scheduler.removeTask(taskId);
       },
     });
