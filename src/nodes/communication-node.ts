@@ -49,6 +49,12 @@ interface PromptMessage {
   senderOpenId?: string;
 }
 
+interface CommandMessage {
+  type: 'command';
+  command: 'reset' | 'restart';
+  chatId: string;
+}
+
 interface FeedbackMessage {
   type: 'text' | 'card' | 'file' | 'done' | 'error';
   chatId: string;
@@ -211,6 +217,20 @@ export class CommunicationNode extends EventEmitter {
 
     this.execWs.send(JSON.stringify(message));
     logger.info({ chatId: message.chatId, messageId: message.messageId }, 'Prompt sent to Execution Node');
+  }
+
+  /**
+   * Send command to Execution Node via WebSocket.
+   */
+  private async sendCommand(message: CommandMessage): Promise<void> {
+    if (!this.execWs || this.execWs.readyState !== WebSocket.OPEN) {
+      logger.warn('No Execution Node connected');
+      await this.sendMessage(message.chatId, '❌ 没有可用的执行节点');
+      throw new Error('No Execution Node connected');
+    }
+
+    this.execWs.send(JSON.stringify(message));
+    logger.info({ chatId: message.chatId, command: message.command }, 'Command sent to Execution Node');
   }
 
   /**
@@ -474,6 +494,7 @@ export class CommunicationNode extends EventEmitter {
     // Handle /reset command
     if (text.trim() === '/reset') {
       logger.info({ chatId: chat_id }, 'Reset command triggered');
+      await this.sendCommand({ type: 'command', command: 'reset', chatId: chat_id });
       await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
       return;
     }

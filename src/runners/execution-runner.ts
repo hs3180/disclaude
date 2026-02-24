@@ -7,7 +7,7 @@
 
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
-import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
+import { Pilot } from '../agents/pilot.js';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
 
@@ -22,6 +22,12 @@ interface PromptMessage {
   prompt: string;
   messageId: string;
   senderOpenId?: string;
+}
+
+interface CommandMessage {
+  type: 'command';
+  command: 'reset' | 'restart';
+  chatId: string;
 }
 
 interface FeedbackMessage {
@@ -126,40 +132,62 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
     ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString()) as PromptMessage;
+        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage;
 
-        if (message.type !== 'prompt') {
-          logger.warn({ type: message.type }, 'Unknown message type');
+        // Handle command messages
+        if (message.type === 'command') {
+          const { command, chatId } = message;
+          logger.info({ command, chatId }, 'Received command');
+
+          try {
+            if (command === 'reset') {
+              sharedPilot.resetAll();
+              logger.info({ chatId }, 'Pilot reset executed');
+            } else if (command === 'restart') {
+              sharedPilot.resetAll();
+              logger.info({ chatId }, 'Pilot restart executed (reset performed)');
+            }
+          } catch (error) {
+            const err = error as Error;
+            logger.error({ err, command, chatId }, 'Command execution failed');
+          }
           return;
         }
 
-        const { chatId, prompt, messageId, senderOpenId } = message;
-        logger.info({ chatId, messageId, promptLength: prompt.length }, 'Received prompt');
+        // Handle prompt messages
+        if (message.type === 'prompt') {
+          const { chatId, prompt, messageId, senderOpenId } = message;
+          logger.info({ chatId, messageId, promptLength: prompt.length }, 'Received prompt');
 
-        // Create send feedback function for this message
-        const sendFeedback = (feedback: FeedbackMessage) => {
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(feedback));
+          // Create send feedback function for this message
+          const sendFeedback = (feedback: FeedbackMessage) => {
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(feedback));
+            }
+          };
+
+          // Register feedback channel for this chatId
+          activeFeedbackChannels.set(chatId, sendFeedback);
+
+          try {
+            // Use processMessage for persistent session context
+            // This is non-blocking - it queues the message and returns immediately
+            sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId);
+
+            // Send done signal after processing
+            // Note: Since processMessage is non-blocking, we send done immediately
+            // The actual response will come through the callbacks asynchronously
+            sendFeedback({ type: 'done', chatId });
+          } catch (error) {
+            const err = error as Error;
+            logger.error({ err, chatId }, 'Execution failed');
+            sendFeedback({ type: 'error', chatId, error: err.message });
           }
-        };
-
-        // Register feedback channel for this chatId
-        activeFeedbackChannels.set(chatId, sendFeedback);
-
-        try {
-          // Use processMessage for persistent session context
-          // This is non-blocking - it queues the message and returns immediately
-          sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId);
-
-          // Send done signal after processing
-          // Note: Since processMessage is non-blocking, we send done immediately
-          // The actual response will come through the callbacks asynchronously
-          sendFeedback({ type: 'done', chatId });
-        } catch (error) {
-          const err = error as Error;
-          logger.error({ err, chatId }, 'Execution failed');
-          sendFeedback({ type: 'error', chatId, error: err.message });
+          return;
         }
+
+        // Unknown message type
+        logger.warn({ type: (message as { type?: string }).type }, 'Unknown message type');
       } catch (error) {
         logger.error({ err: error }, 'Failed to process message');
       }
