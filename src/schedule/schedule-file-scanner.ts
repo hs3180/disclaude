@@ -222,8 +222,11 @@ export class ScheduleFileScanner {
   async writeTask(task: ScheduledTask): Promise<string> {
     await this.ensureDir();
 
-    const slug = slugify(task.name);
-    const fileName = `${slug}.md`;
+    // Use task ID to generate file name (task.id = "schedule-{slug}")
+    // This ensures file name matches task ID for consistent deletion
+    const fileName = task.id.startsWith('schedule-')
+      ? `${task.id.slice('schedule-'.length)}.md`
+      : `${task.id}.md`;
     const filePath = path.join(this.schedulesDir, fileName);
 
     const frontmatter = [

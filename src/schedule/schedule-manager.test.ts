@@ -2,29 +2,27 @@
  * ScheduleManager Tests
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import { ScheduleManager } from './schedule-manager.js';
 
 describe('ScheduleManager', () => {
   let manager: ScheduleManager;
-  const testFilePath = path.join(__dirname, 'test-schedules.json');
+  let testDir: string;
 
   beforeEach(async () => {
-    manager = new ScheduleManager(testFilePath);
-    // Ensure clean state
-    try {
-      await fs.unlink(testFilePath);
-    } catch {
-      // File doesn't exist, that's fine
-    }
+    // Create unique temp directory for each test
+    testDir = path.join(os.tmpdir(), `schedule-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(testDir, { recursive: true });
+    manager = new ScheduleManager({ schedulesDir: testDir });
   });
 
   afterEach(async () => {
     // Clean up
     try {
-      await fs.unlink(testFilePath);
+      await fs.rm(testDir, { recursive: true, force: true });
     } catch {
       // Ignore
     }
@@ -48,7 +46,7 @@ describe('ScheduleManager', () => {
       expect(task.createdAt).toBeDefined();
     });
 
-    it('should persist tasks to file', async () => {
+    it('should persist tasks to markdown files', async () => {
       await manager.create({
         name: 'Task 1',
         cron: '0 9 * * *',
@@ -63,8 +61,13 @@ describe('ScheduleManager', () => {
         chatId: 'chat-2',
       });
 
+      // Verify files exist
+      const files = await fs.readdir(testDir);
+      expect(files.length).toBe(2);
+      expect(files.every(f => f.endsWith('.md'))).toBe(true);
+
       // Create new manager to test persistence
-      const newManager = new ScheduleManager(testFilePath);
+      const newManager = new ScheduleManager({ schedulesDir: testDir });
       const tasks = await newManager.listAll();
 
       expect(tasks).toHaveLength(2);
@@ -118,7 +121,7 @@ describe('ScheduleManager', () => {
 
       const chat1Tasks = await manager.listByChatId('chat-1');
       expect(chat1Tasks).toHaveLength(2);
-      expect(chat1Tasks.map(t => t.name)).toEqual(['Task 1', 'Task 3']);
+      expect(chat1Tasks.map(t => t.name)).toEqual(expect.arrayContaining(['Task 1', 'Task 3']));
 
       const chat2Tasks = await manager.listByChatId('chat-2');
       expect(chat2Tasks).toHaveLength(1);
@@ -245,6 +248,186 @@ describe('ScheduleManager', () => {
 
       const tasks = await manager.listAll();
       expect(tasks).toHaveLength(1);
+    });
+  });
+
+  // ========================================================================
+  // Issue #86 Tests: 定时任务重复执行和删除不彻底问题
+  // ========================================================================
+
+  describe('Issue #86: 删除任务后缓存清除', () => {
+    it('should remove task from cache after delete', async () => {
+      // Create a task
+      const task = await manager.create({
+        name: 'Task to Delete',
+        cron: '* * * * *',
+        prompt: 'Test prompt',
+        chatId: 'test-chat',
+      });
+
+      // Verify task is in cache (via listByChatId)
+      const tasksBefore = await manager.listByChatId('test-chat');
+      expect(tasksBefore).toHaveLength(1);
+      expect(tasksBefore[0].id).toBe(task.id);
+
+      // Delete the task
+      const deleted = await manager.delete(task.id);
+      expect(deleted).toBe(true);
+
+      // Verify task is removed from cache
+      const tasksAfter = await manager.listByChatId('test-chat');
+      expect(tasksAfter).toHaveLength(0);
+    });
+
+    it('should not show deleted task in listAll after delete', async () => {
+      const task = await manager.create({
+        name: 'Task to Delete',
+        cron: '* * * * *',
+        prompt: 'Test',
+        chatId: 'chat-1',
+      });
+
+      // Verify task exists
+      let allTasks = await manager.listAll();
+      expect(allTasks).toHaveLength(1);
+
+      // Delete
+      await manager.delete(task.id);
+
+      // Verify listAll returns empty
+      allTasks = await manager.listAll();
+      expect(allTasks).toHaveLength(0);
+    });
+
+    it('should not show deleted task in listEnabled after delete', async () => {
+      const task = await manager.create({
+        name: 'Enabled Task',
+        cron: '* * * * *',
+        prompt: 'Test',
+        chatId: 'chat-1',
+      });
+
+      // Verify task is enabled
+      let enabledTasks = await manager.listEnabled();
+      expect(enabledTasks).toHaveLength(1);
+
+      // Delete
+      await manager.delete(task.id);
+
+      // Verify listEnabled returns empty
+      enabledTasks = await manager.listEnabled();
+      expect(enabledTasks).toHaveLength(0);
+    });
+  });
+
+  describe('Issue #86: invalidateCache 强制重新加载', () => {
+    it('should reload from files after invalidateCache', async () => {
+      // Create task via manager
+      const task = await manager.create({
+        name: 'Original Task',
+        cron: '0 9 * * *',
+        prompt: 'Original',
+        chatId: 'chat-1',
+      });
+
+      // Get the task file path
+      const files = await fs.readdir(testDir);
+      const taskFile = files.find(f => f.includes('original-task'));
+      expect(taskFile).toBeDefined();
+
+      // Manually modify the file (simulate external change)
+      const filePath = path.join(testDir, taskFile!);
+      const modifiedContent = `---
+name: "Modified Task"
+cron: "0 10 * * *"
+enabled: true
+chatId: "chat-1"
+createdAt: "${task.createdAt}"
+---
+Modified prompt`;
+      await fs.writeFile(filePath, modifiedContent);
+
+      // Invalidate cache
+      manager.invalidateCache();
+
+      // Reload should pick up the changes
+      const tasks = await manager.listAll();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].name).toBe('Modified Task');
+      expect(tasks[0].cron).toBe('0 10 * * *');
+      expect(tasks[0].prompt).toBe('Modified prompt');
+    });
+
+    it('should reflect file deletion after invalidateCache', async () => {
+      // Create task
+      const task = await manager.create({
+        name: 'Task to Remove',
+        cron: '* * * * *',
+        prompt: 'Test',
+        chatId: 'chat-1',
+      });
+
+      // Verify exists
+      let tasks = await manager.listAll();
+      expect(tasks).toHaveLength(1);
+
+      // Manually delete the file
+      const files = await fs.readdir(testDir);
+      const taskFile = files.find(f => f.includes('task-to-remove'));
+      if (taskFile) {
+        await fs.unlink(path.join(testDir, taskFile));
+      }
+
+      // Invalidate cache and reload
+      manager.invalidateCache();
+      tasks = await manager.listAll();
+
+      // Should be empty now
+      expect(tasks).toHaveLength(0);
+    });
+  });
+
+  describe('Issue #86: 多任务删除缓存一致性', () => {
+    it('should correctly handle deleting one of multiple tasks', async () => {
+      // Create multiple tasks
+      const task1 = await manager.create({
+        name: 'Task 1',
+        cron: '0 9 * * *',
+        prompt: 'Prompt 1',
+        chatId: 'chat-1',
+      });
+
+      const task2 = await manager.create({
+        name: 'Task 2',
+        cron: '0 10 * * *',
+        prompt: 'Prompt 2',
+        chatId: 'chat-1',
+      });
+
+      const task3 = await manager.create({
+        name: 'Task 3',
+        cron: '0 11 * * *',
+        prompt: 'Prompt 3',
+        chatId: 'chat-2',
+      });
+
+      // Delete task2
+      await manager.delete(task2.id);
+
+      // Verify task1 and task3 still exist
+      const allTasks = await manager.listAll();
+      expect(allTasks).toHaveLength(2);
+      expect(allTasks.map(t => t.name)).toEqual(expect.arrayContaining(['Task 1', 'Task 3']));
+
+      // Verify chat-1 has only task1
+      const chat1Tasks = await manager.listByChatId('chat-1');
+      expect(chat1Tasks).toHaveLength(1);
+      expect(chat1Tasks[0].id).toBe(task1.id);
+
+      // Verify chat-2 has task3
+      const chat2Tasks = await manager.listByChatId('chat-2');
+      expect(chat2Tasks).toHaveLength(1);
+      expect(chat2Tasks[0].id).toBe(task3.id);
     });
   });
 });
