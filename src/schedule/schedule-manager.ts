@@ -8,12 +8,13 @@
  * - CRUD operations for scheduled tasks
  * - File-based persistence (markdown with YAML frontmatter)
  * - Scope by chatId (each chat has its own tasks)
+ * - No cache: always reads from file system for consistency
  */
 
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
-import { ScheduleFileScanner, type ScheduleFileTask } from './schedule-file-scanner.js';
+import { ScheduleFileScanner } from './schedule-file-scanner.js';
 
 const logger = createLogger('ScheduleManager');
 
@@ -63,6 +64,9 @@ export interface ScheduleManagerOptions {
 /**
  * ScheduleManager - Manages CRUD operations for scheduled tasks.
  *
+ * No cache: all operations read directly from file system.
+ * This ensures perfect consistency - file system is the single source of truth.
+ *
  * Usage:
  * ```typescript
  * const manager = new ScheduleManager({ schedulesDir: './workspace/schedules' });
@@ -87,41 +91,23 @@ export interface ScheduleManagerOptions {
  */
 export class ScheduleManager {
   private fileScanner: ScheduleFileScanner;
-  private cache: Map<string, ScheduledTask> = new Map();
 
   constructor(options: ScheduleManagerOptions) {
     this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
-    logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized');
+    logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized (no cache)');
   }
 
   /**
-   * Load schedules from files.
-   * Uses cache if available.
+   * Load all tasks from file system.
+   * No caching - always reads fresh data.
    */
-  private async load(): Promise<void> {
-    if (this.cache.size > 0) {
-      return;
-    }
-    await this.reload();
-  }
-
-  /**
-   * Force reload from files.
-   */
-  async reload(): Promise<void> {
-    this.cache.clear();
+  private async loadAll(): Promise<Map<string, ScheduledTask>> {
     const tasks = await this.fileScanner.scanAll();
+    const map = new Map<string, ScheduledTask>();
     for (const task of tasks) {
-      this.cache.set(task.id, task);
+      map.set(task.id, task);
     }
-    logger.debug({ count: this.cache.size }, 'Reloaded schedules from files');
-  }
-
-  /**
-   * Invalidate cache (force reload on next operation).
-   */
-  invalidateCache(): void {
-    this.cache.clear();
+    return map;
   }
 
   /**
@@ -138,8 +124,6 @@ export class ScheduleManager {
    * @returns The created task
    */
   async create(options: CreateScheduleOptions): Promise<ScheduledTask> {
-    await this.load();
-
     const slug = this.generateSlug(options.name);
     const task: ScheduledTask = {
       id: `schedule-${slug}`,
@@ -154,9 +138,6 @@ export class ScheduleManager {
 
     // Write to file
     await this.fileScanner.writeTask(task);
-
-    // Update cache
-    this.cache.set(task.id, task);
 
     logger.info({ taskId: task.id, name: task.name, chatId: task.chatId }, 'Created scheduled task');
     return task;
@@ -183,8 +164,8 @@ export class ScheduleManager {
    * @returns The task or undefined if not found
    */
   async get(id: string): Promise<ScheduledTask | undefined> {
-    await this.load();
-    return this.cache.get(id);
+    const tasks = await this.loadAll();
+    return tasks.get(id);
   }
 
   /**
@@ -194,8 +175,8 @@ export class ScheduleManager {
    * @returns Array of tasks for the chat
    */
   async listByChatId(chatId: string): Promise<ScheduledTask[]> {
-    await this.load();
-    return Array.from(this.cache.values()).filter(t => t.chatId === chatId);
+    const tasks = await this.loadAll();
+    return Array.from(tasks.values()).filter(t => t.chatId === chatId);
   }
 
   /**
@@ -204,8 +185,8 @@ export class ScheduleManager {
    * @returns Array of all enabled tasks
    */
   async listEnabled(): Promise<ScheduledTask[]> {
-    await this.load();
-    return Array.from(this.cache.values()).filter(t => t.enabled);
+    const tasks = await this.loadAll();
+    return Array.from(tasks.values()).filter(t => t.enabled);
   }
 
   /**
@@ -214,8 +195,8 @@ export class ScheduleManager {
    * @returns Array of all tasks
    */
   async listAll(): Promise<ScheduledTask[]> {
-    await this.load();
-    return Array.from(this.cache.values());
+    const tasks = await this.loadAll();
+    return Array.from(tasks.values());
   }
 
   /**
@@ -226,9 +207,8 @@ export class ScheduleManager {
    * @returns The updated task or undefined if not found
    */
   async update(id: string, updates: Partial<Omit<ScheduledTask, 'id' | 'createdAt'>>): Promise<ScheduledTask | undefined> {
-    await this.load();
-
-    const task = this.cache.get(id);
+    const tasks = await this.loadAll();
+    const task = tasks.get(id);
     if (!task) {
       return undefined;
     }
@@ -240,9 +220,6 @@ export class ScheduleManager {
 
     // Write to file
     await this.fileScanner.writeTask(updatedTask);
-
-    // Update cache
-    this.cache.set(id, updatedTask);
 
     logger.info({ taskId: id, updates }, 'Updated scheduled task');
     return updatedTask;
@@ -275,21 +252,11 @@ export class ScheduleManager {
    * @returns true if deleted, false if not found
    */
   async delete(id: string): Promise<boolean> {
-    await this.load();
-
-    const task = this.cache.get(id);
-    if (!task) {
-      return false;
-    }
-
     // Delete file
     const deleted = await this.fileScanner.deleteTask(id);
     if (!deleted) {
       return false;
     }
-
-    // Remove from cache
-    this.cache.delete(id);
 
     logger.info({ taskId: id }, 'Deleted scheduled task');
     return true;

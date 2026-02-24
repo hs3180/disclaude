@@ -87,6 +87,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'chatId':
       case 'createdBy':
       case 'createdAt':
+      case 'lastExecutedAt':
         // Remove quotes if present
         frontmatter[key] = value.replace(/^["']|["']$/g, '');
         break;
@@ -200,6 +201,7 @@ export class ScheduleFileScanner {
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
+        lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -241,7 +243,10 @@ export class ScheduleFileScanner {
       frontmatter.push(`createdBy: ${task.createdBy}`);
     }
     if (task.createdAt) {
-      frontmatter.push(`createdAt: ${task.createdAt}`);
+      frontmatter.push(`createdAt: "${task.createdAt}"`);
+    }
+    if (task.lastExecutedAt) {
+      frontmatter.push(`lastExecutedAt: "${task.lastExecutedAt}"`);
     }
 
     frontmatter.push('---', '');

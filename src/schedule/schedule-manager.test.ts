@@ -1,8 +1,11 @@
 /**
  * ScheduleManager Tests
+ *
+ * Note: ScheduleManager has NO cache - all operations read directly from file system.
+ * This ensures perfect consistency - file system is the single source of truth.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -66,7 +69,7 @@ describe('ScheduleManager', () => {
       expect(files.length).toBe(2);
       expect(files.every(f => f.endsWith('.md'))).toBe(true);
 
-      // Create new manager to test persistence
+      // Create new manager to test persistence (no cache, reads from files)
       const newManager = new ScheduleManager({ schedulesDir: testDir });
       const tasks = await newManager.listAll();
 
@@ -234,29 +237,12 @@ describe('ScheduleManager', () => {
     });
   });
 
-  describe('cache', () => {
-    it('should use cache after first load', async () => {
-      await manager.create({
-        name: 'Task 1',
-        cron: '0 9 * * *',
-        prompt: 'Prompt 1',
-        chatId: 'chat-1',
-      });
-
-      // Invalidate cache to force reload
-      manager.invalidateCache();
-
-      const tasks = await manager.listAll();
-      expect(tasks).toHaveLength(1);
-    });
-  });
-
   // ========================================================================
-  // Issue #86 Tests: 定时任务重复执行和删除不彻底问题
+  // Issue #86 Tests: 文件系统一致性（无缓存）
   // ========================================================================
 
-  describe('Issue #86: 删除任务后缓存清除', () => {
-    it('should remove task from cache after delete', async () => {
+  describe('Issue #86: 删除任务后一致性', () => {
+    it('should not show deleted task after delete (no cache)', async () => {
       // Create a task
       const task = await manager.create({
         name: 'Task to Delete',
@@ -265,7 +251,7 @@ describe('ScheduleManager', () => {
         chatId: 'test-chat',
       });
 
-      // Verify task is in cache (via listByChatId)
+      // Verify task exists
       const tasksBefore = await manager.listByChatId('test-chat');
       expect(tasksBefore).toHaveLength(1);
       expect(tasksBefore[0].id).toBe(task.id);
@@ -274,7 +260,7 @@ describe('ScheduleManager', () => {
       const deleted = await manager.delete(task.id);
       expect(deleted).toBe(true);
 
-      // Verify task is removed from cache
+      // Verify task is removed (reads from file system, no cache)
       const tasksAfter = await manager.listByChatId('test-chat');
       expect(tasksAfter).toHaveLength(0);
     });
@@ -294,7 +280,7 @@ describe('ScheduleManager', () => {
       // Delete
       await manager.delete(task.id);
 
-      // Verify listAll returns empty
+      // Verify listAll returns empty (reads from file system)
       allTasks = await manager.listAll();
       expect(allTasks).toHaveLength(0);
     });
@@ -320,8 +306,8 @@ describe('ScheduleManager', () => {
     });
   });
 
-  describe('Issue #86: invalidateCache 强制重新加载', () => {
-    it('should reload from files after invalidateCache', async () => {
+  describe('Issue #86: 外部文件修改立即可见', () => {
+    it('should see external file modifications immediately (no cache)', async () => {
       // Create task via manager
       const task = await manager.create({
         name: 'Original Task',
@@ -347,10 +333,7 @@ createdAt: "${task.createdAt}"
 Modified prompt`;
       await fs.writeFile(filePath, modifiedContent);
 
-      // Invalidate cache
-      manager.invalidateCache();
-
-      // Reload should pick up the changes
+      // No need to invalidate cache - next read sees changes
       const tasks = await manager.listAll();
       expect(tasks).toHaveLength(1);
       expect(tasks[0].name).toBe('Modified Task');
@@ -358,9 +341,9 @@ Modified prompt`;
       expect(tasks[0].prompt).toBe('Modified prompt');
     });
 
-    it('should reflect file deletion after invalidateCache', async () => {
+    it('should see external file deletion immediately (no cache)', async () => {
       // Create task
-      const task = await manager.create({
+      await manager.create({
         name: 'Task to Remove',
         cron: '* * * * *',
         prompt: 'Test',
@@ -378,16 +361,13 @@ Modified prompt`;
         await fs.unlink(path.join(testDir, taskFile));
       }
 
-      // Invalidate cache and reload
-      manager.invalidateCache();
+      // No need to invalidate cache - next read sees deletion
       tasks = await manager.listAll();
-
-      // Should be empty now
       expect(tasks).toHaveLength(0);
     });
   });
 
-  describe('Issue #86: 多任务删除缓存一致性', () => {
+  describe('Issue #86: 多任务删除一致性', () => {
     it('should correctly handle deleting one of multiple tasks', async () => {
       // Create multiple tasks
       const task1 = await manager.create({
@@ -428,6 +408,49 @@ Modified prompt`;
       const chat2Tasks = await manager.listByChatId('chat-2');
       expect(chat2Tasks).toHaveLength(1);
       expect(chat2Tasks[0].id).toBe(task3.id);
+    });
+  });
+
+  describe('No Cache: 文件系统是唯一真相', () => {
+    it('should always read fresh data from files', async () => {
+      // Create task
+      const task = await manager.create({
+        name: 'Test Task',
+        cron: '0 9 * * *',
+        prompt: 'Original',
+        chatId: 'chat-1',
+      });
+
+      // Read via get()
+      let fetched = await manager.get(task.id);
+      expect(fetched?.prompt).toBe('Original');
+
+      // Update via manager
+      await manager.update(task.id, { prompt: 'Updated' });
+
+      // Read again - should see updated value
+      fetched = await manager.get(task.id);
+      expect(fetched?.prompt).toBe('Updated');
+    });
+
+    it('should see changes from another manager instance', async () => {
+      // Create task with first manager
+      const task = await manager.create({
+        name: 'Test Task',
+        cron: '0 9 * * *',
+        prompt: 'Original',
+        chatId: 'chat-1',
+      });
+
+      // Create second manager (simulating another process)
+      const manager2 = new ScheduleManager({ schedulesDir: testDir });
+
+      // Update via second manager
+      await manager2.update(task.id, { prompt: 'Updated by manager2' });
+
+      // First manager should see the change
+      const fetched = await manager.get(task.id);
+      expect(fetched?.prompt).toBe('Updated by manager2');
     });
   });
 });
