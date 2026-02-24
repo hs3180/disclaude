@@ -133,7 +133,6 @@ notifications to the chat when it executes.`,
       logger.info({ name, cron, chatId }, 'Creating scheduled task');
 
       const manager = getScheduleManager();
-      const scheduler = getScheduler();
 
       const task = await manager.create({
         name,
@@ -142,8 +141,8 @@ notifications to the chat when it executes.`,
         chatId,
       });
 
-      // Add to scheduler
-      scheduler.addTask(task);
+      // Note: FileWatcher will detect the new file and add to scheduler
+      // This avoids duplicate scheduling (see issue #86)
 
       const scheduleDesc = formatCron(cron);
       return toolSuccess(
@@ -276,7 +275,6 @@ Use this to temporarily pause a task without deleting it.`,
   async ({ id, enabled, chatId }) => {
     try {
       const manager = getScheduleManager();
-      const scheduler = getScheduler();
 
       // Verify task belongs to this chat
       const task = await manager.get(id);
@@ -288,15 +286,11 @@ Use this to temporarily pause a task without deleting it.`,
         return toolSuccess('❌ 无权修改此任务');
       }
 
-      // Update status
+      // Update status (file change will trigger FileWatcher to update scheduler)
       await manager.toggle(id, enabled);
 
-      // Update scheduler
-      if (enabled) {
-        scheduler.addTask({ ...task, enabled });
-      } else {
-        scheduler.removeTask(id);
-      }
+      // Note: FileWatcher will detect the file change and update scheduler
+      // This avoids duplicate scheduling (see issue #86)
 
       const action = enabled ? '已启用' : '已暂停';
       return toolSuccess(`✅ ${  action  }定时任务「${  task.name  }」`);
