@@ -182,11 +182,13 @@ export class MessageLogger {
         ? new Date(entry.timestamp).toISOString()
         : entry.timestamp;
 
-    const direction = entry.direction === 'incoming' ? 'Incoming' : 'Outgoing';
+    // Use emoji to distinguish message direction
+    const emoji = entry.direction === 'incoming' ? '📥' : '📤';
+    const direction = entry.direction === 'incoming' ? 'User' : 'Bot';
 
     return `
 
-## [${timestamp}] ${direction} (message_id: ${entry.messageId})
+## [${timestamp}] ${emoji} ${direction} (message_id: ${entry.messageId})
 
 **Sender**: ${entry.senderId}
 **Type**: ${entry.messageType}
