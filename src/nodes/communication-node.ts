@@ -1,26 +1,28 @@
 /**
- * Communication Node - Handles Feishu communication.
+ * Communication Node - Handles multi-channel communication.
  *
- * This module manages the Feishu bot and forwards prompts to Execution Node via WebSocket.
- * It runs a WebSocket server that Execution Nodes connect to.
+ * This module manages multiple communication channels (Feishu, REST, etc.)
+ * and forwards prompts to Execution Node via WebSocket.
+ *
+ * Architecture:
+ * ```
+ *                    ┌─────────────────────────────┐
+ *   Feishu Channel ──│                             │
+ *   REST Channel   ──│    Communication Node       │── Execution Node
+ *   (future)       ──│    (Channel Multiplexer)    │    (via WebSocket)
+ *                    │                             │
+ *                    └─────────────────────────────┘
+ * ```
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
-import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
-import { TaskTracker } from '../utils/task-tracker.js';
 import { createLogger } from '../utils/logger.js';
-import { attachmentManager } from '../feishu/attachment-manager.js';
-import { downloadFile } from '../feishu/file-downloader.js';
-import { messageLogger } from '../feishu/message-logger.js';
-import { FileHandler } from '../feishu/file-handler.js';
-import { MessageSender } from '../feishu/message-sender.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
-import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
+import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
+import { FeishuChannel } from '../channels/feishu-channel.js';
+import { RestChannel } from '../channels/rest-channel.js';
 
 const logger = createLogger('CommunicationNode');
 
@@ -32,10 +34,18 @@ export interface CommunicationNodeConfig {
   port: number;
   /** Host for WebSocket server */
   host?: string;
-  /** Feishu App ID */
+  /** Feishu App ID (for backward compatibility) */
   appId?: string;
-  /** Feishu App Secret */
+  /** Feishu App Secret (for backward compatibility) */
   appSecret?: string;
+  /** REST channel port (default: 3000) */
+  restPort?: number;
+  /** Enable REST channel */
+  enableRestChannel?: boolean;
+  /** REST channel auth token */
+  restAuthToken?: string;
+  /** Custom channels to register */
+  channels?: IChannel[];
 }
 
 /**
@@ -69,85 +79,112 @@ interface FeedbackMessage {
 }
 
 /**
- * Communication Node - Manages Feishu bot and WebSocket communication with Execution Node.
+ * Communication Node - Manages multiple channels and WebSocket communication with Execution Node.
  *
  * Responsibilities:
- * - Receives messages from Feishu
+ * - Manages multiple communication channels (Feishu, REST, etc.)
  * - Runs WebSocket server for Execution Nodes to connect
- * - Forwards prompts to connected Execution Node via WebSocket
+ * - Forwards prompts from channels to connected Execution Node via WebSocket
  * - Receives feedback from Execution Node via WebSocket
- * - Sends messages to Feishu users
+ * - Routes feedback back to appropriate channels
  */
 export class CommunicationNode extends EventEmitter {
   private port: number;
   private host: string;
-  private appId: string;
-  private appSecret: string;
 
-  private client?: lark.Client;
-  private wsClient?: lark.WSClient;
-  private eventDispatcher?: lark.EventDispatcher;
   private httpServer?: http.Server;
   private wss?: WebSocketServer;
   private execWs?: WebSocket;
   private running = false;
 
-  // Track processed message IDs to prevent duplicate processing
-  private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
+  // Registered channels
+  private channels: Map<string, IChannel> = new Map();
 
-  // Task tracker for persistent deduplication
-  private taskTracker: TaskTracker;
-
-  // File handler for file/image message processing
-  private fileHandler: FileHandler;
-
-  // Message sender for sending messages
-  private messageSender?: MessageSender;
-
-  // Task flow orchestrator for dialogue execution
-  private taskFlowOrchestrator: TaskFlowOrchestrator;
+  // Channel routing: chatId -> channelId
+  private chatToChannel: Map<string, string> = new Map();
 
   constructor(config: CommunicationNodeConfig) {
     super();
     this.port = config.port;
     this.host = config.host || '0.0.0.0';
-    this.appId = config.appId || Config.FEISHU_APP_ID;
-    this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
-    this.taskTracker = new TaskTracker();
 
-    // Initialize FileHandler
-    this.fileHandler = new FileHandler(
-      attachmentManager,
-      async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
-        if (!this.client) {
-          logger.error({ fileKey }, 'Client not initialized for file download');
-          return { success: false };
-        }
-        try {
-          const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId);
-          return { success: true, filePath };
-        } catch (error) {
-          logger.error({ err: error, fileKey, messageType }, 'File download failed');
-          return { success: false };
-        }
+    // Register custom channels if provided
+    if (config.channels) {
+      for (const channel of config.channels) {
+        this.registerChannel(channel);
       }
-    );
+    }
 
-    // Initialize TaskFlowOrchestrator
-    this.taskFlowOrchestrator = new TaskFlowOrchestrator(
-      this.taskTracker,
-      {
+    // Create Feishu channel (for backward compatibility)
+    const appId = config.appId || Config.FEISHU_APP_ID;
+    const appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
+    if (appId && appSecret) {
+      const feishuChannel = new FeishuChannel({
+        id: 'feishu',
+        appId,
+        appSecret,
+      });
+
+      // Initialize TaskFlowOrchestrator for Feishu channel
+      feishuChannel.initTaskFlowOrchestrator({
         sendMessage: this.sendMessage.bind(this),
         sendCard: this.sendCard.bind(this),
         sendFile: this.sendFileToUser.bind(this),
-      },
-      logger
-    );
+      });
 
-    // Register TaskFlowOrchestrator for task skill MCP tool access
-    setTaskFlowOrchestrator(this.taskFlowOrchestrator);
+      this.registerChannel(feishuChannel);
+      logger.info('Feishu channel registered');
+    }
+
+    // Create REST channel if enabled
+    if (config.enableRestChannel !== false) {
+      const restChannel = new RestChannel({
+        id: 'rest',
+        port: config.restPort || 3000,
+        authToken: config.restAuthToken,
+      });
+      this.registerChannel(restChannel);
+      logger.info({ port: config.restPort || 3000 }, 'REST channel registered');
+    }
 
     logger.info({ port: this.port, host: this.host }, 'CommunicationNode created');
+  }
+
+  /**
+   * Register a communication channel.
+   */
+  registerChannel(channel: IChannel): void {
+    if (this.channels.has(channel.id)) {
+      logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
+    }
+
+    this.channels.set(channel.id, channel);
+
+    // Set up message handler
+    channel.onMessage(async (message: IncomingMessage) => {
+      await this.handleChannelMessage(channel.id, message);
+    });
+
+    // Set up control handler
+    channel.onControl(async (command: ControlCommand) => {
+      return this.handleControlCommand(command);
+    });
+
+    logger.info({ channelId: channel.id, channelName: channel.name }, 'Channel registered');
+  }
+
+  /**
+   * Get a registered channel by ID.
+   */
+  getChannel(channelId: string): IChannel | undefined {
+    return this.channels.get(channelId);
+  }
+
+  /**
+   * Get all registered channels.
+   */
+  getChannels(): IChannel[] {
+    return Array.from(this.channels.values());
   }
 
   /**
@@ -158,7 +195,11 @@ export class CommunicationNode extends EventEmitter {
     this.httpServer = http.createServer((req, res) => {
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', mode: 'communication' }));
+        res.end(JSON.stringify({
+          status: 'ok',
+          mode: 'communication',
+          channels: Array.from(this.channels.keys()),
+        }));
       } else {
         res.writeHead(404);
         res.end();
@@ -207,6 +248,53 @@ export class CommunicationNode extends EventEmitter {
     this.httpServer.listen(this.port, this.host, () => {
       logger.info({ port: this.port, host: this.host }, 'WebSocket server started');
     });
+  }
+
+  /**
+   * Handle message from a channel.
+   */
+  private async handleChannelMessage(channelId: string, message: IncomingMessage): Promise<void> {
+    // Route chat to channel
+    this.chatToChannel.set(message.chatId, channelId);
+
+    // Send prompt to Execution Node
+    await this.sendPrompt({
+      type: 'prompt',
+      chatId: message.chatId,
+      prompt: message.content,
+      messageId: message.messageId,
+      senderOpenId: message.userId,
+      parentId: message.parentId,
+    });
+  }
+
+  /**
+   * Handle control command.
+   */
+  private async handleControlCommand(command: ControlCommand): Promise<ControlResponse> {
+    switch (command.type) {
+      case 'reset':
+        await this.sendCommand({ type: 'command', command: 'reset', chatId: command.chatId });
+        return { success: true, message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。' };
+
+      case 'restart':
+        await this.sendCommand({ type: 'command', command: 'restart', chatId: command.chatId });
+        return { success: true, message: '🔄 **正在重启服务...**' };
+
+      case 'status':
+        const status = this.running ? 'Running' : 'Stopped';
+        const execConnected = this.execWs?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
+        const channelStatus = Array.from(this.channels.entries())
+          .map(([_id, ch]) => `${ch.name}: ${ch.status}`)
+          .join(', ');
+        return {
+          success: true,
+          message: `📊 **状态**\n\n状态: ${status}\nExecution Node: ${execConnected}\nChannels: ${channelStatus}`,
+        };
+
+      default:
+        return { success: false, error: `Unknown command: ${command.type}` };
+    }
   }
 
   /**
@@ -272,38 +360,31 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Get or create Lark HTTP client.
-   */
-  private getClient(): lark.Client {
-    if (!this.client) {
-      this.client = new lark.Client({
-        appId: this.appId,
-        appSecret: this.appSecret,
-      });
-      this.messageSender = new MessageSender({
-        client: this.client,
-        logger,
-      });
-    }
-    return this.client;
-  }
-
-  /**
-   * Send a text message to Feishu.
+   * Send a text message to the appropriate channel.
    */
   async sendMessage(chatId: string, text: string, parentMessageId?: string): Promise<void> {
-    if (!this.messageSender) {
-      this.getClient();
+    const channelId = this.chatToChannel.get(chatId);
+    if (!channelId) {
+      logger.warn({ chatId }, 'No channel found for chat');
+      return;
     }
-    const sender = this.messageSender;
-    if (!sender) {
-      throw new Error('MessageSender not initialized');
+
+    const channel = this.channels.get(channelId);
+    if (!channel) {
+      logger.warn({ chatId, channelId }, 'Channel not found');
+      return;
     }
-    await sender.sendText(chatId, text, parentMessageId);
+
+    await channel.sendMessage({
+      chatId,
+      type: 'text',
+      text,
+      parentId: parentMessageId,
+    });
   }
 
   /**
-   * Send an interactive card to Feishu.
+   * Send an interactive card to the appropriate channel.
    */
   async sendCard(
     chatId: string,
@@ -311,241 +392,48 @@ export class CommunicationNode extends EventEmitter {
     description?: string,
     parentMessageId?: string
   ): Promise<void> {
-    if (!this.messageSender) {
-      this.getClient();
+    const channelId = this.chatToChannel.get(chatId);
+    if (!channelId) {
+      logger.warn({ chatId }, 'No channel found for chat');
+      return;
     }
-    const sender = this.messageSender;
-    if (!sender) {
-      throw new Error('MessageSender not initialized');
+
+    const channel = this.channels.get(channelId);
+    if (!channel) {
+      logger.warn({ chatId, channelId }, 'Channel not found');
+      return;
     }
-    await sender.sendCard(chatId, card, description, parentMessageId);
+
+    await channel.sendMessage({
+      chatId,
+      type: 'card',
+      card,
+      description,
+      parentId: parentMessageId,
+    });
   }
 
   /**
-   * Send a file to Feishu user.
-   * Note: Thread replies for files require Issue #68 implementation.
+   * Send a file to the appropriate channel.
    */
   async sendFileToUser(chatId: string, filePath: string, _parentId?: string): Promise<void> {
-    if (!this.messageSender) {
-      this.getClient();
-    }
-    const sender = this.messageSender;
-    if (!sender) {
-      throw new Error('MessageSender not initialized');
-    }
-    // TODO: Pass parentId to sendFile when Issue #68 is implemented
-    await sender.sendFile(chatId, filePath);
-  }
-
-  /**
-   * Extract open_id from sender object.
-   */
-  private extractOpenId(sender?: { sender_type?: string; sender_id?: unknown }): string | undefined {
-    if (!sender?.sender_id) {
-      return undefined;
-    }
-    if (typeof sender.sender_id === 'object' && sender.sender_id !== null) {
-      const senderId = sender.sender_id as { open_id?: string };
-      return senderId.open_id;
-    }
-    if (typeof sender.sender_id === 'string') {
-      return sender.sender_id;
-    }
-    return undefined;
-  }
-
-  /**
-   * Add typing reaction to indicate processing started.
-   * Provides instant feedback to the user that their message is being handled.
-   *
-   * @param messageId - The message ID to add reaction to
-   */
-  private async addTypingReaction(messageId: string): Promise<void> {
-    if (this.messageSender) {
-      await this.messageSender.addReaction(messageId, REACTIONS.TYPING);
-    }
-  }
-
-  /**
-   * Handle incoming message event from WebSocket.
-   */
-  private async handleMessageReceive(data: FeishuEventData): Promise<void> {
-    if (!this.running) return;
-
-    this.getClient();
-
-    const event = (data.event || data) as FeishuMessageEvent;
-    const { message, sender } = event;
-
-    if (!message) return;
-
-    const { message_id, chat_id, content, message_type, create_time, parent_id } = message;
-
-    if (!message_id || !chat_id || !content || !message_type) {
-      logger.warn('Missing required message fields');
+    const channelId = this.chatToChannel.get(chatId);
+    if (!channelId) {
+      logger.warn({ chatId }, 'No channel found for chat');
       return;
     }
 
-    // Deduplication
-    if (messageLogger.isMessageProcessed(message_id)) {
-      logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+    const channel = this.channels.get(channelId);
+    if (!channel) {
+      logger.warn({ chatId, channelId }, 'Channel not found');
       return;
     }
 
-    // Ignore bot messages
-    if (sender?.sender_type === 'app') {
-      logger.debug('Skipped bot message');
-      return;
-    }
-
-    // Check message age
-    if (create_time) {
-      const messageAge = Date.now() - create_time;
-      if (messageAge > this.MAX_MESSAGE_AGE) {
-        logger.debug({ messageId: message_id }, 'Skipped old message');
-        return;
-      }
-    }
-
-    // Handle file/image messages
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
-      // Add typing reaction for file messages too
-      await this.addTypingReaction(message_id);
-
-      const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
-      if (!result.success) {
-        await this.sendMessage(
-          chat_id,
-          `❌ 处理${message_type === 'image' ? '图片' : '文件'}失败`
-        );
-        return;
-      }
-
-      const attachments = attachmentManager.getAttachments(chat_id);
-      if (attachments.length > 0) {
-        const latestAttachment = attachments[attachments.length - 1];
-        const uploadPrompt = this.fileHandler.buildUploadPrompt(latestAttachment);
-        const enhancedPrompt = `You are responding in a Feishu chat.\n\n**Chat ID:** ${chat_id}\n\n---- User Message ---\n${uploadPrompt}`;
-
-        await messageLogger.logIncomingMessage(
-          message_id,
-          this.extractOpenId(sender) || 'unknown',
-          chat_id,
-          `[File uploaded: ${latestAttachment.fileName}]`,
-          message_type,
-          create_time
-        );
-
-        // Send prompt to Execution Node
-        await this.sendPrompt({
-          type: 'prompt',
-          chatId: chat_id,
-          prompt: enhancedPrompt,
-          messageId: `${message_id}-file`,
-          senderOpenId: this.extractOpenId(sender),
-          parentId: parent_id,
-        });
-      }
-      return;
-    }
-
-    // Handle text and post messages
-    if (message_type !== 'text' && message_type !== 'post') {
-      logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
-      return;
-    }
-
-    // Parse content
-    let text = '';
-    try {
-      const parsed = JSON.parse(content);
-      if (message_type === 'text') {
-        text = parsed.text?.trim() || '';
-      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        for (const row of parsed.content) {
-          if (Array.isArray(row)) {
-            for (const segment of row) {
-              if (segment?.tag === 'text' && segment.text) {
-                text += segment.text;
-              }
-            }
-          }
-        }
-        text = text.trim();
-      }
-    } catch {
-      logger.error('Failed to parse content');
-      return;
-    }
-
-    if (!text) {
-      logger.debug('Skipped empty text');
-      return;
-    }
-
-    logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
-
-    // Add typing reaction to indicate processing started
-    await this.addTypingReaction(message_id);
-
-    // Log message
-    await messageLogger.logIncomingMessage(
-      message_id,
-      this.extractOpenId(sender) || 'unknown',
-      chat_id,
-      text,
-      message_type,
-      create_time
-    );
-
-    // Handle /reset command
-    if (text.trim() === '/reset') {
-      logger.info({ chatId: chat_id }, 'Reset command triggered');
-      await this.sendCommand({ type: 'command', command: 'reset', chatId: chat_id });
-      await this.sendMessage(chat_id, '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。');
-      return;
-    }
-
-    // Handle /restart command
-    if (text.trim() === '/restart') {
-      logger.info({ chatId: chat_id }, 'Restart command triggered');
-      await this.sendMessage(chat_id, '🔄 **正在重启服务...**\n\nPM2 服务即将重启，请稍候。');
-
-      try {
-        const { exec } = await import('node:child_process');
-        const { promisify } = await import('node:util');
-        const execAsync = promisify(exec);
-
-        // Detect Docker environment and use appropriate PM2 app name
-        // Docker: disclaude-docker (from ecosystem.config.docker.cjs)
-        // Local: disclaude-feishu (from ecosystem.config.cjs)
-        const isDocker = require('fs').existsSync('/.dockerenv');
-        const pm2AppName = isDocker ? 'disclaude-docker' : 'disclaude-feishu';
-
-        await execAsync(`pm2 restart ${pm2AppName}`);
-        logger.info({ pm2AppName, isDocker }, 'PM2 service restarted successfully');
-      } catch (error) {
-        logger.error({ err: error }, 'Failed to restart PM2 service');
-      }
-      return;
-    }
-
-    // Handle /status command
-    if (text.trim() === '/status') {
-      const status = this.running ? 'Running' : 'Stopped';
-      const execConnected = this.execWs?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
-      await this.sendMessage(chat_id, `📊 **状态**\n\n状态: ${status}\nExecution Node: ${execConnected}\nWebSocket Server: ws://${this.host}:${this.port}`);
-      return;
-    }
-
-    // Send prompt to Execution Node
-    await this.sendPrompt({
-      type: 'prompt',
-      chatId: chat_id,
-      prompt: text,
-      messageId: message_id,
-      senderOpenId: this.extractOpenId(sender),
-      parentId: parent_id,
+    // TODO: Pass parentId when Issue #68 is implemented
+    await channel.sendMessage({
+      chatId,
+      type: 'file',
+      filePath,
     });
   }
 
@@ -563,44 +451,24 @@ export class CommunicationNode extends EventEmitter {
     // Start WebSocket server for Execution Node connections
     this.startWebSocketServer();
 
-    // Initialize message logger
-    await messageLogger.init();
-
-    // Create event dispatcher
-    this.eventDispatcher = new lark.EventDispatcher({}).register({
-      'im.message.receive_v1': async (data: unknown) => {
-        try {
-          await this.handleMessageReceive(data as FeishuEventData);
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to handle message receive');
-        }
-      },
-      'im.message.message_read_v1': async () => {},
-      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {},
-    });
-
-    // Create WebSocket client
-    const sdkLogger = {
-      error: (...msg: unknown[]) => logger.error({ context: 'LarkSDK' }, String(msg)),
-      warn: (...msg: unknown[]) => logger.warn({ context: 'LarkSDK' }, String(msg)),
-      info: (...msg: unknown[]) => logger.info({ context: 'LarkSDK' }, String(msg)),
-      debug: (...msg: unknown[]) => logger.debug({ context: 'LarkSDK' }, String(msg)),
-      trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
-    };
-
-    this.wsClient = new lark.WSClient({
-      appId: this.appId,
-      appSecret: this.appSecret,
-      logger: sdkLogger,
-      loggerLevel: lark.LoggerLevel.info,
-    });
-
-    await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
+    // Start all registered channels
+    for (const [channelId, channel] of this.channels) {
+      try {
+        await channel.start();
+        logger.info({ channelId }, 'Channel started');
+      } catch (error) {
+        logger.error({ err: error, channelId }, 'Failed to start channel');
+      }
+    }
 
     logger.info('CommunicationNode started');
     console.log('✓ Communication Node ready');
     console.log();
     console.log(`WebSocket Server: ws://${this.host}:${this.port}`);
+    console.log('Channels:');
+    for (const [id, channel] of this.channels) {
+      console.log(`  - ${channel.name} (${id}): ${channel.status}`);
+    }
     console.log('Waiting for Execution Node to connect...');
   }
 
@@ -611,6 +479,16 @@ export class CommunicationNode extends EventEmitter {
     if (!this.running) return;
 
     this.running = false;
+
+    // Stop all channels
+    for (const [channelId, channel] of this.channels) {
+      try {
+        await channel.stop();
+        logger.info({ channelId }, 'Channel stopped');
+      } catch (error) {
+        logger.error({ err: error, channelId }, 'Failed to stop channel');
+      }
+    }
 
     // Close WebSocket connection from Execution Node
     if (this.execWs) {
@@ -629,8 +507,6 @@ export class CommunicationNode extends EventEmitter {
       this.httpServer.close();
       this.httpServer = undefined;
     }
-
-    this.wsClient = undefined;
 
     logger.info('CommunicationNode stopped');
   }

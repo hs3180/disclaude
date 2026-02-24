@@ -27,6 +27,10 @@ export interface GlobalArgs {
   feishuChatId?: string;
   /** Authentication token */
   authToken?: string;
+  /** REST channel port */
+  restPort?: number;
+  /** Enable REST channel */
+  enableRestChannel?: boolean;
 }
 
 /**
@@ -39,6 +43,12 @@ export interface CommNodeConfig {
   host: string;
   /** Authentication token */
   authToken?: string;
+  /** REST channel port */
+  restPort?: number;
+  /** Enable REST channel */
+  enableRestChannel?: boolean;
+  /** REST channel auth token */
+  restAuthToken?: string;
 }
 
 /**
@@ -88,12 +98,15 @@ function parseIntArg(value: string | undefined, defaultValue: number): number {
  */
 export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalArgs {
   const transportConfig = Config.getTransportConfig();
+  const channelsConfig = Config.getChannelsConfig();
 
   // Default values
   const defaultPort = parseInt(process.env.PORT || '3001', 10);
   const defaultHost = process.env.HOST || '0.0.0.0';
   const defaultCommUrl = process.env.COMM_URL || 'ws://localhost:3001';
   const defaultAuthToken = transportConfig.http?.authToken || process.env.AUTH_TOKEN;
+  const defaultRestPort = channelsConfig?.rest?.port || 3000;
+  const defaultEnableRest = channelsConfig?.rest?.enabled ?? true;
 
   // Parse prompt mode
   const promptIndex = args.indexOf('--prompt');
@@ -114,6 +127,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const commUrl = parseArgValue(args, '--comm-url') || defaultCommUrl;
   const feishuChatId = parseArgValue(args, '--feishu-chat-id');
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
+  const restPort = parseIntArg(parseArgValue(args, '--rest-port'), defaultRestPort);
+  const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
 
   // Build prompt args (all args for prompt mode)
   const promptArgs = promptMode ? args : [];
@@ -127,6 +142,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
     commUrl,
     feishuChatId,
     authToken,
+    restPort,
+    enableRestChannel,
   };
 }
 
@@ -134,10 +151,15 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
  * Get Communication Node configuration from global args.
  */
 export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
+  const channelsConfig = Config.getChannelsConfig();
+
   return {
     port: globalArgs.port,
     host: globalArgs.host,
     authToken: globalArgs.authToken,
+    restPort: globalArgs.restPort || channelsConfig?.rest?.port || 3000,
+    enableRestChannel: globalArgs.enableRestChannel ?? channelsConfig?.rest?.enabled ?? true,
+    restAuthToken: channelsConfig?.rest?.authToken,
   };
 }
 
