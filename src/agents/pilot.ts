@@ -193,9 +193,21 @@ export class Pilot extends BaseAgent {
 
     // CLI mode doesn't need Feishu MCP server
     // Merge configured external MCP servers from config file
+    // Note: stdio-based MCP servers cannot be shared across multiple Agent instances.
+    // These servers are filtered out to prevent transport conflicts.
+    // See: https://github.com/hs3180/disclaude/issues/71
+    const STDIO_MCP_BLACKLIST = ['playwright'] as const;
     const configuredMcpServers = Config.getMcpServersConfig();
     if (configuredMcpServers) {
       for (const [name, config] of Object.entries(configuredMcpServers)) {
+        if (STDIO_MCP_BLACKLIST.includes(name as typeof STDIO_MCP_BLACKLIST[number])) {
+          this.logger.warn(
+            { mcpServer: name },
+            'Skipping stdio MCP server that cannot be shared across Agent instances. ' +
+            'See https://github.com/hs3180/disclaude/issues/71 for details.'
+          );
+          continue;
+        }
         mcpServers[name] = {
           type: 'stdio',
           command: config.command,
@@ -561,9 +573,21 @@ ${msg.text}`;
     }
 
     // Merge configured external MCP servers from config file
+    // Note: stdio-based MCP servers cannot be shared across multiple Agent instances.
+    // These servers are filtered out to prevent transport conflicts.
+    // See: https://github.com/hs3180/disclaude/issues/71
+    const STDIO_MCP_BLACKLIST = ['playwright'] as const;
     const configuredMcpServers = Config.getMcpServersConfig();
     if (configuredMcpServers) {
       for (const [name, config] of Object.entries(configuredMcpServers)) {
+        if (STDIO_MCP_BLACKLIST.includes(name as typeof STDIO_MCP_BLACKLIST[number])) {
+          this.logger.warn(
+            { mcpServer: name },
+            'Skipping stdio MCP server that cannot be shared across Agent instances. ' +
+            'See https://github.com/hs3180/disclaude/issues/71 for details.'
+          );
+          continue;
+        }
         mcpServers[name] = {
           type: 'stdio',
           command: config.command,
