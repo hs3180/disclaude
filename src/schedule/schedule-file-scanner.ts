@@ -11,6 +11,7 @@
  * name: Daily Report
  * cron: "0 9 * * *"
  * enabled: true
+ * blocking: true
  * chatId: oc_xxx
  * createdBy: ou_xxx
  * ---
@@ -51,6 +52,7 @@ export interface ScheduleFileScannerOptions {
  * - name (required)
  * - cron (required)
  * - enabled (optional, default: true)
+ * - blocking (optional, default: false)
  * - chatId (required)
  * - createdBy (optional)
  * - createdAt (optional)
@@ -92,6 +94,7 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value.replace(/^["']|["']$/g, '');
         break;
       case 'enabled':
+      case 'blocking':
         frontmatter[key] = value === 'true';
         break;
     }
@@ -199,6 +202,7 @@ export class ScheduleFileScanner {
         chatId: frontmatter['chatId'] as string,
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
+        blocking: (frontmatter['blocking'] as boolean) ?? false,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
@@ -236,6 +240,7 @@ export class ScheduleFileScanner {
       `name: "${task.name}"`,
       `cron: "${task.cron}"`,
       `enabled: ${task.enabled}`,
+      `blocking: ${task.blocking ?? false}`,
       `chatId: ${task.chatId}`,
     ];
 
