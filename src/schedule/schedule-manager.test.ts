@@ -453,4 +453,176 @@ Modified prompt`;
       expect(fetched?.prompt).toBe('Updated by manager2');
     });
   });
+
+  // ========================================================================
+  // Issue #102 Tests: 防止定时任务无限递归
+  // ========================================================================
+
+  describe('Issue #102: 防止同名任务重复创建', () => {
+    it('should reject creating task with same name (default maxSameNameTasks=1)', async () => {
+      await manager.create({
+        name: 'Duplicate Task',
+        cron: '0 9 * * *',
+        prompt: 'First task',
+        chatId: 'chat-1',
+      });
+
+      // Try to create another task with the same name
+      await expect(manager.create({
+        name: 'Duplicate Task',
+        cron: '0 10 * * *',
+        prompt: 'Second task with same name',
+        chatId: 'chat-1',
+      })).rejects.toThrow('already exists');
+    });
+
+    it('should allow same name for different chatIds', async () => {
+      const task1 = await manager.create({
+        name: 'Same Name Task',
+        cron: '0 9 * * *',
+        prompt: 'For chat 1',
+        chatId: 'chat-1',
+      });
+
+      const task2 = await manager.create({
+        name: 'Same Name Task',
+        cron: '0 10 * * *',
+        prompt: 'For chat 2',
+        chatId: 'chat-2',
+      });
+
+      expect(task1.chatId).toBe('chat-1');
+      expect(task2.chatId).toBe('chat-2');
+      expect(task1.id).not.toBe(task2.id);
+    });
+
+    it('should allow maxSameNameTasks > 1', async () => {
+      const lenientManager = new ScheduleManager({
+        schedulesDir: testDir,
+        maxSameNameTasks: 3,
+      });
+
+      await lenientManager.create({
+        name: 'Task Name',
+        cron: '0 9 * * *',
+        prompt: 'First',
+        chatId: 'chat-1',
+      });
+
+      await lenientManager.create({
+        name: 'Task Name',
+        cron: '0 10 * * *',
+        prompt: 'Second',
+        chatId: 'chat-1',
+      });
+
+      // Third one should fail
+      await expect(lenientManager.create({
+        name: 'Task Name',
+        cron: '0 11 * * *',
+        prompt: 'Third',
+        chatId: 'chat-1',
+      })).rejects.toThrow('already exists');
+    });
+  });
+
+  describe('Issue #102: 防止任务数量超限', () => {
+    it('should reject creating tasks beyond maxTasksPerChat limit', async () => {
+      const limitedManager = new ScheduleManager({
+        schedulesDir: testDir,
+        maxTasksPerChat: 3,
+      });
+
+      // Create 3 tasks (at the limit)
+      await limitedManager.create({
+        name: 'Task 1',
+        cron: '0 9 * * *',
+        prompt: 'First',
+        chatId: 'chat-1',
+      });
+
+      await limitedManager.create({
+        name: 'Task 2',
+        cron: '0 10 * * *',
+        prompt: 'Second',
+        chatId: 'chat-1',
+      });
+
+      await limitedManager.create({
+        name: 'Task 3',
+        cron: '0 11 * * *',
+        prompt: 'Third',
+        chatId: 'chat-1',
+      });
+
+      // Fourth one should fail
+      await expect(limitedManager.create({
+        name: 'Task 4',
+        cron: '0 12 * * *',
+        prompt: 'Fourth',
+        chatId: 'chat-1',
+      })).rejects.toThrow('Task limit exceeded');
+    });
+
+    it('should count tasks per chatId independently', async () => {
+      const limitedManager = new ScheduleManager({
+        schedulesDir: testDir,
+        maxTasksPerChat: 2,
+      });
+
+      // Chat 1: 2 tasks (at limit)
+      await limitedManager.create({
+        name: 'Chat1 Task 1',
+        cron: '0 9 * * *',
+        prompt: 'First for chat 1',
+        chatId: 'chat-1',
+      });
+
+      await limitedManager.create({
+        name: 'Chat1 Task 2',
+        cron: '0 10 * * *',
+        prompt: 'Second for chat 1',
+        chatId: 'chat-1',
+      });
+
+      // Chat 2: should be able to create 2 tasks independently
+      await limitedManager.create({
+        name: 'Chat2 Task 1',
+        cron: '0 11 * * *',
+        prompt: 'First for chat 2',
+        chatId: 'chat-2',
+      });
+
+      await limitedManager.create({
+        name: 'Chat2 Task 2',
+        cron: '0 12 * * *',
+        prompt: 'Second for chat 2',
+        chatId: 'chat-2',
+      });
+
+      // Chat 1 should still be at limit
+      await expect(limitedManager.create({
+        name: 'Chat1 Task 3',
+        cron: '0 13 * * *',
+        prompt: 'Third for chat 1',
+        chatId: 'chat-1',
+      })).rejects.toThrow('Task limit exceeded');
+    });
+
+    it('should have default maxTasksPerChat of 50', async () => {
+      const defaultManager = new ScheduleManager({
+        schedulesDir: testDir,
+      });
+
+      // Should be able to create at least 1 task
+      const task = await defaultManager.create({
+        name: 'Test Task',
+        cron: '0 9 * * *',
+        prompt: 'Test',
+        chatId: 'chat-1',
+      });
+
+      expect(task).toBeDefined();
+    });
+  });
 });

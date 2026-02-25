@@ -63,6 +63,18 @@ function getScheduler(): Scheduler {
 }
 
 /**
+ * Check if currently executing within a scheduled task.
+ * Used to prevent infinite recursion from tasks creating new tasks.
+ */
+function isExecutingInScheduleContext(_chatId?: string): boolean {
+  if (!schedulerInstance) {
+    return false;
+  }
+  // If any scheduled task is running, we're in a schedule execution context
+  return schedulerInstance.isAnyTaskRunning();
+}
+
+/**
  * Helper to create a successful tool result.
  */
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
@@ -130,6 +142,17 @@ notifications to the chat when it executes.`,
   },
   async ({ name, cron, prompt, chatId }) => {
     try {
+      // Prevent recursive schedule creation (Issue #102)
+      // If we're currently executing a scheduled task, prevent creating new ones
+      if (isExecutingInScheduleContext(chatId)) {
+        logger.warn({ chatId, name }, 'Blocked recursive schedule creation');
+        return toolSuccess(
+          '❌ 定时任务执行期间禁止创建新任务。\n\n' +
+          '这是为了防止无限递归导致系统资源耗尽。\n' +
+          '请在手动对话中创建定时任务。'
+        );
+      }
+
       logger.info({ name, cron, chatId }, 'Creating scheduled task');
 
       const manager = getScheduleManager();

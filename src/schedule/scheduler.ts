@@ -246,4 +246,23 @@ export class Scheduler {
   isTaskRunning(taskId: string): boolean {
     return this.runningTasks.has(taskId);
   }
+
+  /**
+   * Check if any scheduled task is currently being executed.
+   * Used to prevent recursive schedule creation.
+   *
+   * @returns true if any scheduled task is currently running
+   */
+  isAnyTaskRunning(): boolean {
+    return this.runningTasks.size > 0;
+  }
+
+  /**
+   * Get the IDs of all currently running tasks.
+   *
+   * @returns Array of running task IDs
+   */
+  getRunningTaskIds(): string[] {
+    return Array.from(this.runningTasks);
+  }
 }
