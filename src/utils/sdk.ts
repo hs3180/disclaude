@@ -387,7 +387,7 @@ export function buildSdkEnv(
   const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
 
   // Priority (highest to lowest):
-  // 1. Our forced values (API_KEY, PATH, BASE_URL)
+  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
   // 2. process.env (system environment)
   // 3. extraEnv (caller-provided defaults)
   // This ensures system env vars can't be accidentally overridden by extraEnv,
@@ -397,6 +397,9 @@ export function buildSdkEnv(
     ...(process.env as Record<string, string | undefined>),
     ANTHROPIC_API_KEY: apiKey,
     PATH: newPath,
+    // Enable SDK debug logging by default for better troubleshooting
+    // SDK subprocess errors go to stderr and are critical for debugging
+    DEBUG_CLAUDE_AGENT_SDK: process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1',
   };
 
   // Set base URL if provided (for GLM or custom endpoints)
