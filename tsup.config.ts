@@ -8,6 +8,11 @@ const EXTERNAL_DEPS = [
   '@larksuiteoapi/node-sdk',
   '@playwright/mcp',
   'ws',
+  'pino',
+  'pino-pretty',
+  'pino-roll',
+  'sonic-boom',
+  'pino-file',
 ];
 
 export default defineConfig([
