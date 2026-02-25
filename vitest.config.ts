@@ -24,6 +24,12 @@ export default defineConfig({
       'dist/',
       '**/workspace/**',
     ],
+    env: {
+      NODE_ENV: 'test',
+      // Disable pino diagnostics_channel to fix compatibility with Vitest
+      // See: https://github.com/hs3180/disclaude/issues/115
+      PINO_DISABLE_DIAGNOSTICS: '1',
+    },
     // Use single-fork mode to prevent multiple worker processes
     // This is critical for preventing OOM in containerized environments
     pool: 'forks',
