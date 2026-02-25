@@ -36,6 +36,8 @@ export interface ScheduledTask {
   createdBy?: string;
   /** Whether task is enabled */
   enabled: boolean;
+  /** Whether to block concurrent executions (skip if previous still running) */
+  blocking?: boolean;
   /** Creation timestamp */
   createdAt: string;
   /** Last execution timestamp */
@@ -51,6 +53,8 @@ export interface CreateScheduleOptions {
   prompt: string;
   chatId: string;
   createdBy?: string;
+  /** Whether to block concurrent executions */
+  blocking?: boolean;
 }
 
 /**
@@ -133,6 +137,7 @@ export class ScheduleManager {
       chatId: options.chatId,
       createdBy: options.createdBy,
       enabled: true,
+      blocking: options.blocking,
       createdAt: new Date().toISOString(),
     };
 
