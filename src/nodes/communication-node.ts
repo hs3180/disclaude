@@ -12,7 +12,6 @@
  *   (future)       ──│    (Channel Multiplexer)    │    (via WebSocket)
  *                    │                             │
  *                    └─────────────────────────────┘
- * ```
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -24,6 +23,9 @@ import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from 
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
+import type { FileReference } from '../types/file-reference.js';
+import { FileStorageService, type FileStorageConfig } from '../services/file-storage-service.js';
+import { createFileTransferAPIHandler } from '../services/file-transfer-api.js';
 
 const logger = createLogger('CommunicationNode');
 
@@ -47,6 +49,8 @@ export interface CommunicationNodeConfig {
   restAuthToken?: string;
   /** Custom channels to register */
   channels?: IChannel[];
+  /** File storage configuration */
+  fileStorage?: FileStorageConfig;
 }
 
 /**
@@ -74,10 +78,17 @@ export class CommunicationNode extends EventEmitter {
   // Channel routing: chatId -> channelId
   private chatToChannel: Map<string, string> = new Map();
 
+  // File storage service
+  private fileStorageService?: FileStorageService;
+  private fileStorageConfig?: FileStorageConfig;
+
   constructor(config: CommunicationNodeConfig) {
     super();
     this.port = config.port;
     this.host = config.host || '0.0.0.0';
+
+    // Store file storage config for later initialization
+    this.fileStorageConfig = config.fileStorage;
 
     // Register custom channels if provided
     if (config.channels) {
@@ -137,7 +148,7 @@ export class CommunicationNode extends EventEmitter {
     });
 
     // Set up control handler
-    channel.onControl(async (command: ControlCommand) => {
+    channel.onControl((command: ControlCommand) => {
       return this.handleControlCommand(command);
     });
 
@@ -161,20 +172,43 @@ export class CommunicationNode extends EventEmitter {
   /**
    * Start WebSocket server for Execution Node connections.
    */
-  private startWebSocketServer(): void {
-    // Create HTTP server for health check and WebSocket upgrade
-    this.httpServer = http.createServer((req, res) => {
-      if (req.url === '/health') {
+  private async startWebSocketServer(): Promise<void> {
+    // Initialize file storage service if configured
+    if (this.fileStorageConfig) {
+      this.fileStorageService = new FileStorageService(this.fileStorageConfig);
+      await this.fileStorageService.initialize();
+      logger.info('File storage service initialized');
+    }
+
+    // Create file API handler
+    const fileApiHandler = this.fileStorageService
+      ? createFileTransferAPIHandler({ storageService: this.fileStorageService })
+      : null;
+
+    // Create HTTP server for health check, file API, and WebSocket upgrade
+    this.httpServer = http.createServer(async (req, res) => {
+      const url = req.url || '/';
+
+      // Handle file API requests
+      if (fileApiHandler && url.startsWith('/api/files')) {
+        const handled = await fileApiHandler(req, res);
+        if (handled) {return;}
+      }
+
+      // Health check
+      if (url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'ok',
           mode: 'communication',
           channels: Array.from(this.channels.keys()),
+          fileStorage: this.fileStorageService?.getStats(),
         }));
-      } else {
-        res.writeHead(404);
-        res.end();
+        return;
       }
+
+      res.writeHead(404);
+      res.end();
     });
 
     // Create WebSocket server
@@ -194,7 +228,7 @@ export class CommunicationNode extends EventEmitter {
       ws.on('message', (data) => {
         try {
           const message = JSON.parse(data.toString()) as FeedbackMessage;
-          this.handleFeedback(message);
+          void this.handleFeedback(message);
         } catch (error) {
           logger.error({ err: error }, 'Failed to parse feedback');
         }
@@ -228,6 +262,27 @@ export class CommunicationNode extends EventEmitter {
     // Route chat to channel
     this.chatToChannel.set(message.chatId, channelId);
 
+    // Process attachments if present
+    let attachments: FileReference[] | undefined;
+    if (message.attachments && message.attachments.length > 0 && this.fileStorageService) {
+      attachments = [];
+      for (const att of message.attachments) {
+        try {
+          const fileRef = await this.fileStorageService.storeFromLocal(
+            att.filePath,
+            att.fileName,
+            att.mimeType,
+            'user',
+            message.chatId
+          );
+          attachments.push(fileRef);
+          logger.info({ fileId: fileRef.id, fileName: att.fileName }, 'Attachment stored');
+        } catch (error) {
+          logger.error({ err: error, fileName: att.fileName }, 'Failed to store attachment');
+        }
+      }
+    }
+
     // Send prompt to Execution Node
     await this.sendPrompt({
       type: 'prompt',
@@ -236,6 +291,7 @@ export class CommunicationNode extends EventEmitter {
       messageId: message.messageId,
       senderOpenId: message.userId,
       parentId: message.parentId,
+      attachments,
     });
   }
 
@@ -300,7 +356,7 @@ export class CommunicationNode extends EventEmitter {
    * Handle feedback from Execution Node.
    */
   private async handleFeedback(message: FeedbackMessage): Promise<void> {
-    const { chatId, type, text, card, filePath, error, parentId } = message;
+    const { chatId, type, text, card, error, parentId, fileRef } = message;
 
     try {
       switch (type) {
@@ -313,8 +369,14 @@ export class CommunicationNode extends EventEmitter {
           await this.sendCard(chatId, card || {}, undefined, parentId);
           break;
         case 'file':
-          if (filePath) {
-            await this.sendFileToUser(chatId, filePath, parentId);
+          if (fileRef && this.fileStorageService) {
+            const localPath = this.fileStorageService.getLocalPath(fileRef.id);
+            if (localPath) {
+              await this.sendFileToUser(chatId, localPath, parentId);
+            } else {
+              logger.error({ fileId: fileRef.id }, 'File not found in storage');
+              await this.sendMessage(chatId, `❌ 文件未找到: ${fileRef.fileName}`, parentId);
+            }
           }
           break;
         case 'done':
@@ -430,7 +492,7 @@ export class CommunicationNode extends EventEmitter {
     this.running = true;
 
     // Start WebSocket server for Execution Node connections
-    this.startWebSocketServer();
+    await this.startWebSocketServer();
 
     // Start all registered channels
     for (const [channelId, channel] of this.channels) {
@@ -457,9 +519,15 @@ export class CommunicationNode extends EventEmitter {
    * Stop the Communication Node.
    */
   async stop(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running) {return;}
 
     this.running = false;
+
+    // Shutdown file storage service
+    if (this.fileStorageService) {
+      this.fileStorageService.shutdown();
+      this.fileStorageService = undefined;
+    }
 
     // Stop all channels
     for (const [channelId, channel] of this.channels) {
