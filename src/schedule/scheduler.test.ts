@@ -1,10 +1,11 @@
 /**
- * Scheduler Tests - Issue #86
+ * Scheduler Tests - Issue #86, Issue #89
  *
  * Tests for:
  * - No duplicate scheduling when addTask is called multiple times
  * - Proper task removal
  * - Active jobs count consistency
+ * - Blocking mechanism for concurrent task execution
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -330,6 +331,141 @@ describe('Scheduler', () => {
       jobs = scheduler.getActiveJobs();
       expect(jobs).toHaveLength(1);
       expect(jobs[0].task.name).toBe('Recreated');
+    });
+  });
+
+  // ========================================================================
+  // Issue #89 Tests: 阻塞机制
+  // ========================================================================
+
+  describe('Issue #89: 阻塞机制', () => {
+    it('should skip task execution when blocking is true and task is running', async () => {
+      // Create a pilot that takes time to complete
+      let resolveExecute: () => void;
+      const executePromise = new Promise<void>((resolve) => {
+        resolveExecute = resolve;
+      });
+      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
+
+      const task: ScheduledTask = {
+        id: 'schedule-blocking-test',
+        name: 'Blocking Task',
+        cron: '* * * * * *', // Every second
+        prompt: 'Test',
+        chatId: 'test-chat',
+        enabled: true,
+        blocking: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      scheduler.addTask(task);
+
+      // Trigger execution manually by calling the cron callback
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Task should be marked as running
+      expect(scheduler.isTaskRunning(task.id)).toBe(true);
+
+      // Trigger again - should be skipped due to blocking
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // ExecuteOnce should have been called only once (second call skipped)
+      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(1);
+
+      // Complete the first execution
+      resolveExecute!();
+
+      // Wait a bit for cleanup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Task should no longer be running
+      expect(scheduler.isTaskRunning(task.id)).toBe(false);
+    });
+
+    it('should allow concurrent execution when blocking is false', async () => {
+      // Create a pilot that takes time to complete
+      let resolveExecute: () => void;
+      const executePromise = new Promise<void>((resolve) => {
+        resolveExecute = resolve;
+      });
+      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
+
+      const task: ScheduledTask = {
+        id: 'schedule-nonblocking-test',
+        name: 'Non-Blocking Task',
+        cron: '* * * * * *',
+        prompt: 'Test',
+        chatId: 'test-chat',
+        enabled: true,
+        blocking: false, // explicitly false
+        createdAt: new Date().toISOString(),
+      };
+
+      scheduler.addTask(task);
+
+      // Trigger execution
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Task should be running
+      expect(scheduler.isTaskRunning(task.id)).toBe(true);
+
+      // Trigger again - should NOT be skipped (blocking is false)
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // ExecuteOnce should have been called twice
+      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
+
+      // Complete executions
+      resolveExecute!();
+    });
+
+    it('should default blocking to false when not specified', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-default-blocking',
+        name: 'Default Blocking Task',
+        cron: '* * * * * *',
+        prompt: 'Test',
+        chatId: 'test-chat',
+        enabled: true,
+        // blocking not specified
+        createdAt: new Date().toISOString(),
+      };
+
+      scheduler.addTask(task);
+
+      // Trigger execution
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Should allow concurrent (blocking defaults to false)
+      expect(scheduler.isTaskRunning(task.id)).toBe(false); // Already completed
+    });
+
+    it('should allow task to run after previous execution completes', async () => {
+      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const task: ScheduledTask = {
+        id: 'schedule-blocking-sequential',
+        name: 'Blocking Sequential Task',
+        cron: '* * * * * *',
+        prompt: 'Test',
+        chatId: 'test-chat',
+        enabled: true,
+        blocking: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      scheduler.addTask(task);
+
+      // First execution
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(1);
+
+      // Task should no longer be running
+      expect(scheduler.isTaskRunning(task.id)).toBe(false);
+
+      // Second execution should proceed
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
     });
   });
 });

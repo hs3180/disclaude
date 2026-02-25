@@ -65,6 +65,8 @@ export class Scheduler {
   private callbacks: PilotCallbacks;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
+  /** Tracks tasks currently being executed (for blocking mechanism) */
+  private runningTasks: Set<string> = new Set();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -162,7 +164,19 @@ export class Scheduler {
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
+    // Check blocking mechanism
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'Task skipped - previous execution still running'
+      );
+      return;
+    }
+
     logger.info({ taskId: task.id, name: task.name }, 'Executing scheduled task');
+
+    // Mark task as running
+    this.runningTasks.add(task.id);
 
     try {
       // Send start notification
@@ -193,6 +207,9 @@ export class Scheduler {
         task.chatId,
         `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
       );
+    } finally {
+      // Always remove from running tasks
+      this.runningTasks.delete(task.id);
     }
   }
 
@@ -218,5 +235,15 @@ export class Scheduler {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Check if a task is currently being executed.
+   *
+   * @param taskId - Task ID to check
+   * @returns true if the task is currently running
+   */
+  isTaskRunning(taskId: string): boolean {
+    return this.runningTasks.has(taskId);
   }
 }
