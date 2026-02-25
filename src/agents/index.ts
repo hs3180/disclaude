@@ -25,3 +25,6 @@ export { Reporter, type ReporterConfig } from './reporter.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
+
+// Factory
+export { AgentFactory, type AgentCreateOptions } from './factory.js';

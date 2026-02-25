@@ -216,9 +216,9 @@ export class Executor extends BaseAgent {
       };
     } catch (err) {
       // Use BaseAgent's handleIteratorError for consistent error handling
-      const errorMessage = this.handleIteratorError(err, 'executeTask');
-      // handleIteratorError always returns string content
-      error = typeof errorMessage.content === 'string' ? errorMessage.content : String(errorMessage.content);
+      const errorResult = this.handleIteratorError(err, 'executeTask');
+      // Extract error message from AgentMessage content
+      error = errorResult.content;
 
       // Create execution.md even on error
       try {
