@@ -18,38 +18,9 @@ import {
   setScheduleManager,
   setScheduler,
 } from '../schedule/index.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
 
 const logger = createLogger('ExecRunner');
-
-/**
- * WebSocket message types.
- */
-interface PromptMessage {
-  type: 'prompt';
-  chatId: string;
-  prompt: string;
-  messageId: string;
-  senderOpenId?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
-}
-
-interface CommandMessage {
-  type: 'command';
-  command: 'reset' | 'restart';
-  chatId: string;
-}
-
-interface FeedbackMessage {
-  type: 'text' | 'card' | 'file' | 'done' | 'error';
-  chatId: string;
-  text?: string;
-  card?: Record<string, unknown>;
-  filePath?: string;
-  error?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
-}
 
 /**
  * Run Execution Node (Pilot Agent with WebSocket client).

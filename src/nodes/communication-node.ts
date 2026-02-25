@@ -23,6 +23,7 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
 
 const logger = createLogger('CommunicationNode');
 
@@ -46,36 +47,6 @@ export interface CommunicationNodeConfig {
   restAuthToken?: string;
   /** Custom channels to register */
   channels?: IChannel[];
-}
-
-/**
- * WebSocket message types.
- */
-interface PromptMessage {
-  type: 'prompt';
-  chatId: string;
-  prompt: string;
-  messageId: string;
-  senderOpenId?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
-}
-
-interface CommandMessage {
-  type: 'command';
-  command: 'reset' | 'restart';
-  chatId: string;
-}
-
-interface FeedbackMessage {
-  type: 'text' | 'card' | 'file' | 'done' | 'error';
-  chatId: string;
-  text?: string;
-  card?: Record<string, unknown>;
-  filePath?: string;
-  error?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
 }
 
 /**
