@@ -170,12 +170,12 @@ export class Scheduler {
 You are executing a scheduled task named "${task.name}".
 
 **IMPORTANT RULES:**
-1. Do NOT create new scheduled tasks using create_schedule tool
+1. Do NOT create new scheduled tasks
 2. Do NOT modify existing scheduled tasks
 3. Focus on completing the task described below
 4. If you need to run something periodically, report this need to the user instead
 
-The create_schedule tool is blocked during scheduled task execution to prevent infinite recursion.
+Scheduled task creation is blocked during scheduled task execution to prevent infinite recursion.
 
 ---
 
