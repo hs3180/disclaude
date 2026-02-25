@@ -708,23 +708,26 @@ You can read these files using the Read tool with the local paths above.`;
           await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
         }
 
-        // Check for completion - result type means query is done
+        // Check for completion - result type means current turn is done
+        // Do NOT break here to preserve conversation context across multiple turns.
+        // The loop continues waiting for the next message from messageGenerator,
+        // keeping the same Query instance alive (fixes issue #120 - context loss).
         if (parsed.type === 'result') {
-          this.logger.debug({ chatId, content: parsed.content }, 'Result received, breaking loop');
-          break;
+          this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
+          // Signal completion to communication layer (e.g., REST sync mode)
+          if (this.callbacks.onDone) {
+            await this.callbacks.onDone(chatId, state.currentThreadRootId);
+          }
+          // Continue the loop - messageGenerator will wait for next user message
         }
       }
 
-      this.logger.info({ chatId }, 'Agent loop completed normally');
+      // Loop exited normally (state.closed or iterator exhausted)
+      this.logger.info({ chatId, closed: state.closed }, 'Agent loop completed');
 
-      // Signal completion to communication layer (e.g., REST sync mode)
-      if (this.callbacks.onDone) {
-        await this.callbacks.onDone(chatId, state.currentThreadRootId);
-      }
-
-      // Mark as restartable instead of deleting - preserve queue for next session
+      // Mark as restartable - preserve queue for next session
       state.started = false;
-      // Keep closed=false to allow restart on next message
+      // Keep closed as-is (may be true from clearQueue/resetAll, or false for iterator exhaustion)
     } catch (error) {
       const err = error as Error;
       this.logger.error({ err, chatId }, 'Agent loop error');
