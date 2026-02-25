@@ -34,7 +34,6 @@
 import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
-import { createTaskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
 
@@ -197,11 +196,8 @@ export class Pilot extends BaseAgent {
   ): Promise<void> {
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
-    // Add MCP servers for task tools
-    // Create new instances per Agent to prevent transport conflicts (issue #81)
-    const mcpServers: Record<string, unknown> = {
-      'task-skill': createTaskSkillSdkMcpServer(),
-    };
+    // Add MCP servers
+    const mcpServers: Record<string, unknown> = {};
 
     // CLI mode doesn't need Feishu MCP server
     // Merge configured external MCP servers from config file
@@ -590,12 +586,9 @@ You can read these files using the Read tool with the local paths above.`;
     state.started = true;
     state.closed = false;
 
-    // Add MCP servers for task tools
+    // Add MCP servers
     // Start with internal SDK MCP servers
-    // Create new instances per Agent to prevent transport conflicts (issue #81)
-    const mcpServers: Record<string, unknown> = {
-      'task-skill': createTaskSkillSdkMcpServer(),
-    };
+    const mcpServers: Record<string, unknown> = {};
 
     // Only add Feishu MCP server if NOT in CLI mode
     // CLI mode doesn't need Feishu integration (no Feishu API calls)

@@ -2,6 +2,7 @@
  * Tests for TaskFlowOrchestrator module.
  *
  * Tests the following functionality:
+ * - TaskFileWatcher integration
  * - executeDialoguePhase execution
  * - Message callbacks
  * - Error handling
@@ -9,6 +10,17 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskFlowOrchestrator, type MessageCallbacks } from './task-flow-orchestrator.js';
+
+// Mock TaskFileWatcher
+const mockStart = vi.fn().mockResolvedValue(undefined);
+const mockStop = vi.fn();
+vi.mock('../task/task-file-watcher.js', () => ({
+  TaskFileWatcher: vi.fn().mockImplementation(() => ({
+    start: mockStart,
+    stop: mockStop,
+    isRunning: vi.fn(() => true),
+  })),
+}));
 
 // Mock DialogueOrchestrator
 vi.mock('../task/index.js', () => ({
@@ -74,17 +86,15 @@ vi.mock('../utils/error-handler.js', () => ({
 }));
 
 // Mock TaskTracker
-const mockGetDialogueTaskPath = vi.fn(() => '/test/workspace/tasks/test-task.md');
 vi.mock('../utils/task-tracker.js', () => ({
   TaskTracker: vi.fn().mockImplementation(() => ({
-    getDialogueTaskPath: mockGetDialogueTaskPath,
+    getDialogueTaskPath: vi.fn(() => '/test/workspace/tasks/test-task.md'),
   })),
 }));
 
 describe('TaskFlowOrchestrator', () => {
   let orchestrator: TaskFlowOrchestrator;
   let mockCallbacks: MessageCallbacks;
-  let mockTaskTracker: { getDialogueTaskPath: ReturnType<typeof vi.fn> };
   let mockLogger: { debug: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
@@ -96,10 +106,6 @@ describe('TaskFlowOrchestrator', () => {
       sendFile: vi.fn().mockResolvedValue(undefined),
     };
 
-    mockTaskTracker = {
-      getDialogueTaskPath: mockGetDialogueTaskPath,
-    };
-
     mockLogger = {
       debug: vi.fn(),
       info: vi.fn(),
@@ -108,7 +114,7 @@ describe('TaskFlowOrchestrator', () => {
     };
 
     orchestrator = new TaskFlowOrchestrator(
-      mockTaskTracker as unknown as import('../utils/task-tracker.js').TaskTracker,
+      {} as any, // TaskTracker mock
       mockCallbacks,
       mockLogger as unknown as import('pino').Logger
     );
@@ -122,30 +128,61 @@ describe('TaskFlowOrchestrator', () => {
     it('should create instance with callbacks', () => {
       expect(orchestrator).toBeInstanceOf(TaskFlowOrchestrator);
     });
+
+    it('should initialize TaskFileWatcher', () => {
+      expect(mockStart).not.toHaveBeenCalled(); // Not started in constructor
+    });
+  });
+
+  describe('start/stop', () => {
+    it('should start file watcher', async () => {
+      await orchestrator.start();
+
+      expect(mockStart).toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('started')
+      );
+    });
+
+    it('should stop file watcher', () => {
+      orchestrator.stop();
+
+      expect(mockStop).toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('stopped')
+      );
+    });
   });
 
   describe('executeDialoguePhase', () => {
-    it('should start dialogue phase asynchronously', async () => {
-      // executeDialoguePhase starts async, doesn't wait
-      orchestrator.executeDialoguePhase('chat-123', 'msg-001', 'Test task');
+    it('should start dialogue phase with task path', async () => {
+      const taskPath = '/test/workspace/tasks/msg_123/task.md';
+
+      orchestrator.executeDialoguePhase('chat-123', 'msg-001', taskPath);
 
       // Wait a bit for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Verify task path was requested
-      expect(mockGetDialogueTaskPath).toHaveBeenCalledWith('msg-001');
+      expect(mockLogger.info).toHaveBeenCalled();
     });
 
     it('should handle chat ID correctly', async () => {
-      orchestrator.executeDialoguePhase('test-chat-id', 'msg-002', 'Another task');
+      const taskPath = '/test/workspace/tasks/msg_456/task.md';
+
+      orchestrator.executeDialoguePhase('test-chat-id', 'msg-002', taskPath);
 
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      expect(mockGetDialogueTaskPath).toHaveBeenCalledWith('msg-002');
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: 'test-chat-id' }),
+        expect.any(String)
+      );
     });
 
     it('should log dialogue phase start', async () => {
-      orchestrator.executeDialoguePhase('chat-123', 'msg-003', 'Task');
+      const taskPath = '/test/workspace/tasks/msg_789/task.md';
+
+      orchestrator.executeDialoguePhase('chat-123', 'msg-003', taskPath);
 
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -188,12 +225,13 @@ describe('TaskFlowOrchestrator', () => {
       }));
 
       const errorOrchestrator = new TaskFlowOrchestrator(
-        mockTaskTracker as unknown as import('../utils/task-tracker.js').TaskTracker,
+        {} as any,
         mockCallbacks,
         mockLogger as unknown as import('pino').Logger
       );
 
-      errorOrchestrator.executeDialoguePhase('chat-err', 'msg-err', 'Error task');
+      const taskPath = '/test/workspace/tasks/msg_err/task.md';
+      errorOrchestrator.executeDialoguePhase('chat-err', 'msg-err', taskPath);
 
       // Wait for async error handling
       await new Promise(resolve => setTimeout(resolve, 200));

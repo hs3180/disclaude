@@ -17,7 +17,6 @@ import {
   ScheduleFileWatcher,
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../transport/file-client.js';
@@ -209,7 +208,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   };
 
   // Initialize TaskFlowOrchestrator for task skill dialogue phase
-  // This fixes Issue #111: TaskFlowOrchestrator needs to be registered in Execution Node
+  // Uses file watcher to detect new Task.md files and trigger dialogue
   const taskTracker = new TaskTracker();
   const taskFlowOrchestrator = new TaskFlowOrchestrator(
     taskTracker,
@@ -238,8 +237,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     },
     logger
   );
-  setTaskFlowOrchestrator(taskFlowOrchestrator);
-  console.log('✓ TaskFlowOrchestrator registered');
+  await taskFlowOrchestrator.start();
+  console.log('✓ TaskFlowOrchestrator started with file watcher');
 
   // Start scheduler
   await scheduler.start();
