@@ -25,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: disclaude:latest
+    image: disclaude:comm
     container_name: disclaude-comm
     restart: unless-stopped
 
@@ -73,8 +73,8 @@ services:
   exec:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: disclaude:latest
+      dockerfile: Dockerfile.exec
+    image: disclaude:exec
     container_name: disclaude-exec
     restart: unless-stopped
 
