@@ -125,6 +125,15 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
           logger.warn({ chatId }, 'No active feedback channel for sendFile');
         }
       },
+      onDone: async (chatId: string, parentMessageId?: string) => {
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'done', chatId, parentId: parentMessageId || ctx.parentId });
+          logger.info({ chatId }, 'Task completed, sent done signal');
+        } else {
+          logger.warn({ chatId }, 'No active feedback channel for onDone');
+        }
+      },
     },
   });
 
@@ -255,16 +264,13 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
           try {
             // Use processMessage for persistent session context
             // This is non-blocking - it queues the message and returns immediately
+            // The 'done' signal will be sent via onDone callback when Agent completes
             sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId);
-
-            // Send done signal after processing
-            // Note: Since processMessage is non-blocking, we send done immediately
-            // The actual response will come through the callbacks asynchronously
-            sendFeedback({ type: 'done', chatId, parentId });
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');
             sendFeedback({ type: 'error', chatId, error: err.message, parentId });
+            sendFeedback({ type: 'done', chatId, parentId });
           }
           return;
         }

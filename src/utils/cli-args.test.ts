@@ -25,6 +25,10 @@ vi.mock('../config/index.js', () => ({
         authToken: 'test-token',
       },
     })),
+    getChannelsConfig: vi.fn(() => ({
+      feishu: { enabled: false },
+      rest: { enabled: true, port: 3000 },
+    })),
   },
 }));
 
