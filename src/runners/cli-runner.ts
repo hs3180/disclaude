@@ -120,6 +120,7 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     model: agentConfig.model,
     apiBaseUrl: agentConfig.apiBaseUrl,
     isCliMode: true,
+    enableSchedule: true, // Enable schedule MCP tools in CLI mode (issue #114)
     callbacks,
   });
 
