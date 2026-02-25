@@ -77,19 +77,13 @@ export interface PilotCallbacks {
 /**
  * Configuration options for Pilot.
  *
- * Note: apiKey, model, apiBaseUrl, and permissionMode are optional.
- * If not provided, they will be fetched from Config.getAgentConfig().
- * This maintains backward compatibility with existing code.
+ * All configuration fields extend BaseAgentConfig for consistency with other agents.
+ * Use AgentFactory.createPilot() for convenient instance creation with defaults.
+ *
+ * Note: The special default value logic from Config.getAgentConfig() has been removed.
+ * Callers must provide all required fields, or use AgentFactory which handles defaults.
  */
-export interface PilotConfig {
-  /** API key (if not provided, uses Config.getAgentConfig()) */
-  apiKey?: string;
-  /** Model identifier (if not provided, uses Config.getAgentConfig()) */
-  model?: string;
-  /** API base URL (if not provided, uses Config.getAgentConfig()) */
-  apiBaseUrl?: string;
-  /** Permission mode (default: 'bypassPermissions' for all modes) */
-  permissionMode?: 'default' | 'bypassPermissions';
+export interface PilotConfig extends BaseAgentConfig {
   /**
    * Callback functions for platform-specific operations.
    */
@@ -155,18 +149,7 @@ export class Pilot extends BaseAgent {
   private states = new Map<string, PerChatIdState>();
 
   constructor(config: PilotConfig) {
-    // Get API config from Config if not provided (backward compatibility)
-    const agentConfig = Config.getAgentConfig();
-
-    // Build BaseAgentConfig with required fields
-    const baseConfig: BaseAgentConfig = {
-      apiKey: config.apiKey || agentConfig.apiKey,
-      model: config.model || agentConfig.model,
-      apiBaseUrl: config.apiBaseUrl || agentConfig.apiBaseUrl,
-      permissionMode: config.permissionMode ?? 'bypassPermissions',
-    };
-
-    super(baseConfig);
+    super(config);
 
     this.callbacks = config.callbacks;
     this.isCliMode = config.isCliMode ?? false;
@@ -786,6 +769,31 @@ You can read these files using the Read tool with the local paths above.`;
       state.pendingWriteFiles.clear();
     }
     this.logger.debug({ chatId }, 'Pending files cleared');
+  }
+
+  /**
+   * Reset state for a specific chatId (close session and remove from map).
+   *
+   * This is useful for /reset commands that clear conversation context for a specific chat.
+   * Unlike clearQueue, this method logs the reset for better observability.
+   *
+   * @param chatId - Platform-specific chat identifier
+   */
+  reset(chatId: string): void {
+    const state = this.states.get(chatId);
+    if (state) {
+      state.closed = true;
+      if (state.messageResolver) {
+        state.messageResolver();
+      }
+      if (state.queryInstance) {
+        state.queryInstance.close();
+      }
+      this.states.delete(chatId);
+      this.logger.info({ chatId }, 'State reset for chatId');
+    } else {
+      this.logger.debug({ chatId }, 'No state to reset for chatId');
+    }
   }
 
   /**
