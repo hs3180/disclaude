@@ -3,7 +3,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ReporterConfig } from './reporter.js';
 
 // Mock SDK
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -62,17 +61,6 @@ vi.mock('../mcp/feishu-context-mcp.js', () => ({
   feishuSdkMcpServer: {},
   createFeishuSdkMcpServer: vi.fn(() => ({})),
 }));
-
-describe('ReporterConfig type', () => {
-  it('should accept required fields', () => {
-    const config: ReporterConfig = {
-      apiKey: 'test-key',
-      model: 'test-model',
-    };
-    expect(config.apiKey).toBe('test-key');
-    expect(config.model).toBe('test-model');
-  });
-});
 
 describe('Reporter class', () => {
   let Reporter: typeof import('./reporter.js').Reporter;

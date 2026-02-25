@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { EvaluatorConfig, EvaluatorInput } from './evaluator.js';
+import type { EvaluatorConfig } from './evaluator.js';
 
 // Mock SDK
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -85,20 +85,6 @@ describe('EvaluatorConfig type', () => {
       subdirectory: 'regular',
     };
     expect(config.subdirectory).toBe('regular');
-  });
-});
-
-describe('EvaluatorInput type', () => {
-  it('should accept string input', () => {
-    const input: EvaluatorInput = 'Test prompt';
-    expect(input).toBe('Test prompt');
-  });
-
-  it('should accept AsyncIterable input', () => {
-    const asyncIterable: EvaluatorInput = (async function* () {
-      yield { role: 'user', content: 'Hello' } as any;
-    })();
-    expect(asyncIterable).toBeDefined();
   });
 });
 
