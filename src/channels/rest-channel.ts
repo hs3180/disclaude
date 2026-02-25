@@ -53,8 +53,8 @@ interface ChatRequest {
   message: string;
   /** User ID (optional) */
   userId?: string;
-  /** Parent message ID for thread context (optional) */
-  parentId?: string;
+  /** Thread root message ID for thread context (optional) */
+  threadId?: string;
   /** Response mode: 'stream' or 'sync' */
   mode?: 'stream' | 'sync';
 }
@@ -371,7 +371,7 @@ export class RestChannel extends EventEmitter implements IChannel {
           content: chatRequest.message,
           messageType: 'text',
           timestamp: Date.now(),
-          parentId: chatRequest.parentId,
+          threadId: chatRequest.threadId,
         });
       } catch (error) {
         logger.error({ err: error, messageId }, 'Failed to handle message');

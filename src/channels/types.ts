@@ -38,8 +38,8 @@ export interface IncomingMessage {
   /** Timestamp when message was created (ms since epoch) */
   timestamp?: number;
 
-  /** Parent message ID for thread replies */
-  parentId?: string;
+  /** Thread root message ID for thread replies (from root_id in Feishu) */
+  threadId?: string;
 
   /** Additional metadata from the channel */
   metadata?: Record<string, unknown>;
@@ -96,8 +96,8 @@ export interface OutgoingMessage {
   /** Optional description for logging */
   description?: string;
 
-  /** Parent message ID for thread replies */
-  parentId?: string;
+  /** Thread root message ID for thread replies */
+  threadId?: string;
 
   /** Task success status (for type 'done') */
   success?: boolean;

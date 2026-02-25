@@ -63,10 +63,10 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   });
 
   // Map to store active feedback context per chatId
-  // Includes sendFeedback function and parentId for thread replies
+  // Includes sendFeedback function and threadId for thread replies
   interface FeedbackContext {
     sendFeedback: (feedback: FeedbackMessage) => void;
-    parentId?: string;
+    threadId?: string;
   }
   const activeFeedbackChannels = new Map<string, FeedbackContext>();
 
@@ -83,18 +83,18 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     apiBaseUrl: agentConfig.apiBaseUrl,
     isCliMode: false, // Enable persistent sessions for context retention
     callbacks: {
-      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+      sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
         const ctx = activeFeedbackChannels.get(chatId);
         if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId, text, parentId: parentMessageId || ctx.parentId });
+          ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
         } else {
           logger.warn({ chatId }, 'No active feedback channel for sendMessage');
         }
       },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
         const ctx = activeFeedbackChannels.get(chatId);
         if (ctx) {
-          ctx.sendFeedback({ type: 'card', chatId, card, text: description, parentId: parentMessageId || ctx.parentId });
+          ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
         } else {
           logger.warn({ chatId }, 'No active feedback channel for sendCard');
         }
@@ -118,7 +118,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             fileName: fileRef.fileName,
             fileSize: fileRef.size,
             mimeType: fileRef.mimeType,
-            parentId: ctx.parentId,
+            threadId: ctx.threadId,
           });
         } catch (error) {
           logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
@@ -126,14 +126,14 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             type: 'error',
             chatId,
             error: `Failed to send file: ${(error as Error).message}`,
-            parentId: ctx.parentId,
+            threadId: ctx.threadId,
           });
         }
       },
-      onDone: async (chatId: string, parentMessageId?: string) => {
+      onDone: async (chatId: string, threadMessageId?: string) => {
         const ctx = activeFeedbackChannels.get(chatId);
         if (ctx) {
-          ctx.sendFeedback({ type: 'done', chatId, parentId: parentMessageId || ctx.parentId });
+          ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
           logger.info({ chatId }, 'Task completed, sent done signal');
         } else {
           logger.warn({ chatId }, 'No active feedback channel for onDone');
@@ -220,16 +220,16 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   const taskFlowOrchestrator = new TaskFlowOrchestrator(
     taskTracker,
     {
-      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+      sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
         if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'text', chatId, text, parentId: parentMessageId }));
+          ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
         } else {
           logger.warn({ chatId }, 'Cannot send message: WebSocket not connected');
         }
       },
-      sendCard: async (chatId: string, card: Record<string, unknown>, _description?: string, parentMessageId?: string) => {
+      sendCard: async (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string) => {
         if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'card', chatId, card, parentId: parentMessageId }));
+          ws.send(JSON.stringify({ type: 'card', chatId, card, threadId: threadMessageId }));
         } else {
           logger.warn({ chatId }, 'Cannot send card: WebSocket not connected');
         }
@@ -301,8 +301,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
         // Handle prompt messages
         if (message.type === 'prompt') {
-          const { chatId, prompt, messageId, senderOpenId, parentId, attachments } = message;
-          logger.info({ chatId, messageId, promptLength: prompt.length, parentId, hasAttachments: !!attachments }, 'Received prompt');
+          const { chatId, prompt, messageId, senderOpenId, threadId, attachments } = message;
+          logger.info({ chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments }, 'Received prompt');
 
           // Download attachments if present
           if (attachments && attachments.length > 0) {
@@ -326,8 +326,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             }
           };
 
-          // Register feedback channel for this chatId with parentId
-          activeFeedbackChannels.set(chatId, { sendFeedback, parentId });
+          // Register feedback channel for this chatId with threadId
+          activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
 
           try {
             // Use processMessage for persistent session context
@@ -336,8 +336,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');
-            sendFeedback({ type: 'error', chatId, error: err.message, parentId });
-            sendFeedback({ type: 'done', chatId, parentId });
+            sendFeedback({ type: 'error', chatId, error: err.message, threadId });
+            sendFeedback({ type: 'done', chatId, threadId });
           }
           return;
         }
