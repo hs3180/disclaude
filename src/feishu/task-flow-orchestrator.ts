@@ -2,17 +2,19 @@
  * TaskFlowOrchestrator - Manages dialogue execution phase.
  *
  * This module handles:
+ * - TaskFileWatcher for detecting new Task.md files
  * - DialogueOrchestrator execution (Evaluator → Executor → Reporter)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
  *
- * The Task.md creation is handled by Pilot with task skill.
- * This orchestrator only manages the dialogue phase triggered by start_dialogue tool.
+ * Architecture:
+ * Task.md file created → TaskFileWatcher detects → executeDialoguePhase → Dialogue loop
  */
 
 import * as path from 'path';
 import { DialogueOrchestrator, extractText } from '../task/index.js';
+import { TaskFileWatcher } from '../task/task-file-watcher.js';
 import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import type { TaskTracker } from '../utils/task-tracker.js';
@@ -26,43 +28,68 @@ export interface MessageCallbacks {
 }
 
 export class TaskFlowOrchestrator {
-  private taskTracker: TaskTracker;
   private messageCallbacks: MessageCallbacks;
   private logger: Logger;
+  private fileWatcher: TaskFileWatcher;
 
   // Track running background tasks for cleanup
   private runningDialogueTasks: Map<string, Promise<unknown>> = new Map();
 
   constructor(
-    taskTracker: TaskTracker,
+    _taskTracker: TaskTracker,
     messageCallbacks: MessageCallbacks,
     logger: Logger
   ) {
-    this.taskTracker = taskTracker;
     this.messageCallbacks = messageCallbacks;
     this.logger = logger;
+
+    // Initialize file watcher
+    const workspaceDir = Config.getWorkspaceDir();
+    const tasksDir = path.join(workspaceDir, 'tasks');
+
+    this.fileWatcher = new TaskFileWatcher({
+      tasksDir,
+      onTaskCreated: (taskPath, messageId, chatId) => {
+        this.executeDialoguePhase(chatId, messageId, taskPath);
+      },
+    });
+  }
+
+  /**
+   * Start the file watcher.
+   */
+  async start(): Promise<void> {
+    await this.fileWatcher.start();
+    this.logger.info('TaskFlowOrchestrator started with file watcher');
+  }
+
+  /**
+   * Stop the file watcher and cleanup.
+   */
+  stop(): void {
+    this.fileWatcher.stop();
+    this.logger.info('TaskFlowOrchestrator stopped');
   }
 
   /**
    * Execute dialogue phase for a task.
    *
-   * This is called by the start_dialogue tool after Pilot creates Task.md.
+   * Triggered by TaskFileWatcher when a new Task.md is detected.
    * The dialogue runs asynchronously in the background.
    *
    * @param chatId - Feishu chat ID
    * @param messageId - Unique message identifier
-   * @param text - Original user request
+   * @param taskPath - Path to the Task.md file
    */
   executeDialoguePhase(
     chatId: string,
     messageId: string,
-    text: string
+    taskPath: string
   ): void {
-    const taskPath = this.taskTracker.getDialogueTaskPath(messageId);
     const agentConfig = Config.getAgentConfig();
 
     // Run dialogue asynchronously in background
-    void this.runDialogue(chatId, messageId, text, taskPath, agentConfig)
+    void this.runDialogue(chatId, messageId, taskPath, agentConfig)
       .catch((error) => {
         this.logger.error({ err: error, chatId, messageId }, 'Async dialogue failed');
         // Send error notification to user (as thread reply)
@@ -86,7 +113,6 @@ export class TaskFlowOrchestrator {
   private async runDialogue(
     chatId: string,
     messageId: string,
-    text: string,
     taskPath: string,
     agentConfig: { apiKey: string; model: string; apiBaseUrl?: string }
   ): Promise<void> {
@@ -131,8 +157,8 @@ export class TaskFlowOrchestrator {
     try {
       this.logger.debug({ chatId, taskId: path.basename(taskPath, '.md') }, 'Starting dialogue');
 
-      // Run dialogue loop
-      for await (const message of bridge.runDialogue(taskPath, text, chatId, messageId)) {
+      // Run dialogue loop (text is extracted from Task.md by DialogueOrchestrator)
+      for await (const message of bridge.runDialogue(taskPath, '', chatId, messageId)) {
         const content = typeof message.content === 'string'
           ? message.content
           : extractText(message);

@@ -16,7 +16,6 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FileHandler } from '../feishu/file-handler.js';
 import { MessageSender } from '../feishu/message-sender.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
 import type {
@@ -222,18 +221,20 @@ export class FeishuChannel extends EventEmitter implements IChannel {
   /**
    * Initialize TaskFlowOrchestrator with callbacks.
    * Called by CommunicationNode after channel is created.
+   * Starts the file watcher to detect new Task.md files.
    */
-  initTaskFlowOrchestrator(callbacks: {
+  async initTaskFlowOrchestrator(callbacks: {
     sendMessage: (chatId: string, text: string) => Promise<void>;
     sendCard: (chatId: string, card: Record<string, unknown>, description?: string) => Promise<void>;
     sendFile: (chatId: string, filePath: string) => Promise<void>;
-  }): void {
+  }): Promise<void> {
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
       this.taskTracker,
       callbacks,
       logger
     );
-    setTaskFlowOrchestrator(this.taskFlowOrchestrator);
+    // Start the file watcher
+    await this.taskFlowOrchestrator.start();
   }
 
   /**
