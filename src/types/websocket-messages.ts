@@ -17,8 +17,8 @@ export interface PromptMessage {
   prompt: string;
   messageId: string;
   senderOpenId?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
+  /** Thread root message ID for thread replies */
+  threadId?: string;
   /** File attachments (if any) */
   attachments?: FileReference[];
 }
@@ -41,8 +41,8 @@ export interface FeedbackMessage {
   text?: string;
   card?: Record<string, unknown>;
   error?: string;
-  /** Parent message ID for thread replies */
-  parentId?: string;
+  /** Thread root message ID for thread replies */
+  threadId?: string;
 
   // ===== File transfer fields =====
 

@@ -290,7 +290,7 @@ export class CommunicationNode extends EventEmitter {
       prompt: message.content,
       messageId: message.messageId,
       senderOpenId: message.userId,
-      parentId: message.parentId,
+      threadId: message.threadId,
       attachments,
     });
   }
@@ -335,7 +335,7 @@ export class CommunicationNode extends EventEmitter {
     }
 
     this.execWs.send(JSON.stringify(message));
-    logger.info({ chatId: message.chatId, messageId: message.messageId, parentId: message.parentId }, 'Prompt sent to Execution Node');
+    logger.info({ chatId: message.chatId, messageId: message.messageId, threadId: message.threadId }, 'Prompt sent to Execution Node');
   }
 
   /**
@@ -356,26 +356,26 @@ export class CommunicationNode extends EventEmitter {
    * Handle feedback from Execution Node.
    */
   private async handleFeedback(message: FeedbackMessage): Promise<void> {
-    const { chatId, type, text, card, error, parentId, fileRef } = message;
+    const { chatId, type, text, card, error, threadId, fileRef } = message;
 
     try {
       switch (type) {
         case 'text':
           if (text) {
-            await this.sendMessage(chatId, text, parentId);
+            await this.sendMessage(chatId, text, threadId);
           }
           break;
         case 'card':
-          await this.sendCard(chatId, card || {}, undefined, parentId);
+          await this.sendCard(chatId, card || {}, undefined, threadId);
           break;
         case 'file':
           if (fileRef && this.fileStorageService) {
             const localPath = this.fileStorageService.getLocalPath(fileRef.id);
             if (localPath) {
-              await this.sendFileToUser(chatId, localPath, parentId);
+              await this.sendFileToUser(chatId, localPath, threadId);
             } else {
               logger.error({ fileId: fileRef.id }, 'File not found in storage');
-              await this.sendMessage(chatId, `❌ 文件未找到: ${fileRef.fileName}`, parentId);
+              await this.sendMessage(chatId, `❌ 文件未找到: ${fileRef.fileName}`, threadId);
             }
           }
           break;
@@ -387,14 +387,14 @@ export class CommunicationNode extends EventEmitter {
             if (channelId) {
               const channel = this.channels.get(channelId);
               if (channel) {
-                await channel.sendMessage({ type: 'done', chatId, parentId });
+                await channel.sendMessage({ type: 'done', chatId, threadId });
               }
             }
           }
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');
-          await this.sendMessage(chatId, `❌ 执行错误: ${error || 'Unknown error'}`, parentId);
+          await this.sendMessage(chatId, `❌ 执行错误: ${error || 'Unknown error'}`, threadId);
           break;
       }
     } catch (err) {
@@ -405,7 +405,7 @@ export class CommunicationNode extends EventEmitter {
   /**
    * Send a text message to the appropriate channel.
    */
-  async sendMessage(chatId: string, text: string, parentMessageId?: string): Promise<void> {
+  async sendMessage(chatId: string, text: string, threadMessageId?: string): Promise<void> {
     const channelId = this.chatToChannel.get(chatId);
     if (!channelId) {
       logger.warn({ chatId }, 'No channel found for chat');
@@ -422,7 +422,7 @@ export class CommunicationNode extends EventEmitter {
       chatId,
       type: 'text',
       text,
-      parentId: parentMessageId,
+      threadId: threadMessageId,
     });
   }
 
@@ -433,7 +433,7 @@ export class CommunicationNode extends EventEmitter {
     chatId: string,
     card: Record<string, unknown>,
     description?: string,
-    parentMessageId?: string
+    threadMessageId?: string
   ): Promise<void> {
     const channelId = this.chatToChannel.get(chatId);
     if (!channelId) {
@@ -452,14 +452,14 @@ export class CommunicationNode extends EventEmitter {
       type: 'card',
       card,
       description,
-      parentId: parentMessageId,
+      threadId: threadMessageId,
     });
   }
 
   /**
    * Send a file to the appropriate channel.
    */
-  async sendFileToUser(chatId: string, filePath: string, _parentId?: string): Promise<void> {
+  async sendFileToUser(chatId: string, filePath: string, _threadId?: string): Promise<void> {
     const channelId = this.chatToChannel.get(chatId);
     if (!channelId) {
       logger.warn({ chatId }, 'No channel found for chat');
@@ -472,7 +472,7 @@ export class CommunicationNode extends EventEmitter {
       return;
     }
 
-    // TODO: Pass parentId when Issue #68 is implemented
+    // TODO: Pass threadId when Issue #68 is implemented
     await channel.sendMessage({
       chatId,
       type: 'file',
