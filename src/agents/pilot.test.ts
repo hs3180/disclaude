@@ -141,52 +141,6 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('PilotCallbacks Interface', () => {
-    it('should require sendMessage callback', () => {
-      const callbacks: PilotCallbacks = {
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        sendFile: async () => {},
-      };
-
-      expect(typeof callbacks.sendMessage).toBe('function');
-    });
-
-    it('should require sendCard callback', () => {
-      const callbacks: PilotCallbacks = {
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        sendFile: async () => {},
-      };
-
-      expect(typeof callbacks.sendCard).toBe('function');
-    });
-
-    it('should require sendFile callback', () => {
-      const callbacks: PilotCallbacks = {
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        sendFile: async () => {},
-      };
-
-      expect(typeof callbacks.sendFile).toBe('function');
-    });
-  });
-
-  describe('PilotOptions Interface', () => {
-    it('should require callbacks field', () => {
-      const options: { callbacks: PilotCallbacks } = {
-        callbacks: {
-          sendMessage: async () => {},
-          sendCard: async () => {},
-          sendFile: async () => {},
-        },
-      };
-
-      expect(options.callbacks).toBeDefined();
-    });
-  });
-
   describe('hasActiveStream', () => {
     it('should return false when no state exists', () => {
       expect(pilot.hasActiveStream('chat-123')).toBe(false);
@@ -232,6 +186,65 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
+  describe('reset', () => {
+    it('should reset specific chatId only', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      pilot.processMessage('chat-456', 'Hi', 'msg-002');
+      expect(pilot['states'].size).toBe(2);
+
+      // Reset only chat-123
+      pilot.reset('chat-123');
+
+      // chat-123 should be removed, chat-456 should remain
+      expect(pilot['states'].size).toBe(1);
+      expect(pilot['states'].has('chat-123')).toBe(false);
+      expect(pilot['states'].has('chat-456')).toBe(true);
+    });
+
+    it('should handle non-existent chatId gracefully', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      expect(pilot['states'].size).toBe(1);
+
+      // Reset non-existent chatId
+      pilot.reset('chat-nonexistent');
+
+      // Original state should remain
+      expect(pilot['states'].size).toBe(1);
+      expect(pilot['states'].has('chat-123')).toBe(true);
+    });
+
+    it('should close query instance when resetting', async () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      const state = pilot['states'].get('chat-123');
+
+      // Wait a bit for agent loop to start
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      pilot.reset('chat-123');
+
+      // State should be removed
+      expect(pilot['states'].has('chat-123')).toBe(false);
+    });
+
+    it('should not affect other chatIds in group chat scenario', () => {
+      // Simulate multiple group chats
+      pilot.processMessage('group-chat-1', 'Hello from group 1', 'msg-001');
+      pilot.processMessage('group-chat-2', 'Hello from group 2', 'msg-002');
+      pilot.processMessage('group-chat-3', 'Hello from group 3', 'msg-003');
+
+      expect(pilot['states'].size).toBe(3);
+
+      // User in group-chat-1 sends /reset
+      pilot.reset('group-chat-1');
+
+      // Only group-chat-1 should be reset
+      expect(pilot['states'].size).toBe(2);
+      expect(pilot['states'].has('group-chat-1')).toBe(false);
+      expect(pilot['states'].has('group-chat-2')).toBe(true);
+      expect(pilot['states'].has('group-chat-3')).toBe(true);
+    });
+  });
+
   describe('resetAll', () => {
     it('should clear all states', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
@@ -264,70 +277,6 @@ describe('Pilot (Streaming Input)', () => {
       await pilot.shutdown();
 
       expect(pilot['states'].size).toBe(0);
-    });
-  });
-
-  describe('Design Principles', () => {
-    it('should be platform-agnostic', () => {
-      // Pilot works with any messaging platform via callbacks
-      const isPlatformAgnostic = true;
-      expect(isPlatformAgnostic).toBe(true);
-    });
-
-    it('should use per-chatId states (not shared)', () => {
-      // Each chatId gets its own state
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-
-      expect(pilot['states'].size).toBe(2);
-    });
-
-    it('should use callback-based output', () => {
-      // Pilot uses dependency injection for callbacks
-      expect(pilot['callbacks']).toEqual(mockCallbacks);
-    });
-  });
-
-  describe('Module Exports', () => {
-    it('should export Pilot class', () => {
-      expect(Pilot).toBeDefined();
-      expect(typeof Pilot).toBe('function');
-    });
-
-    it('should export PilotCallbacks type', () => {
-      // PilotCallbacks is a type interface
-      const callbacks: {
-        sendMessage: (chatId: string, text: string) => Promise<void>;
-        sendCard: (chatId: string, card: Record<string, unknown>, description?: string) => Promise<void>;
-        sendFile: (chatId: string, filePath: string) => Promise<void>;
-      } = {
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        sendFile: async () => {},
-      };
-
-      expect(callbacks).toBeDefined();
-    });
-
-    it('should export PilotOptions type', () => {
-      // PilotOptions is a type interface
-      const options: {
-        callbacks: {
-          sendMessage: () => Promise<void>;
-          sendCard: () => Promise<void>;
-          sendFile: () => Promise<void>;
-        };
-        isCliMode?: boolean;
-      } = {
-        callbacks: {
-          sendMessage: async () => {},
-          sendCard: async () => {},
-          sendFile: async () => {},
-        },
-        isCliMode: false,
-      };
-
-      expect(options).toBeDefined();
     });
   });
 

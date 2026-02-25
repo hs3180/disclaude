@@ -7,7 +7,6 @@
  * - Executor: Task execution specialist
  * - Reporter: Communication and instruction generation specialist
  * - Pilot: Platform-agnostic direct chat with streaming input
- * - AgentFactory: Unified factory for creating Agent instances (Issue #129)
  */
 
 // Base class
@@ -20,19 +19,12 @@ export {
 } from './base-agent.js';
 
 // Task agents
-export { Evaluator, type EvaluatorConfig, type EvaluatorInput } from './evaluator.js';
+export { Evaluator, type EvaluatorConfig } from './evaluator.js';
 export { Executor, type ExecutorConfig, type TaskProgressEvent, type TaskResult } from './executor.js';
-export { Reporter, type ReporterConfig } from './reporter.js';
+export { Reporter } from './reporter.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
 
 // Factory
-export {
-  AgentFactory,
-  type AgentType,
-  type CreatePilotOptions,
-  type CreateEvaluatorOptions,
-  type CreateExecutorOptions,
-  type CreateReporterOptions,
-} from './agent-factory.js';
+export { AgentFactory, type AgentCreateOptions } from './factory.js';
