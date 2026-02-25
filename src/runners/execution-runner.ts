@@ -22,6 +22,7 @@ import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
+import { FileClient } from '../transport/file-client.js';
 
 const logger = createLogger('ExecRunner');
 
@@ -38,7 +39,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   const runnerConfig = config || getExecNodeConfig(globalArgs);
 
   // Get comm URL from config
-  const commUrl = runnerConfig.commUrl;
+  const {commUrl} = runnerConfig;
   const reconnectInterval = 3000;
   let ws: WebSocket | undefined;
   let running = true;
@@ -47,12 +48,19 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   logger.info({ commUrl }, 'Starting Execution Node');
 
   console.log('Initializing Execution Node...');
-  console.log(`Mode: Execution (Pilot Agent + WebSocket Client)`);
+  console.log('Mode: Execution (Pilot Agent + WebSocket Client)');
   console.log(`Comm URL: ${commUrl}`);
   console.log();
 
   // Get agent configuration
   const agentConfig = Config.getAgentConfig();
+
+  // Create FileClient for file transfer with Communication Node
+  const commHttpUrl = commUrl.replace(/^ws/, 'http');
+  const fileClient = new FileClient({
+    commNodeUrl: commHttpUrl,
+    downloadDir: path.join(Config.getWorkspaceDir(), 'downloads'),
+  });
 
   // Map to store active feedback context per chatId
   // Includes sendFeedback function and parentId for thread replies
@@ -93,10 +101,33 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       },
       sendFile: async (chatId: string, filePath: string) => {
         const ctx = activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'file', chatId, filePath, parentId: ctx.parentId });
-        } else {
+        if (!ctx) {
           logger.warn({ chatId }, 'No active feedback channel for sendFile');
+          return;
+        }
+
+        try {
+          // Upload file to Communication Node
+          const fileRef = await fileClient.uploadFile(filePath, chatId);
+
+          // Send fileRef to Communication Node
+          ctx.sendFeedback({
+            type: 'file',
+            chatId,
+            fileRef,
+            fileName: fileRef.fileName,
+            fileSize: fileRef.size,
+            mimeType: fileRef.mimeType,
+            parentId: ctx.parentId,
+          });
+        } catch (error) {
+          logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
+          ctx.sendFeedback({
+            type: 'error',
+            chatId,
+            error: `Failed to send file: ${(error as Error).message}`,
+            parentId: ctx.parentId,
+          });
         }
       },
       onDone: async (chatId: string, parentMessageId?: string) => {
@@ -137,8 +168,23 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
         }
       },
       sendFile: async (chatId: string, filePath: string) => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
+        try {
+          // Upload file to Communication Node
+          const fileRef = await fileClient.uploadFile(filePath, chatId);
+
+          // Send fileRef via WebSocket
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'file',
+              chatId,
+              fileRef,
+              fileName: fileRef.fileName,
+              fileSize: fileRef.size,
+              mimeType: fileRef.mimeType,
+            }));
+          }
+        } catch (error) {
+          logger.error({ err: error, chatId, filePath }, 'Failed to upload file for scheduled task');
         }
       },
     },
@@ -255,8 +301,23 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
         // Handle prompt messages
         if (message.type === 'prompt') {
-          const { chatId, prompt, messageId, senderOpenId, parentId } = message;
-          logger.info({ chatId, messageId, promptLength: prompt.length, parentId }, 'Received prompt');
+          const { chatId, prompt, messageId, senderOpenId, parentId, attachments } = message;
+          logger.info({ chatId, messageId, promptLength: prompt.length, parentId, hasAttachments: !!attachments }, 'Received prompt');
+
+          // Download attachments if present
+          if (attachments && attachments.length > 0) {
+            logger.info({ chatId, attachmentCount: attachments.length }, 'Downloading attachments');
+            for (const att of attachments) {
+              try {
+                const localPath = await fileClient.downloadToFile(att);
+                // Update storageKey to local path for Pilot to use
+                att.storageKey = localPath;
+                logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
+              } catch (error) {
+                logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');
+              }
+            }
+          }
 
           // Create send feedback function for this message
           const sendFeedback = (feedback: FeedbackMessage) => {
@@ -270,9 +331,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
           try {
             // Use processMessage for persistent session context
-            // This is non-blocking - it queues the message and returns immediately
             // The 'done' signal will be sent via onDone callback when Agent completes
-            sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId);
+            sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments);
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');
@@ -326,7 +386,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   connectToCommNode();
 
   // Handle shutdown
-  const shutdown = async () => {
+  const shutdown = () => {
     logger.info('Shutting down Execution Node...');
     console.log('\nShutting down Execution Node...');
 

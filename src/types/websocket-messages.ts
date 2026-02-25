@@ -6,6 +6,8 @@
  * - Execution Node sends: FeedbackMessage
  */
 
+import type { FileReference } from './file-reference.js';
+
 /**
  * Message sent from Communication Node to Execution Node when a user sends a prompt.
  */
@@ -17,6 +19,8 @@ export interface PromptMessage {
   senderOpenId?: string;
   /** Parent message ID for thread replies */
   parentId?: string;
+  /** File attachments (if any) */
+  attachments?: FileReference[];
 }
 
 /**
@@ -36,8 +40,21 @@ export interface FeedbackMessage {
   chatId: string;
   text?: string;
   card?: Record<string, unknown>;
-  filePath?: string;
   error?: string;
   /** Parent message ID for thread replies */
   parentId?: string;
+
+  // ===== File transfer fields =====
+
+  /** File reference */
+  fileRef?: FileReference;
+
+  /** File name (redundant field for convenience) */
+  fileName?: string;
+
+  /** File size (bytes) */
+  fileSize?: number;
+
+  /** MIME type */
+  mimeType?: string;
 }

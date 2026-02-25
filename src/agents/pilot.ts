@@ -37,6 +37,7 @@ import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { createTaskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
 import { createScheduleSdkMcpServer } from '../schedule/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import type { FileReference } from '../types/file-reference.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -109,6 +110,8 @@ interface QueuedMessage {
   text: string;
   messageId: string;
   senderOpenId?: string;
+  /** File attachments (if any) */
+  attachments?: FileReference[];
 }
 
 /**
@@ -312,14 +315,16 @@ export class Pilot extends BaseAgent {
    * @param text - User's message text
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
+   * @param attachments - Optional file attachments
    */
   processMessage(
     chatId: string,
     text: string,
     messageId: string,
-    senderOpenId?: string
+    senderOpenId?: string,
+    attachments?: FileReference[]
   ): void {
-    this.logger.debug({ chatId, messageId, textLength: text.length }, 'Processing message');
+    this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
 
     // Get or create state for this chatId (handles health check and restart)
     const state = this.getOrCreateState(chatId);
@@ -333,7 +338,7 @@ export class Pilot extends BaseAgent {
     this.logger.debug({ chatId, messageId }, 'Set current thread root for replies');
 
     // Push message to the queue
-    state.messageQueue.push({ text, messageId, senderOpenId });
+    state.messageQueue.push({ text, messageId, senderOpenId, attachments });
 
     // Log health status for debugging
     if (state.closed || !state.started) {
@@ -433,12 +438,12 @@ export class Pilot extends BaseAgent {
 ---
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
-**Sender Open ID:** ${msg.senderOpenId}`
+**Sender Open ID:** ${msg.senderOpenId}${this.buildAttachmentsInfo(msg.attachments)}`
         : `
 
 ---
 **Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}`;
+**Message ID:** ${msg.messageId}${this.buildAttachmentsInfo(msg.attachments)}`;
 
       return `${msg.text}${contextInfo}`;
     }
@@ -473,7 +478,7 @@ When using send_file_to_feishu or send_user_feedback, use:
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
 
 --- User Message ---
-${msg.text}`;
+${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
 
     return `You are responding in a Feishu chat.
@@ -486,7 +491,35 @@ When using send_file_to_feishu or send_user_feedback, use:
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
 
 --- User Message ---
-${msg.text}`;
+${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+  }
+
+  /**
+   * Build attachments info string for the message content.
+   */
+  private buildAttachmentsInfo(attachments?: FileReference[]): string {
+    if (!attachments || attachments.length === 0) {
+      return '';
+    }
+
+    const attachmentList = attachments
+      .map((att, index) => {
+        const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
+        return `${index + 1}. **${att.fileName}**${sizeInfo}
+   - File ID: \`${att.id}\`
+   - Local path: \`${att.storageKey}\`
+   - MIME type: ${att.mimeType || 'unknown'}`;
+      })
+      .join('\n');
+
+    return `
+
+--- Attachments ---
+The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
+
+${attachmentList}
+
+You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
