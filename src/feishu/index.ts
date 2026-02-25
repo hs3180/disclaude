@@ -2,8 +2,8 @@
  * Feishu/Lark module exports.
  *
  * This module exports the components needed for Feishu integration.
- * The bot functionality is now handled by CommunicationNode and ExecutionNode
- * through the Transport abstraction layer.
+ * The bot functionality is handled by CommunicationNode which forwards
+ * messages to the Execution Node via WebSocket.
  */
 
 // Re-export commonly used components

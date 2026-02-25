@@ -1,8 +1,5 @@
 /**
- * Transport layer types.
- *
- * These types define the interfaces for message passing between nodes.
- * The actual transport implementation is now done via direct HTTP calls.
+ * Transport layer - File Client for file transfer.
  *
  * Architecture:
  * ```
@@ -21,5 +18,4 @@
  * ```
  */
 
-export * from './types.js';
 export * from './file-client.js';
