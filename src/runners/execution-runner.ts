@@ -15,8 +15,6 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
-  setScheduleManager,
-  setScheduler,
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
@@ -209,10 +207,6 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       },
     });
   };
-
-  // Register with MCP tools
-  setScheduleManager(scheduleManager);
-  setScheduler(scheduler);
 
   // Initialize TaskFlowOrchestrator for task skill dialogue phase
   // This fixes Issue #111: TaskFlowOrchestrator needs to be registered in Execution Node

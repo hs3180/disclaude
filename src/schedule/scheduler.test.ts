@@ -14,8 +14,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { Scheduler } from './scheduler.js';
 import { ScheduleManager } from './schedule-manager.js';
-import type { ScheduledTask, PilotCallbacks } from './index.js';
-import type { Pilot } from '../agents/pilot.js';
+import type { ScheduledTask } from './index.js';
+import type { Pilot, PilotCallbacks } from '../agents/pilot.js';
 
 // Mock Pilot
 const createMockPilot = (): Pilot => {
@@ -290,7 +290,7 @@ describe('Scheduler', () => {
       // Delete task from manager
       await manager.delete(task.id);
 
-      // Remove from scheduler (simulating delete_schedule flow)
+      // Remove from scheduler (simulating task deletion flow)
       scheduler.removeTask(task.id);
 
       expect(scheduler.getActiveJobs()).toHaveLength(0);
