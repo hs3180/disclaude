@@ -35,7 +35,6 @@ import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { createTaskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
-import { createScheduleSdkMcpServer } from '../schedule/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
 
@@ -101,6 +100,12 @@ export interface PilotConfig {
    * CLI mode doesn't need Feishu MCP servers.
    */
   isCliMode?: boolean;
+  /**
+   * Whether to enable schedule MCP tools (default: false).
+   * Should only be enabled in exec mode (issue #114).
+   * Comm mode doesn't need scheduling functionality.
+   */
+  enableSchedule?: boolean;
 }
 
 /**
@@ -152,6 +157,7 @@ interface PerChatIdState {
 export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
   private readonly isCliMode: boolean;
+  private readonly enableSchedule: boolean;
 
   // Per-chatId Agent states
   private states = new Map<string, PerChatIdState>();
@@ -172,6 +178,7 @@ export class Pilot extends BaseAgent {
 
     this.callbacks = config.callbacks;
     this.isCliMode = config.isCliMode ?? false;
+    this.enableSchedule = config.enableSchedule ?? false;
   }
 
   protected getAgentName(): string {
@@ -202,8 +209,14 @@ export class Pilot extends BaseAgent {
     // Create new instances per Agent to prevent transport conflicts (issue #81)
     const mcpServers: Record<string, unknown> = {
       'task-skill': createTaskSkillSdkMcpServer(),
-      'schedule': createScheduleSdkMcpServer(),
     };
+
+    // Only add schedule MCP server if enabled (exec mode only, issue #114)
+    // Use dynamic import to avoid loading schedule module in comm mode
+    if (this.enableSchedule) {
+      const { createScheduleSdkMcpServer } = await import('../schedule/index.js');
+      mcpServers['schedule'] = createScheduleSdkMcpServer();
+    }
 
     // CLI mode doesn't need Feishu MCP server
     // Merge configured external MCP servers from config file
@@ -597,8 +610,14 @@ You can read these files using the Read tool with the local paths above.`;
     // Create new instances per Agent to prevent transport conflicts (issue #81)
     const mcpServers: Record<string, unknown> = {
       'task-skill': createTaskSkillSdkMcpServer(),
-      'schedule': createScheduleSdkMcpServer(),
     };
+
+    // Only add schedule MCP server if enabled (exec mode only, issue #114)
+    // Use dynamic import to avoid loading schedule module in comm mode
+    if (this.enableSchedule) {
+      const { createScheduleSdkMcpServer } = await import('../schedule/index.js');
+      mcpServers['schedule'] = createScheduleSdkMcpServer();
+    }
 
     // Only add Feishu MCP server if NOT in CLI mode
     // CLI mode doesn't need Feishu integration (no Feishu API calls)
