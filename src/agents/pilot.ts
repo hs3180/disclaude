@@ -65,6 +65,14 @@ export interface PilotCallbacks {
    * @param filePath - Local file path to send
    */
   sendFile: (chatId: string, filePath: string) => Promise<void>;
+
+  /**
+   * Called when the Agent query completes (result message received).
+   * Used to signal completion to communication layer (e.g., REST sync mode).
+   * @param chatId - Platform-specific chat identifier
+   * @param parentMessageId - Optional parent message ID for thread replies
+   */
+  onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
 }
 
 /**
@@ -647,9 +655,20 @@ ${msg.text}`;
         if (parsed.content) {
           await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
         }
+
+        // Check for completion - result type means query is done
+        if (parsed.type === 'result') {
+          this.logger.debug({ chatId, content: parsed.content }, 'Result received, breaking loop');
+          break;
+        }
       }
 
       this.logger.info({ chatId }, 'Agent loop completed normally');
+
+      // Signal completion to communication layer (e.g., REST sync mode)
+      if (this.callbacks.onDone) {
+        await this.callbacks.onDone(chatId, state.currentThreadRootId);
+      }
 
       // Mark as restartable instead of deleting - preserve queue for next session
       state.started = false;
@@ -659,6 +678,11 @@ ${msg.text}`;
       this.logger.error({ err, chatId }, 'Agent loop error');
 
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentThreadRootId);
+
+      // Signal completion even on error
+      if (this.callbacks.onDone) {
+        await this.callbacks.onDone(chatId, state.currentThreadRootId);
+      }
 
       // Mark as restartable instead of deleting - preserve queue for next session
       state.started = false;
