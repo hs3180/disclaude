@@ -11,6 +11,7 @@ import {
   createUserMessage,
   enrichError,
   handleError,
+  formatError,
   AppError,
   ErrorCategory,
   ErrorSeverity,
@@ -192,5 +193,39 @@ describe('handleError', () => {
     const notifier = vi.fn();
     handleError(new Error('Test'), {}, { userNotifier: notifier });
     expect(notifier).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('formatError', () => {
+  it('should format AppError using toJSON', () => {
+    const error = new AppError('Test error', ErrorCategory.SDK, ErrorSeverity.ERROR, {
+      context: { agent: 'TestAgent' },
+    });
+    const formatted = formatError(error);
+
+    expect(formatted.name).toBe('AppError');
+    expect(formatted.message).toBe('Test error');
+    expect(formatted.category).toBe(ErrorCategory.SDK);
+  });
+
+  it('should format generic Error', () => {
+    const error = new Error('Generic error');
+    const formatted = formatError(error);
+
+    expect(formatted.name).toBe('Error');
+    expect(formatted.message).toBe('Generic error');
+    expect(formatted.stack).toBeDefined();
+  });
+
+  it('should handle non-Error objects', () => {
+    const formatted = formatError('string error');
+
+    expect(formatted.name).toBe('UnknownError');
+    expect(formatted.message).toBe('string error');
+  });
+
+  it('should handle null/undefined', () => {
+    expect(formatError(null).message).toBe('null');
+    expect(formatError(undefined).message).toBe('undefined');
   });
 });

@@ -15,7 +15,7 @@ import { query, type SDKMessage, type Query, type SDKUserMessage } from '@anthro
 import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import { AgentExecutionError, formatError } from '../utils/errors.js';
+import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 
 /**
@@ -270,18 +270,23 @@ export abstract class BaseAgent {
   /**
    * Handle iterator error with proper logging and error wrapping.
    *
-   * Creates AgentExecutionError and returns an AgentMessage for yielding to caller.
+   * Creates AppError and returns an AgentMessage for yielding to caller.
    *
    * @param error - The caught error
    * @param operation - Operation name for error message
    * @returns AgentMessage for yielding to caller
    */
   protected handleIteratorError(error: unknown, operation: string): AgentMessage {
-    const agentError = new AgentExecutionError(`${this.getAgentName()} ${operation} failed`, {
-      cause: error instanceof Error ? error : new Error(String(error)),
-      agent: this.getAgentName(),
-      recoverable: true,
-    });
+    const agentError = new AppError(
+      `${this.getAgentName()} ${operation} failed`,
+      ErrorCategory.SDK,
+      undefined,
+      {
+        cause: error instanceof Error ? error : new Error(String(error)),
+        context: { agent: this.getAgentName() },
+        retryable: true,
+      }
+    );
     this.logger.error({ err: formatError(agentError) }, `${operation} failed`);
 
     return {
