@@ -748,6 +748,31 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
+   * Reset state for a specific chatId (close session and remove from map).
+   *
+   * This is useful for /reset commands that clear conversation context for a specific chat.
+   * Unlike clearQueue, this method logs the reset for better observability.
+   *
+   * @param chatId - Platform-specific chat identifier
+   */
+  reset(chatId: string): void {
+    const state = this.states.get(chatId);
+    if (state) {
+      state.closed = true;
+      if (state.messageResolver) {
+        state.messageResolver();
+      }
+      if (state.queryInstance) {
+        state.queryInstance.close();
+      }
+      this.states.delete(chatId);
+      this.logger.info({ chatId }, 'State reset for chatId');
+    } else {
+      this.logger.debug({ chatId }, 'No state to reset for chatId');
+    }
+  }
+
+  /**
    * Clear all pending files for a chatId.
    *
    * Note: In the new implementation, file tracking is internal to the state.
@@ -766,7 +791,8 @@ You can read these files using the Read tool with the local paths above.`;
   /**
    * Reset all states (close all and start fresh).
    *
-   * This is useful for /reset commands that clear all conversation context.
+   * WARNING: This resets ALL chatIds. Use reset(chatId) for single chat reset.
+   * This is useful for admin commands or shutdown scenarios.
    */
   resetAll(): void {
     this.logger.info('Resetting all states');

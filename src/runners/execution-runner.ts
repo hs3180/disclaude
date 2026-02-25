@@ -279,10 +279,11 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
           try {
             if (command === 'reset') {
-              sharedPilot.resetAll();
-              logger.info({ chatId }, 'Pilot reset executed');
+              // Use reset(chatId) to only reset the specific chat, not all chats
+              sharedPilot.reset(chatId);
+              logger.info({ chatId }, 'Pilot reset executed for chatId');
             } else if (command === 'restart') {
-              sharedPilot.resetAll();
+              sharedPilot.reset(chatId);
               logger.info({ chatId }, 'Pilot restart executed (reset performed)');
             }
           } catch (error) {
