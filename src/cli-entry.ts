@@ -10,8 +10,20 @@ import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
 import { handleError, ErrorCategory } from './utils/error-handler.js';
 import { setupSkillsInWorkspace } from './utils/skills-setup.js';
 import { parseGlobalArgs } from './utils/cli-args.js';
-import { runCommunicationNode, runExecutionNode, runCli } from './runners/index.js';
 import packageJson from '../package.json' with { type: 'json' };
+
+/**
+ * Dynamic imports for runners to avoid loading unnecessary modules.
+ * This ensures comm mode doesn't load the schedule module (issue #114).
+ */
+async function importRunners() {
+  const runners = await import('./runners/index.js');
+  return {
+    runCommunicationNode: runners.runCommunicationNode,
+    runExecutionNode: runners.runExecutionNode,
+    runCli: runners.runCli,
+  };
+}
 
 // Increase max listeners to prevent memory leak warnings
 // We register multiple process event handlers across the codebase
@@ -106,6 +118,10 @@ async function main(): Promise<void> {
   }
 
   try {
+    // Dynamically import runners to avoid loading unnecessary modules
+    // This ensures comm mode doesn't load the schedule module (issue #114)
+    const { runCli, runCommunicationNode, runExecutionNode } = await importRunners();
+
     // Handle prompt mode (CLI single query)
     if (promptMode) {
       await runCli(promptArgs);

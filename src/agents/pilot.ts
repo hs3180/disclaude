@@ -35,7 +35,6 @@ import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { createTaskSkillSdkMcpServer } from '../mcp/task-skill-mcp.js';
-import { createScheduleSdkMcpServer } from '../schedule/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
@@ -210,7 +209,9 @@ export class Pilot extends BaseAgent {
     };
 
     // Only add schedule MCP server if enabled (exec mode only, issue #114)
+    // Use dynamic import to avoid loading schedule module in comm mode
     if (this.enableSchedule) {
+      const { createScheduleSdkMcpServer } = await import('../schedule/index.js');
       mcpServers['schedule'] = createScheduleSdkMcpServer();
     }
 
@@ -579,7 +580,9 @@ ${msg.text}`;
     };
 
     // Only add schedule MCP server if enabled (exec mode only, issue #114)
+    // Use dynamic import to avoid loading schedule module in comm mode
     if (this.enableSchedule) {
+      const { createScheduleSdkMcpServer } = await import('../schedule/index.js');
       mcpServers['schedule'] = createScheduleSdkMcpServer();
     }
 

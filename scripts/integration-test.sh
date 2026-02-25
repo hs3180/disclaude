@@ -68,8 +68,10 @@ CONFIG_TARGET="./disclaude.config.yaml"
 if [ -f "$CONFIG_SOURCE" ]; then
     cp "$CONFIG_SOURCE" "$CONFIG_TARGET"
     echo -e "${GREEN}Copied config from $CONFIG_SOURCE${NC}"
+elif [ -f "$CONFIG_TARGET" ]; then
+    echo -e "${GREEN}Using existing config: $CONFIG_TARGET${NC}"
 else
-    echo -e "${RED}Error: Config file not found: $CONFIG_SOURCE${NC}"
+    echo -e "${RED}Error: Config file not found (tried $CONFIG_SOURCE and $CONFIG_TARGET)${NC}"
     exit 1
 fi
 
