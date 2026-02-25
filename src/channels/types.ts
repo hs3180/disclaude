@@ -41,6 +41,13 @@ export interface IncomingMessage {
   /** Parent message ID for thread replies */
   parentId?: string;
 
+  /**
+   * Thread ID for thread replies (root message ID of the thread).
+   * Used to aggregate Bot replies into the same thread.
+   * For Feishu, this is the root_id field.
+   */
+  threadId?: string;
+
   /** Additional metadata from the channel */
   metadata?: Record<string, unknown>;
 

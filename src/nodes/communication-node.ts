@@ -236,6 +236,7 @@ export class CommunicationNode extends EventEmitter {
       messageId: message.messageId,
       senderOpenId: message.userId,
       parentId: message.parentId,
+      threadId: message.threadId,
     });
   }
 
@@ -279,7 +280,7 @@ export class CommunicationNode extends EventEmitter {
     }
 
     this.execWs.send(JSON.stringify(message));
-    logger.info({ chatId: message.chatId, messageId: message.messageId, parentId: message.parentId }, 'Prompt sent to Execution Node');
+    logger.info({ chatId: message.chatId, messageId: message.messageId, parentId: message.parentId, threadId: message.threadId }, 'Prompt sent to Execution Node');
   }
 
   /**

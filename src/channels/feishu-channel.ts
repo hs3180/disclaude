@@ -136,6 +136,11 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         // TODO: Pass parentId when Issue #68 is implemented
         await sender.sendFile(message.chatId, message.filePath || '');
         break;
+      case 'done':
+        // Task completion signal - no message to send
+        // This is used for REST sync mode to signal completion
+        logger.debug({ chatId: message.chatId }, 'Task completed (done signal received)');
+        break;
       default:
         throw new Error(`Unsupported message type: ${message.type}`);
     }
@@ -287,7 +292,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     if (!message) return;
 
-    const { message_id, chat_id, content, message_type, create_time, parent_id } = message;
+    const { message_id, chat_id, content, message_type, create_time, parent_id, root_id } = message;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
@@ -354,6 +359,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
             messageType: 'file',
             timestamp: create_time,
             parentId: parent_id,
+            threadId: root_id || parent_id, // Use root_id for thread aggregation
             attachments: [{
               fileName: latestAttachment.fileName || 'unknown',
               filePath: latestAttachment.localPath || '',
@@ -473,6 +479,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         messageType: message_type as any,
         timestamp: create_time,
         parentId: parent_id,
+        threadId: root_id || parent_id, // Use root_id for thread aggregation
       });
     }
   }
