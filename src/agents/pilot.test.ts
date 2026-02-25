@@ -406,25 +406,8 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('Config Fallback', () => {
-    it('should use Config.getAgentConfig when apiKey not provided', () => {
-      const fallbackPilot = new Pilot({
-        callbacks: mockCallbacks,
-      });
-
-      // apiKey should be fetched from Config (mocked to return 'test-key')
-      expect(fallbackPilot['apiKey']).toBe('test-key');
-    });
-
-    it('should use Config.getAgentConfig when model not provided', () => {
-      const fallbackPilot = new Pilot({
-        callbacks: mockCallbacks,
-      });
-
-      // model should be fetched from Config (mocked to return 'test-model')
-      expect(fallbackPilot['model']).toBe('test-model');
-    });
-  });
+  // Config Fallback tests removed - PilotConfig now requires apiKey and model
+  // Use AgentFactory.createPilot() for convenient instance creation with defaults
 
   describe('Error Handling', () => {
     it('should handle errors in processMessage gracefully', () => {

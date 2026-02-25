@@ -8,7 +8,8 @@
 import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
-import { Pilot } from '../agents/pilot.js';
+import { AgentFactory } from '../agents/index.js';
+import type { Pilot } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
 import {
@@ -49,9 +50,6 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   console.log(`Comm URL: ${commUrl}`);
   console.log();
 
-  // Get agent configuration
-  const agentConfig = Config.getAgentConfig();
-
   // Create FileClient for file transfer with Communication Node
   const commHttpUrl = commUrl.replace(/^ws/, 'http');
   const fileClient = new FileClient({
@@ -71,14 +69,9 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
    * Create a shared Pilot instance for all messages.
    * This ensures conversation context is maintained across messages for each chatId.
    *
-   * The callbacks use the activeFeedbackChannels map to find the correct
-   * WebSocket feedback function for each chatId.
+   * Uses AgentFactory for consistent configuration (Issue #129).
    */
-  const sharedPilot = new Pilot({
-    apiKey: agentConfig.apiKey,
-    model: agentConfig.model,
-    apiBaseUrl: agentConfig.apiBaseUrl,
-    isCliMode: false, // Enable persistent sessions for context retention
+  const sharedPilot = AgentFactory.createPilot({
     callbacks: {
       sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
         const ctx = activeFeedbackChannels.get(chatId);
@@ -279,10 +272,11 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
           try {
             if (command === 'reset') {
-              sharedPilot.resetAll();
-              logger.info({ chatId }, 'Pilot reset executed');
+              // Use reset(chatId) to only reset the specific chat, not all chats
+              sharedPilot.reset(chatId);
+              logger.info({ chatId }, 'Pilot reset executed for chatId');
             } else if (command === 'restart') {
-              sharedPilot.resetAll();
+              sharedPilot.reset(chatId);
               logger.info({ chatId }, 'Pilot restart executed (reset performed)');
             }
           } catch (error) {
