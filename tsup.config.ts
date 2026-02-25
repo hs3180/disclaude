@@ -13,12 +13,13 @@ const EXTERNAL_DEPS = [
 export default defineConfig([
   // CLI entry point (standalone executable)
   // Using ESM with external deps to avoid bundling issues
+  // Code splitting enabled to avoid loading schedule module in comm mode (issue #114)
   {
     entry: ['src/cli-entry.ts'],
     format: ['esm'],
     target: 'node18',
     sourcemap: true,
-    splitting: false,
+    splitting: true, // Enable code splitting for dynamic imports
     minify: false,
     bundle: true,
     platform: 'node',
