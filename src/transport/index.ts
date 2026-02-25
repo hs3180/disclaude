@@ -11,6 +11,7 @@
  *     │  HTTP Server (:3001)                │  HTTP Server (:3002)
  *     │  - POST /callback                   │  - POST /execute
  *     │  - GET /health                      │  - GET /health
+ *     │  - /api/files/* (file transfer)     │
  *     │                                     │
  *     │  ──── POST /execute ────────────►   │
  *     │  { chatId, prompt, ... }            │
@@ -21,3 +22,4 @@
  */
 
 export * from './types.js';
+export * from './file-client.js';
