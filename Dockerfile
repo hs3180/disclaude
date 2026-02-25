@@ -105,8 +105,8 @@ RUN groupadd -g 1001 disclaude && \
     useradd -r -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -c "Disclaude user" disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /app/workspace /app/logs /app/.claude && \
-    chown -R disclaude:disclaude /app/workspace /app/logs /app/.claude
+RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.pm2 && \
+    chown -R disclaude:disclaude /app/workspace /app/logs /app/.claude /app/.pm2
 
 # Copy built artifacts from builder and production dependencies from deps
 # Use --chown to set ownership during copy, avoiding slow recursive chown of node_modules
