@@ -100,28 +100,26 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install PM2 globally for process management and logging
 RUN npm install -g pm2@latest
 
-# Copy built artifacts from builder and production dependencies from deps
-COPY --from=builder /app/dist ./dist
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-
-# Copy PM2 ecosystem configs for Docker (one for each mode)
-COPY --from=builder /app/ecosystem.comm.config.json ./
-COPY --from=builder /app/ecosystem.exec.config.json ./
-
-# Copy skills directory if it exists
-COPY --from=builder /app/skills ./skills
-
 # Create non-root user for running the application
 RUN groupadd -g 1001 disclaude && \
     useradd -r -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -c "Disclaude user" disclaude
 
-# Give disclaude user ownership of /app (needed for SDK config files)
-RUN chown -R disclaude:disclaude /app
-
 # Create directories for runtime with proper permissions
 RUN mkdir -p /app/workspace /app/logs /app/.claude && \
     chown -R disclaude:disclaude /app/workspace /app/logs /app/.claude
+
+# Copy built artifacts from builder and production dependencies from deps
+# Use --chown to set ownership during copy, avoiding slow recursive chown of node_modules
+COPY --from=builder --chown=disclaude:disclaude /app/dist ./dist
+COPY --from=deps --chown=disclaude:disclaude /app/node_modules ./node_modules
+COPY --from=builder --chown=disclaude:disclaude /app/package.json ./
+
+# Copy PM2 ecosystem configs for Docker (one for each mode)
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.comm.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.exec.config.json ./
+
+# Copy skills directory if it exists
+COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 
 # Set environment variables
 ENV NODE_ENV=production
