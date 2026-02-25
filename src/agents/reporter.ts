@@ -38,11 +38,6 @@ import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
- * Reporter agent configuration.
- */
-export interface ReporterConfig extends BaseAgentConfig {}
-
-/**
  * Reporter - Communication and instruction generation specialist.
  *
  * Extends BaseAgent to inherit:
@@ -53,7 +48,7 @@ export interface ReporterConfig extends BaseAgentConfig {}
 export class Reporter extends BaseAgent {
   private skill?: ParsedSkill;
 
-  constructor(config: ReporterConfig) {
+  constructor(config: BaseAgentConfig) {
     super(config);
   }
 

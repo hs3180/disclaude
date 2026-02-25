@@ -3,7 +3,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ExecutorConfig, TaskProgressEvent, TaskResult } from './executor.js';
 
 // Mock SDK
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -69,86 +68,6 @@ vi.mock('../task/file-manager.js', () => ({
     getFinalResultPath: vi.fn(() => '/test/workspace/tasks/task_123/final_result.md'),
   })),
 }));
-
-describe('ExecutorConfig type', () => {
-  it('should accept required fields', () => {
-    const config: ExecutorConfig = {
-      apiKey: 'test-key',
-      model: 'test-model',
-    };
-    expect(config.apiKey).toBe('test-key');
-    expect(config.model).toBe('test-model');
-  });
-
-  it('should accept optional abortSignal', () => {
-    const controller = new AbortController();
-    const config: ExecutorConfig = {
-      apiKey: 'test-key',
-      model: 'test-model',
-      abortSignal: controller.signal,
-    };
-    expect(config.abortSignal).toBe(controller.signal);
-  });
-});
-
-describe('TaskProgressEvent types', () => {
-  it('should support start event', () => {
-    const event: TaskProgressEvent = {
-      type: 'start',
-      title: 'Test',
-    };
-    expect(event.type).toBe('start');
-  });
-
-  it('should support output event', () => {
-    const event: TaskProgressEvent = {
-      type: 'output',
-      content: 'Working...',
-      messageType: 'text',
-    };
-    expect(event.type).toBe('output');
-  });
-
-  it('should support complete event', () => {
-    const event: TaskProgressEvent = {
-      type: 'complete',
-      summaryFile: '/path/to/summary.md',
-      files: ['file1.txt'],
-    };
-    expect(event.type).toBe('complete');
-  });
-
-  it('should support error event', () => {
-    const event: TaskProgressEvent = {
-      type: 'error',
-      error: 'Something went wrong',
-    };
-    expect(event.type).toBe('error');
-  });
-});
-
-describe('TaskResult type', () => {
-  it('should have success field', () => {
-    const result: TaskResult = {
-      success: true,
-      summaryFile: '/path',
-      files: [],
-      output: '',
-    };
-    expect(result.success).toBe(true);
-  });
-
-  it('should have optional error field', () => {
-    const result: TaskResult = {
-      success: false,
-      summaryFile: '/path',
-      files: [],
-      output: '',
-      error: 'Failed',
-    };
-    expect(result.error).toBe('Failed');
-  });
-});
 
 describe('Executor class', () => {
   let Executor: typeof import('./executor.js').Executor;

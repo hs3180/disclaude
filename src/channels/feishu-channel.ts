@@ -202,6 +202,9 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     this.client = undefined;
     this.messageSender = undefined;
 
+    // Clean up old attachments to prevent memory leaks
+    attachmentManager.cleanupOldAttachments();
+
     this._status = 'stopped';
     logger.info('FeishuChannel stopped');
   }
