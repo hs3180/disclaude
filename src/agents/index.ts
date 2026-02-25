@@ -19,9 +19,9 @@ export {
 } from './base-agent.js';
 
 // Task agents
-export { Evaluator, type EvaluatorConfig, type EvaluatorInput } from './evaluator.js';
+export { Evaluator, type EvaluatorConfig } from './evaluator.js';
 export { Executor, type ExecutorConfig, type TaskProgressEvent, type TaskResult } from './executor.js';
-export { Reporter, type ReporterConfig } from './reporter.js';
+export { Reporter } from './reporter.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';

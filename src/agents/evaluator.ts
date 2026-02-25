@@ -35,11 +35,6 @@ export interface EvaluatorConfig extends BaseAgentConfig {
 }
 
 /**
- * Input type for Evaluator queries.
- */
-export type EvaluatorInput = AgentInput;
-
-/**
  * Evaluator - Task completion evaluation specialist.
  *
  * Simplified architecture:
@@ -94,7 +89,7 @@ export class Evaluator extends BaseAgent {
    * @param input - Prompt or message array
    * @returns Async iterable of agent messages
    */
-  async *queryStream(input: EvaluatorInput): AsyncIterable<AgentMessage> {
+  async *queryStream(input: AgentInput): AsyncIterable<AgentMessage> {
     if (!this.initialized) {
       await this.initialize();
     }
