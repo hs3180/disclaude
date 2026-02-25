@@ -232,6 +232,65 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
+  describe('reset', () => {
+    it('should reset specific chatId only', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      pilot.processMessage('chat-456', 'Hi', 'msg-002');
+      expect(pilot['states'].size).toBe(2);
+
+      // Reset only chat-123
+      pilot.reset('chat-123');
+
+      // chat-123 should be removed, chat-456 should remain
+      expect(pilot['states'].size).toBe(1);
+      expect(pilot['states'].has('chat-123')).toBe(false);
+      expect(pilot['states'].has('chat-456')).toBe(true);
+    });
+
+    it('should handle non-existent chatId gracefully', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      expect(pilot['states'].size).toBe(1);
+
+      // Reset non-existent chatId
+      pilot.reset('chat-nonexistent');
+
+      // Original state should remain
+      expect(pilot['states'].size).toBe(1);
+      expect(pilot['states'].has('chat-123')).toBe(true);
+    });
+
+    it('should close query instance when resetting', async () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      const state = pilot['states'].get('chat-123');
+
+      // Wait a bit for agent loop to start
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      pilot.reset('chat-123');
+
+      // State should be removed
+      expect(pilot['states'].has('chat-123')).toBe(false);
+    });
+
+    it('should not affect other chatIds in group chat scenario', () => {
+      // Simulate multiple group chats
+      pilot.processMessage('group-chat-1', 'Hello from group 1', 'msg-001');
+      pilot.processMessage('group-chat-2', 'Hello from group 2', 'msg-002');
+      pilot.processMessage('group-chat-3', 'Hello from group 3', 'msg-003');
+
+      expect(pilot['states'].size).toBe(3);
+
+      // User in group-chat-1 sends /reset
+      pilot.reset('group-chat-1');
+
+      // Only group-chat-1 should be reset
+      expect(pilot['states'].size).toBe(2);
+      expect(pilot['states'].has('group-chat-1')).toBe(false);
+      expect(pilot['states'].has('group-chat-2')).toBe(true);
+      expect(pilot['states'].has('group-chat-3')).toBe(true);
+    });
+  });
+
   describe('resetAll', () => {
     it('should clear all states', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');

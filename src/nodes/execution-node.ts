@@ -206,8 +206,9 @@ export class ExecutionNode {
     try {
       switch (command.type) {
         case 'reset':
-          this.pilot.resetAll();
-          this.logger.info({ chatId: command.chatId }, 'Reset command executed');
+          // Use reset(chatId) to only reset the specific chat, not all chats
+          this.pilot.reset(command.chatId);
+          this.logger.info({ chatId: command.chatId }, 'Reset command executed for chatId');
           return {
             success: true,
             type: command.type,
@@ -216,7 +217,7 @@ export class ExecutionNode {
         case 'restart':
           // Restart is typically handled at the process level (PM2)
           // Here we just reset and let the caller know
-          this.pilot.resetAll();
+          this.pilot.reset(command.chatId);
           this.logger.info({ chatId: command.chatId }, 'Restart command executed (reset performed)');
           return {
             success: true,
