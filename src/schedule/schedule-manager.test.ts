@@ -499,9 +499,10 @@ Modified prompt`;
     it('should allow maxSameNameTasks > 1', async () => {
       const lenientManager = new ScheduleManager({
         schedulesDir: testDir,
-        maxSameNameTasks: 3,
+        maxSameNameTasks: 2,  // Allow up to 2 tasks with the same name
       });
 
+      // First one should succeed
       await lenientManager.create({
         name: 'Task Name',
         cron: '0 9 * * *',
@@ -509,6 +510,7 @@ Modified prompt`;
         chatId: 'chat-1',
       });
 
+      // Second one should succeed (at the limit)
       await lenientManager.create({
         name: 'Task Name',
         cron: '0 10 * * *',
@@ -516,7 +518,7 @@ Modified prompt`;
         chatId: 'chat-1',
       });
 
-      // Third one should fail
+      // Third one should fail (exceeds maxSameNameTasks)
       await expect(lenientManager.create({
         name: 'Task Name',
         cron: '0 11 * * *',

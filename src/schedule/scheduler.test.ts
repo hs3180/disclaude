@@ -360,8 +360,11 @@ describe('Scheduler', () => {
 
       scheduler.addTask(task);
 
-      // Trigger execution manually by calling the cron callback
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      // Trigger execution - don't await, let it run in background
+      const firstExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Wait a bit for the task to start running
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Task should be marked as running
       expect(scheduler.isTaskRunning(task.id)).toBe(true);
@@ -375,8 +378,8 @@ describe('Scheduler', () => {
       // Complete the first execution
       resolveExecute!();
 
-      // Wait a bit for cleanup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Wait for first execution to complete
+      await firstExecution;
 
       // Task should no longer be running
       expect(scheduler.isTaskRunning(task.id)).toBe(false);
@@ -403,20 +406,29 @@ describe('Scheduler', () => {
 
       scheduler.addTask(task);
 
-      // Trigger execution
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      // Trigger execution - don't await, let it run in background
+      const firstExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Wait a bit for the task to start running
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Task should be running
       expect(scheduler.isTaskRunning(task.id)).toBe(true);
 
       // Trigger again - should NOT be skipped (blocking is false)
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      const secondExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Wait a bit for the second execution to reach executeOnce
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // ExecuteOnce should have been called twice
       expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
 
       // Complete executions
       resolveExecute!();
+
+      // Wait for executions to complete
+      await Promise.all([firstExecution, secondExecution]);
     });
 
     it('should default blocking to false when not specified', async () => {

@@ -108,9 +108,11 @@ function parseScheduleFrontmatter(content: string): {
 
 /**
  * Generate a slug from task name for file naming.
+ * Note: This function is kept for potential future use.
+ * @param _name - Task name (unused parameter)
  */
-function slugify(name: string): string {
-  return name
+export function _slugify(_name: string): string {
+  return _name
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-') // Keep alphanumeric and Chinese
     .replace(/^-+|-+$/g, ''); // Remove leading/trailing dashes
