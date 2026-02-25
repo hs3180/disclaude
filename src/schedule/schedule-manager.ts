@@ -11,7 +11,6 @@
  * - No cache: always reads from file system for consistency
  */
 
-import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 import { ScheduleFileScanner } from './schedule-file-scanner.js';
@@ -63,6 +62,10 @@ export interface CreateScheduleOptions {
 export interface ScheduleManagerOptions {
   /** Directory for schedule files */
   schedulesDir: string;
+  /** Maximum number of tasks per chatId (default: 50) */
+  maxTasksPerChat?: number;
+  /** Maximum number of tasks with the same name per chatId (default: 1) */
+  maxSameNameTasks?: number;
 }
 
 /**
@@ -95,10 +98,17 @@ export interface ScheduleManagerOptions {
  */
 export class ScheduleManager {
   private fileScanner: ScheduleFileScanner;
+  private readonly maxTasksPerChat: number;
+  private readonly maxSameNameTasks: number;
 
   constructor(options: ScheduleManagerOptions) {
     this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
-    logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized (no cache)');
+    this.maxTasksPerChat = options.maxTasksPerChat ?? 50;
+    this.maxSameNameTasks = options.maxSameNameTasks ?? 1;
+    logger.info(
+      { schedulesDir: options.schedulesDir, maxTasksPerChat: this.maxTasksPerChat },
+      'ScheduleManager initialized (no cache)'
+    );
   }
 
   /**
@@ -126,8 +136,27 @@ export class ScheduleManager {
    *
    * @param options - Task creation options
    * @returns The created task
+   * @throws Error if task limit exceeded or duplicate name exists
    */
   async create(options: CreateScheduleOptions): Promise<ScheduledTask> {
+    // Validate: Check task count limit for this chatId
+    const existingTasks = await this.listByChatId(options.chatId);
+    if (existingTasks.length >= this.maxTasksPerChat) {
+      throw new Error(
+        `Task limit exceeded: maximum ${this.maxTasksPerChat} tasks per chat. ` +
+        `Please delete some existing tasks first.`
+      );
+    }
+
+    // Validate: Check for tasks with the same name (prevent infinite recursion)
+    const sameNameTasks = existingTasks.filter(t => t.name === options.name);
+    if (sameNameTasks.length >= this.maxSameNameTasks) {
+      throw new Error(
+        `Task "${options.name}" already exists. ` +
+        `Please use a different name or delete the existing task first.`
+      );
+    }
+
     const slug = this.generateSlug(options.name);
     const task: ScheduledTask = {
       id: `schedule-${slug}`,
