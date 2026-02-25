@@ -348,6 +348,16 @@ export class CommunicationNode extends EventEmitter {
           break;
         case 'done':
           logger.info({ chatId }, 'Execution completed');
+          // Notify channel that task is done (important for REST sync mode)
+          {
+            const channelId = this.chatToChannel.get(chatId);
+            if (channelId) {
+              const channel = this.channels.get(channelId);
+              if (channel) {
+                await channel.sendMessage({ type: 'done', chatId, parentId });
+              }
+            }
+          }
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');

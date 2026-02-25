@@ -388,8 +388,8 @@ export class RestChannel extends EventEmitter implements IChannel {
     };
 
     if (syncMode) {
-      // Wait for response with timeout
-      const timeoutMs = 60000; // 60 seconds
+      // Wait for response with timeout (4 minutes for AI processing)
+      const timeoutMs = 240000; // 240 seconds (4 minutes)
       const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
       response.response = responseText;
 
