@@ -158,6 +158,32 @@ export class Scheduler {
   }
 
   /**
+   * Build wrapped prompt with anti-recursion instructions.
+   * Provides defense-in-depth against infinite recursion.
+   *
+   * @param task - Task being executed
+   * @returns Wrapped prompt with explicit anti-recursion instructions
+   */
+  private buildScheduledTaskPrompt(task: ScheduledTask): string {
+    return `⚠️ **Scheduled Task Execution Context**
+
+You are executing a scheduled task named "${task.name}".
+
+**IMPORTANT RULES:**
+1. Do NOT create new scheduled tasks using create_schedule tool
+2. Do NOT modify existing scheduled tasks
+3. Focus on completing the task described below
+4. If you need to run something periodically, report this need to the user instead
+
+The create_schedule tool is blocked during scheduled task execution to prevent infinite recursion.
+
+---
+
+**Task Prompt:**
+${task.prompt}`;
+  }
+
+  /**
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
@@ -185,10 +211,13 @@ export class Scheduler {
         `⏰ 定时任务「${task.name}」开始执行...`
       );
 
+      // Build wrapped prompt with anti-recursion instructions
+      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
       // Execute task using Pilot's executeOnce method
       await this.pilot.executeOnce(
         task.chatId,
-        task.prompt,
+        wrappedPrompt,
         `${task.id}-${Date.now()}`,
         task.createdBy
       );

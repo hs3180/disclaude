@@ -145,11 +145,13 @@ notifications to the chat when it executes.`,
       // Prevent recursive schedule creation (Issue #102)
       // If we're currently executing a scheduled task, prevent creating new ones
       if (isExecutingInScheduleContext(chatId)) {
-        logger.warn({ chatId, name }, 'Blocked recursive schedule creation');
+        const runningTaskIds = schedulerInstance?.getRunningTaskIds() || [];
+        logger.warn({ chatId, name, runningTaskIds }, 'Blocked recursive schedule creation');
         return toolSuccess(
           '❌ 定时任务执行期间禁止创建新任务。\n\n' +
-          '这是为了防止无限递归导致系统资源耗尽。\n' +
-          '请在手动对话中创建定时任务。'
+          '**原因**: 当前有定时任务正在执行，为防止无限递归导致系统资源耗尽，创建新任务已被阻止。\n\n' +
+          `**当前执行中的任务**: ${runningTaskIds.join(', ')}\n\n` +
+          '**解决方案**: 请在非定时任务的普通对话中创建新的定时任务。'
         );
       }
 
