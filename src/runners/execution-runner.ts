@@ -18,6 +18,9 @@ import {
   setScheduleManager,
   setScheduler,
 } from '../schedule/index.js';
+import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
+import { setTaskFlowOrchestrator } from '../mcp/task-skill-mcp.js';
+import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
 
 const logger = createLogger('ExecRunner');
@@ -164,6 +167,39 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   // Register with MCP tools
   setScheduleManager(scheduleManager);
   setScheduler(scheduler);
+
+  // Initialize TaskFlowOrchestrator for task skill dialogue phase
+  // This fixes Issue #111: TaskFlowOrchestrator needs to be registered in Execution Node
+  const taskTracker = new TaskTracker();
+  const taskFlowOrchestrator = new TaskFlowOrchestrator(
+    taskTracker,
+    {
+      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'text', chatId, text, parentId: parentMessageId }));
+        } else {
+          logger.warn({ chatId }, 'Cannot send message: WebSocket not connected');
+        }
+      },
+      sendCard: async (chatId: string, card: Record<string, unknown>, _description?: string, parentMessageId?: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'card', chatId, card, parentId: parentMessageId }));
+        } else {
+          logger.warn({ chatId }, 'Cannot send card: WebSocket not connected');
+        }
+      },
+      sendFile: async (chatId: string, filePath: string) => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
+        } else {
+          logger.warn({ chatId }, 'Cannot send file: WebSocket not connected');
+        }
+      },
+    },
+    logger
+  );
+  setTaskFlowOrchestrator(taskFlowOrchestrator);
+  console.log('✓ TaskFlowOrchestrator registered');
 
   // Start scheduler
   await scheduler.start();
