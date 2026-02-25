@@ -9,7 +9,8 @@
  * In multi-process mode, this runs in a separate process.
  */
 
-import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
+import { AgentFactory, type PilotCallbacks } from '../agents/index.js';
+import type { Pilot } from '../agents/index.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { ITransport, TaskRequest, TaskResponse, MessageContent, ControlCommand, ControlResponse } from '../transport/index.js';
@@ -49,9 +50,6 @@ export class ExecutionNode {
     this.transport = config.transport;
     this.isCliMode = config.isCliMode ?? false;
 
-    // Get API config from Config if not provided
-    const agentConfig = Config.getAgentConfig();
-
     // Create Pilot callbacks that send messages via Transport
     const callbacks: PilotCallbacks = {
       sendMessage: async (chatId: string, text: string) => {
@@ -81,11 +79,11 @@ export class ExecutionNode {
       },
     };
 
-    // Create Pilot instance
-    this.pilot = new Pilot({
-      apiKey: config.apiKey || agentConfig.apiKey,
-      model: config.model || agentConfig.model,
-      apiBaseUrl: config.apiBaseUrl || agentConfig.apiBaseUrl,
+    // Create Pilot instance using AgentFactory (Issue #129)
+    this.pilot = AgentFactory.createPilot({
+      apiKey: config.apiKey,
+      model: config.model,
+      apiBaseUrl: config.apiBaseUrl,
       isCliMode: this.isCliMode,
       callbacks,
     });

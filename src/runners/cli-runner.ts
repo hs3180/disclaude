@@ -18,8 +18,8 @@
  * ```
  */
 
+import { AgentFactory, type PilotCallbacks } from '../agents/index.js';
 import { Config } from '../config/index.js';
-import { Pilot, type PilotCallbacks } from '../agents/pilot.js';
 import { CLIOutputAdapter, FeishuOutputAdapter, OutputAdapter } from '../utils/output-adapter.js';
 import { createFeishuSender, createFeishuCardSender } from '../feishu/sender.js';
 import { createLogger } from '../utils/logger.js';
@@ -97,9 +97,6 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     adapter = new CLIOutputAdapter();
   }
 
-  // Get agent configuration
-  const agentConfig = Config.getAgentConfig();
-
   // Create Pilot callbacks for output
   const callbacks: PilotCallbacks = {
     sendMessage: async (_chatId: string, text: string) => {
@@ -114,11 +111,8 @@ export async function runCliMode(config: CliModeConfig): Promise<void> {
     },
   };
 
-  // Create Pilot instance
-  const pilot = new Pilot({
-    apiKey: agentConfig.apiKey,
-    model: agentConfig.model,
-    apiBaseUrl: agentConfig.apiBaseUrl,
+  // Create Pilot instance using AgentFactory (Issue #129)
+  const pilot = AgentFactory.createPilot({
     isCliMode: true,
     callbacks,
   });
