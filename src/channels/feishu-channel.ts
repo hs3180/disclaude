@@ -122,22 +122,27 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     switch (message.type) {
       case 'text':
-        await sender.sendText(message.chatId, message.text || '', message.parentId);
+        await sender.sendText(message.chatId, message.text || '', message.threadId);
         break;
       case 'card':
         await sender.sendCard(
           message.chatId,
           message.card || {},
           message.description,
-          message.parentId
+          message.threadId
         );
         break;
       case 'file':
-        // TODO: Pass parentId when Issue #68 is implemented
+        // TODO: Pass threadId when Issue #68 is implemented
         await sender.sendFile(message.chatId, message.filePath || '');
         break;
+      case 'done':
+        // Task completion signal, no actual message to send
+        // This is used for REST sync mode and internal signaling
+        logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
+        break;
       default:
-        throw new Error(`Unsupported message type: ${message.type}`);
+        throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
   }
 
@@ -287,7 +292,11 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     if (!message) return;
 
-    const { message_id, chat_id, content, message_type, create_time, parent_id } = message;
+    const { message_id, chat_id, content, message_type, create_time, parent_id, root_id } = message;
+
+    // Use root_id for thread replies (this ensures all replies go to the same thread)
+    // root_id is the thread root message ID, parent_id is the direct parent
+    const threadId = root_id || parent_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
@@ -353,7 +362,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
             content: uploadPrompt,
             messageType: 'file',
             timestamp: create_time,
-            parentId: parent_id,
+            threadId,
             attachments: [{
               fileName: latestAttachment.fileName || 'unknown',
               filePath: latestAttachment.localPath || '',
@@ -472,7 +481,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         content: text,
         messageType: message_type as any,
         timestamp: create_time,
-        parentId: parent_id,
+        threadId,
       });
     }
   }
