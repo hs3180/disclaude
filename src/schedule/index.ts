@@ -10,6 +10,7 @@
  *
  * @see Issue #3 - Scheduled task feature
  * @see Issue #79 - Refactor to file-based configuration
+ * @see Issue #89 - Blocking mechanism for scheduled tasks
  */
 
 export { ScheduleManager, type ScheduledTask, type CreateScheduleOptions, type ScheduleManagerOptions } from './schedule-manager.js';
