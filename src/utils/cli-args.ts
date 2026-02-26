@@ -5,19 +5,23 @@
  */
 
 import { Config } from '../config/index.js';
-import type { RunMode } from '../config/types.js';
+
+/**
+ * Run mode type (legacy and new modes).
+ */
+export type NewRunMode = 'primary' | 'worker' | 'comm' | 'exec';
 
 /**
  * Global CLI arguments interface.
  */
 export interface GlobalArgs {
-  /** Run mode (comm or exec) */
-  mode: RunMode | null;
-  /** Port for communication node (default: 3001) */
+  /** Run mode (primary, worker, comm, or exec) */
+  mode: NewRunMode | null;
+  /** Port for communication/primary node (default: 3001) */
   port: number;
-  /** Host for communication node */
+  /** Host for communication/primary node */
   host: string;
-  /** Communication Node WebSocket URL for exec mode */
+  /** Communication Node / Primary Node WebSocket URL for worker/exec mode */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
@@ -25,6 +29,10 @@ export interface GlobalArgs {
   restPort?: number;
   /** Enable REST channel */
   enableRestChannel?: boolean;
+  /** Node ID for worker/exec mode */
+  nodeId?: string;
+  /** Node name for worker/exec mode */
+  nodeName?: string;
 }
 
 /**
@@ -98,11 +106,11 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const defaultEnableRest = channelsConfig?.rest?.enabled ?? true;
 
   // Parse mode
-  let mode: RunMode | null = null;
+  let mode: NewRunMode | null = null;
   if (args[0] === 'start') {
     const modeValue = parseArgValue(args, '--mode');
-    if (modeValue && ['comm', 'exec'].includes(modeValue)) {
-      mode = modeValue as RunMode;
+    if (modeValue && ['primary', 'worker', 'comm', 'exec'].includes(modeValue)) {
+      mode = modeValue as NewRunMode;
     }
   }
 
@@ -113,6 +121,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
   const restPort = parseIntArg(parseArgValue(args, '--rest-port'), defaultRestPort);
   const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
+  const nodeId = parseArgValue(args, '--node-id') || process.env.EXEC_NODE_ID;
+  const nodeName = parseArgValue(args, '--node-name') || process.env.EXEC_NODE_NAME;
 
   return {
     mode,
@@ -122,6 +132,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
     authToken,
     restPort,
     enableRestChannel,
+    nodeId,
+    nodeName,
   };
 }
 
@@ -148,7 +160,7 @@ export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
   return {
     commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,
-    nodeId: process.env.EXEC_NODE_ID,
-    nodeName: process.env.EXEC_NODE_NAME,
+    nodeId: globalArgs.nodeId,
+    nodeName: globalArgs.nodeName,
   };
 }
