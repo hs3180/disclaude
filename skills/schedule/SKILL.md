@@ -73,16 +73,40 @@ Schedule content prompt here
 
 ---
 
-### 2. Delete Schedule
+### 2. Disable Schedule (Recommended)
+
+**IMPORTANT**: Prefer disabling schedules over deleting them. Disabled schedules can be re-enabled later.
 
 **Steps:**
 1. Find schedule files with `Glob`: `workspace/schedules/*.md`
 2. Read files with `Read`
 3. Filter by current `chatId`
-4. Confirm schedule to delete
+4. Confirm schedule to disable
 5. Verify schedule belongs to current `chatId`
-6. Delete with `Bash rm`
-7. **SEND FEEDBACK** confirming deletion
+6. Set `enabled: false` with `Edit` tool
+7. **SEND FEEDBACK** confirming schedule is disabled
+
+**Example:**
+```yaml
+# Before
+enabled: true
+
+# After
+enabled: false
+```
+
+---
+
+### 3. Delete Schedule (Only if absolutely necessary)
+
+**WARNING**: Only delete schedules when they are truly no longer needed. Prefer disabling.
+
+**Steps:**
+1. First, try to disable the schedule (see above)
+2. If user insists on deletion, confirm once more
+3. Verify schedule belongs to current `chatId`
+4. Delete with `Bash rm`
+5. **SEND FEEDBACK** confirming deletion
 
 **Error Handling:**
 - Schedule not found → send feedback with available schedules
@@ -90,7 +114,7 @@ Schedule content prompt here
 
 ---
 
-### 3. Update Schedule
+### 4. Update Schedule
 
 **Modifiable Properties:**
 - `cron`: Execution time
@@ -108,7 +132,7 @@ Schedule content prompt here
 
 ---
 
-### 4. List Schedules
+### 5. List Schedules
 
 **Steps:**
 1. Find all schedule files
@@ -167,3 +191,100 @@ After each operation, verify:
 - Complete operation without sending feedback
 - Assume directory exists (check first)
 - Execute unrelated operations
+
+---
+
+## Schedule Prompt Best Practices
+
+When creating or modifying schedule prompts, follow these guidelines to ensure efficient execution:
+
+### 1. Be Specific and Self-Contained
+
+**Good:**
+```markdown
+Summarize the issues created in hs3180/disclaude repository today.
+List each issue with its title, number, and brief description.
+```
+
+**Bad:**
+```markdown
+Check the issues. (Too vague - what repo? what to check?)
+```
+
+### 2. Include All Necessary Context
+
+The prompt executes in an isolated context. Include:
+- Repository names (owner/repo format)
+- Specific file paths
+- Required parameters
+
+**Good:**
+```markdown
+Review open issues in hs3180/disclaude and list:
+1. Bug reports (high priority)
+2. Feature requests (medium priority)
+3. Documentation issues (low priority)
+```
+
+### 3. Define Clear Success Criteria
+
+What should the output look like?
+
+**Good:**
+```markdown
+Generate a daily standup report with:
+- ✅ Completed tasks
+- 🔄 In progress tasks
+- ⏳ Blocked tasks
+Format as a markdown checklist.
+```
+
+### 4. Keep Prompts Focused
+
+One schedule = one task. Don't combine unrelated operations.
+
+**Good:** Create separate schedules for:
+- Daily issue summary
+- Weekly PR review
+- Monthly metrics report
+
+**Bad:** One schedule doing all three
+
+### 5. Handle Errors Gracefully
+
+Include fallback instructions:
+
+**Good:**
+```markdown
+Fetch recent commits from hs3180/disclaude.
+If API fails, report the error and suggest retry.
+```
+
+### 6. Consider Execution Time
+
+- Short tasks (< 1 min): Any frequency
+- Medium tasks (1-5 min): Hourly or less frequent
+- Long tasks (> 5 min): Daily or less frequent
+
+Use `blocking: true` for long-running tasks to prevent overlap.
+
+### 7. Example Prompt Template
+
+```markdown
+# Task: [Clear task name]
+
+## Objective
+[One sentence describing the goal]
+
+## Steps
+1. [First step]
+2. [Second step]
+3. [Third step]
+
+## Expected Output
+[Description of what success looks like]
+
+## Error Handling
+[What to do if something goes wrong]
+```
+
