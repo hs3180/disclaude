@@ -300,7 +300,8 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     // Use root_id for thread replies (this ensures all replies go to the same thread)
     // root_id is the thread root message ID, parent_id is the direct parent
-    const threadId = root_id || parent_id;
+    // For new messages (not in a thread), use message_id so bot reply forms a thread
+    const threadId = root_id || parent_id || message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
