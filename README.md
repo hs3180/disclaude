@@ -123,9 +123,6 @@ npm run dev
 
 # Production (after build)
 npm run build && npm start
-
-# CLI mode (quick testing without Feishu)
-disclaude --prompt "your question"
 ```
 
 ## Platform Setup
@@ -243,9 +240,17 @@ disclaude start --mode comm --port 3001
 
 # Execution Node (handles Agent tasks)
 disclaude start --mode exec --communication-url http://localhost:3001
+```
 
-# CLI prompt mode (one-shot query, no Feishu needed)
-disclaude --prompt "List all TypeScript files"
+### REST API Testing
+
+Use the REST API endpoint for offline testing:
+
+```bash
+# Send message via REST API
+curl -X POST http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"chatId": "test", "prompt": "hello"}'
 ```
 
 ### Run Modes
@@ -290,33 +295,37 @@ Bot: [Executes and shows results]
 
 ## Development Workflow
 
-### CLI Mode for Rapid Development
+### REST API for Rapid Development
 
 **Recommended approach:**
 
 ```bash
-# 1. Make code changes
+# 1. Start Communication Node
+disclaude start --mode comm
+
+# 2. Make code changes
 vim src/agent/client.ts
 
-# 2. Build
-npm run build
+# 3. Build and restart
+npm run build && npm run pm2:restart
 
-# 3. Test with CLI (instant feedback)
-disclaude --prompt "Test the new feature"
-disclaude --prompt "Read src/agent/client.ts and summarize"
+# 4. Test with REST API (instant feedback)
+curl -X POST http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"chatId": "test", "prompt": "Test the new feature"}'
 
-# 4. Deploy when ready
+# 5. Deploy when ready
 npm run pm2:restart
 ```
 
 ### Mode Comparison
 
-| Feature | CLI Mode | Feishu Mode |
+| Feature | REST API | Feishu Mode |
 |---------|----------|-------------|
-| **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
-| **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
-| **Session** | ❌ One-shot | ✅ Persistent (in-memory) |
-| **Permissions** | 🔒 Asks user | ✅ Auto-approves |
+| **Startup** | ⚡ HTTP server | 🔄 Requires WebSocket connection |
+| **Output** | 📺 JSON response | 💬 Chat messages (throttled) |
+| **Session** | ✅ Per-chatId persistent | ✅ Persistent (in-memory) |
+| **Permissions** | ✅ Auto-approves | ✅ Auto-approves |
 | **Best for** | 🔧 Development & testing | 🤖 Production & users |
 
 ## Project Structure

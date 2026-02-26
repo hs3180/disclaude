@@ -215,7 +215,6 @@ describe('Pilot (Streaming Input)', () => {
 
     it('should close query instance when resetting', async () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
 
       // Wait a bit for agent loop to start
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -305,53 +304,13 @@ describe('Pilot (Streaming Input)', () => {
   describe('executeOnce', () => {
     it('should be an instance method', () => {
       // executeOnce is an instance method, not static
+      // This method is used by the Scheduler for scheduled task execution
       expect(typeof pilot.executeOnce).toBe('function');
     });
 
-    it('should create CLI pilot instance', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
-      expect(cliPilot['isCliMode']).toBe(true);
-    });
-
     it('should accept all parameters', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
       // Test that the method exists and can be called
-      expect(typeof cliPilot.executeOnce).toBe('function');
-    });
-  });
-
-  describe('CLI Mode', () => {
-    it('should support isCliMode option', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
-      expect(cliPilot['isCliMode']).toBe(true);
-    });
-
-    it('should default isCliMode to false', () => {
-      const defaultPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-      });
-
-      expect(defaultPilot['isCliMode']).toBe(false);
+      expect(typeof pilot.executeOnce).toBe('function');
     });
   });
 
