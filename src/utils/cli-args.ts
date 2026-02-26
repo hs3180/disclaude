@@ -13,18 +13,12 @@ import type { RunMode } from '../config/types.js';
 export interface GlobalArgs {
   /** Run mode (comm or exec) */
   mode: RunMode | null;
-  /** Whether running in prompt/CLI mode */
-  promptMode: boolean;
-  /** Arguments for prompt mode */
-  promptArgs: string[];
   /** Port for communication node (default: 3001) */
   port: number;
   /** Host for communication node */
   host: string;
   /** Communication Node WebSocket URL for exec mode */
   commUrl: string;
-  /** Feishu chat ID for output */
-  feishuChatId?: string;
   /** Authentication token */
   authToken?: string;
   /** REST channel port */
@@ -59,15 +53,6 @@ export interface ExecNodeConfig {
   commUrl: string;
   /** Authentication token */
   authToken?: string;
-}
-
-/**
- * CLI mode configuration.
- */
-export interface CliModeConfig {
-  prompt: string;
-  feishuChatId?: string;
-  port: number;
 }
 
 /**
@@ -108,10 +93,6 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const defaultRestPort = channelsConfig?.rest?.port || 3000;
   const defaultEnableRest = channelsConfig?.rest?.enabled ?? true;
 
-  // Parse prompt mode
-  const promptIndex = args.indexOf('--prompt');
-  const promptMode = promptIndex !== -1;
-
   // Parse mode
   let mode: RunMode | null = null;
   if (args[0] === 'start') {
@@ -125,22 +106,15 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const port = parseIntArg(parseArgValue(args, '--port'), defaultPort);
   const host = parseArgValue(args, '--host') || defaultHost;
   const commUrl = parseArgValue(args, '--comm-url') || defaultCommUrl;
-  const feishuChatId = parseArgValue(args, '--feishu-chat-id');
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
   const restPort = parseIntArg(parseArgValue(args, '--rest-port'), defaultRestPort);
   const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
 
-  // Build prompt args (all args for prompt mode)
-  const promptArgs = promptMode ? args : [];
-
   return {
     mode,
-    promptMode,
-    promptArgs,
     port,
     host,
     commUrl,
-    feishuChatId,
     authToken,
     restPort,
     enableRestChannel,
@@ -170,27 +144,5 @@ export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
   return {
     commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,
-  };
-}
-
-/**
- * Get CLI mode configuration from global args.
- */
-export function getCliModeConfig(globalArgs: GlobalArgs): CliModeConfig | null {
-  if (!globalArgs.promptMode) return null;
-
-  const promptIndex = globalArgs.promptArgs.indexOf('--prompt');
-  const prompt = promptIndex !== -1 && globalArgs.promptArgs[promptIndex + 1]
-    ? globalArgs.promptArgs[promptIndex + 1]
-    : globalArgs.promptArgs.join(' ');
-
-  if (!prompt || prompt.trim() === '' || prompt === '--prompt') {
-    return null;
-  }
-
-  return {
-    prompt,
-    feishuChatId: globalArgs.feishuChatId,
-    port: globalArgs.port,
   };
 }
