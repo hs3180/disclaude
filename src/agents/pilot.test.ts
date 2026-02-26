@@ -141,19 +141,6 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('hasActiveStream', () => {
-    it('should return false when no state exists', () => {
-      expect(pilot.hasActiveStream('chat-123')).toBe(false);
-    });
-
-    it('should return true when state is active', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      // State should be active after creation
-      expect(pilot.hasActiveStream('chat-123')).toBe(true);
-    });
-  });
-
   describe('clearQueue', () => {
     it('should clear state', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
@@ -167,22 +154,6 @@ describe('Pilot (Streaming Input)', () => {
     it('should handle clearing non-existent state', () => {
       // Should not throw
       pilot.clearQueue('chat-nonexistent');
-    });
-  });
-
-  describe('clearPendingFiles', () => {
-    it('should clear pending files in state', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      // Add some pending files
-      state?.pendingWriteFiles.add('file1.txt');
-      state?.pendingWriteFiles.add('file2.txt');
-      expect(state?.pendingWriteFiles.size).toBe(2);
-
-      // Clear pending files
-      pilot.clearPendingFiles('chat-123');
-      expect(state?.pendingWriteFiles.size).toBe(0);
     });
   });
 

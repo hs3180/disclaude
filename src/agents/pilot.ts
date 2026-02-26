@@ -700,17 +700,6 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Check if an Agent session is active for a chatId.
-   *
-   * @param chatId - Platform-specific chat identifier
-   * @returns true if a session is active
-   */
-  hasActiveStream(chatId: string): boolean {
-    const state = this.states.get(chatId);
-    return state?.started === true && state.closed === false;
-  }
-
-  /**
    * Clear all state for a chatId (close session and remove from map).
    *
    * @param chatId - Platform-specific chat identifier
@@ -753,22 +742,6 @@ You can read these files using the Read tool with the local paths above.`;
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
     }
-  }
-
-  /**
-   * Clear all pending files for a chatId.
-   *
-   * Note: In the new implementation, file tracking is internal to the state.
-   * This method is kept for API compatibility.
-   *
-   * @param chatId - Platform-specific chat identifier
-   */
-  clearPendingFiles(chatId: string): void {
-    const state = this.states.get(chatId);
-    if (state) {
-      state.pendingWriteFiles.clear();
-    }
-    this.logger.debug({ chatId }, 'Pending files cleared');
   }
 
   /**
