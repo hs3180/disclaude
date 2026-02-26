@@ -72,63 +72,61 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
    * Uses AgentFactory for consistent configuration (Issue #129).
    */
   const sharedPilot = AgentFactory.createPilot({
-    callbacks: {
-      sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
-        const ctx = activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendMessage');
-        }
-      },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
-        const ctx = activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendCard');
-        }
-      },
-      sendFile: async (chatId: string, filePath: string) => {
-        const ctx = activeFeedbackChannels.get(chatId);
-        if (!ctx) {
-          logger.warn({ chatId }, 'No active feedback channel for sendFile');
-          return;
-        }
+    sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
+      const ctx = activeFeedbackChannels.get(chatId);
+      if (ctx) {
+        ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
+      } else {
+        logger.warn({ chatId }, 'No active feedback channel for sendMessage');
+      }
+    },
+    sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
+      const ctx = activeFeedbackChannels.get(chatId);
+      if (ctx) {
+        ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
+      } else {
+        logger.warn({ chatId }, 'No active feedback channel for sendCard');
+      }
+    },
+    sendFile: async (chatId: string, filePath: string) => {
+      const ctx = activeFeedbackChannels.get(chatId);
+      if (!ctx) {
+        logger.warn({ chatId }, 'No active feedback channel for sendFile');
+        return;
+      }
 
-        try {
-          // Upload file to Communication Node
-          const fileRef = await fileClient.uploadFile(filePath, chatId);
+      try {
+        // Upload file to Communication Node
+        const fileRef = await fileClient.uploadFile(filePath, chatId);
 
-          // Send fileRef to Communication Node
-          ctx.sendFeedback({
-            type: 'file',
-            chatId,
-            fileRef,
-            fileName: fileRef.fileName,
-            fileSize: fileRef.size,
-            mimeType: fileRef.mimeType,
-            threadId: ctx.threadId,
-          });
-        } catch (error) {
-          logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
-          ctx.sendFeedback({
-            type: 'error',
-            chatId,
-            error: `Failed to send file: ${(error as Error).message}`,
-            threadId: ctx.threadId,
-          });
-        }
-      },
-      onDone: async (chatId: string, threadMessageId?: string) => {
-        const ctx = activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
-          logger.info({ chatId }, 'Task completed, sent done signal');
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for onDone');
-        }
-      },
+        // Send fileRef to Communication Node
+        ctx.sendFeedback({
+          type: 'file',
+          chatId,
+          fileRef,
+          fileName: fileRef.fileName,
+          fileSize: fileRef.size,
+          mimeType: fileRef.mimeType,
+          threadId: ctx.threadId,
+        });
+      } catch (error) {
+        logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
+        ctx.sendFeedback({
+          type: 'error',
+          chatId,
+          error: `Failed to send file: ${(error as Error).message}`,
+          threadId: ctx.threadId,
+        });
+      }
+    },
+    onDone: async (chatId: string, threadMessageId?: string) => {
+      const ctx = activeFeedbackChannels.get(chatId);
+      if (ctx) {
+        ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
+        logger.info({ chatId }, 'Task completed, sent done signal');
+      } else {
+        logger.warn({ chatId }, 'No active feedback channel for onDone');
+      }
     },
   });
 

@@ -23,10 +23,10 @@
  */
 
 import { Config } from '../config/index.js';
-import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import type { BaseAgentConfig } from './base-agent.js';
 import { Evaluator, type EvaluatorConfig } from './evaluator.js';
 import { Executor, type ExecutorConfig } from './executor.js';
-import { Reporter, type ReporterConfig } from './reporter.js';
+import { Reporter } from './reporter.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 
 /**
@@ -131,7 +131,7 @@ export class AgentFactory {
    * ```
    */
   static createReporter(options: AgentCreateOptions = {}): Reporter {
-    const config: ReporterConfig = this.getBaseConfig(options);
+    const config: BaseAgentConfig = this.getBaseConfig(options);
 
     return new Reporter(config);
   }
@@ -158,13 +158,11 @@ export class AgentFactory {
     options: AgentCreateOptions = {},
     isCliMode = false
   ): Pilot {
+    const baseConfig = this.getBaseConfig(options);
     const config: PilotConfig = {
+      ...baseConfig,
       callbacks,
       isCliMode,
-      apiKey: options.apiKey,
-      model: options.model,
-      apiBaseUrl: options.apiBaseUrl,
-      permissionMode: options.permissionMode,
     };
 
     return new Pilot(config);
