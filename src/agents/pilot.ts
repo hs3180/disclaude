@@ -14,12 +14,19 @@
  * ```
  * User Message → Pilot.processMessage()
  *                    ↓
- *              Get/Create Query for chatId
+ *              SessionManager.getOrCreate()
+ *                    ↓
+ *              ConversationContext.trackThread()
  *                    ↓
  *              Query.streamInput() → SDK processes
  *                    ↓
  *              SDK output → Callbacks → Platform (Feishu/CLI)
  * ```
+ *
+ * Separation of Concerns (refactored from #218):
+ * - SessionManager: Query and Channel lifecycle management
+ * - ConversationContext: Thread root and context tracking
+ * - Pilot: Orchestration, callbacks, and main logic flow
  *
  * Extends BaseAgent to inherit:
  * - SDK configuration building
@@ -34,6 +41,8 @@ import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
 import { MessageChannel } from './message-channel.js';
+import { SessionManager } from './session-manager.js';
+import { ConversationContext } from './conversation-context.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -103,21 +112,26 @@ interface MessageData {
  *
  * Simplified implementation using SDK's streamInput() for message delivery.
  * Each chatId gets its own persistent Query instance.
+ *
+ * Refactored to use:
+ * - SessionManager for Query/Channel lifecycle
+ * - ConversationContext for thread tracking
  */
 export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
 
-  // Per-chatId Query instances
-  private queries = new Map<string, Query>();
-  // Per-chatId message channels
-  private channels = new Map<string, MessageChannel>();
-  // Thread root IDs for replies
-  private threadRoots = new Map<string, string>();
+  // Separated concerns
+  private readonly sessionManager: SessionManager;
+  private readonly conversationContext: ConversationContext;
 
   constructor(config: PilotConfig) {
     super(config);
 
     this.callbacks = config.callbacks;
+
+    // Initialize separated managers
+    this.sessionManager = new SessionManager({ logger: this.logger });
+    this.conversationContext = new ConversationContext({ logger: this.logger });
   }
 
   protected getAgentName(): string {
@@ -224,11 +238,11 @@ export class Pilot extends BaseAgent {
   ): void {
     this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
 
-    // Store thread root for replies
-    this.threadRoots.set(chatId, messageId);
+    // Track thread root using ConversationContext
+    this.conversationContext.setThreadRoot(chatId, messageId);
 
-    // Get or create channel for this chatId
-    if (!this.channels.has(chatId)) {
+    // Get or create session using SessionManager
+    if (!this.sessionManager.has(chatId)) {
       this.startAgentLoop(chatId);
     }
 
@@ -246,7 +260,7 @@ export class Pilot extends BaseAgent {
     };
 
     // Push message to channel - generator will yield it to SDK
-    const channel = this.channels.get(chatId);
+    const channel = this.sessionManager.getChannel(chatId);
     if (channel) {
       channel.push(userMessage);
     }
@@ -286,20 +300,20 @@ export class Pilot extends BaseAgent {
 
     // Create message channel for this chatId
     const channel = new MessageChannel();
-    this.channels.set(chatId, channel);
 
     // Create streaming query using channel's generator
     const { query: queryInstance, iterator } = this.createQueryStream(
       channel.generator(),
       sdkOptions
     );
-    this.queries.set(chatId, queryInstance);
+
+    // Create session using SessionManager
+    this.sessionManager.create(chatId, queryInstance, channel);
 
     // Process SDK messages in background
     this.processIterator(chatId, iterator).catch((err) => {
       this.logger.error({ err, chatId }, 'Agent loop error');
-      this.queries.delete(chatId);
-      this.channels.delete(chatId);
+      this.sessionManager.deleteTracking(chatId);
     });
   }
 
@@ -323,14 +337,16 @@ export class Pilot extends BaseAgent {
       for await (const { parsed } of iterator) {
         // Send message content to callback
         if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content, this.threadRoots.get(chatId));
+          const threadRoot = this.conversationContext.getThreadRoot(chatId);
+          await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
         }
 
         // Check for completion
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
           if (this.callbacks.onDone) {
-            await this.callbacks.onDone(chatId, this.threadRoots.get(chatId));
+            const threadRoot = this.conversationContext.getThreadRoot(chatId);
+            await this.callbacks.onDone(chatId, threadRoot);
           }
         }
       }
@@ -338,16 +354,17 @@ export class Pilot extends BaseAgent {
       iteratorError = error as Error;
       this.logger.error({ err: iteratorError, chatId }, 'Iterator error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, this.threadRoots.get(chatId));
+      const threadRoot = this.conversationContext.getThreadRoot(chatId);
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
 
       if (this.callbacks.onDone) {
-        await this.callbacks.onDone(chatId, this.threadRoots.get(chatId));
+        await this.callbacks.onDone(chatId, threadRoot);
       }
     }
 
-    // Check if this was an explicit close (reset removed the Query)
-    // If Query is still in the map, it means the iterator ended unexpectedly
-    const wasExplicitClose = !this.queries.has(chatId);
+    // Check if this was an explicit close (reset removed the session)
+    // If session is still tracked, it means the iterator ended unexpectedly
+    const wasExplicitClose = !this.sessionManager.has(chatId);
 
     if (wasExplicitClose) {
       this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
@@ -355,16 +372,16 @@ export class Pilot extends BaseAgent {
     }
 
     // Iterator ended without explicit close - this is unexpected
-    // Remove the stale Query and Channel, then attempt to restart
-    this.queries.delete(chatId);
-    this.channels.delete(chatId);
+    // Remove the stale session tracking, then attempt to restart
+    this.sessionManager.deleteTracking(chatId);
     this.logger.warn({ chatId, error: iteratorError?.message }, 'Agent loop ended unexpectedly, attempting restart');
 
     // Notify user about the restart
+    const threadRoot = this.conversationContext.getThreadRoot(chatId);
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';
-    await this.callbacks.sendMessage(chatId, restartMessage, this.threadRoots.get(chatId));
+    await this.callbacks.sendMessage(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
     this.startAgentLoop(chatId);
@@ -480,25 +497,18 @@ You can read these files using the Read tool with the local paths above.`;
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
    *
-   * IMPORTANT: Deletes Query and Channel from map BEFORE closing, so processIterator
+   * IMPORTANT: Deletes session from tracking BEFORE closing, so processIterator
    * can distinguish explicit close from unexpected iterator end.
    *
    * @param chatId - Platform-specific chat identifier
    */
   reset(chatId: string): void {
-    // Close channel first to stop generator
-    const channel = this.channels.get(chatId);
-    if (channel) {
-      this.channels.delete(chatId);
-      channel.close();
-    }
+    // Delete session (this closes channel and query)
+    const deleted = this.sessionManager.delete(chatId);
 
-    const query = this.queries.get(chatId);
-    if (query) {
-      // Delete from map FIRST, so processIterator knows this is an explicit close
-      this.queries.delete(chatId);
-      query.close();
-      this.threadRoots.delete(chatId);
+    if (deleted) {
+      // Also clear thread root
+      this.conversationContext.deleteThreadRoot(chatId);
       this.logger.info({ chatId }, 'State reset for chatId');
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
@@ -509,7 +519,7 @@ You can read these files using the Read tool with the local paths above.`;
    * Get the number of active sessions.
    */
   getActiveSessionCount(): number {
-    return this.queries.size;
+    return this.sessionManager.size();
   }
 
   /**
@@ -519,21 +529,11 @@ You can read these files using the Read tool with the local paths above.`;
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info('Shutting down Pilot');
 
-    // Close all channels first
-    const channelsToClose = Array.from(this.channels.values());
-    this.channels.clear();
-    for (const channel of channelsToClose) {
-      channel.close();
-    }
+    // Close all sessions via SessionManager
+    this.sessionManager.closeAll();
 
-    // Clear map FIRST, then close all queries
-    const queriesToClose = Array.from(this.queries.values());
-    this.queries.clear();
-    this.threadRoots.clear();
-
-    for (const query of queriesToClose) {
-      query.close();
-    }
+    // Clear all context via ConversationContext
+    this.conversationContext.clearAll();
 
     this.logger.info('Pilot shutdown complete');
   }

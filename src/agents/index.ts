@@ -7,6 +7,8 @@
  * - Executor: Task execution specialist
  * - Reporter: Communication and instruction generation specialist
  * - Pilot: Platform-agnostic direct chat with streaming input
+ * - SessionManager: Pilot session lifecycle management
+ * - ConversationContext: Pilot conversation context tracking
  */
 
 // Base class
@@ -25,6 +27,10 @@ export { Reporter } from './reporter.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
+
+// Pilot support classes (extracted from Pilot for separation of concerns)
+export { SessionManager, type PilotSession, type SessionManagerConfig } from './session-manager.js';
+export { ConversationContext, type ConversationContextConfig } from './conversation-context.js';
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
