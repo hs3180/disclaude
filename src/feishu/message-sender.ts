@@ -45,27 +45,36 @@ export class MessageSender {
       // Always use plain text format
       // Use content builder utility for consistent message formatting
       const messageData: {
-        receive_id: string;
         msg_type: string;
         content: string;
-        parent_id?: string;
       } = {
-        receive_id: chatId,
         msg_type: 'text',
         content: buildTextContent(text),
       };
 
-      // Add parent_id for thread replies if provided
-      if (parentId) {
-        messageData.parent_id = parentId;
-      }
+      let response;
 
-      const response = await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: messageData,
-      });
+      // Use reply() method when parentId is provided to properly quote user messages
+      // This ensures the bot message references the original user message
+      if (parentId) {
+        response = await this.client.im.message.reply({
+          path: {
+            message_id: parentId,
+          },
+          data: messageData,
+        });
+      } else {
+        // Use create() method for new messages (no thread reply)
+        response = await this.client.im.message.create({
+          params: {
+            receive_id_type: 'chat_id',
+          },
+          data: {
+            receive_id: chatId,
+            ...messageData,
+          },
+        });
+      }
 
       // Track outgoing bot message in history
       // Feishu API returns message_id in response.data.message_id
@@ -108,27 +117,36 @@ export class MessageSender {
   ): Promise<void> {
     try {
       const messageData: {
-        receive_id: string;
         msg_type: string;
         content: string;
-        parent_id?: string;
       } = {
-        receive_id: chatId,
         msg_type: 'interactive',
         content: JSON.stringify(card),
       };
 
-      // Add parent_id for thread replies if provided
-      if (parentId) {
-        messageData.parent_id = parentId;
-      }
+      let response;
 
-      const response = await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: messageData,
-      });
+      // Use reply() method when parentId is provided to properly quote user messages
+      // This ensures the bot message references the original user message
+      if (parentId) {
+        response = await this.client.im.message.reply({
+          path: {
+            message_id: parentId,
+          },
+          data: messageData,
+        });
+      } else {
+        // Use create() method for new messages (no thread reply)
+        response = await this.client.im.message.create({
+          params: {
+            receive_id_type: 'chat_id',
+          },
+          data: {
+            receive_id: chatId,
+            ...messageData,
+          },
+        });
+      }
 
       // Track outgoing bot message in history
       const botMessageId = response?.data?.message_id;
