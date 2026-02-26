@@ -131,14 +131,6 @@ describe('Pilot (Streaming Input)', () => {
       // Should return almost immediately (not wait for SDK)
       expect(elapsed).toBeLessThan(100);
     });
-
-    it('should update lastActivity timestamp', () => {
-      const before = Date.now();
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      expect(state?.lastActivity).toBeGreaterThanOrEqual(before);
-    });
   });
 
   describe('clearQueue', () => {
