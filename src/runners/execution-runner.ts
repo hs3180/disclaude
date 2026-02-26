@@ -248,7 +248,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     });
   };
 
-  // Initialize TaskFlowOrchestrator for task skill dialogue phase
+  // Initialize TaskFlowOrchestrator for deep-task skill dialogue phase
   // Uses file watcher to detect new Task.md files and trigger dialogue
   const taskTracker = new TaskTracker();
   const taskFlowOrchestrator = new TaskFlowOrchestrator(

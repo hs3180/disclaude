@@ -175,7 +175,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /**
    * Get the TaskFlowOrchestrator for this channel.
-   * Used by task skill MCP tools.
+   * Used by deep-task skill MCP tools.
    */
   getTaskFlowOrchestrator(): TaskFlowOrchestrator | undefined {
     return this.taskFlowOrchestrator;

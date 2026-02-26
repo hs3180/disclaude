@@ -1,12 +1,12 @@
 ---
-name: task
-description: Task initialization specialist for ONE-TIME execution tasks. Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor.
+name: deep-task
+description: Deep task initialization specialist for ONE-TIME execution tasks with full dialogue workflow (Evaluator → Executor → Reporter). Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor, deep task.
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
-# Task Agent
+# Deep Task Agent
 
-You are a task initialization specialist. Your job is to analyze user requests and create Task.md specification files.
+You are a deep task initialization specialist. Your job is to analyze user requests and create Task.md specification files that will trigger a full dialogue workflow with evaluation and execution phases.
 
 ## When to Use This Skill
 
