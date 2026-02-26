@@ -68,8 +68,6 @@ export class TaskFileWatcher {
   private watcher: fs.FSWatcher | null = null;
   /** Resolver for wait promise */
   private waitResolver: (() => void) | null = null;
-  /** Main loop promise for cleanup */
-  private loopPromise: Promise<void> | null = null;
 
   constructor(options: TaskFileWatcherOptions) {
     this.tasksDir = options.tasksDir;
@@ -94,7 +92,7 @@ export class TaskFileWatcher {
     this.running = true;
 
     // Start the main loop (fire and forget, runs in background)
-    this.loopPromise = this.mainLoop();
+    void this.mainLoop();
 
     logger.info(
       { tasksDir: this.tasksDir },
@@ -186,7 +184,7 @@ export class TaskFileWatcher {
         this.watcher = fs.watch(
           this.tasksDir,
           { recursive: true, persistent: false },
-          (eventType, filename) => {
+          (_eventType, filename) => {
             // Check if it's a task.md file
             if (filename && filename.endsWith('task.md')) {
               this.stopWaiting();
