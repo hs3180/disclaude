@@ -164,9 +164,9 @@ clearSession(chatId)            // Reset conversation
 
 Internal MCP servers providing custom tools:
 
-- **`feishu-context-mcp.ts`** - Feishu-specific operations (send messages, files, cards)
+- **`feishu-context-mcp.ts`** - Main Feishu MCP implementation (send messages, files, cards, SDK integration)
+- **`feishu-mcp-server.ts`** - Thin stdio wrapper around feishu-context-mcp.ts for external tool integration
 - **`task-skill-mcp.ts`** - Custom skill integration
-- **`feishu-tools-server.ts`** - File sending to Feishu chats
 
 External MCP servers can be configured via `disclaude.config.yaml`.
 
