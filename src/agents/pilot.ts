@@ -317,7 +317,7 @@ export class Pilot extends BaseAgent {
    * Process the SDK iterator for a chatId.
    *
    * IMPORTANT: This method preserves conversation context by NOT deleting the Query/Channel
-   * when the iterator ends unexpectedly. Only explicit close (reset/clearQueue)
+   * when the iterator ends unexpectedly. Only explicit close (reset)
    * removes the Query and Channel from the maps.
    *
    * If the iterator ends without explicit close, we attempt to restart the agent loop
@@ -355,7 +355,7 @@ export class Pilot extends BaseAgent {
       }
     }
 
-    // Check if this was an explicit close (reset/clearQueue removed the Query)
+    // Check if this was an explicit close (reset removed the Query)
     // If Query is still in the map, it means the iterator ended unexpectedly
     const wasExplicitClose = !this.queries.has(chatId);
 
@@ -486,32 +486,6 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Clear all state for a chatId (close session and remove from map).
-   *
-   * IMPORTANT: Deletes Query and Channel from map BEFORE closing, so processIterator
-   * can distinguish explicit close from unexpected iterator end.
-   *
-   * @param chatId - Platform-specific chat identifier
-   */
-  clearQueue(chatId: string): void {
-    // Close channel first to stop generator
-    const channel = this.channels.get(chatId);
-    if (channel) {
-      this.channels.delete(chatId);
-      channel.close();
-    }
-
-    const query = this.queries.get(chatId);
-    if (query) {
-      // Delete from map FIRST, so processIterator knows this is an explicit close
-      this.queries.delete(chatId);
-      query.close();
-    }
-    this.threadRoots.delete(chatId);
-    this.logger.debug({ chatId }, 'State cleared');
-  }
-
-  /**
    * Reset state for a specific chatId (close session and remove from map).
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
@@ -539,33 +513,6 @@ You can read these files using the Read tool with the local paths above.`;
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
     }
-  }
-
-  /**
-   * Reset all states (close all and start fresh).
-   *
-   * WARNING: This resets ALL chatIds. Use reset(chatId) for single chat reset.
-   */
-  resetAll(): void {
-    this.logger.info('Resetting all states');
-
-    // Close all channels first
-    const channelsToClose = Array.from(this.channels.values());
-    this.channels.clear();
-    for (const channel of channelsToClose) {
-      channel.close();
-    }
-
-    // Clear map FIRST, then close all queries
-    const queriesToClose = Array.from(this.queries.values());
-    this.queries.clear();
-    this.threadRoots.clear();
-
-    for (const query of queriesToClose) {
-      query.close();
-    }
-
-    this.logger.info('All states reset');
   }
 
   /**

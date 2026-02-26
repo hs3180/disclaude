@@ -22,7 +22,6 @@ const createMockPilot = (): Pilot => {
   return {
     executeOnce: vi.fn().mockResolvedValue(undefined),
     processMessage: vi.fn().mockResolvedValue(undefined),
-    resetAll: vi.fn(),
   } as unknown as Pilot;
 };
 
