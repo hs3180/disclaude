@@ -315,6 +315,34 @@ describe('buildSdkEnv', () => {
     // process.env should take precedence
     expect(result.HOME).toBe(originalHome);
   });
+
+  it('should enable SDK debug by default', () => {
+    const result = buildSdkEnv('test-key');
+
+    expect(result.DEBUG_CLAUDE_AGENT_SDK).toBe('1');
+  });
+
+  it('should disable SDK debug when sdkDebug is false', () => {
+    const result = buildSdkEnv('test-key', undefined, undefined, false);
+
+    expect(result.DEBUG_CLAUDE_AGENT_SDK).toBeUndefined();
+  });
+
+  it('should respect process.env.DEBUG_CLAUDE_AGENT_SDK when sdkDebug is true', () => {
+    const originalValue = process.env.DEBUG_CLAUDE_AGENT_SDK;
+    process.env.DEBUG_CLAUDE_AGENT_SDK = 'verbose';
+
+    const result = buildSdkEnv('test-key', undefined, undefined, true);
+
+    expect(result.DEBUG_CLAUDE_AGENT_SDK).toBe('verbose');
+
+    // Restore original value
+    if (originalValue === undefined) {
+      delete process.env.DEBUG_CLAUDE_AGENT_SDK;
+    } else {
+      process.env.DEBUG_CLAUDE_AGENT_SDK = originalValue;
+    }
+  });
 });
 
 describe('extractText', () => {
