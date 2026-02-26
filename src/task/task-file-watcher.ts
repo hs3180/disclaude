@@ -7,13 +7,29 @@
  * - Loop: find task → execute → wait (if no task)
  * - No queue, no concurrent execution
  * - Uses fs.watch when idle (no polling when no work)
+ *
+ * Reliability features:
+ * - Heartbeat logging for monitoring
+ * - Task status tracking (pending → processing → completed/failed)
+ * - Error recording to error.md
+ * - Automatic recovery of stuck tasks
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import { TaskFileManager } from './file-manager.js';
 
 const logger = createLogger('TaskFileWatcher');
+
+/** Heartbeat interval in milliseconds (5 minutes) */
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Task timeout in milliseconds (30 minutes) */
+const TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** Maximum retry count for failed tasks */
+const MAX_RETRY_COUNT = 3;
 
 /**
  * Callback when a task file is created and ready for processing.
@@ -33,6 +49,16 @@ export interface TaskFileWatcherOptions {
   tasksDir: string;
   /** Callback when a task is created (async for serial execution) */
   onTaskCreated: OnTaskCreated;
+  /** Enable heartbeat logging (default: true) */
+  enableHeartbeat?: boolean;
+  /** Heartbeat interval in milliseconds (default: 5 minutes) */
+  heartbeatIntervalMs?: number;
+  /** Task timeout in milliseconds (default: 30 minutes) */
+  taskTimeoutMs?: number;
+  /** Maximum retry count (default: 3) */
+  maxRetryCount?: number;
+  /** Optional TaskFileManager instance (for testing) */
+  fileManager?: TaskFileManager;
 }
 
 /**
@@ -41,6 +67,17 @@ export interface TaskFileWatcherOptions {
 interface TaskMetadata {
   messageId: string;
   chatId: string;
+}
+
+/**
+ * Watcher health status for monitoring.
+ */
+export interface WatcherHealth {
+  isRunning: boolean;
+  lastHeartbeat: string | null;
+  processedCount: number;
+  failedCount: number;
+  currentTask: string | null;
 }
 
 /**
@@ -57,6 +94,12 @@ interface TaskMetadata {
  *   }
  * }
  * ```
+ *
+ * Reliability features:
+ * - Heartbeat logging every 5 minutes
+ * - Task status tracking via status.md
+ * - Error recording to error.md
+ * - Automatic retry with backoff
  */
 export class TaskFileWatcher {
   private tasksDir: string;
@@ -69,9 +112,27 @@ export class TaskFileWatcher {
   /** Resolver for wait promise */
   private waitResolver: (() => void) | null = null;
 
+  // Reliability features
+  private fileManager: TaskFileManager;
+  private enableHeartbeat: boolean;
+  private heartbeatIntervalMs: number;
+  private taskTimeoutMs: number;
+  private maxRetryCount: number;
+  private lastHeartbeat: Date | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private processedCount = 0;
+  private failedCount = 0;
+  private currentTask: string | null = null;
+
   constructor(options: TaskFileWatcherOptions) {
     this.tasksDir = options.tasksDir;
     this.onTaskCreated = options.onTaskCreated;
+    this.enableHeartbeat = options.enableHeartbeat ?? true;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+    this.taskTimeoutMs = options.taskTimeoutMs ?? TASK_TIMEOUT_MS;
+    this.maxRetryCount = options.maxRetryCount ?? MAX_RETRY_COUNT;
+    // Use provided fileManager or create one with tasksDir as tasksBaseDir
+    this.fileManager = options.fileManager ?? new TaskFileManager(undefined, undefined, options.tasksDir);
   }
 
   /**
@@ -89,49 +150,116 @@ export class TaskFileWatcher {
     // Scan existing tasks to avoid reprocessing
     await this.scanExistingTasks();
 
+    // Initialize status for uninitialized tasks
+    await this.initializeUninitializedTasks();
+
     this.running = true;
+
+    // Start heartbeat if enabled
+    if (this.enableHeartbeat) {
+      this.startHeartbeat();
+    }
 
     // Start the main loop (fire and forget, runs in background)
     void this.mainLoop();
 
     logger.info(
-      { tasksDir: this.tasksDir },
-      'Task file watcher started (serial loop mode)'
+      {
+        tasksDir: this.tasksDir,
+        enableHeartbeat: this.enableHeartbeat,
+        heartbeatIntervalMs: this.heartbeatIntervalMs,
+        taskTimeoutMs: this.taskTimeoutMs,
+        maxRetryCount: this.maxRetryCount,
+      },
+      'Task file watcher started (serial loop mode with reliability features)'
     );
   }
 
   /**
-   * Main loop - simple serial execution.
+   * Main loop - simple serial execution with reliability features.
    * Find task → execute → wait if no task.
    */
   private async mainLoop(): Promise<void> {
     while (this.running) {
-      const task = await this.findNextTask();
+      try {
+        // Check for stuck tasks and handle them
+        await this.checkStuckTasks();
 
-      if (task) {
-        // Execute task (serial, await completion)
-        logger.info(
-          { messageId: task.metadata.messageId, chatId: task.metadata.chatId },
-          'Executing task'
-        );
+        const task = await this.findNextTask();
 
-        try {
-          await this.onTaskCreated(
-            task.path,
-            task.metadata.messageId,
-            task.metadata.chatId
+        if (task) {
+          // Update heartbeat on activity
+          this.lastHeartbeat = new Date();
+
+          // Execute task (serial, await completion)
+          const taskId = this.extractTaskId(task.path);
+          this.currentTask = taskId;
+
+          logger.info(
+            { messageId: task.metadata.messageId, chatId: task.metadata.chatId, taskId },
+            'Executing task'
           );
-          logger.info({ messageId: task.metadata.messageId }, 'Task completed');
-        } catch (error) {
-          logger.error(
-            { err: error, messageId: task.metadata.messageId },
-            'Task failed'
-          );
+
+          // Update status to 'processing'
+          await this.fileManager.updateStatus(taskId, 'processing');
+
+          try {
+            await this.onTaskCreated(
+              task.path,
+              task.metadata.messageId,
+              task.metadata.chatId
+            );
+
+            // Update status to 'completed'
+            await this.fileManager.updateStatus(taskId, 'completed');
+            this.processedCount++;
+            logger.info({ messageId: task.metadata.messageId, taskId }, 'Task completed');
+          } catch (error) {
+            // Handle task failure
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorStack = error instanceof Error ? error.stack : undefined;
+
+            logger.error(
+              { err: error, messageId: task.metadata.messageId, taskId },
+              'Task failed'
+            );
+
+            // Check retry count
+            const status = await this.fileManager.readStatus(taskId);
+            const retryCount = status?.retryCount ?? 0;
+
+            if (retryCount < this.maxRetryCount) {
+              // Increment retry count and keep status as 'processing' for retry
+              await this.fileManager.incrementRetryCount(taskId);
+              logger.info(
+                { taskId, retryCount: retryCount + 1, maxRetryCount: this.maxRetryCount },
+                'Task will be retried'
+              );
+              // Remove from processed tasks so it can be picked up again
+              this.processedTasks.delete(task.path);
+            } else {
+              // Max retries reached, mark as failed
+              await this.fileManager.updateStatus(taskId, 'failed', errorMessage);
+              await this.fileManager.writeError(taskId, errorMessage, errorStack);
+              this.failedCount++;
+              logger.error(
+                { taskId, retryCount },
+                'Task failed after max retries'
+              );
+            }
+          }
+
+          this.currentTask = null;
+          // Continue to next task immediately (no wait)
+        } else {
+          // No task found, wait for new file
+          await this.waitForNewTask();
         }
-        // Continue to next task immediately (no wait)
-      } else {
-        // No task found, wait for new file
-        await this.waitForNewTask();
+      } catch (error) {
+        // Catch any unexpected errors in the main loop itself
+        logger.error({ err: error }, 'Unexpected error in main loop, continuing...');
+        // Wait a bit before continuing to avoid tight error loops
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
   }
@@ -250,8 +378,15 @@ export class TaskFileWatcher {
   stop(): void {
     this.running = false;
     this.stopWaiting();
+    this.stopHeartbeat();
 
-    logger.info('Task file watcher stopped');
+    logger.info(
+      {
+        processedCount: this.processedCount,
+        failedCount: this.failedCount,
+      },
+      'Task file watcher stopped'
+    );
   }
 
   /**
@@ -259,6 +394,100 @@ export class TaskFileWatcher {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Get watcher health status.
+   */
+  getHealth(): WatcherHealth {
+    return {
+      isRunning: this.running,
+      lastHeartbeat: this.lastHeartbeat?.toISOString() ?? null,
+      processedCount: this.processedCount,
+      failedCount: this.failedCount,
+      currentTask: this.currentTask,
+    };
+  }
+
+  /**
+   * Start heartbeat timer.
+   */
+  private startHeartbeat(): void {
+    this.heartbeatTimer = setInterval(() => {
+      if (this.running) {
+        this.lastHeartbeat = new Date();
+        logger.info(
+          {
+            lastHeartbeat: this.lastHeartbeat.toISOString(),
+            processedCount: this.processedCount,
+            failedCount: this.failedCount,
+            currentTask: this.currentTask,
+            processedTasks: this.processedTasks.size,
+          },
+          'Task file watcher heartbeat'
+        );
+      }
+    }, this.heartbeatIntervalMs);
+  }
+
+  /**
+   * Stop heartbeat timer.
+   */
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /**
+   * Check for stuck tasks and handle them.
+   */
+  private async checkStuckTasks(): Promise<void> {
+    try {
+      const stuckTasks = await this.fileManager.findStuckTasks(this.taskTimeoutMs);
+
+      for (const taskId of stuckTasks) {
+        logger.warn({ taskId }, 'Found stuck task, marking as timeout');
+
+        // Update status to timeout
+        await this.fileManager.updateStatus(taskId, 'timeout', 'Task exceeded timeout');
+        await this.fileManager.writeError(taskId, 'Task exceeded timeout and was marked as timed out');
+
+        this.failedCount++;
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Error checking stuck tasks');
+    }
+  }
+
+  /**
+   * Initialize status for tasks that have task.md but no status.md.
+   */
+  private async initializeUninitializedTasks(): Promise<void> {
+    try {
+      const uninitialized = await this.fileManager.findUninitializedTasks();
+
+      for (const taskId of uninitialized) {
+        await this.fileManager.initializeStatus(taskId);
+        logger.info({ taskId }, 'Initialized status for existing task');
+      }
+
+      if (uninitialized.length > 0) {
+        logger.info({ count: uninitialized.length }, 'Initialized status for uninitialized tasks');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Error initializing uninitialized tasks');
+    }
+  }
+
+  /**
+   * Extract task ID from task path.
+   * E.g., /path/to/tasks/cli-123/task.md -> cli-123
+   */
+  private extractTaskId(taskPath: string): string {
+    const taskDir = path.dirname(taskPath);
+    return path.basename(taskDir);
   }
 
   /**

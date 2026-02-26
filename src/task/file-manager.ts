@@ -6,6 +6,8 @@
  *
  * {task_id}/
  *   ├── task.md
+ *   ├── status.md (tracks task execution status)
+ *   ├── error.md (created when task fails)
  *   ├── final_result.md (created by Evaluator when task is COMPLETE)
  *   └── iterations/
  *       ├── iter-1/
@@ -28,6 +30,24 @@ import * as path from 'path';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 
+/**
+ * Task execution status.
+ */
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'timeout';
+
+/**
+ * Task status information.
+ */
+export interface TaskStatusInfo {
+  status: TaskStatus;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+  error?: string;
+  retryCount?: number;
+}
+
 const logger = createLogger('TaskFileManager', {});
 
 /**
@@ -37,11 +57,17 @@ export class TaskFileManager {
   private readonly workspaceDir: string;
   private readonly tasksBaseDir: string;
 
-  constructor(workspaceDir?: string, private readonly subdirectory?: string) {
-    this.workspaceDir = workspaceDir || Config.getWorkspaceDir();
-    this.tasksBaseDir = this.subdirectory
-      ? path.join(this.workspaceDir, 'tasks', this.subdirectory)
-      : path.join(this.workspaceDir, 'tasks');
+  constructor(workspaceDir?: string, private readonly subdirectory?: string, tasksBaseDir?: string) {
+    // If tasksBaseDir is provided directly, use it; otherwise derive from workspaceDir
+    if (tasksBaseDir) {
+      this.tasksBaseDir = tasksBaseDir;
+      this.workspaceDir = workspaceDir || path.dirname(tasksBaseDir);
+    } else {
+      this.workspaceDir = workspaceDir || Config.getWorkspaceDir();
+      this.tasksBaseDir = this.subdirectory
+        ? path.join(this.workspaceDir, 'tasks', this.subdirectory)
+        : path.join(this.workspaceDir, 'tasks');
+    }
   }
 
   /**
@@ -490,5 +516,330 @@ export class TaskFileManager {
    */
   getFinalResultPath(taskId: string): string {
     return path.join(this.getTaskDir(taskId), 'final_result.md');
+  }
+
+  // ===== Task Status Management =====
+
+  /**
+   * Get the path to status.md for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns Absolute path to status.md
+   */
+  getStatusPath(taskId: string): string {
+    return path.join(this.getTaskDir(taskId), 'status.md');
+  }
+
+  /**
+   * Get the path to error.md for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns Absolute path to error.md
+   */
+  getErrorPath(taskId: string): string {
+    return path.join(this.getTaskDir(taskId), 'error.md');
+  }
+
+  /**
+   * Initialize task status to 'pending'.
+   *
+   * @param taskId - Task identifier
+   */
+  async initializeStatus(taskId: string): Promise<void> {
+    const statusPath = this.getStatusPath(taskId);
+    const now = new Date().toISOString();
+
+    const content = `# Task Status
+
+**Task ID**: ${taskId}
+**Status**: pending
+**Created**: ${now}
+**Updated**: ${now}
+`;
+
+    try {
+      await fs.writeFile(statusPath, content, 'utf-8');
+      logger.debug({ taskId, statusPath }, 'Task status initialized to pending');
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to initialize task status');
+      throw error;
+    }
+  }
+
+  /**
+   * Update task status.
+   *
+   * @param taskId - Task identifier
+   * @param status - New status
+   * @param error - Optional error message (for failed status)
+   */
+  async updateStatus(taskId: string, status: TaskStatus, error?: string): Promise<void> {
+    const statusPath = this.getStatusPath(taskId);
+
+    try {
+      // Read existing status or create new one
+      let existingContent = '';
+      try {
+        existingContent = await fs.readFile(statusPath, 'utf-8');
+      } catch {
+        // File doesn't exist, will create new
+      }
+
+      const now = new Date().toISOString();
+      const createdAt = this.extractField(existingContent, 'Created') || now;
+      const startedAt = status === 'processing' ? now : this.extractField(existingContent, 'Started');
+      const completedAt = ['completed', 'failed', 'timeout'].includes(status) ? now : undefined;
+      const retryCount = this.extractField(existingContent, 'Retry Count');
+      const retryNum = retryCount ? parseInt(retryCount, 10) : 0;
+
+      const content = `# Task Status
+
+**Task ID**: ${taskId}
+**Status**: ${status}
+**Created**: ${createdAt}
+${startedAt ? `**Started**: ${startedAt}` : ''}
+${completedAt ? `**Completed**: ${completedAt}` : ''}
+**Updated**: ${now}
+${retryNum > 0 ? `**Retry Count**: ${retryNum}` : ''}
+${error ? `\n## Error\n\n\`\`\`\n${error}\n\`\`\`\n` : ''}
+`;
+
+      await fs.writeFile(statusPath, content, 'utf-8');
+      logger.info({ taskId, status, error: !!error }, 'Task status updated');
+    } catch (err) {
+      logger.error({ err, taskId }, 'Failed to update task status');
+      throw err;
+    }
+  }
+
+  /**
+   * Read task status.
+   *
+   * @param taskId - Task identifier
+   * @returns Task status info or null if not found
+   */
+  async readStatus(taskId: string): Promise<TaskStatusInfo | null> {
+    const statusPath = this.getStatusPath(taskId);
+
+    try {
+      const content = await fs.readFile(statusPath, 'utf-8');
+
+      return {
+        status: (this.extractField(content, 'Status') as TaskStatus) || 'pending',
+        createdAt: this.extractField(content, 'Created') || '',
+        startedAt: this.extractField(content, 'Started'),
+        completedAt: this.extractField(content, 'Completed'),
+        updatedAt: this.extractField(content, 'Updated') || '',
+        error: this.extractErrorSection(content),
+        retryCount: this.extractField(content, 'Retry Count')
+          ? parseInt(this.extractField(content, 'Retry Count')!, 10)
+          : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check if task has status.md file.
+   *
+   * @param taskId - Task identifier
+   * @returns True if status.md exists
+   */
+  async hasStatus(taskId: string): Promise<boolean> {
+    const statusPath = this.getStatusPath(taskId);
+    try {
+      await fs.access(statusPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Increment retry count for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns New retry count
+   */
+  async incrementRetryCount(taskId: string): Promise<number> {
+    const statusPath = this.getStatusPath(taskId);
+
+    try {
+      const content = await fs.readFile(statusPath, 'utf-8');
+      const currentCount = this.extractField(content, 'Retry Count');
+      const newCount = currentCount ? parseInt(currentCount, 10) + 1 : 1;
+
+      // Update the retry count in the content
+      let updatedContent = content;
+      if (content.includes('**Retry Count**:')) {
+        updatedContent = content.replace(
+          /\*\*Retry Count\*\*: \d+/,
+          `**Retry Count**: ${newCount}`
+        );
+      } else {
+        // Add retry count after Updated line
+        updatedContent = content.replace(
+          /(\*\*Updated\*\*: [^\n]+)/,
+          `$1\n**Retry Count**: ${newCount}`
+        );
+      }
+
+      await fs.writeFile(statusPath, updatedContent, 'utf-8');
+      logger.info({ taskId, retryCount: newCount }, 'Task retry count incremented');
+      return newCount;
+    } catch (err) {
+      logger.error({ err, taskId }, 'Failed to increment retry count');
+      throw err;
+    }
+  }
+
+  /**
+   * Write error.md file for a failed task.
+   *
+   * @param taskId - Task identifier
+   * @param error - Error message
+   * @param stack - Optional stack trace
+   */
+  async writeError(taskId: string, error: string, stack?: string): Promise<void> {
+    const errorPath = this.getErrorPath(taskId);
+    const now = new Date().toISOString();
+
+    const content = `# Task Error
+
+**Task ID**: ${taskId}
+**Failed At**: ${now}
+
+## Error Message
+
+\`\`\`
+${error}
+\`\`\`
+${stack ? `
+## Stack Trace
+
+\`\`\`
+${stack}
+\`\`\`
+` : ''}
+`;
+
+    try {
+      await fs.writeFile(errorPath, content, 'utf-8');
+      logger.info({ taskId, errorPath }, 'Task error written');
+    } catch (err) {
+      logger.error({ err, taskId }, 'Failed to write task error');
+      throw err;
+    }
+  }
+
+  /**
+   * Check if task has error.md file.
+   *
+   * @param taskId - Task identifier
+   * @returns True if error.md exists
+   */
+  async hasError(taskId: string): Promise<boolean> {
+    const errorPath = this.getErrorPath(taskId);
+    try {
+      await fs.access(errorPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Find tasks that have been stuck in 'processing' status for too long.
+   *
+   * @param timeoutMs - Timeout in milliseconds (default: 30 minutes)
+   * @returns Array of stuck task IDs
+   */
+  async findStuckTasks(timeoutMs = 30 * 60 * 1000): Promise<string[]> {
+    const stuckTasks: string[] = [];
+    const now = Date.now();
+
+    try {
+      const entries = await fs.readdir(this.tasksBaseDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const taskId = entry.name;
+        const status = await this.readStatus(taskId);
+
+        if (status?.status === 'processing' && status.startedAt) {
+          const startedTime = new Date(status.startedAt).getTime();
+          if (now - startedTime > timeoutMs) {
+            stuckTasks.push(taskId);
+            logger.warn(
+              { taskId, startedAt: status.startedAt, elapsedMs: now - startedTime },
+              'Found stuck task'
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Failed to find stuck tasks');
+    }
+
+    return stuckTasks;
+  }
+
+  /**
+   * Find tasks with task.md but no status.md (uninitialized).
+   *
+   * @returns Array of uninitialized task IDs
+   */
+  async findUninitializedTasks(): Promise<string[]> {
+    const uninitialized: string[] = [];
+
+    try {
+      const entries = await fs.readdir(this.tasksBaseDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+
+        const taskId = entry.name;
+        const taskSpecPath = this.getTaskSpecPath(taskId);
+        const hasStatus = await this.hasStatus(taskId);
+
+        // Check if task.md exists but status.md doesn't
+        try {
+          await fs.access(taskSpecPath);
+          if (!hasStatus) {
+            uninitialized.push(taskId);
+          }
+        } catch {
+          // task.md doesn't exist, skip
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Failed to find uninitialized tasks');
+    }
+
+    return uninitialized;
+  }
+
+  /**
+   * Extract a field value from status.md content.
+   */
+  private extractField(content: string, fieldName: string): string | undefined {
+    const match = content.match(new RegExp(`\\*\\*${fieldName}\\*\\*: ([^\\n]+)`));
+    return match?.[1]?.trim();
+  }
+
+  /**
+   * Extract error section from status.md content.
+   */
+  private extractErrorSection(content: string): string | undefined {
+    const match = content.match(/## Error\s+```[\s\S]*?```/);
+    if (match) {
+      const codeBlock = match[0].match(/```[\s\S]*?```/);
+      if (codeBlock) {
+        return codeBlock[0].replace(/```\n?/g, '').trim();
+      }
+    }
+    return undefined;
   }
 }

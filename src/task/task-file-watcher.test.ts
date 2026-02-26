@@ -286,6 +286,7 @@ Test task description.
       watcher = new TaskFileWatcher({
         tasksDir: tempDir,
         onTaskCreated: failingCallback,
+        maxRetryCount: 0, // Disable retry for this test
       });
 
       await watcher.start();
