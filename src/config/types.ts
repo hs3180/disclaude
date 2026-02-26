@@ -3,7 +3,21 @@
  *
  * This module defines the TypeScript interfaces for the configuration system,
  * which can be loaded from disclaude.config.yaml or environment variables.
+ *
+ * Channel configurations extend from the base channel types in channels/types.ts.
  */
+
+// Re-export channel config types from channels module for consistency
+export type { ChannelConfig } from '../channels/types.js';
+
+/**
+ * Base configuration for all channels in config file.
+ * Extends ChannelConfig with config-specific options.
+ */
+export interface ConfigChannelConfig {
+  /** Enable/disable channel */
+  enabled?: boolean;
+}
 
 /**
  * Workspace configuration section.
@@ -140,11 +154,10 @@ export interface TransportConfig {
 }
 
 /**
- * REST channel configuration.
+ * REST channel configuration for config file.
+ * Combines ConfigChannelConfig with channel-specific options.
  */
-export interface RestChannelConfig {
-  /** Enable/disable REST channel */
-  enabled?: boolean;
+export interface RestChannelConfig extends ConfigChannelConfig {
   /** Server port for REST API */
   port?: number;
   /** Server host */
@@ -158,11 +171,12 @@ export interface RestChannelConfig {
 }
 
 /**
- * Feishu channel configuration.
+ * Feishu channel configuration for config file.
+ * Combines ConfigChannelConfig with channel-specific options.
  */
-export interface FeishuChannelConfig {
-  /** Enable/disable Feishu channel */
-  enabled?: boolean;
+export interface FeishuChannelConfig extends ConfigChannelConfig {
+  // Feishu-specific config options can be added here
+  // Currently only 'enabled' from ConfigChannelConfig
 }
 
 /**

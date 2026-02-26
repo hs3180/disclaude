@@ -6,7 +6,6 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
@@ -17,14 +16,11 @@ import { FileHandler } from '../feishu/file-handler.js';
 import { MessageSender } from '../feishu/message-sender.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
+import { BaseChannel } from './base-channel.js';
 import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
 import type {
-  IChannel,
   ChannelConfig,
-  ChannelStatus,
   OutgoingMessage,
-  MessageHandler,
-  ControlHandler,
 } from './types.js';
 
 const logger = createLogger('FeishuChannel');
@@ -49,10 +45,7 @@ export interface FeishuChannelConfig extends ChannelConfig {
  * - Interactive card support
  * - Typing reactions
  */
-export class FeishuChannel extends EventEmitter implements IChannel {
-  readonly id: string;
-  readonly name: string = 'Feishu';
-
+export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appId: string;
   private appSecret: string;
   private client?: lark.Client;
@@ -63,15 +56,10 @@ export class FeishuChannel extends EventEmitter implements IChannel {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
-  private _status: ChannelStatus = 'stopped';
-  private messageHandler?: MessageHandler;
-  private controlHandler?: ControlHandler;
-
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
   constructor(config: FeishuChannelConfig = {}) {
-    super();
-    this.id = config.id || 'feishu';
+    super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
     this.taskTracker = new TaskTracker();
@@ -97,19 +85,55 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     logger.info({ id: this.id }, 'FeishuChannel created');
   }
 
-  get status(): ChannelStatus {
-    return this._status;
+  protected async doStart(): Promise<void> {
+    // Initialize message logger
+    await messageLogger.init();
+
+    // Create event dispatcher
+    this.eventDispatcher = new lark.EventDispatcher({}).register({
+      'im.message.receive_v1': async (data: unknown) => {
+        try {
+          await this.handleMessageReceive(data as FeishuEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle message receive');
+        }
+      },
+      'im.message.message_read_v1': async () => {},
+      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {},
+    });
+
+    // Create WebSocket client
+    const sdkLogger = {
+      error: (...msg: unknown[]) => logger.error({ context: 'LarkSDK' }, String(msg)),
+      warn: (...msg: unknown[]) => logger.warn({ context: 'LarkSDK' }, String(msg)),
+      info: (...msg: unknown[]) => logger.info({ context: 'LarkSDK' }, String(msg)),
+      debug: (...msg: unknown[]) => logger.debug({ context: 'LarkSDK' }, String(msg)),
+      trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
+    };
+
+    this.wsClient = new lark.WSClient({
+      appId: this.appId,
+      appSecret: this.appSecret,
+      logger: sdkLogger,
+      loggerLevel: lark.LoggerLevel.info,
+    });
+
+    await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
+    logger.info('FeishuChannel started');
   }
 
-  onMessage(handler: MessageHandler): void {
-    this.messageHandler = handler;
+  protected async doStop(): Promise<void> {
+    this.wsClient = undefined;
+    this.client = undefined;
+    this.messageSender = undefined;
+
+    // Clean up old attachments to prevent memory leaks
+    attachmentManager.cleanupOldAttachments();
+
+    logger.info('FeishuChannel stopped');
   }
 
-  onControl(handler: ControlHandler): void {
-    this.controlHandler = handler;
-  }
-
-  async sendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.messageSender) {
       this.getClient();
     }
@@ -145,73 +169,8 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     }
   }
 
-  async start(): Promise<void> {
-    if (this._status === 'running') {
-      logger.warn('FeishuChannel already running');
-      return;
-    }
-
-    this._status = 'starting';
-
-    // Initialize message logger
-    await messageLogger.init();
-
-    // Create event dispatcher
-    this.eventDispatcher = new lark.EventDispatcher({}).register({
-      'im.message.receive_v1': async (data: unknown) => {
-        try {
-          await this.handleMessageReceive(data as FeishuEventData);
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to handle message receive');
-        }
-      },
-      'im.message.message_read_v1': async () => {},
-      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {},
-    });
-
-    // Create WebSocket client
-    const sdkLogger = {
-      error: (...msg: unknown[]) => logger.error({ context: 'LarkSDK' }, String(msg)),
-      warn: (...msg: unknown[]) => logger.warn({ context: 'LarkSDK' }, String(msg)),
-      info: (...msg: unknown[]) => logger.info({ context: 'LarkSDK' }, String(msg)),
-      debug: (...msg: unknown[]) => logger.debug({ context: 'LarkSDK' }, String(msg)),
-      trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
-    };
-
-    this.wsClient = new lark.WSClient({
-      appId: this.appId,
-      appSecret: this.appSecret,
-      logger: sdkLogger,
-      loggerLevel: lark.LoggerLevel.info,
-    });
-
-    await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
-
-    this._status = 'running';
-    logger.info('FeishuChannel started');
-  }
-
-  stop(): Promise<void> {
-    if (this._status === 'stopped') {
-      return Promise.resolve();
-    }
-
-    this._status = 'stopping';
-
-    this.wsClient = undefined;
-    this.client = undefined;
-    this.messageSender = undefined;
-
-    // Clean up old attachments to prevent memory leaks
-    attachmentManager.cleanupOldAttachments();
-
-    this._status = 'stopped';
-    logger.info('FeishuChannel stopped');
-    return Promise.resolve();
-  }
-
-  isHealthy(): boolean {
-    return this._status === 'running' && this.wsClient !== undefined;
+  protected checkHealth(): boolean {
+    return this.wsClient !== undefined;
   }
 
   /**
@@ -288,7 +247,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
-    if (this._status !== 'running') {return;}
+    if (!this.isRunning) {return;}
 
     this.getClient();
 
@@ -359,22 +318,20 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         );
 
         // Emit as incoming message
-        if (this.messageHandler) {
-          await this.messageHandler({
-            messageId: `${message_id}-file`,
-            chatId: chat_id,
-            userId: this.extractOpenId(sender),
-            content: uploadPrompt,
-            messageType: 'file',
-            timestamp: create_time,
-            threadId,
-            attachments: [{
-              fileName: latestAttachment.fileName || 'unknown',
-              filePath: latestAttachment.localPath || '',
-              mimeType: latestAttachment.mimeType,
-            }],
-          });
-        }
+        await this.emitMessage({
+          messageId: `${message_id}-file`,
+          chatId: chat_id,
+          userId: this.extractOpenId(sender),
+          content: uploadPrompt,
+          messageType: 'file',
+          timestamp: create_time,
+          threadId,
+          attachments: [{
+            fileName: latestAttachment.fileName || 'unknown',
+            filePath: latestAttachment.localPath || '',
+            mimeType: latestAttachment.mimeType,
+          }],
+        });
       }
       return;
     }
@@ -432,7 +389,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
       const cmd = command.toLowerCase();
 
       if (this.controlHandler) {
-        const response = await this.controlHandler({
+        const response = await this.emitControl({
           type: cmd as any,
           chatId: chat_id,
           data: { args, rawText: trimmedText },
@@ -462,7 +419,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         await this.sendMessage({
           chatId: chat_id,
           type: 'text',
-          text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this._status}`,
+          text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
         });
         return;
       }
@@ -478,16 +435,14 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     }
 
     // Emit as incoming message
-    if (this.messageHandler) {
-      await this.messageHandler({
-        messageId: message_id,
-        chatId: chat_id,
-        userId: this.extractOpenId(sender),
-        content: text,
-        messageType: message_type as any,
-        timestamp: create_time,
-        threadId,
-      });
-    }
+    await this.emitMessage({
+      messageId: message_id,
+      chatId: chat_id,
+      userId: this.extractOpenId(sender),
+      content: text,
+      messageType: message_type as any,
+      timestamp: create_time,
+      threadId,
+    });
   }
 }
