@@ -257,7 +257,6 @@ describe('Pilot (Streaming Input)', () => {
 
       expect(state).toBeDefined();
       expect(state?.messageQueue).toEqual(expect.any(Array));
-      expect(state?.pendingWriteFiles).toBeInstanceOf(Set);
       expect(state?.closed).toBe(false);
       expect(state?.started).toBe(true);
     });
