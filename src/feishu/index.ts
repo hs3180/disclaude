@@ -6,9 +6,16 @@
  * messages to the Execution Node via WebSocket.
  */
 
+// Re-export platform adapters (consolidated from channels/platforms/feishu)
+// @deprecated - Import from '../channels/platforms/feishu/index.js' instead
+export {
+  FeishuMessageSender,
+  FeishuFileHandler,
+  type FeishuMessageSenderConfig,
+  type FeishuFileHandlerConfig,
+} from '../channels/platforms/feishu/index.js';
+
 // Re-export commonly used components
-export { MessageSender } from './message-sender.js';
-export { FileHandler } from './file-handler.js';
 export { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 export { messageLogger } from './message-logger.js';
 

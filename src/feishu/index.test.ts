@@ -6,14 +6,14 @@ import { describe, it, expect } from 'vitest';
 
 describe('Feishu Module Exports', () => {
   describe('Module Structure', () => {
-    it('should export MessageSender class', async () => {
+    it('should export FeishuMessageSender class', async () => {
       const module = await import('./index.js');
-      expect(module.MessageSender).toBeDefined();
+      expect(module.FeishuMessageSender).toBeDefined();
     });
 
-    it('should export FileHandler class', async () => {
+    it('should export FeishuFileHandler class', async () => {
       const module = await import('./index.js');
-      expect(module.FileHandler).toBeDefined();
+      expect(module.FeishuFileHandler).toBeDefined();
     });
 
     it('should export TaskFlowOrchestrator class', async () => {
