@@ -9,7 +9,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
-import { attachmentManager } from '../feishu/attachment-manager.js';
+import { attachmentManager } from '../core/attachment-manager.js';
 import { downloadFile } from '../feishu/file-downloader.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { FileHandler } from '../feishu/file-handler.js';
