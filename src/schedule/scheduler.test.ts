@@ -437,7 +437,7 @@ describe('Scheduler', () => {
       await Promise.all([firstExecution, secondExecution]);
     });
 
-    it('should default blocking to false when not specified', async () => {
+    it('should default blocking to true when not specified', async () => {
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -447,7 +447,7 @@ describe('Scheduler', () => {
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
-        // blocking not specified - defaults to false
+        // blocking not specified - defaults to true
         createdAt: new Date().toISOString(),
       };
 
@@ -456,7 +456,7 @@ describe('Scheduler', () => {
       // Trigger execution
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
-      // Should allow concurrent (blocking defaults to false)
+      // Should allow concurrent (blocking defaults to true, but task completed)
       expect(scheduler.isTaskRunning(task.id)).toBe(false); // Already completed
     });
 
