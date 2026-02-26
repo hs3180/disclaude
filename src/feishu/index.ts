@@ -20,6 +20,7 @@ export { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 export { messageLogger } from './message-logger.js';
 
 // Re-export core components for backward compatibility
+// @deprecated - Import from '../file-transfer/inbound/index.js' instead
+export { attachmentManager } from '../file-transfer/inbound/index.js';
 // @deprecated - Import from '../core/index.js' instead
-export { attachmentManager } from '../core/attachment-manager.js';
 export { messageHistoryManager } from '../core/message-history.js';

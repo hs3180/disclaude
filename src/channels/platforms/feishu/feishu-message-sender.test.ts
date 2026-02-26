@@ -59,7 +59,7 @@ vi.mock('../../../feishu/message-logger.js', () => ({
   },
 }));
 
-vi.mock('../../../feishu/file-uploader.js', () => ({
+vi.mock('../../../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
@@ -199,7 +199,7 @@ describe('FeishuMessageSender', () => {
 
   describe('sendFile', () => {
     it('should send file successfully', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(1024);
 
@@ -214,7 +214,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should send file with thread reply', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(2048);
 
@@ -229,7 +229,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should handle file send error gracefully', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockRejectedValue(new Error('Upload failed'));
 
@@ -240,7 +240,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should log outgoing file message', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(5120);
 

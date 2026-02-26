@@ -11,7 +11,7 @@
  * Files are cleared after being processed with a text message.
  */
 
-import type { IAttachmentManager, FileAttachment } from '../channels/adapters/types.js';
+import type { IAttachmentManager, FileAttachment } from '../../channels/adapters/types.js';
 
 /**
  * Attachment manager for in-memory storage of pending files.
