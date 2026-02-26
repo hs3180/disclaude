@@ -146,7 +146,7 @@ export class Pilot extends BaseAgent {
   async executeOnce(
     chatId: string,
     text: string,
-    messageId: string,
+    messageId?: string,
     senderOpenId?: string
   ): Promise<void> {
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');

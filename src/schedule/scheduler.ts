@@ -224,13 +224,12 @@ ${task.prompt}`;
     // The sendFeedback will be provided by ExecutionRunner to directly send via WebSocket
     // We don't call callbacks.sendMessage here to avoid recursion
     if (this.setFeedbackChannel) {
-      const messageId = `${task.id}-${Date.now()}`;
       this.setFeedbackChannel(task.chatId, {
         // sendFeedback will be implemented by ExecutionRunner to directly use WebSocket
         sendFeedback: () => {
           // This is a placeholder - ExecutionRunner will replace this with actual implementation
         },
-        threadId: messageId,
+        threadId: undefined,  // Scheduled tasks send new messages, not replies
       });
       logger.debug({ chatId: task.chatId, taskId: task.id }, 'Feedback channel set for scheduled task');
     }
@@ -246,10 +245,11 @@ ${task.prompt}`;
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Execute task using Pilot's executeOnce method
+      // messageId is undefined - scheduled tasks send new messages, not replies
       await this.pilot.executeOnce(
         task.chatId,
         wrappedPrompt,
-        `${task.id}-${Date.now()}`,
+        undefined,
         task.createdBy
       );
 
