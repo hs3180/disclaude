@@ -140,45 +140,91 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     scheduleManager,
     pilot: sharedPilot,
     callbacks: {
-      sendMessage: (chatId: string, text: string): Promise<void> => {
+      sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
         const ctx = activeFeedbackChannels.get(chatId);
         if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId, text });
+          ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
         } else {
-          // For scheduled tasks without active channel, we need a way to send
-          // This creates a temporary feedback function
+          // For scheduled tasks without active channel, send directly via WebSocket
           if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'text', chatId, text }));
+            ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
           }
         }
         return Promise.resolve();
       },
-      sendCard: (chatId: string, card: Record<string, unknown>, description?: string): Promise<void> => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'card', chatId, card, text: description }));
+      sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
+        } else {
+          // For scheduled tasks without active channel, send directly via WebSocket
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'card', chatId, card, text: description, threadId: threadMessageId }));
+          }
         }
         return Promise.resolve();
       },
       sendFile: async (chatId: string, filePath: string) => {
-        try {
-          // Upload file to Communication Node
-          const fileRef = await fileClient.uploadFile(filePath, chatId);
-
-          // Send fileRef via WebSocket
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
+        const ctx = activeFeedbackChannels.get(chatId);
+        if (ctx) {
+          try {
+            const fileRef = await fileClient.uploadFile(filePath, chatId);
+            ctx.sendFeedback({
               type: 'file',
               chatId,
               fileRef,
               fileName: fileRef.fileName,
               fileSize: fileRef.size,
               mimeType: fileRef.mimeType,
-            }));
+              threadId: ctx.threadId,
+            });
+          } catch (error) {
+            logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
+            ctx.sendFeedback({
+              type: 'error',
+              chatId,
+              error: `Failed to send file: ${(error as Error).message}`,
+              threadId: ctx.threadId,
+            });
           }
-        } catch (error) {
-          logger.error({ err: error, chatId, filePath }, 'Failed to upload file for scheduled task');
+        } else {
+          // For scheduled tasks without active channel, send directly via WebSocket
+          try {
+            const fileRef = await fileClient.uploadFile(filePath, chatId);
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'file',
+                chatId,
+                fileRef,
+                fileName: fileRef.fileName,
+                fileSize: fileRef.size,
+                mimeType: fileRef.mimeType,
+              }));
+            }
+          } catch (error) {
+            logger.error({ err: error, chatId, filePath }, 'Failed to upload file for scheduled task');
+          }
         }
       },
+    },
+    // Feedback channel management for scheduled tasks
+    // Provides direct WebSocket access to avoid recursion through callbacks
+    setFeedbackChannel: (chatId: string, context) => {
+      // Replace the placeholder sendFeedback with actual WebSocket implementation
+      const actualContext = {
+        sendFeedback: (feedback: FeedbackMessage) => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(feedback));
+          }
+        },
+        threadId: context.threadId,
+      };
+      activeFeedbackChannels.set(chatId, actualContext);
+      logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+    },
+    clearFeedbackChannel: (chatId: string) => {
+      activeFeedbackChannels.delete(chatId);
+      logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
     },
   });
 
