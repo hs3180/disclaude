@@ -141,7 +141,6 @@ export class AgentFactory {
    *
    * @param callbacks - Platform-specific callbacks for Pilot
    * @param options - Optional configuration overrides
-   * @param isCliMode - Whether running in CLI mode (default: false)
    * @returns Configured Pilot instance
    *
    * @example
@@ -155,14 +154,12 @@ export class AgentFactory {
    */
   static createPilot(
     callbacks: PilotCallbacks,
-    options: AgentCreateOptions = {},
-    isCliMode = false
+    options: AgentCreateOptions = {}
   ): Pilot {
     const baseConfig = this.getBaseConfig(options);
     const config: PilotConfig = {
       ...baseConfig,
       callbacks,
-      isCliMode,
     };
 
     return new Pilot(config);

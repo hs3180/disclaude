@@ -86,11 +86,6 @@ export interface PilotConfig extends BaseAgentConfig {
    * Callback functions for platform-specific operations.
    */
   callbacks: PilotCallbacks;
-  /**
-   * Whether running in CLI mode (vs Feishu bot mode).
-   * CLI mode doesn't need Feishu MCP servers.
-   */
-  isCliMode?: boolean;
 }
 
 /**
@@ -111,7 +106,6 @@ interface MessageData {
  */
 export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
-  private readonly isCliMode: boolean;
 
   // Per-chatId Query instances
   private queries = new Map<string, Query>();
@@ -124,7 +118,6 @@ export class Pilot extends BaseAgent {
     super(config);
 
     this.callbacks = config.callbacks;
-    this.isCliMode = config.isCliMode ?? false;
   }
 
   protected getAgentName(): string {
@@ -266,12 +259,9 @@ export class Pilot extends BaseAgent {
    */
   private startAgentLoop(chatId: string): void {
     // Add MCP servers
-    const mcpServers: Record<string, unknown> = {};
-
-    // Only add Feishu MCP server if NOT in CLI mode
-    if (!this.isCliMode) {
-      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
-    }
+    const mcpServers: Record<string, unknown> = {
+      'feishu-context': createFeishuSdkMcpServer(),
+    };
 
     // Merge configured external MCP servers from config file
     const configuredMcpServers = Config.getMcpServersConfig();

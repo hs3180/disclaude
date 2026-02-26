@@ -114,12 +114,6 @@ describe('AgentFactory', () => {
       expect(Config.getAgentConfig).toHaveBeenCalled();
     });
 
-    it('should create Pilot with CLI mode', () => {
-      const pilot = AgentFactory.createPilot(mockCallbacks, {}, true);
-
-      expect(pilot).toBeInstanceOf(Pilot);
-    });
-
     it('should allow overriding config options', () => {
       const pilot = AgentFactory.createPilot(mockCallbacks, {
         apiKey: 'custom-key',
