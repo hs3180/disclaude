@@ -1,8 +1,14 @@
 /**
  * Attachment manager re-export.
  *
- * @deprecated Import from '../core/index.js' instead.
- * This file is kept for backward compatibility.
+ * @deprecated This file is deprecated and will be removed in a future version.
+ *
+ * Migration guide:
+ * - For AttachmentManager class: Import from `../core/index.js` or `../core/attachment-manager.js`
+ * - For FileAttachment type: Import from `../channels/adapters/types.js` or `../file-transfer/index.js`
+ *
+ * This file is kept for backward compatibility during the file transfer system refactoring.
+ * @see Issue #194 - Refactor: 统一文件传输系统架构
  */
 
 export {
