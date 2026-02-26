@@ -65,27 +65,34 @@ async function sendMessageToFeishu(
   parentId?: string
 ): Promise<void> {
   const messageData: {
-    receive_id: string;
+    receive_id_type?: string;
     msg_type: string;
     content: string;
-    parent_id?: string;
   } = {
-    receive_id: chatId,
     msg_type: msgType,
     content,
   };
 
-  // Add parent_id for thread replies if provided
+  // When replying to a message, use reply method to properly quote the user's message
   if (parentId) {
-    messageData.parent_id = parentId;
+    await client.im.message.reply({
+      path: {
+        message_id: parentId,
+      },
+      data: messageData,
+    });
+  } else {
+    // New message: use create method with receive_id
+    await client.im.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: chatId,
+        ...messageData,
+      },
+    });
   }
-
-  await client.im.message.create({
-    params: {
-      receive_id_type: 'chat_id',
-    },
-    data: messageData,
-  });
 }
 
 /**
