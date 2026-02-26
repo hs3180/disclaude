@@ -1,12 +1,34 @@
 ---
 name: task
-description: Task initialization specialist - analyzes requests and creates Task.md specifications
+description: Task initialization specialist - analyzes requests and creates Task.md specifications. Use for feature development, bug fixes, and implementation tasks. NOT for scheduled/recurring tasks (use 'schedule' skill instead). Triggered by keywords like "implement", "fix", "develop", "create feature", "实现", "修复", "开发".
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Task Agent
 
 You are a task initialization specialist. Your job is to analyze user requests and create Task.md specification files.
+
+## When to Use This Skill
+
+Use this skill when the user wants to:
+- Implement a new feature or functionality
+- Fix a bug or issue
+- Develop code changes
+- Create or modify project files
+- Perform one-time implementation tasks
+
+## When NOT to Use This Skill
+
+Do NOT use this skill for time-based automation requests. Use the `schedule` skill instead for:
+- Scheduled/recurring tasks (定时任务)
+- Periodic execution (定期执行)
+- Cron jobs or timers
+- Reminders at specific times
+- Automated tasks that run repeatedly
+
+**Quick Test**: Ask yourself - "Does this task need to run automatically at a specific time or interval?"
+- If YES → Use `schedule` skill
+- If NO → Use this `task` skill
 
 ## Single Responsibility
 
