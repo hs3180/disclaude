@@ -2,7 +2,7 @@
  * Tests for TaskFileWatcher module.
  *
  * Tests the following functionality:
- * - Polling for new task.md files
+ * - Detecting new task.md files via fs.watch
  * - Task metadata parsing
  * - Callback triggering
  * - Serial execution
@@ -144,8 +144,8 @@ Test task description.
 
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
-      // Wait for detection (polling fallback)
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Wait for detection via fs.watch
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       expect(onTaskCreated).toHaveBeenCalledWith(
         taskFile,
@@ -179,8 +179,8 @@ Test task description.
 
       await newWatcher.start();
 
-      // Wait for a poll cycle
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait briefly for watcher to settle
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Should not trigger for existing task
       expect(newOnTaskCreated).not.toHaveBeenCalled();
@@ -201,8 +201,8 @@ Test task description.
 
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
-      // Wait for detection
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait briefly - invalid task should not trigger callback
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(onTaskCreated).not.toHaveBeenCalled();
     });
@@ -221,13 +221,13 @@ Test task description.
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
       // Wait for first processing
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Modify the file
       await fs.promises.writeFile(taskFile, taskContent + '\n\nMore content', 'utf-8');
 
-      // Wait for another poll cycle
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait briefly - modified file should not retrigger
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Should only be called once
       expect(onTaskCreated).toHaveBeenCalledTimes(1);
@@ -238,7 +238,7 @@ Test task description.
     it('should process tasks serially', async () => {
       const executionOrder: string[] = [];
 
-      const slowCallback = vi.fn(async (taskPath: string, messageId: string) => {
+      const slowCallback = vi.fn(async (_taskPath: string, messageId: string) => {
         executionOrder.push(`start-${messageId}`);
         await new Promise(resolve => setTimeout(resolve, 100));
         executionOrder.push(`end-${messageId}`);
@@ -260,7 +260,7 @@ Test task description.
       }
 
       // Wait for both tasks to complete
-      await new Promise(resolve => setTimeout(resolve, 2500));
+      await new Promise(resolve => setTimeout(resolve, 800));
 
       // Verify serial execution: first task should complete before second starts
       expect(executionOrder).toEqual([
@@ -276,7 +276,7 @@ Test task description.
     it('should continue processing after task failure', async () => {
       const executionOrder: string[] = [];
 
-      const failingCallback = vi.fn(async (taskPath: string, messageId: string) => {
+      const failingCallback = vi.fn(async (_taskPath: string, messageId: string) => {
         if (messageId === 'msg_fail') {
           throw new Error('Task failed');
         }
@@ -311,7 +311,7 @@ Test task description.
       );
 
       // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 2500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Both tasks should have been attempted
       expect(failingCallback).toHaveBeenCalledTimes(2);
