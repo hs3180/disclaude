@@ -1,5 +1,8 @@
 /**
- * Tests for Feishu attachment manager (src/feishu/attachment-manager.ts)
+ * Tests for AttachmentManager.
+ *
+ * Note: The AttachmentManager is now in src/core/attachment-manager.ts
+ * This test file remains in src/feishu/ for backward compatibility testing.
  *
  * Tests the following functionality:
  * - Adding attachments
@@ -9,6 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+// Import from the new location (core), but test the re-export from feishu for backward compatibility
 import { AttachmentManager, type FileAttachment } from './attachment-manager.js';
 
 describe('AttachmentManager', () => {
