@@ -30,6 +30,12 @@ vi.mock('../config/index.js', () => ({
     })),
     getGlobalEnv: vi.fn(() => ({})),
     getMcpServersConfig: vi.fn(() => null),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
   },
 }));
 

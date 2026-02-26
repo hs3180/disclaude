@@ -62,6 +62,7 @@ export class Config {
   static readonly LOG_FILE = fileConfigOnly.logging?.file;
   static readonly LOG_PRETTY = fileConfigOnly.logging?.pretty ?? true;
   static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
+  static readonly SDK_DEBUG = fileConfigOnly.logging?.sdkDebug ?? true;
 
   // Skills configuration - loaded from package installation directory
   static readonly SKILLS_DIR = Config.getBuiltinSkillsDir();
@@ -282,12 +283,14 @@ export class Config {
     file?: string;
     pretty: boolean;
     rotate: boolean;
+    sdkDebug: boolean;
   } {
     return {
       level: this.LOG_LEVEL,
       file: this.LOG_FILE,
       pretty: this.LOG_PRETTY,
       rotate: this.LOG_ROTATE,
+      sdkDebug: this.SDK_DEBUG,
     };
   }
 

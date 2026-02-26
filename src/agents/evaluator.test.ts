@@ -26,6 +26,12 @@ vi.mock('../config/index.js', () => ({
       provider: 'anthropic',
     })),
     getGlobalEnv: vi.fn(() => ({})),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
   },
 }));
 

@@ -150,7 +150,13 @@ export abstract class BaseAgent {
     }
 
     // Set environment
-    sdkOptions.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, Config.getGlobalEnv());
+    const loggingConfig = Config.getLoggingConfig();
+    sdkOptions.env = buildSdkEnv(
+      this.apiKey,
+      this.apiBaseUrl,
+      Config.getGlobalEnv(),
+      loggingConfig.sdkDebug
+    );
 
     // Set model
     if (this.model) {

@@ -92,6 +92,8 @@ export interface LoggingConfig {
   pretty?: boolean;
   /** Enable log rotation */
   rotate?: boolean;
+  /** Enable SDK debug logging and capture subprocess stderr */
+  sdkDebug?: boolean;
 }
 
 /**
