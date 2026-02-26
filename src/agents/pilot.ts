@@ -34,6 +34,7 @@ import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
 import { MessageChannel } from './message-channel.js';
+import { TOOL_FALLBACK_GUIDE } from '../config/tool-fallback-guide.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -430,6 +431,10 @@ When using send_file_to_feishu or send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
 
+---
+
+${TOOL_FALLBACK_GUIDE}
+
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
@@ -442,6 +447,10 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 When using send_file_to_feishu or send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
+
+---
+
+${TOOL_FALLBACK_GUIDE}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
