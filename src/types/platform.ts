@@ -19,9 +19,6 @@ export interface FeishuMessageEvent {
       name: string;
       tenant_key: string;
     }>;
-    parent_id?: string;
-    root_id?: string;
-    thread_id?: string;
   };
   sender: {
     sender_type?: string;
