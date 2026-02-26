@@ -53,6 +53,10 @@ export interface ExecNodeConfig {
   commUrl: string;
   /** Authentication token */
   authToken?: string;
+  /** Unique identifier for this execution node (auto-generated if not provided) */
+  nodeId?: string;
+  /** Human-readable name for this execution node */
+  nodeName?: string;
 }
 
 /**
@@ -144,5 +148,7 @@ export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
   return {
     commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,
+    nodeId: process.env.EXEC_NODE_ID,
+    nodeName: process.env.EXEC_NODE_NAME,
   };
 }

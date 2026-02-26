@@ -109,7 +109,7 @@ export interface OutgoingMessage {
 /**
  * Control command types.
  */
-export type ControlCommandType = 'reset' | 'restart' | 'status';
+export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node';
 
 /**
  * Control command from user to agent.
@@ -123,6 +123,9 @@ export interface ControlCommand {
 
   /** Additional command data */
   data?: Record<string, unknown>;
+
+  /** Target node ID for switch-node command */
+  targetNodeId?: string;
 }
 
 /**

@@ -28,8 +28,37 @@ export interface PromptMessage {
  */
 export interface CommandMessage {
   type: 'command';
-  command: 'reset' | 'restart';
+  command: 'reset' | 'restart' | 'list-nodes' | 'switch-node';
   chatId: string;
+  /** Target exec node ID for switch-node command */
+  targetNodeId?: string;
+}
+
+/**
+ * Message sent from Execution Node to Communication Node for registration.
+ */
+export interface RegisterMessage {
+  type: 'register';
+  /** Unique identifier for this exec node */
+  nodeId: string;
+  /** Human-readable name for this exec node */
+  name?: string;
+}
+
+/**
+ * Information about a connected execution node.
+ */
+export interface ExecNodeInfo {
+  /** Unique identifier */
+  nodeId: string;
+  /** Human-readable name */
+  name: string;
+  /** Connection status */
+  status: 'connected' | 'disconnected';
+  /** Number of active chats assigned */
+  activeChats: number;
+  /** Connection time */
+  connectedAt: Date;
 }
 
 /**

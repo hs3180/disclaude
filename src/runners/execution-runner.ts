@@ -18,7 +18,7 @@ import {
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../transport/file-client.js';
 
 const logger = createLogger('ExecRunner');
@@ -36,17 +36,23 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   const runnerConfig = config || getExecNodeConfig(globalArgs);
 
   // Get comm URL from config
-  const {commUrl} = runnerConfig;
+  const {commUrl, nodeId: configNodeId, nodeName} = runnerConfig;
   const reconnectInterval = 3000;
   let ws: WebSocket | undefined;
   let running = true;
   let reconnectTimer: NodeJS.Timeout | undefined;
 
-  logger.info({ commUrl }, 'Starting Execution Node');
+  // Generate or use configured node ID
+  const nodeId = configNodeId || `exec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const nodeDisplayName = nodeName || `ExecNode-${nodeId.slice(0, 8)}`;
+
+  logger.info({ commUrl, nodeId, nodeName: nodeDisplayName }, 'Starting Execution Node');
 
   console.log('Initializing Execution Node...');
   console.log('Mode: Execution (Pilot Agent + WebSocket Client)');
   console.log(`Comm URL: ${commUrl}`);
+  console.log(`Node ID: ${nodeId}`);
+  console.log(`Node Name: ${nodeDisplayName}`);
   console.log();
 
   // Create FileClient for file transfer with Communication Node
@@ -309,6 +315,16 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     ws.on('open', () => {
       logger.info('Connected to Communication Node');
       console.log('✓ Connected to Communication Node');
+
+      // Send registration message
+      const registerMsg: RegisterMessage = {
+        type: 'register',
+        nodeId,
+        name: nodeDisplayName,
+      };
+      ws!.send(JSON.stringify(registerMsg));
+      logger.info({ nodeId, name: nodeDisplayName }, 'Sent registration message');
+
       console.log();
     });
 
