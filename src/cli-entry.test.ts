@@ -47,21 +47,21 @@ describe('CLI Entry Point', () => {
 
     it('should detect comm mode', () => {
       const args = ['start', '--mode', 'comm'];
-      const mode = args[2];
+      const [, , mode] = args;
 
       expect(mode).toBe('comm');
     });
 
     it('should detect exec mode', () => {
       const args = ['start', '--mode', 'exec'];
-      const mode = args[2];
+      const [, , mode] = args;
 
       expect(mode).toBe('exec');
     });
 
     it('should detect missing mode argument', () => {
       const args = ['start'];
-      const mode = args[2];
+      const [, , mode] = args;
 
       expect(mode).toBeUndefined();
     });

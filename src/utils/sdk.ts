@@ -164,12 +164,12 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
       // Check for tool_use blocks in content
       const toolBlocks = apiMessage.content.filter(
-        (block) => block.type === 'tool_use'
+        (block: ContentBlock) => block.type === 'tool_use'
       );
 
       // Check for text blocks
       const textBlocks = apiMessage.content.filter(
-        (block) => block.type === 'text' && 'text' in block
+        (block: ContentBlock) => block.type === 'text' && 'text' in block
       );
 
       // Accumulate all content blocks (tool uses + text)
@@ -199,8 +199,8 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
       // Extract all text content
       const textParts = textBlocks
-        .filter((block) => 'text' in block)
-        .map((block) => (block as { text: string }).text);
+        .filter((block: ContentBlock) => 'text' in block)
+        .map((block: ContentBlock) => (block as { text: string }).text);
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));

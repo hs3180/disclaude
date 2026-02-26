@@ -9,7 +9,6 @@ import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
 import { AgentFactory } from '../agents/index.js';
-import type { Pilot } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, getExecNodeConfig, type ExecNodeConfig } from '../utils/cli-args.js';
 import {
@@ -72,21 +71,23 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
    * Uses AgentFactory for consistent configuration (Issue #129).
    */
   const sharedPilot = AgentFactory.createPilot({
-    sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
+    sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
       const ctx = activeFeedbackChannels.get(chatId);
       if (ctx) {
         ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
       } else {
         logger.warn({ chatId }, 'No active feedback channel for sendMessage');
       }
+      return Promise.resolve();
     },
-    sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
+    sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
       const ctx = activeFeedbackChannels.get(chatId);
       if (ctx) {
         ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
       } else {
         logger.warn({ chatId }, 'No active feedback channel for sendCard');
       }
+      return Promise.resolve();
     },
     sendFile: async (chatId: string, filePath: string) => {
       const ctx = activeFeedbackChannels.get(chatId);
@@ -119,7 +120,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
         });
       }
     },
-    onDone: async (chatId: string, threadMessageId?: string) => {
+    onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
       const ctx = activeFeedbackChannels.get(chatId);
       if (ctx) {
         ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
@@ -127,6 +128,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
       } else {
         logger.warn({ chatId }, 'No active feedback channel for onDone');
       }
+      return Promise.resolve();
     },
   });
 
@@ -138,7 +140,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     scheduleManager,
     pilot: sharedPilot,
     callbacks: {
-      sendMessage: async (chatId: string, text: string) => {
+      sendMessage: (chatId: string, text: string): Promise<void> => {
         const ctx = activeFeedbackChannels.get(chatId);
         if (ctx) {
           ctx.sendFeedback({ type: 'text', chatId, text });
@@ -149,11 +151,13 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             ws.send(JSON.stringify({ type: 'text', chatId, text }));
           }
         }
+        return Promise.resolve();
       },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string) => {
+      sendCard: (chatId: string, card: Record<string, unknown>, description?: string): Promise<void> => {
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'card', chatId, card, text: description }));
         }
+        return Promise.resolve();
       },
       sendFile: async (chatId: string, filePath: string) => {
         try {
@@ -204,26 +208,29 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   const taskFlowOrchestrator = new TaskFlowOrchestrator(
     taskTracker,
     {
-      sendMessage: async (chatId: string, text: string, threadMessageId?: string) => {
+      sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
         } else {
           logger.warn({ chatId }, 'Cannot send message: WebSocket not connected');
         }
+        return Promise.resolve();
       },
-      sendCard: async (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string) => {
+      sendCard: (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string): Promise<void> => {
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'card', chatId, card, threadId: threadMessageId }));
         } else {
           logger.warn({ chatId }, 'Cannot send card: WebSocket not connected');
         }
+        return Promise.resolve();
       },
-      sendFile: async (chatId: string, filePath: string) => {
+      sendFile: (chatId: string, filePath: string): Promise<void> => {
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
         } else {
           logger.warn({ chatId }, 'Cannot send file: WebSocket not connected');
         }
+        return Promise.resolve();
       },
     },
     logger

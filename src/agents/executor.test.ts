@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { TaskProgressEvent } from './executor.js';
 
 // Mock SDK
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({

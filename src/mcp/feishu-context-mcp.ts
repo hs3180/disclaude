@@ -130,9 +130,9 @@ function getCardValidationError(content: unknown): string {
   const obj = content as Record<string, unknown>;
   const missing: string[] = [];
 
-  if (!('config' in obj)) missing.push('config');
-  if (!('header' in obj)) missing.push('header');
-  if (!('elements' in obj)) missing.push('elements');
+  if (!('config' in obj)) {missing.push('config');}
+  if (!('header' in obj)) {missing.push('header');}
+  if (!('elements' in obj)) {missing.push('elements');}
 
   if (missing.length > 0) {
     return `missing required fields: ${missing.join(', ')}`;
@@ -293,7 +293,7 @@ export async function send_user_feedback(params: {
           return {
             success: false,
             error: `Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Parse failed'}`,
-            message: `❌ Content is not valid JSON. Expected a Feishu card object with: { config, header: { title }, elements: [] }`,
+            message: '❌ Content is not valid JSON. Expected a Feishu card object with: { config, header: { title }, elements: [] }',
           };
         }
       } else {
@@ -308,7 +308,7 @@ export async function send_user_feedback(params: {
         return {
           success: false,
           error: `Invalid content type: expected object or string, got ${actualType}`,
-          message: `❌ Invalid content type. Expected Feishu card object or JSON string.`,
+          message: '❌ Invalid content type. Expected Feishu card object or JSON string.',
         };
       }
     }

@@ -107,16 +107,6 @@ function parseScheduleFrontmatter(content: string): {
 }
 
 /**
- * Generate a slug from task name for file naming.
- */
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-') // Keep alphanumeric and Chinese
-    .replace(/^-+|-+$/g, ''); // Remove leading/trailing dashes
-}
-
-/**
  * Generate task ID from file name.
  */
 function generateTaskId(fileName: string): string {

@@ -191,9 +191,9 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     logger.info('FeishuChannel started');
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     if (this._status === 'stopped') {
-      return;
+      return Promise.resolve();
     }
 
     this._status = 'stopping';
@@ -207,6 +207,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     this._status = 'stopped';
     logger.info('FeishuChannel stopped');
+    return Promise.resolve();
   }
 
   isHealthy(): boolean {
@@ -287,14 +288,14 @@ export class FeishuChannel extends EventEmitter implements IChannel {
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
-    if (this._status !== 'running') return;
+    if (this._status !== 'running') {return;}
 
     this.getClient();
 
     const event = (data.event || data) as FeishuMessageEvent;
     const { message, sender } = event;
 
-    if (!message) return;
+    if (!message) {return;}
 
     const { message_id, chat_id, content, message_type, create_time, parent_id, root_id } = message;
 

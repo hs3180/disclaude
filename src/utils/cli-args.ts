@@ -70,7 +70,7 @@ function parseArgValue(args: string[], flag: string): string | undefined {
  * Parse an integer argument value.
  */
 function parseIntArg(value: string | undefined, defaultValue: number): number {
-  if (!value) return defaultValue;
+  if (!value) {return defaultValue;}
   const parsed = parseInt(value, 10);
   return isNaN(parsed) ? defaultValue : parsed;
 }

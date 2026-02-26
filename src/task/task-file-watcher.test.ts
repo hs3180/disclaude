@@ -228,7 +228,7 @@ Test task description.
       await new Promise(resolve => setTimeout(resolve, 150));
 
       // Modify the file
-      await fs.promises.writeFile(taskFile, taskContent + '\n\nMore content', 'utf-8');
+      await fs.promises.writeFile(taskFile, `${taskContent  }\n\nMore content`, 'utf-8');
 
       // Wait for another poll cycle
       await new Promise(resolve => setTimeout(resolve, 150));

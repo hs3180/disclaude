@@ -141,7 +141,7 @@ export class RestChannel extends EventEmitter implements IChannel {
     this.controlHandler = handler;
   }
 
-  async sendMessage(message: OutgoingMessage): Promise<void> {
+  sendMessage(message: OutgoingMessage): Promise<void> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal for sync mode
@@ -165,7 +165,7 @@ export class RestChannel extends EventEmitter implements IChannel {
 
         logger.debug({ chatId: message.chatId, messageId }, 'Task completed, sync response resolved');
       }
-      return;
+      return Promise.resolve();
     }
 
     // For sync mode: buffer text responses
@@ -179,12 +179,13 @@ export class RestChannel extends EventEmitter implements IChannel {
     // For streaming mode: this could be extended to use Server-Sent Events
     // Currently we just log the message
     logger.debug({ chatId: message.chatId, type: message.type }, 'Message sent through REST channel');
+    return Promise.resolve();
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
     if (this._status === 'running') {
       logger.warn('RestChannel already running');
-      return;
+      return Promise.resolve();
     }
 
     this._status = 'starting';
@@ -211,9 +212,9 @@ export class RestChannel extends EventEmitter implements IChannel {
     });
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     if (this._status === 'stopped') {
-      return;
+      return Promise.resolve();
     }
 
     this._status = 'stopping';
@@ -351,7 +352,7 @@ export class RestChannel extends EventEmitter implements IChannel {
 
     const chatId = chatRequest.chatId || uuidv4();
     const messageId = uuidv4();
-    const userId = chatRequest.userId;
+    const {userId} = chatRequest;
 
     logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
 

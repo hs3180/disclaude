@@ -35,7 +35,7 @@ function showHelp(): void {
   console.log('');
   console.log('═══════════════════════════════════════════════════');
   console.log('  Disclaude - Multi-platform Agent Bot');
-  console.log('  Version: ' + packageJson.version);
+  console.log(`  Version: ${  packageJson.version}`);
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Usage:');
