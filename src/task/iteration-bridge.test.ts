@@ -60,16 +60,6 @@ vi.mock('./file-manager.js', () => ({
   })),
 }));
 
-vi.mock('./skill-loader.js', () => ({
-  loadSkillOrThrow: vi.fn().mockResolvedValue({
-    name: 'evaluator',
-    description: 'Evaluator skill',
-    content: 'Evaluator skill content',
-    allowedTools: ['Read', 'Grep', 'Glob', 'Write'],
-    disableModelInvocation: false,
-  }),
-}));
-
 describe('IterationBridge (File-Driven Architecture)', () => {
   let bridge: IterationBridge;
   let config: IterationBridgeConfig;

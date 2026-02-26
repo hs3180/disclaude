@@ -48,14 +48,6 @@ vi.mock('../utils/logger.js', () => ({
   })),
 }));
 
-// Mock skill-loader
-vi.mock('../task/skill-loader.js', () => ({
-  loadSkillOrThrow: vi.fn().mockResolvedValue({
-    name: 'reporter',
-    allowedTools: ['send_user_feedback', 'send_file_to_feishu'],
-  }),
-}));
-
 // Mock feishu-context-mcp
 vi.mock('../mcp/feishu-context-mcp.js', () => ({
   feishuSdkMcpServer: {},
