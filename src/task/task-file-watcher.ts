@@ -6,7 +6,7 @@
  * Mode: Single coroutine serial execution
  * - Loop: find task → execute → wait (if no task)
  * - No queue, no concurrent execution
- * - Uses fs.watch when idle (no polling)
+ * - Uses fs.watch when idle (no polling when no work)
  */
 
 import * as fs from 'fs';
@@ -53,7 +53,7 @@ interface TaskMetadata {
  *   if (task) {
  *     await execute(task)
  *   } else {
- *     await waitForNewTask()  // fs.watch only, no polling
+ *     await waitForNewTask()  // fs.watch, no polling
  *   }
  * }
  * ```
