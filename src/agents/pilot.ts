@@ -326,11 +326,20 @@ export class Pilot extends BaseAgent {
 
   /**
    * Process the SDK iterator for a chatId.
+   *
+   * IMPORTANT: This method preserves conversation context by NOT deleting the Query
+   * when the iterator ends unexpectedly. Only explicit close (reset/clearQueue)
+   * removes the Query from the map.
+   *
+   * If the iterator ends without explicit close, we attempt to restart the agent loop
+   * and notify the user, preserving the conversation context.
    */
   private async processIterator(
     chatId: string,
     iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
   ): Promise<void> {
+    let iteratorError: Error | null = null;
+
     try {
       for await (const { parsed } of iterator) {
         // Send message content to callback
@@ -347,18 +356,39 @@ export class Pilot extends BaseAgent {
         }
       }
     } catch (error) {
-      const err = error as Error;
-      this.logger.error({ err, chatId }, 'Iterator error');
+      iteratorError = error as Error;
+      this.logger.error({ err: iteratorError, chatId }, 'Iterator error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, this.threadRoots.get(chatId));
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, this.threadRoots.get(chatId));
 
       if (this.callbacks.onDone) {
         await this.callbacks.onDone(chatId, this.threadRoots.get(chatId));
       }
-    } finally {
-      this.queries.delete(chatId);
-      this.logger.info({ chatId }, 'Agent loop completed');
     }
+
+    // Check if this was an explicit close (reset/clearQueue removed the Query)
+    // If Query is still in the map, it means the iterator ended unexpectedly
+    const wasExplicitClose = !this.queries.has(chatId);
+
+    if (wasExplicitClose) {
+      this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
+      return;
+    }
+
+    // Iterator ended without explicit close - this is unexpected
+    // Remove the stale Query and attempt to restart
+    this.queries.delete(chatId);
+    this.logger.warn({ chatId, error: iteratorError?.message }, 'Agent loop ended unexpectedly, attempting restart');
+
+    // Notify user about the restart
+    const restartMessage = iteratorError
+      ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
+      : '⚠️ 会话意外断开，正在重新连接...';
+    await this.callbacks.sendMessage(chatId, restartMessage, this.threadRoots.get(chatId));
+
+    // Restart the agent loop to preserve context for future messages
+    this.startAgentLoop(chatId);
+    this.logger.info({ chatId }, 'Agent loop restarted');
   }
 
   /**
@@ -468,13 +498,17 @@ You can read these files using the Read tool with the local paths above.`;
   /**
    * Clear all state for a chatId (close session and remove from map).
    *
+   * IMPORTANT: Deletes Query from map BEFORE closing, so processIterator
+   * can distinguish explicit close from unexpected iterator end.
+   *
    * @param chatId - Platform-specific chat identifier
    */
   clearQueue(chatId: string): void {
     const query = this.queries.get(chatId);
     if (query) {
-      query.close();
+      // Delete from map FIRST, so processIterator knows this is an explicit close
       this.queries.delete(chatId);
+      query.close();
     }
     this.threadRoots.delete(chatId);
     this.logger.debug({ chatId }, 'State cleared');
@@ -485,13 +519,17 @@ You can read these files using the Read tool with the local paths above.`;
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
    *
+   * IMPORTANT: Deletes Query from map BEFORE closing, so processIterator
+   * can distinguish explicit close from unexpected iterator end.
+   *
    * @param chatId - Platform-specific chat identifier
    */
   reset(chatId: string): void {
     const query = this.queries.get(chatId);
     if (query) {
-      query.close();
+      // Delete from map FIRST, so processIterator knows this is an explicit close
       this.queries.delete(chatId);
+      query.close();
       this.threadRoots.delete(chatId);
       this.logger.info({ chatId }, 'State reset for chatId');
     } else {
@@ -507,12 +545,15 @@ You can read these files using the Read tool with the local paths above.`;
   resetAll(): void {
     this.logger.info('Resetting all states');
 
-    for (const [, query] of this.queries) {
+    // Clear map FIRST, then close all queries
+    const queriesToClose = Array.from(this.queries.values());
+    this.queries.clear();
+    this.threadRoots.clear();
+
+    for (const query of queriesToClose) {
       query.close();
     }
 
-    this.queries.clear();
-    this.threadRoots.clear();
     this.logger.info('All states reset');
   }
 
@@ -530,13 +571,15 @@ You can read these files using the Read tool with the local paths above.`;
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info('Shutting down Pilot');
 
-    // Close all queries
-    for (const [, query] of this.queries) {
+    // Clear map FIRST, then close all queries
+    const queriesToClose = Array.from(this.queries.values());
+    this.queries.clear();
+    this.threadRoots.clear();
+
+    for (const query of queriesToClose) {
       query.close();
     }
 
-    this.queries.clear();
-    this.threadRoots.clear();
     this.logger.info('Pilot shutdown complete');
   }
 }
