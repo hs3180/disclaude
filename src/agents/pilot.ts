@@ -118,12 +118,10 @@ interface PerChatIdState {
   queryInstance?: Query;
   /** Whether this chatId is closed */
   closed: boolean;
-  /** Last activity timestamp */
-  lastActivity: number;
   /** Whether the Agent loop has been started */
   started: boolean;
-  /** Current thread root message ID for replies (the latest user message) */
-  currentThreadRootId?: string;
+  /** Current message ID being processed (for thread replies) */
+  currentMessageId?: string;
 }
 
 /**
@@ -261,15 +259,8 @@ export class Pilot extends BaseAgent {
     // Get or create state for this chatId (handles health check and restart)
     const state = this.getOrCreateState(chatId);
 
-    // Update last activity
-    state.lastActivity = Date.now();
-
-    // Set this message as the current thread root for replies
-    // All bot responses will be threaded to this user message
-    state.currentThreadRootId = messageId;
-    this.logger.debug({ chatId, messageId }, 'Set current thread root for replies');
-
     // Push message to the queue
+    // The messageId will be used as threadRootId when processing this message
     state.messageQueue.push({ text, messageId, senderOpenId, attachments });
 
     // Log health status for debugging
@@ -334,9 +325,8 @@ export class Pilot extends BaseAgent {
       messageResolver: undefined,
       queryInstance: undefined,
       closed: false,
-      lastActivity: Date.now(),
       started: false,
-      currentThreadRootId: undefined,
+      currentMessageId: undefined,
     };
 
     this.states.set(chatId, state);
@@ -474,6 +464,10 @@ You can read these files using the Read tool with the local paths above.`;
         }
         this.logger.debug({ messageId: msg.messageId }, 'Yielding message to Agent');
 
+        // Track current message ID for thread replies
+        // This is updated for each message processed
+        state.currentMessageId = msg.messageId;
+
         // Build user message with context
         const enhancedContent = this.buildEnhancedContent(chatId, msg);
 
@@ -568,12 +562,10 @@ You can read these files using the Read tool with the local paths above.`;
           break;
         }
 
-        // Update activity timestamp
-        state.lastActivity = Date.now();
-
         // Send message content to callback (with thread support)
+        // Uses currentMessageId which is set by messageGenerator for each message
         if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
+          await this.callbacks.sendMessage(chatId, parsed.content, state.currentMessageId);
         }
 
         // Check for completion - result type means current turn is done
@@ -584,7 +576,7 @@ You can read these files using the Read tool with the local paths above.`;
           this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
           // Signal completion to communication layer (e.g., REST sync mode)
           if (this.callbacks.onDone) {
-            await this.callbacks.onDone(chatId, state.currentThreadRootId);
+            await this.callbacks.onDone(chatId, state.currentMessageId);
           }
           // Continue the loop - messageGenerator will wait for next user message
         }
@@ -600,11 +592,11 @@ You can read these files using the Read tool with the local paths above.`;
       const err = error as Error;
       this.logger.error({ err, chatId }, 'Agent loop error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentThreadRootId);
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentMessageId);
 
       // Signal completion even on error
       if (this.callbacks.onDone) {
-        await this.callbacks.onDone(chatId, state.currentThreadRootId);
+        await this.callbacks.onDone(chatId, state.currentMessageId);
       }
 
       // Mark as restartable instead of deleting - preserve queue for next session

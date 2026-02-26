@@ -238,7 +238,7 @@ Test task description.
     it('should process tasks serially', async () => {
       const executionOrder: string[] = [];
 
-      const slowCallback = vi.fn(async (taskPath: string, messageId: string) => {
+      const slowCallback = vi.fn(async (_taskPath: string, messageId: string) => {
         executionOrder.push(`start-${messageId}`);
         await new Promise(resolve => setTimeout(resolve, 100));
         executionOrder.push(`end-${messageId}`);
@@ -276,7 +276,7 @@ Test task description.
     it('should continue processing after task failure', async () => {
       const executionOrder: string[] = [];
 
-      const failingCallback = vi.fn(async (taskPath: string, messageId: string) => {
+      const failingCallback = vi.fn(async (_taskPath: string, messageId: string) => {
         if (messageId === 'msg_fail') {
           throw new Error('Task failed');
         }
