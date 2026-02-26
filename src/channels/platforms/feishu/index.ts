@@ -11,6 +11,19 @@ export { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from './feish
 export { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 
+// File Transfer
+export {
+  downloadFile,
+  extractFileExtension,
+} from './feishu-file-downloader.js';
+export {
+  detectFileType,
+  uploadFile,
+  sendFileMessage,
+  uploadAndSendFile,
+  type UploadResult,
+} from './feishu-file-uploader.js';
+
 // Card Builders
 export {
   buildTextContent,

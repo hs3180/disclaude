@@ -8,8 +8,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { Config } from '../config/index.js';
-import { createLogger } from '../utils/logger.js';
+import { Config } from '../../../config/index.js';
+import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('FileDownloader');
 

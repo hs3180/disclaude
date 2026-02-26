@@ -16,7 +16,7 @@ import * as fs from 'fs/promises';
 import * as fsStream from 'fs';
 import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createLogger } from '../utils/logger.js';
+import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('FeishuFileUploader');
 

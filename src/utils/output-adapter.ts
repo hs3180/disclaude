@@ -284,7 +284,7 @@ export class FeishuOutputAdapter implements OutputAdapter {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { parseEditToolInput, buildUnifiedDiffCard } = await import('../feishu/diff-card-builder.js');
+      const { parseEditToolInput, buildUnifiedDiffCard } = await import('../channels/platforms/feishu/card-builders/diff-card-builder.js');
 
       const codeChange = parseEditToolInput(toolInput);
       logger.debug({ success: !!codeChange }, 'Parse edit tool input result');
@@ -326,7 +326,7 @@ export class FeishuOutputAdapter implements OutputAdapter {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { parseWriteToolInput, buildWriteContentCard } = await import('../feishu/write-card-builder.js');
+      const { parseWriteToolInput, buildWriteContentCard } = await import('../channels/platforms/feishu/card-builders/write-card-builder.js');
 
       const writeContent = parseWriteToolInput(toolInput);
       logger.debug({ success: !!writeContent }, 'Parse write tool input result');

@@ -53,13 +53,13 @@ vi.mock('./card-builders/content-builder.js', () => ({
   buildTextContent: vi.fn((text) => JSON.stringify({ text })),
 }));
 
-vi.mock('../../../feishu/message-logger.js', () => ({
+vi.mock('../../../core/message-logger.js', () => ({
   messageLogger: {
     logOutgoingMessage: vi.fn(),
   },
 }));
 
-vi.mock('../../../feishu/file-uploader.js', () => ({
+vi.mock('./feishu-file-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
@@ -132,7 +132,7 @@ describe('FeishuMessageSender', () => {
 
       await sender.sendText('chat_456', 'Test');
 
-      const { messageLogger } = await import('../../../feishu/message-logger.js');
+      const { messageLogger } = await import('../../../core/message-logger.js');
       expect(messageLogger.logOutgoingMessage).toHaveBeenCalledWith(
         'bot_msg_123',
         'chat_456',
@@ -199,7 +199,7 @@ describe('FeishuMessageSender', () => {
 
   describe('sendFile', () => {
     it('should send file successfully', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('./feishu-file-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(1024);
 
@@ -214,7 +214,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should send file with thread reply', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('./feishu-file-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(2048);
 
@@ -229,7 +229,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should handle file send error gracefully', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('./feishu-file-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockRejectedValue(new Error('Upload failed'));
 
@@ -240,11 +240,11 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should log outgoing file message', async () => {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('./feishu-file-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(5120);
 
-      const { messageLogger } = await import('../../../feishu/message-logger.js');
+      const { messageLogger } = await import('../../../core/message-logger.js');
 
       await sender.sendFile('chat_456', '/path/to/document.pdf');
 

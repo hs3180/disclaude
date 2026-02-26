@@ -11,7 +11,7 @@ import type { Logger } from 'pino';
 import type { IMessageSender } from '../../adapters/types.js';
 import { handleError, ErrorCategory } from '../../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
-import { messageLogger } from '../../../feishu/message-logger.js';
+import { messageLogger } from '../../../core/message-logger.js';
 
 /**
  * Feishu Message Sender Configuration.
@@ -131,7 +131,7 @@ export class FeishuMessageSender implements IMessageSender {
 
   async sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
     try {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('./feishu-file-uploader.js');
       const fileSize = await uploadAndSendFile(this.client, filePath, chatId, threadId);
 
       const fileName = path.basename(filePath);

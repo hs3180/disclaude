@@ -16,7 +16,7 @@ import {
   Scheduler,
   ScheduleFileWatcher,
 } from '../schedule/index.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
+import { TaskFlowOrchestrator } from '../core/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../transport/file-client.js';
