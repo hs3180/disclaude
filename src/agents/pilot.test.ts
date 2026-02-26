@@ -134,22 +134,6 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('clearQueue', () => {
-    it('should clear query', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['queries'].has('chat-123')).toBe(true);
-
-      pilot.clearQueue('chat-123');
-
-      expect(pilot['queries'].has('chat-123')).toBe(false);
-    });
-
-    it('should handle clearing non-existent query', () => {
-      // Should not throw
-      pilot.clearQueue('chat-nonexistent');
-    });
-  });
-
   describe('reset', () => {
     it('should reset specific chatId only', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
@@ -207,18 +191,6 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('resetAll', () => {
-    it('should clear all queries', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['queries'].size).toBe(2);
-
-      pilot.resetAll();
-
-      expect(pilot['queries'].size).toBe(0);
-    });
-  });
-
   describe('getActiveSessionCount', () => {
     it('should return 0 when no queries', () => {
       expect(pilot.getActiveSessionCount()).toBe(0);
@@ -235,6 +207,16 @@ describe('Pilot (Streaming Input)', () => {
   describe('shutdown', () => {
     it('should cleanup resources', async () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
+
+      await pilot.shutdown();
+
+      expect(pilot['queries'].size).toBe(0);
+    });
+
+    it('should clear all queries from multiple chatIds', async () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      pilot.processMessage('chat-456', 'Hi', 'msg-002');
+      expect(pilot['queries'].size).toBe(2);
 
       await pilot.shutdown();
 
