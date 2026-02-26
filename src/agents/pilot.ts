@@ -116,8 +116,6 @@ interface PerChatIdState {
   messageResolver?: (() => void);
   /** SDK Query instance */
   queryInstance?: Query;
-  /** Pending Write tool files */
-  pendingWriteFiles: Set<string>;
   /** Whether this chatId is closed */
   closed: boolean;
   /** Last activity timestamp */
@@ -211,9 +209,6 @@ export class Pilot extends BaseAgent {
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
 
-    // Track pending Write tool files for this execution
-    const pendingWriteFiles = new Set<string>();
-
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
       for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
@@ -221,46 +216,6 @@ export class Pilot extends BaseAgent {
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
           break;
-        }
-
-        // Track Write tool operations
-        const isWriteTool =
-          parsed.type === 'tool_use' && parsed.metadata?.toolName === 'Write';
-
-        if (isWriteTool && parsed.metadata?.toolInputRaw) {
-          const toolInput = parsed.metadata.toolInputRaw as Record<string, unknown>;
-          const filePath =
-            (toolInput.file_path || toolInput.filePath) as string | undefined;
-
-          if (filePath) {
-            pendingWriteFiles.add(filePath);
-            this.logger.debug({ filePath, chatId }, 'Write tool detected');
-          }
-        }
-
-        // Send file when Write tool completes
-        if (parsed.type === 'tool_result' && pendingWriteFiles.size > 0) {
-          const filePaths = Array.from(pendingWriteFiles);
-          pendingWriteFiles.clear();
-          this.logger.debug(
-            { fileCount: filePaths.length, chatId },
-            'Write tool completed'
-          );
-
-          for (const filePath of filePaths) {
-            try {
-              await this.callbacks.sendFile(chatId, filePath);
-              this.logger.info({ filePath, chatId }, 'File sent');
-            } catch (error) {
-              const err = error as Error;
-              this.logger.error({ err, filePath, chatId }, 'Failed to send file');
-              await this.callbacks.sendMessage(
-                chatId,
-                `❌ Failed to send file: ${filePath}`,
-                messageId // Use current message as thread root for CLI mode
-              );
-            }
-          }
         }
 
         // Send message content to callback (with thread support)
@@ -378,7 +333,6 @@ export class Pilot extends BaseAgent {
       messageQueue: [],
       messageResolver: undefined,
       queryInstance: undefined,
-      pendingWriteFiles: new Set(),
       closed: false,
       lastActivity: Date.now(),
       started: false,
@@ -617,46 +571,6 @@ You can read these files using the Read tool with the local paths above.`;
         // Update activity timestamp
         state.lastActivity = Date.now();
 
-        // Track Write tool operations
-        const isWriteTool =
-          parsed.type === 'tool_use' && parsed.metadata?.toolName === 'Write';
-
-        if (isWriteTool && parsed.metadata?.toolInputRaw) {
-          const toolInput = parsed.metadata.toolInputRaw as Record<string, unknown>;
-          const filePath =
-            (toolInput.file_path || toolInput.filePath) as string | undefined;
-
-          if (filePath) {
-            state.pendingWriteFiles.add(filePath);
-            this.logger.debug({ filePath, chatId }, 'Write tool detected');
-          }
-        }
-
-        // Send file when Write tool completes
-        if (parsed.type === 'tool_result' && state.pendingWriteFiles.size > 0) {
-          const filePaths = Array.from(state.pendingWriteFiles);
-          state.pendingWriteFiles.clear();
-          this.logger.debug(
-            { fileCount: filePaths.length, chatId },
-            'Write tool completed'
-          );
-
-          for (const filePath of filePaths) {
-            try {
-              await this.callbacks.sendFile(chatId, filePath);
-              this.logger.info({ filePath, chatId }, 'File sent');
-            } catch (error) {
-              const err = error as Error;
-              this.logger.error({ err, filePath, chatId }, 'Failed to send file');
-              await this.callbacks.sendMessage(
-                chatId,
-                `❌ Failed to send file: ${filePath}`,
-                state.currentThreadRootId
-              );
-            }
-          }
-        }
-
         // Send message content to callback (with thread support)
         if (parsed.content) {
           await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
@@ -697,17 +611,6 @@ You can read these files using the Read tool with the local paths above.`;
       state.started = false;
       state.closed = false; // Allow restart
     }
-  }
-
-  /**
-   * Check if an Agent session is active for a chatId.
-   *
-   * @param chatId - Platform-specific chat identifier
-   * @returns true if a session is active
-   */
-  hasActiveStream(chatId: string): boolean {
-    const state = this.states.get(chatId);
-    return state?.started === true && state.closed === false;
   }
 
   /**
@@ -753,22 +656,6 @@ You can read these files using the Read tool with the local paths above.`;
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
     }
-  }
-
-  /**
-   * Clear all pending files for a chatId.
-   *
-   * Note: In the new implementation, file tracking is internal to the state.
-   * This method is kept for API compatibility.
-   *
-   * @param chatId - Platform-specific chat identifier
-   */
-  clearPendingFiles(chatId: string): void {
-    const state = this.states.get(chatId);
-    if (state) {
-      state.pendingWriteFiles.clear();
-    }
-    this.logger.debug({ chatId }, 'Pending files cleared');
   }
 
   /**
