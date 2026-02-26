@@ -1,10 +1,12 @@
 /**
  * Task File Watcher - Triggers dialogue execution when Task.md is created.
  *
- * Watches the tasks/ directory for new task files and triggers the
- * Dialogue phase (Evaluator → Executor → Reporter) automatically.
+ * Watches the tasks/ directory for new task files using a simple serial loop.
  *
- * Uses polling-based scanning for cross-platform compatibility.
+ * Mode: Single coroutine serial execution
+ * - Loop: find task → execute → wait (if no task)
+ * - No queue, no concurrent execution
+ * - Uses fs.watch when idle (no polling)
  */
 
 import * as fs from 'fs';
@@ -15,12 +17,13 @@ const logger = createLogger('TaskFileWatcher');
 
 /**
  * Callback when a task file is created and ready for processing.
+ * Returns a Promise for serial execution.
  */
 export type OnTaskCreated = (
   taskPath: string,
   messageId: string,
   chatId: string
-) => void;
+) => Promise<void>;
 
 /**
  * TaskFileWatcher options.
@@ -28,10 +31,8 @@ export type OnTaskCreated = (
 export interface TaskFileWatcherOptions {
   /** Directory to watch (default: workspace/tasks) */
   tasksDir: string;
-  /** Callback when a task is created */
+  /** Callback when a task is created (async for serial execution) */
   onTaskCreated: OnTaskCreated;
-  /** Polling interval in ms (default: 1000) */
-  pollIntervalMs?: number;
 }
 
 /**
@@ -45,25 +46,34 @@ interface TaskMetadata {
 /**
  * TaskFileWatcher - Watches tasks directory for new Task.md files.
  *
- * When a new task.md file is detected, it parses the file to extract
- * message ID and chat ID, then triggers the dialogue phase.
- *
- * Uses polling for cross-platform compatibility (fs.watch recursive
- * is not available on all platforms).
+ * Simple serial execution mode:
+ * ```
+ * while (running) {
+ *   task = findNextTask()
+ *   if (task) {
+ *     await execute(task)
+ *   } else {
+ *     await waitForNewTask()  // fs.watch only, no polling
+ *   }
+ * }
+ * ```
  */
 export class TaskFileWatcher {
   private tasksDir: string;
   private onTaskCreated: OnTaskCreated;
-  private pollIntervalMs: number;
-  private pollTimer: NodeJS.Timeout | null = null;
   private running = false;
   /** Track processed tasks to avoid duplicates */
   private processedTasks: Set<string> = new Set();
+  /** fs.watch instance for idle waiting */
+  private watcher: fs.FSWatcher | null = null;
+  /** Resolver for wait promise */
+  private waitResolver: (() => void) | null = null;
+  /** Main loop promise for cleanup */
+  private loopPromise: Promise<void> | null = null;
 
   constructor(options: TaskFileWatcherOptions) {
     this.tasksDir = options.tasksDir;
     this.onTaskCreated = options.onTaskCreated;
-    this.pollIntervalMs = options.pollIntervalMs ?? 1000;
   }
 
   /**
@@ -83,28 +93,134 @@ export class TaskFileWatcher {
 
     this.running = true;
 
-    // Start polling
-    this.scheduleNextPoll();
+    // Start the main loop (fire and forget, runs in background)
+    this.loopPromise = this.mainLoop();
 
     logger.info(
-      { tasksDir: this.tasksDir, pollIntervalMs: this.pollIntervalMs },
-      'Task file watcher started (polling mode)'
+      { tasksDir: this.tasksDir },
+      'Task file watcher started (serial loop mode)'
     );
   }
 
   /**
-   * Schedule the next poll.
+   * Main loop - simple serial execution.
+   * Find task → execute → wait if no task.
    */
-  private scheduleNextPoll(): void {
-    if (!this.running) {return;}
+  private async mainLoop(): Promise<void> {
+    while (this.running) {
+      const task = await this.findNextTask();
 
-    this.pollTimer = setTimeout(() => {
-      this.poll().catch((error) => {
-        logger.error({ err: error }, 'Error during poll');
-      }).finally(() => {
-        this.scheduleNextPoll();
-      });
-    }, this.pollIntervalMs);
+      if (task) {
+        // Execute task (serial, await completion)
+        logger.info(
+          { messageId: task.metadata.messageId, chatId: task.metadata.chatId },
+          'Executing task'
+        );
+
+        try {
+          await this.onTaskCreated(
+            task.path,
+            task.metadata.messageId,
+            task.metadata.chatId
+          );
+          logger.info({ messageId: task.metadata.messageId }, 'Task completed');
+        } catch (error) {
+          logger.error(
+            { err: error, messageId: task.metadata.messageId },
+            'Task failed'
+          );
+        }
+        // Continue to next task immediately (no wait)
+      } else {
+        // No task found, wait for new file
+        await this.waitForNewTask();
+      }
+    }
+  }
+
+  /**
+   * Find the next unprocessed task.
+   * Returns null if no task found.
+   */
+  private async findNextTask(): Promise<{ path: string; metadata: TaskMetadata } | null> {
+    try {
+      const entries = await fs.promises.readdir(this.tasksDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const taskFile = path.join(this.tasksDir, entry.name, 'task.md');
+
+          // Skip if already processed
+          if (this.processedTasks.has(taskFile)) {
+            continue;
+          }
+
+          // Check if task.md exists
+          if (await this.fileExists(taskFile)) {
+            const metadata = await this.parseTaskFile(taskFile);
+
+            if (metadata) {
+              // Mark as processed immediately to prevent duplicate detection
+              this.processedTasks.add(taskFile);
+              return { path: taskFile, metadata };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Error finding next task');
+    }
+
+    return null;
+  }
+
+  /**
+   * Wait for a new task file to be created.
+   * Uses fs.watch for efficiency.
+   */
+  private async waitForNewTask(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.waitResolver = resolve;
+
+      try {
+        this.watcher = fs.watch(
+          this.tasksDir,
+          { recursive: true, persistent: false },
+          (eventType, filename) => {
+            // Check if it's a task.md file
+            if (filename && filename.endsWith('task.md')) {
+              this.stopWaiting();
+            }
+          }
+        );
+
+        this.watcher.on('error', (error) => {
+          logger.debug({ err: error }, 'fs.watch error, will retry on next cycle');
+          this.stopWaiting();
+        });
+
+        logger.debug('Waiting for new task (fs.watch)');
+      } catch {
+        // fs.watch recursive may not be available on all platforms
+        // Just resolve immediately and retry on next loop iteration
+        logger.debug('fs.watch unavailable, will retry');
+        resolve();
+      }
+    });
+  }
+
+  /**
+   * Stop waiting and clean up watcher.
+   */
+  private stopWaiting(): void {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+    if (this.waitResolver) {
+      this.waitResolver();
+      this.waitResolver = null;
+    }
   }
 
   /**
@@ -135,11 +251,7 @@ export class TaskFileWatcher {
    */
   stop(): void {
     this.running = false;
-
-    if (this.pollTimer) {
-      clearTimeout(this.pollTimer);
-      this.pollTimer = null;
-    }
+    this.stopWaiting();
 
     logger.info('Task file watcher stopped');
   }
@@ -149,46 +261,6 @@ export class TaskFileWatcher {
    */
   isRunning(): boolean {
     return this.running;
-  }
-
-  /**
-   * Poll for new tasks.
-   */
-  private async poll(): Promise<void> {
-    try {
-      const entries = await fs.promises.readdir(this.tasksDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const taskFile = path.join(this.tasksDir, entry.name, 'task.md');
-
-          // Skip if already processed
-          if (this.processedTasks.has(taskFile)) {
-            continue;
-          }
-
-          // Check if task.md exists
-          if (await this.fileExists(taskFile)) {
-            const metadata = await this.parseTaskFile(taskFile);
-
-            if (metadata) {
-              // Mark as processed
-              this.processedTasks.add(taskFile);
-
-              logger.info(
-                { messageId: metadata.messageId, chatId: metadata.chatId, taskFile },
-                'New task detected, triggering dialogue'
-              );
-
-              // Trigger dialogue
-              this.onTaskCreated(taskFile, metadata.messageId, metadata.chatId);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      logger.error({ err: error }, 'Error polling for tasks');
-    }
   }
 
   /**
