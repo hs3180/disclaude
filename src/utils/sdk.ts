@@ -7,6 +7,10 @@ import type {
   ContentBlock,
   ParsedSDKMessage,
 } from '../types/agent.js';
+import {
+  isRateLimitError,
+  generateFallbackErrorMessage,
+} from '../config/tool-fallback.js';
 
 /**
  * Get directory containing node executable.
@@ -276,8 +280,41 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
       if (message.subtype === 'error_during_execution' && 'errors' in message) {
         const errors = message.errors as string[];
+        const errorMessage = errors.join(', ');
+
+        // Check for rate limit errors and provide fallback suggestions
+        // Detect common tool names from error message patterns
+        let enhancedError = `❌ Error: ${errorMessage}`;
+
+        // Check for WebSearch rate limit
+        if (isRateLimitError('WebSearch', errorMessage) ||
+            errorMessage.toLowerCase().includes('search tool')) {
+          enhancedError = generateFallbackErrorMessage('WebSearch', errorMessage);
+        }
+        // Check for webReader rate limit
+        else if (isRateLimitError('mcp__web_reader__webReader', errorMessage) ||
+                 errorMessage.toLowerCase().includes('webreader') ||
+                 errorMessage.toLowerCase().includes('web reader')) {
+          enhancedError = generateFallbackErrorMessage('mcp__web_reader__webReader', errorMessage);
+        }
+        // Check for WebFetch rate limit
+        else if (isRateLimitError('WebFetch', errorMessage) ||
+                 errorMessage.toLowerCase().includes('fetch') ||
+                 errorMessage.toLowerCase().includes('webfetch')) {
+          enhancedError = generateFallbackErrorMessage('WebFetch', errorMessage);
+        }
+        // Generic rate limit check
+        else if (isRateLimitError('', errorMessage)) {
+          enhancedError = `⚠️ A tool rate limit was encountered: ${errorMessage}
+
+**Suggested alternatives:**
+- Try using Playwright browser automation (browser_navigate, browser_snapshot) instead
+- Use Bash with curl for simple HTTP requests
+- Wait for the rate limit to reset and try again later`;
+        }
+
         result.type = 'error';
-        result.content = `❌ Error: ${errors.join(', ')}`;
+        result.content = enhancedError;
         return result;
       }
 

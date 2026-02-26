@@ -15,6 +15,7 @@ import type { DisclaudeConfig, ConfigValidationError } from './types.js';
 // Export constants and types
 export * from './constants.js';
 export * from './tool-configuration.js';
+export * from './tool-fallback.js';
 export * from './types.js';
 export * from './loader.js';
 

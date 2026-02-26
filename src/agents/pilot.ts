@@ -29,7 +29,7 @@
  */
 
 import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
-import { Config } from '../config/index.js';
+import { Config, TOOL_FALLBACK_SYSTEM_PROMPT } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
@@ -440,6 +440,8 @@ When using send_file_to_feishu or send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
 
+---
+${TOOL_FALLBACK_SYSTEM_PROMPT}
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
@@ -452,7 +454,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 When using send_file_to_feishu or send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId}\` (for thread replies)
-
+${TOOL_FALLBACK_SYSTEM_PROMPT}
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
   }
