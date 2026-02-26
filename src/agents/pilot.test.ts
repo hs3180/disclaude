@@ -170,22 +170,6 @@ describe('Pilot (Streaming Input)', () => {
     });
   });
 
-  describe('clearPendingFiles', () => {
-    it('should clear pending files in state', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      // Add some pending files
-      state?.pendingWriteFiles.add('file1.txt');
-      state?.pendingWriteFiles.add('file2.txt');
-      expect(state?.pendingWriteFiles.size).toBe(2);
-
-      // Clear pending files
-      pilot.clearPendingFiles('chat-123');
-      expect(state?.pendingWriteFiles.size).toBe(0);
-    });
-  });
-
   describe('reset', () => {
     it('should reset specific chatId only', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
@@ -286,7 +270,6 @@ describe('Pilot (Streaming Input)', () => {
 
       expect(state).toBeDefined();
       expect(state?.messageQueue).toEqual(expect.any(Array));
-      expect(state?.pendingWriteFiles).toBeInstanceOf(Set);
       expect(state?.closed).toBe(false);
       expect(state?.started).toBe(true);
     });
