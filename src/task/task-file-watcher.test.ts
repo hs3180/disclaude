@@ -5,6 +5,7 @@
  * - Polling for new task.md files
  * - Task metadata parsing
  * - Callback triggering
+ * - Serial execution
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -34,7 +35,7 @@ describe('TaskFileWatcher', () => {
     tempDir = path.join('/tmp', `task-watcher-test-${Date.now()}`);
     await fs.promises.mkdir(tempDir, { recursive: true });
 
-    onTaskCreated = vi.fn();
+    onTaskCreated = vi.fn().mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -68,7 +69,6 @@ describe('TaskFileWatcher', () => {
       watcher = new TaskFileWatcher({
         tasksDir: tempDir,
         onTaskCreated,
-        pollIntervalMs: 50,
       });
 
       await watcher.start();
@@ -82,7 +82,6 @@ describe('TaskFileWatcher', () => {
       watcher = new TaskFileWatcher({
         tasksDir: tempDir,
         onTaskCreated,
-        pollIntervalMs: 50,
       });
 
       await watcher.start();
@@ -98,7 +97,6 @@ describe('TaskFileWatcher', () => {
       watcher = new TaskFileWatcher({
         tasksDir: nonExistentDir,
         onTaskCreated,
-        pollIntervalMs: 50,
       });
 
       await watcher.start();
@@ -118,7 +116,6 @@ describe('TaskFileWatcher', () => {
       watcher = new TaskFileWatcher({
         tasksDir: tempDir,
         onTaskCreated,
-        pollIntervalMs: 50, // Fast polling for tests
       });
 
       await watcher.start();
@@ -147,8 +144,8 @@ Test task description.
 
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
-      // Wait for polling
-      await new Promise(resolve => setTimeout(resolve, 150));
+      // Wait for detection (polling fallback)
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
       expect(onTaskCreated).toHaveBeenCalledWith(
         taskFile,
@@ -174,17 +171,16 @@ Test task description.
       // Stop and restart watcher
       watcher.stop();
 
-      const newOnTaskCreated = vi.fn();
+      const newOnTaskCreated = vi.fn().mockResolvedValue(undefined);
       const newWatcher = new TaskFileWatcher({
         tasksDir: tempDir,
         onTaskCreated: newOnTaskCreated,
-        pollIntervalMs: 50,
       });
 
       await newWatcher.start();
 
       // Wait for a poll cycle
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Should not trigger for existing task
       expect(newOnTaskCreated).not.toHaveBeenCalled();
@@ -205,8 +201,8 @@ Test task description.
 
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
-      // Wait for polling
-      await new Promise(resolve => setTimeout(resolve, 150));
+      // Wait for detection
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       expect(onTaskCreated).not.toHaveBeenCalled();
     });
@@ -225,16 +221,103 @@ Test task description.
       await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
 
       // Wait for first processing
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
       // Modify the file
       await fs.promises.writeFile(taskFile, taskContent + '\n\nMore content', 'utf-8');
 
       // Wait for another poll cycle
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Should only be called once
       expect(onTaskCreated).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Serial Execution', () => {
+    it('should process tasks serially', async () => {
+      const executionOrder: string[] = [];
+
+      const slowCallback = vi.fn(async (taskPath: string, messageId: string) => {
+        executionOrder.push(`start-${messageId}`);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        executionOrder.push(`end-${messageId}`);
+      });
+
+      watcher = new TaskFileWatcher({
+        tasksDir: tempDir,
+        onTaskCreated: slowCallback,
+      });
+
+      await watcher.start();
+
+      // Create two tasks quickly
+      for (let i = 1; i <= 2; i++) {
+        const taskDir = path.join(tempDir, `msg_task${i}`);
+        await fs.promises.mkdir(taskDir, { recursive: true });
+        const taskFile = path.join(taskDir, 'task.md');
+        await fs.promises.writeFile(taskFile, `**Task ID**: msg_task${i}\n**Chat ID**: chat${i}`, 'utf-8');
+      }
+
+      // Wait for both tasks to complete
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      // Verify serial execution: first task should complete before second starts
+      expect(executionOrder).toEqual([
+        'start-msg_task1',
+        'end-msg_task1',
+        'start-msg_task2',
+        'end-msg_task2',
+      ]);
+
+      watcher.stop();
+    });
+
+    it('should continue processing after task failure', async () => {
+      const executionOrder: string[] = [];
+
+      const failingCallback = vi.fn(async (taskPath: string, messageId: string) => {
+        if (messageId === 'msg_fail') {
+          throw new Error('Task failed');
+        }
+        executionOrder.push(messageId);
+      });
+
+      watcher = new TaskFileWatcher({
+        tasksDir: tempDir,
+        onTaskCreated: failingCallback,
+      });
+
+      await watcher.start();
+
+      // Create failing task first
+      const failDir = path.join(tempDir, 'msg_fail');
+      await fs.promises.mkdir(failDir, { recursive: true });
+      await fs.promises.writeFile(
+        path.join(failDir, 'task.md'),
+        '**Task ID**: msg_fail\n**Chat ID**: chat1',
+        'utf-8'
+      );
+
+      // Wait a bit then create success task
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const successDir = path.join(tempDir, 'msg_success');
+      await fs.promises.mkdir(successDir, { recursive: true });
+      await fs.promises.writeFile(
+        path.join(successDir, 'task.md'),
+        '**Task ID**: msg_success\n**Chat ID**: chat2',
+        'utf-8'
+      );
+
+      // Wait for processing
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      // Both tasks should have been attempted
+      expect(failingCallback).toHaveBeenCalledTimes(2);
+      expect(executionOrder).toContain('msg_success');
+
+      watcher.stop();
     });
   });
 });

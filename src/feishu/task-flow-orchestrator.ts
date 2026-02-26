@@ -8,8 +8,13 @@
  * - Message tracking and cleanup
  * - Error handling
  *
- * Architecture:
- * Task.md file created → TaskFileWatcher detects → executeDialoguePhase → Dialogue loop
+ * Architecture (Serial Loop):
+ * TaskFileWatcher loop: find task → execute (await) → wait (if no task)
+ *
+ * All tasks are processed serially, one at a time, to prevent:
+ * - Resource contention (API quota exhaustion)
+ * - Complex state tracking
+ * - Debugging difficulties with interleaved logs
  */
 
 import * as path from 'path';
@@ -32,9 +37,6 @@ export class TaskFlowOrchestrator {
   private logger: Logger;
   private fileWatcher: TaskFileWatcher;
 
-  // Track running background tasks for cleanup
-  private runningDialogueTasks: Map<string, Promise<unknown>> = new Map();
-
   constructor(
     _taskTracker: TaskTracker,
     messageCallbacks: MessageCallbacks,
@@ -43,14 +45,15 @@ export class TaskFlowOrchestrator {
     this.messageCallbacks = messageCallbacks;
     this.logger = logger;
 
-    // Initialize file watcher
+    // Initialize file watcher with serial execution callback
     const workspaceDir = Config.getWorkspaceDir();
     const tasksDir = path.join(workspaceDir, 'tasks');
 
     this.fileWatcher = new TaskFileWatcher({
       tasksDir,
       onTaskCreated: (taskPath, messageId, chatId) => {
-        this.executeDialoguePhase(chatId, messageId, taskPath);
+        // Serial execution: await is handled by TaskFileWatcher's main loop
+        return this.executeDialoguePhase(chatId, messageId, taskPath);
       },
     });
   }
@@ -60,7 +63,7 @@ export class TaskFlowOrchestrator {
    */
   async start(): Promise<void> {
     await this.fileWatcher.start();
-    this.logger.info('TaskFlowOrchestrator started with file watcher');
+    this.logger.info('TaskFlowOrchestrator started with file watcher (serial loop mode)');
   }
 
   /**
@@ -74,37 +77,35 @@ export class TaskFlowOrchestrator {
   /**
    * Execute dialogue phase for a task.
    *
-   * Triggered by TaskFileWatcher when a new Task.md is detected.
-   * The dialogue runs asynchronously in the background.
+   * This method is async and awaited by TaskFileWatcher to ensure
+   * serial execution - only one task runs at a time.
    *
    * @param chatId - Feishu chat ID
    * @param messageId - Unique message identifier
    * @param taskPath - Path to the Task.md file
    */
-  executeDialoguePhase(
+  async executeDialoguePhase(
     chatId: string,
     messageId: string,
     taskPath: string
-  ): void {
+  ): Promise<void> {
     const agentConfig = Config.getAgentConfig();
 
-    // Run dialogue asynchronously in background
-    void this.runDialogue(chatId, messageId, taskPath, agentConfig)
-      .catch((error) => {
-        this.logger.error({ err: error, chatId, messageId }, 'Async dialogue failed');
-        // Send error notification to user (as thread reply)
-        this.messageCallbacks.sendMessage(chatId, `❌ 后台任务执行失败: ${error instanceof Error ? error.message : String(error)}`, messageId)
-          .catch((sendError) => {
-            this.logger.error({ err: sendError }, 'Failed to send error notification');
-          });
-      })
-      .finally(() => {
-        // Clean up tracking
-        this.runningDialogueTasks.delete(messageId);
-        this.logger.debug({ messageId }, 'Async dialogue task completed and cleaned up');
-      });
+    this.logger.info({ messageId, chatId }, 'Dialogue phase started (serial mode)');
 
-    this.logger.info({ messageId, chatId }, 'Dialogue phase started async');
+    try {
+      await this.runDialogue(chatId, messageId, taskPath, agentConfig);
+    } catch (error) {
+      this.logger.error({ err: error, chatId, messageId }, 'Dialogue failed');
+      // Send error notification to user (as thread reply)
+      await this.messageCallbacks.sendMessage(
+        chatId,
+        `❌ 任务执行失败: ${error instanceof Error ? error.message : String(error)}`,
+        messageId
+      ).catch((sendError) => {
+        this.logger.error({ err: sendError }, 'Failed to send error notification');
+      });
+    }
   }
 
   /**
