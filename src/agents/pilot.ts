@@ -33,6 +33,7 @@ import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
+import { MessageChannel } from './message-channel.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -114,6 +115,8 @@ export class Pilot extends BaseAgent {
 
   // Per-chatId Query instances
   private queries = new Map<string, Query>();
+  // Per-chatId message channels
+  private channels = new Map<string, MessageChannel>();
   // Thread root IDs for replies
   private threadRoots = new Map<string, string>();
 
@@ -208,10 +211,10 @@ export class Pilot extends BaseAgent {
   /**
    * Process a message with the AI agent.
    *
-   * This method is non-blocking - it sends the message to the Query and returns immediately.
-   * The message will be processed by the Query instance for this chatId.
+   * This method is non-blocking - it pushes the message to the channel and returns immediately.
+   * The message will be processed by the SDK via the channel's generator.
    *
-   * If no Query exists for this chatId, one is created automatically.
+   * If no channel exists for this chatId, one is created automatically via startAgentLoop.
    *
    * @param chatId - Platform-specific chat identifier
    * @param text - User's message text
@@ -231,8 +234,8 @@ export class Pilot extends BaseAgent {
     // Store thread root for replies
     this.threadRoots.set(chatId, messageId);
 
-    // Get or create Query for this chatId
-    if (!this.queries.has(chatId)) {
+    // Get or create channel for this chatId
+    if (!this.channels.has(chatId)) {
       this.startAgentLoop(chatId);
     }
 
@@ -249,23 +252,17 @@ export class Pilot extends BaseAgent {
       session_id: '',
     };
 
-    // Send message directly via streamInput
-    const query = this.queries.get(chatId);
-    if (query) {
-      // Create an async iterable for single message
-      async function* singleMessage(): AsyncGenerator<SDKUserMessage> {
-        yield userMessage;
-      }
-      query.streamInput(singleMessage()).catch((err) => {
-        this.logger.error({ err, chatId }, 'Failed to send message via streamInput');
-      });
+    // Push message to channel - generator will yield it to SDK
+    const channel = this.channels.get(chatId);
+    if (channel) {
+      channel.push(userMessage);
     }
   }
 
   /**
    * Start the Agent loop for a chatId.
    *
-   * Creates a Query with an idle generator that waits for streamInput calls.
+   * Creates a MessageChannel and Query, using the channel's generator for streaming input.
    */
   private startAgentLoop(chatId: string): void {
     // Add MCP servers
@@ -295,24 +292,15 @@ export class Pilot extends BaseAgent {
       mcpServers,
     });
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with streaming input');
+    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with message channel');
 
-    // Create an idle generator that never yields on its own
-    // Messages are sent via streamInput()
-    async function* idleGenerator(): AsyncGenerator<SDKUserMessage> {
-      // This generator never yields - it just keeps the Query alive
-      // Messages are sent via query.streamInput()
-      yield* (async function* () {
-        // Keep alive forever - streamInput will send messages
-        while (true) {
-          await new Promise(() => {}); // Never resolves
-        }
-      })();
-    }
+    // Create message channel for this chatId
+    const channel = new MessageChannel();
+    this.channels.set(chatId, channel);
 
-    // Create streaming query
+    // Create streaming query using channel's generator
     const { query: queryInstance, iterator } = this.createQueryStream(
-      idleGenerator(),
+      channel.generator(),
       sdkOptions
     );
     this.queries.set(chatId, queryInstance);
@@ -321,15 +309,16 @@ export class Pilot extends BaseAgent {
     this.processIterator(chatId, iterator).catch((err) => {
       this.logger.error({ err, chatId }, 'Agent loop error');
       this.queries.delete(chatId);
+      this.channels.delete(chatId);
     });
   }
 
   /**
    * Process the SDK iterator for a chatId.
    *
-   * IMPORTANT: This method preserves conversation context by NOT deleting the Query
+   * IMPORTANT: This method preserves conversation context by NOT deleting the Query/Channel
    * when the iterator ends unexpectedly. Only explicit close (reset/clearQueue)
-   * removes the Query from the map.
+   * removes the Query and Channel from the maps.
    *
    * If the iterator ends without explicit close, we attempt to restart the agent loop
    * and notify the user, preserving the conversation context.
@@ -376,8 +365,9 @@ export class Pilot extends BaseAgent {
     }
 
     // Iterator ended without explicit close - this is unexpected
-    // Remove the stale Query and attempt to restart
+    // Remove the stale Query and Channel, then attempt to restart
     this.queries.delete(chatId);
+    this.channels.delete(chatId);
     this.logger.warn({ chatId, error: iteratorError?.message }, 'Agent loop ended unexpectedly, attempting restart');
 
     // Notify user about the restart
@@ -498,12 +488,19 @@ You can read these files using the Read tool with the local paths above.`;
   /**
    * Clear all state for a chatId (close session and remove from map).
    *
-   * IMPORTANT: Deletes Query from map BEFORE closing, so processIterator
+   * IMPORTANT: Deletes Query and Channel from map BEFORE closing, so processIterator
    * can distinguish explicit close from unexpected iterator end.
    *
    * @param chatId - Platform-specific chat identifier
    */
   clearQueue(chatId: string): void {
+    // Close channel first to stop generator
+    const channel = this.channels.get(chatId);
+    if (channel) {
+      this.channels.delete(chatId);
+      channel.close();
+    }
+
     const query = this.queries.get(chatId);
     if (query) {
       // Delete from map FIRST, so processIterator knows this is an explicit close
@@ -519,12 +516,19 @@ You can read these files using the Read tool with the local paths above.`;
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
    *
-   * IMPORTANT: Deletes Query from map BEFORE closing, so processIterator
+   * IMPORTANT: Deletes Query and Channel from map BEFORE closing, so processIterator
    * can distinguish explicit close from unexpected iterator end.
    *
    * @param chatId - Platform-specific chat identifier
    */
   reset(chatId: string): void {
+    // Close channel first to stop generator
+    const channel = this.channels.get(chatId);
+    if (channel) {
+      this.channels.delete(chatId);
+      channel.close();
+    }
+
     const query = this.queries.get(chatId);
     if (query) {
       // Delete from map FIRST, so processIterator knows this is an explicit close
@@ -544,6 +548,13 @@ You can read these files using the Read tool with the local paths above.`;
    */
   resetAll(): void {
     this.logger.info('Resetting all states');
+
+    // Close all channels first
+    const channelsToClose = Array.from(this.channels.values());
+    this.channels.clear();
+    for (const channel of channelsToClose) {
+      channel.close();
+    }
 
     // Clear map FIRST, then close all queries
     const queriesToClose = Array.from(this.queries.values());
@@ -570,6 +581,13 @@ You can read these files using the Read tool with the local paths above.`;
   async shutdown(): Promise<void> {
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info('Shutting down Pilot');
+
+    // Close all channels first
+    const channelsToClose = Array.from(this.channels.values());
+    this.channels.clear();
+    for (const channel of channelsToClose) {
+      channel.close();
+    }
 
     // Clear map FIRST, then close all queries
     const queriesToClose = Array.from(this.queries.values());
