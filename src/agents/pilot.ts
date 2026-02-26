@@ -2,24 +2,21 @@
  * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
  *
  * The Pilot class manages conversational AI interactions using Claude Agent SDK's
- * streaming input mode. It maintains persistent Agent instances per chatId, allowing
+ * streaming input mode. It maintains persistent Query instances per chatId, allowing
  * for context persistence across multiple user messages indefinitely.
  *
  * Key Features:
- * - Streaming Input Mode: Uses SDK's AsyncGenerator-based input for real-time interaction
- * - Per-chatId Agent Instances: Each chatId has its own persistent Agent instance
- * - Message Queue: Messages are queued and processed sequentially per chatId
+ * - Streaming Input Mode: Uses SDK's streamInput() for real-time message delivery
+ * - Per-chatId Query Instances: Each chatId has its own persistent Query instance
  * - Persistent Context: Session context persists until manual reset (/reset) or shutdown
  *
  * Architecture:
  * ```
  * User Message → Pilot.processMessage()
  *                    ↓
- *              Get/Create state for chatId
+ *              Get/Create Query for chatId
  *                    ↓
- *              Push message to queue
- *                    ↓
- *              Message queued → Generator yields → SDK processes
+ *              Query.streamInput() → SDK processes
  *                    ↓
  *              SDK output → Callbacks → Platform (Feishu/CLI)
  * ```
@@ -96,53 +93,29 @@ export interface PilotConfig extends BaseAgentConfig {
 }
 
 /**
- * Queued message waiting to be processed by the Agent.
+ * Message data for processing.
  */
-interface QueuedMessage {
+interface MessageData {
   text: string;
   messageId: string;
   senderOpenId?: string;
-  /** File attachments (if any) */
   attachments?: FileReference[];
-}
-
-/**
- * Per-chatId state for managing Agent instances.
- */
-interface PerChatIdState {
-  /** Message queue for streaming input */
-  messageQueue: QueuedMessage[];
-  /** Resolver for signaling new messages */
-  messageResolver?: (() => void);
-  /** SDK Query instance */
-  queryInstance?: Query;
-  /** Whether this chatId is closed */
-  closed: boolean;
-  /** Whether the Agent loop has been started */
-  started: boolean;
-  /** Current message ID being processed (for thread replies) */
-  currentMessageId?: string;
 }
 
 /**
  * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
  *
- * Manages conversational AI interactions via streaming SDK queries.
- * Each chatId gets its own persistent Agent instance that maintains
- * conversation context across multiple messages indefinitely.
- *
- * Session context is NOT automatically reset on inactivity - it persists
- * until manually reset via /reset command or application shutdown.
- *
- * Extends BaseAgent to inherit common functionality while adding
- * Pilot-specific features like per-chatId state management.
+ * Simplified implementation using SDK's streamInput() for message delivery.
+ * Each chatId gets its own persistent Query instance.
  */
 export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
   private readonly isCliMode: boolean;
 
-  // Per-chatId Agent states
-  private states = new Map<string, PerChatIdState>();
+  // Per-chatId Query instances
+  private queries = new Map<string, Query>();
+  // Thread root IDs for replies
+  private threadRoots = new Map<string, string>();
 
   constructor(config: PilotConfig) {
     super(config);
@@ -159,7 +132,7 @@ export class Pilot extends BaseAgent {
    * Execute a one-shot query (CLI mode).
    *
    * This method is blocking - it waits for the query to complete before returning.
-   * Uses direct string prompt instead of streaming input generator.
+   * Uses direct string prompt instead of streaming input.
    * No session state is maintained - each call is independent.
    *
    * @param chatId - Platform-specific chat identifier
@@ -235,11 +208,10 @@ export class Pilot extends BaseAgent {
   /**
    * Process a message with the AI agent.
    *
-   * This method is non-blocking - it queues the message and returns immediately.
-   * The message will be processed by the Agent instance for this chatId.
+   * This method is non-blocking - it sends the message to the Query and returns immediately.
+   * The message will be processed by the Query instance for this chatId.
    *
-   * If no Agent state exists for this chatId, one is created automatically.
-   * If the Agent loop is not healthy (closed or not started), it will be restarted.
+   * If no Query exists for this chatId, one is created automatically.
    *
    * @param chatId - Platform-specific chat identifier
    * @param text - User's message text
@@ -256,87 +228,137 @@ export class Pilot extends BaseAgent {
   ): void {
     this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
 
-    // Get or create state for this chatId (handles health check and restart)
-    const state = this.getOrCreateState(chatId);
+    // Store thread root for replies
+    this.threadRoots.set(chatId, messageId);
 
-    // Push message to the queue
-    // The messageId will be used as threadRootId when processing this message
-    state.messageQueue.push({ text, messageId, senderOpenId, attachments });
-
-    // Log health status for debugging
-    if (state.closed || !state.started) {
-      this.logger.warn(
-        { chatId, closed: state.closed, started: state.started },
-        'Loop not healthy, restart triggered by getOrCreateState'
-      );
+    // Get or create Query for this chatId
+    if (!this.queries.has(chatId)) {
+      this.startAgentLoop(chatId);
     }
 
-    // Signal the generator that a new message is available
-    if (state.messageResolver) {
-      state.messageResolver();
+    // Build the user message
+    const enhancedContent = this.buildEnhancedContent(chatId, { text, messageId, senderOpenId, attachments });
+
+    const userMessage: SDKUserMessage = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: enhancedContent,
+      },
+      parent_tool_use_id: null,
+      session_id: '',
+    };
+
+    // Send message directly via streamInput
+    const query = this.queries.get(chatId);
+    if (query) {
+      // Create an async iterable for single message
+      async function* singleMessage(): AsyncGenerator<SDKUserMessage> {
+        yield userMessage;
+      }
+      query.streamInput(singleMessage()).catch((err) => {
+        this.logger.error({ err, chatId }, 'Failed to send message via streamInput');
+      });
     }
   }
 
   /**
-   * Get or create a PerChatIdState for a chatId.
+   * Start the Agent loop for a chatId.
    *
-   * Handles three scenarios:
-   * 1. Existing state is active → reuse
-   * 2. Existing state is not started → start it
-   * 3. Existing state is closed → restart (preserve queued messages)
-   * 4. No existing state → create new
+   * Creates a Query with an idle generator that waits for streamInput calls.
    */
-  private getOrCreateState(chatId: string): PerChatIdState {
-    const existing = this.states.get(chatId);
+  private startAgentLoop(chatId: string): void {
+    // Add MCP servers
+    const mcpServers: Record<string, unknown> = {};
 
-    if (existing) {
-      // Already active → reuse
-      if (!existing.closed && existing.started) {
-        this.logger.debug({ chatId }, 'Reusing existing active state');
-        return existing;
-      }
+    // Only add Feishu MCP server if NOT in CLI mode
+    if (!this.isCliMode) {
+      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
+    }
 
-      // Exists but not started → start it
-      if (!existing.started && !existing.closed) {
-        this.logger.info({ chatId }, 'Starting existing idle state');
-        this.startAgentLoop(chatId).catch((err) => {
-          this.logger.error({ err, chatId }, 'Failed to start Agent loop');
-        });
-        return existing;
-      }
-
-      // Exists but closed → restart (preserve queued messages)
-      if (existing.closed) {
-        this.logger.info({ chatId }, 'Restarting closed state');
-        existing.closed = false;
-        existing.started = false;
-        this.startAgentLoop(chatId).catch((err) => {
-          this.logger.error({ err, chatId }, 'Failed to restart Agent loop');
-        });
-        return existing;
+    // Merge configured external MCP servers from config file
+    const configuredMcpServers = Config.getMcpServersConfig();
+    if (configuredMcpServers) {
+      for (const [name, config] of Object.entries(configuredMcpServers)) {
+        mcpServers[name] = {
+          type: 'stdio',
+          command: config.command,
+          args: config.args || [],
+          ...(config.env && { env: config.env }),
+        };
       }
     }
 
-    // Create new state
-    this.logger.info({ chatId }, 'Creating new state');
-
-    const state: PerChatIdState = {
-      messageQueue: [],
-      messageResolver: undefined,
-      queryInstance: undefined,
-      closed: false,
-      started: false,
-      currentMessageId: undefined,
-    };
-
-    this.states.set(chatId, state);
-
-    // Start the Agent loop
-    this.startAgentLoop(chatId).catch((err) => {
-      this.logger.error({ err, chatId }, 'Failed to start Agent loop');
+    // Build SDK options using BaseAgent's createSdkOptions
+    const sdkOptions = this.createSdkOptions({
+      disallowedTools: ['AskUserQuestion'],
+      mcpServers,
     });
 
-    return state;
+    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with streaming input');
+
+    // Create an idle generator that never yields on its own
+    // Messages are sent via streamInput()
+    async function* idleGenerator(): AsyncGenerator<SDKUserMessage> {
+      // This generator never yields - it just keeps the Query alive
+      // Messages are sent via query.streamInput()
+      yield* (async function* () {
+        // Keep alive forever - streamInput will send messages
+        while (true) {
+          await new Promise(() => {}); // Never resolves
+        }
+      })();
+    }
+
+    // Create streaming query
+    const { query: queryInstance, iterator } = this.createQueryStream(
+      idleGenerator(),
+      sdkOptions
+    );
+    this.queries.set(chatId, queryInstance);
+
+    // Process SDK messages in background
+    this.processIterator(chatId, iterator).catch((err) => {
+      this.logger.error({ err, chatId }, 'Agent loop error');
+      this.queries.delete(chatId);
+    });
+  }
+
+  /**
+   * Process the SDK iterator for a chatId.
+   */
+  private async processIterator(
+    chatId: string,
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
+  ): Promise<void> {
+    try {
+      for await (const { parsed } of iterator) {
+        // Send message content to callback
+        if (parsed.content) {
+          await this.callbacks.sendMessage(chatId, parsed.content, this.threadRoots.get(chatId));
+        }
+
+        // Check for completion
+        if (parsed.type === 'result') {
+          this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
+          if (this.callbacks.onDone) {
+            await this.callbacks.onDone(chatId, this.threadRoots.get(chatId));
+          }
+        }
+      }
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error({ err, chatId }, 'Iterator error');
+
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, this.threadRoots.get(chatId));
+
+      if (this.callbacks.onDone) {
+        await this.callbacks.onDone(chatId, this.threadRoots.get(chatId));
+      }
+    } finally {
+      this.queries.delete(chatId);
+      this.logger.info({ chatId }, 'Agent loop completed');
+    }
   }
 
   /**
@@ -347,7 +369,7 @@ export class Pilot extends BaseAgent {
    * - Append minimal context AFTER the command for skill to extract
    * - Do NOT wrap with system prompt template
    */
-  private buildEnhancedContent(chatId: string, msg: QueuedMessage): string {
+  private buildEnhancedContent(chatId: string, msg: MessageData): string {
     // Check if this is a skill command (starts with /)
     const isSkillCommand = msg.text.trimStart().startsWith('/');
 
@@ -444,184 +466,17 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Message generator for SDK streaming input.
-   *
-   * This AsyncGenerator yields messages from the queue, waiting
-   * for new messages when the queue is empty.
-   */
-  private async *messageGenerator(chatId: string): AsyncGenerator<SDKUserMessage> {
-    const state = this.states.get(chatId);
-    if (!state) {
-      return;
-    }
-
-    while (!state.closed) {
-      // Yield all queued messages
-      while (state.messageQueue.length > 0) {
-        const msg = state.messageQueue.shift();
-        if (!msg) {
-          break;
-        }
-        this.logger.debug({ messageId: msg.messageId }, 'Yielding message to Agent');
-
-        // Track current message ID for thread replies
-        // This is updated for each message processed
-        state.currentMessageId = msg.messageId;
-
-        // Build user message with context
-        const enhancedContent = this.buildEnhancedContent(chatId, msg);
-
-        yield {
-          type: 'user',
-          message: {
-            role: 'user',
-            content: enhancedContent,
-          },
-          parent_tool_use_id: null,
-          session_id: '', // Empty string - SDK handles session internally
-        };
-      }
-
-      // If closed, stop the generator
-      if (state.closed) {
-        return;
-      }
-
-      // Wait for new messages
-      await new Promise<void>((resolve) => {
-        state.messageResolver = resolve;
-      });
-      state.messageResolver = undefined;
-    }
-  }
-
-  /**
-   * Main Agent loop - processes SDK messages.
-   *
-   * On completion or error, the state is marked as restartable (started=false, closed=false)
-   * to allow automatic recovery on the next processMessage call.
-   * Queued messages are preserved for the next session.
-   */
-  private async startAgentLoop(chatId: string): Promise<void> {
-    const state = this.states.get(chatId);
-    if (!state) {
-      return;
-    }
-
-    // Prevent duplicate starts
-    if (state.started) {
-      this.logger.warn({ chatId }, 'Agent loop already started');
-      return;
-    }
-
-    state.started = true;
-    state.closed = false;
-
-    // Add MCP servers
-    // Start with internal SDK MCP servers
-    const mcpServers: Record<string, unknown> = {};
-
-    // Only add Feishu MCP server if NOT in CLI mode
-    // CLI mode doesn't need Feishu integration (no Feishu API calls)
-    if (!this.isCliMode) {
-      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
-    }
-
-    // Merge configured external MCP servers from config file
-    const configuredMcpServers = Config.getMcpServersConfig();
-    if (configuredMcpServers) {
-      for (const [name, config] of Object.entries(configuredMcpServers)) {
-        mcpServers[name] = {
-          type: 'stdio',
-          command: config.command,
-          args: config.args || [],
-          ...(config.env && { env: config.env }),
-        };
-      }
-    }
-
-    // Build SDK options using BaseAgent's createSdkOptions
-    const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['AskUserQuestion'],
-      mcpServers,
-    });
-
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with streaming input');
-
-    try {
-      // Create streaming query using BaseAgent's createQueryStream
-      const { query: queryInstance, iterator } = this.createQueryStream(
-        this.messageGenerator(chatId),
-        sdkOptions
-      );
-      state.queryInstance = queryInstance;
-
-      // Process SDK messages
-      for await (const { parsed } of iterator) {
-        if (state.closed) {
-          break;
-        }
-
-        // Send message content to callback (with thread support)
-        // Uses currentMessageId which is set by messageGenerator for each message
-        if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content, state.currentMessageId);
-        }
-
-        // Check for completion - result type means current turn is done
-        // Do NOT break here to preserve conversation context across multiple turns.
-        // The loop continues waiting for the next message from messageGenerator,
-        // keeping the same Query instance alive (fixes issue #120 - context loss).
-        if (parsed.type === 'result') {
-          this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
-          // Signal completion to communication layer (e.g., REST sync mode)
-          if (this.callbacks.onDone) {
-            await this.callbacks.onDone(chatId, state.currentMessageId);
-          }
-          // Continue the loop - messageGenerator will wait for next user message
-        }
-      }
-
-      // Loop exited normally (state.closed or iterator exhausted)
-      this.logger.info({ chatId, closed: state.closed }, 'Agent loop completed');
-
-      // Mark as restartable - preserve queue for next session
-      state.started = false;
-      // Keep closed as-is (may be true from clearQueue/resetAll, or false for iterator exhaustion)
-    } catch (error) {
-      const err = error as Error;
-      this.logger.error({ err, chatId }, 'Agent loop error');
-
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentMessageId);
-
-      // Signal completion even on error
-      if (this.callbacks.onDone) {
-        await this.callbacks.onDone(chatId, state.currentMessageId);
-      }
-
-      // Mark as restartable instead of deleting - preserve queue for next session
-      state.started = false;
-      state.closed = false; // Allow restart
-    }
-  }
-
-  /**
    * Clear all state for a chatId (close session and remove from map).
    *
    * @param chatId - Platform-specific chat identifier
    */
   clearQueue(chatId: string): void {
-    const state = this.states.get(chatId);
-    if (state) {
-      state.closed = true;
-      if (state.messageResolver) {
-        state.messageResolver();
-      }
-      if (state.queryInstance) {
-        state.queryInstance.close();
-      }
+    const query = this.queries.get(chatId);
+    if (query) {
+      query.close();
+      this.queries.delete(chatId);
     }
-    this.states.delete(chatId);
+    this.threadRoots.delete(chatId);
     this.logger.debug({ chatId }, 'State cleared');
   }
 
@@ -629,21 +484,15 @@ You can read these files using the Read tool with the local paths above.`;
    * Reset state for a specific chatId (close session and remove from map).
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
-   * Unlike clearQueue, this method logs the reset for better observability.
    *
    * @param chatId - Platform-specific chat identifier
    */
   reset(chatId: string): void {
-    const state = this.states.get(chatId);
-    if (state) {
-      state.closed = true;
-      if (state.messageResolver) {
-        state.messageResolver();
-      }
-      if (state.queryInstance) {
-        state.queryInstance.close();
-      }
-      this.states.delete(chatId);
+    const query = this.queries.get(chatId);
+    if (query) {
+      query.close();
+      this.queries.delete(chatId);
+      this.threadRoots.delete(chatId);
       this.logger.info({ chatId }, 'State reset for chatId');
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
@@ -654,36 +503,24 @@ You can read these files using the Read tool with the local paths above.`;
    * Reset all states (close all and start fresh).
    *
    * WARNING: This resets ALL chatIds. Use reset(chatId) for single chat reset.
-   * This is useful for admin commands or shutdown scenarios.
    */
   resetAll(): void {
     this.logger.info('Resetting all states');
 
-    for (const [, state] of this.states) {
-      state.closed = true;
-      if (state.messageResolver) {
-        state.messageResolver();
-      }
-      if (state.queryInstance) {
-        state.queryInstance.close();
-      }
+    for (const [, query] of this.queries) {
+      query.close();
     }
 
-    this.states.clear();
+    this.queries.clear();
+    this.threadRoots.clear();
     this.logger.info('All states reset');
   }
 
   /**
-   * Get the number of active states.
+   * Get the number of active sessions.
    */
   getActiveSessionCount(): number {
-    let count = 0;
-    for (const state of this.states.values()) {
-      if (state.started && !state.closed) {
-        count++;
-      }
-    }
-    return count;
+    return this.queries.size;
   }
 
   /**
@@ -693,18 +530,13 @@ You can read these files using the Read tool with the local paths above.`;
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info('Shutting down Pilot');
 
-    // Close all states
-    for (const [, state] of this.states) {
-      state.closed = true;
-      if (state.messageResolver) {
-        state.messageResolver();
-      }
-      if (state.queryInstance) {
-        state.queryInstance.close();
-      }
+    // Close all queries
+    for (const [, query] of this.queries) {
+      query.close();
     }
 
-    this.states.clear();
+    this.queries.clear();
+    this.threadRoots.clear();
     this.logger.info('Pilot shutdown complete');
   }
 }
