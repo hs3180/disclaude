@@ -19,7 +19,7 @@ import http from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
+import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
@@ -74,9 +74,6 @@ export class CommunicationNode extends EventEmitter {
 
   // Registered channels
   private channels: Map<string, IChannel> = new Map();
-
-  // Channel routing: chatId -> channelId
-  private chatToChannel: Map<string, string> = new Map();
 
   // File storage service
   private fileStorageService?: FileStorageService;
@@ -259,9 +256,6 @@ export class CommunicationNode extends EventEmitter {
    * Handle message from a channel.
    */
   private async handleChannelMessage(channelId: string, message: IncomingMessage): Promise<void> {
-    // Route chat to channel
-    this.chatToChannel.set(message.chatId, channelId);
-
     // Process attachments if present
     let attachments: FileReference[] | undefined;
     if (message.attachments && message.attachments.length > 0 && this.fileStorageService) {
@@ -381,16 +375,8 @@ export class CommunicationNode extends EventEmitter {
           break;
         case 'done':
           logger.info({ chatId }, 'Execution completed');
-          // Notify channel that task is done (important for REST sync mode)
-          {
-            const channelId = this.chatToChannel.get(chatId);
-            if (channelId) {
-              const channel = this.channels.get(channelId);
-              if (channel) {
-                await channel.sendMessage({ type: 'done', chatId, threadId });
-              }
-            }
-          }
+          // Broadcast done signal to all channels (important for REST sync mode)
+          await this.broadcastToChannels({ type: 'done', chatId, threadId });
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');
@@ -403,22 +389,11 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Send a text message to the appropriate channel.
+   * Send a text message to all channels (broadcast mode).
+   * Each channel will handle the message if it recognizes the chatId.
    */
   async sendMessage(chatId: string, text: string, threadMessageId?: string): Promise<void> {
-    const channelId = this.chatToChannel.get(chatId);
-    if (!channelId) {
-      logger.warn({ chatId }, 'No channel found for chat');
-      return;
-    }
-
-    const channel = this.channels.get(channelId);
-    if (!channel) {
-      logger.warn({ chatId, channelId }, 'Channel not found');
-      return;
-    }
-
-    await channel.sendMessage({
+    await this.broadcastToChannels({
       chatId,
       type: 'text',
       text,
@@ -427,7 +402,8 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Send an interactive card to the appropriate channel.
+   * Send an interactive card to all channels (broadcast mode).
+   * Each channel will handle the message if it recognizes the chatId.
    */
   async sendCard(
     chatId: string,
@@ -435,19 +411,7 @@ export class CommunicationNode extends EventEmitter {
     description?: string,
     threadMessageId?: string
   ): Promise<void> {
-    const channelId = this.chatToChannel.get(chatId);
-    if (!channelId) {
-      logger.warn({ chatId }, 'No channel found for chat');
-      return;
-    }
-
-    const channel = this.channels.get(channelId);
-    if (!channel) {
-      logger.warn({ chatId, channelId }, 'Channel not found');
-      return;
-    }
-
-    await channel.sendMessage({
+    await this.broadcastToChannels({
       chatId,
       type: 'card',
       card,
@@ -457,26 +421,51 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Send a file to the appropriate channel.
+   * Send a file to all channels (broadcast mode).
+   * Each channel will handle the message if it recognizes the chatId.
    */
   async sendFileToUser(chatId: string, filePath: string, _threadId?: string): Promise<void> {
-    const channelId = this.chatToChannel.get(chatId);
-    if (!channelId) {
-      logger.warn({ chatId }, 'No channel found for chat');
-      return;
-    }
-
-    const channel = this.channels.get(channelId);
-    if (!channel) {
-      logger.warn({ chatId, channelId }, 'Channel not found');
-      return;
-    }
-
     // TODO: Pass threadId when Issue #68 is implemented
-    await channel.sendMessage({
+    await this.broadcastToChannels({
       chatId,
       type: 'file',
       filePath,
+    });
+  }
+
+  /**
+   * Broadcast a message to all registered channels.
+   * Uses Promise.allSettled to ensure one channel's failure doesn't affect others.
+   */
+  private async broadcastToChannels(message: OutgoingMessage): Promise<void> {
+    if (this.channels.size === 0) {
+      logger.warn({ chatId: message.chatId }, 'No channels registered');
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      Array.from(this.channels.values()).map(async (channel) => {
+        try {
+          await channel.sendMessage(message);
+        } catch (error) {
+          logger.warn(
+            { channelId: channel.id, chatId: message.chatId, error },
+            'Channel failed to send message'
+          );
+          throw error;
+        }
+      })
+    );
+
+    // Log any failures
+    const channelArray = Array.from(this.channels.values());
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        logger.warn(
+          { channelId: channelArray[index].id, chatId: message.chatId },
+          'Message delivery failed'
+        );
+      }
     });
   }
 
