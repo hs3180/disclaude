@@ -1,12 +1,29 @@
 ---
 name: schedule
-description: Schedule management specialist. Use when user wants to create, view, modify, or delete schedules. Triggered by keywords like "schedule", "timer", "cron", "定时任务", "提醒".
+description: Schedule management specialist. Use when user wants to create, view, modify, or delete schedules. Triggered by keywords like "schedule", "timer", "cron", "定时任务", "提醒", "每天", "每周", "每月", "定期执行". NOT for one-time tasks - use 'task' skill instead.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
 # Schedule Manager
 
 Manage schedules with full CRUD operations.
+
+## 🎯 When to Use This Skill
+
+Use this skill when the user wants:
+- **定时任务** (scheduled/recurring tasks)
+- **定时执行** (execute at specific times)
+- **每天/每周/每月** (daily/weekly/monthly execution)
+- **cron 表达式** (cron expressions)
+- **提醒/闹钟** (reminders/alarms)
+- **timer/计时器** (timers)
+
+## ⚠️ DO NOT Use This Skill For
+
+One-time tasks or general feature requests. Use the **task** skill instead:
+- Implement a new feature (one-time)
+- Fix a bug (one-time)
+- Refactor code (one-time)
 
 ## Core Principle
 
