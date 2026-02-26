@@ -2,13 +2,13 @@
  * Agent module exports.
  *
  * Architecture (Evaluation-Execution):
- * - Pilot: Handles user messages with task skill for Task.md creation
+ * - Pilot: Handles user messages with deep-task skill for Task.md creation
  * - Evaluator: Task completion evaluation
  * - Executor: Executes tasks directly with Reporter for progress updates
  * - DialogueOrchestrator: Manages direct Evaluator-Executor flow
  *
  * Complete Workflow:
- * Flow 1: User request → Pilot (with task skill) → Task.md
+ * Flow 1: User request → Pilot (with deep-task skill) → Task.md
  * Flow 2: Task.md → Evaluator (evaluate) → Executor (execute directly) → ...
  *
  * Evaluation-Execution Flow:
