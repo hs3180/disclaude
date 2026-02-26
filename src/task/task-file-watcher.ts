@@ -6,7 +6,7 @@
  * Mode: Single coroutine serial execution
  * - Loop: find task → execute → wait (if no task)
  * - No queue, no concurrent execution
- * - Uses fs.watch when idle (no polling when no work)
+ * - Uses fs.watch when idle (no polling)
  */
 
 import * as fs from 'fs';
@@ -53,7 +53,7 @@ interface TaskMetadata {
  *   if (task) {
  *     await execute(task)
  *   } else {
- *     await waitForNewTask()  // fs.watch, no polling
+ *     await waitForNewTask()  // fs.watch only, no polling
  *   }
  * }
  * ```
@@ -66,8 +66,6 @@ export class TaskFileWatcher {
   private processedTasks: Set<string> = new Set();
   /** fs.watch instance for idle waiting */
   private watcher: fs.FSWatcher | null = null;
-  /** Polling interval for fallback */
-  private pollInterval: NodeJS.Timeout | null = null;
   /** Resolver for wait promise */
   private waitResolver: (() => void) | null = null;
   /** Main loop promise for cleanup */
@@ -178,13 +176,12 @@ export class TaskFileWatcher {
 
   /**
    * Wait for a new task file to be created.
-   * Uses fs.watch for efficiency, falls back to polling on error.
+   * Uses fs.watch for efficiency.
    */
   private async waitForNewTask(): Promise<void> {
     return new Promise<void>((resolve) => {
       this.waitResolver = resolve;
 
-      // Try fs.watch first
       try {
         this.watcher = fs.watch(
           this.tasksDir,
@@ -198,46 +195,27 @@ export class TaskFileWatcher {
         );
 
         this.watcher.on('error', (error) => {
-          logger.debug({ err: error }, 'fs.watch not available, falling back to polling');
+          logger.debug({ err: error }, 'fs.watch error, will retry on next cycle');
           this.stopWaiting();
-          // On error, fall through to polling below
         });
 
         logger.debug('Waiting for new task (fs.watch)');
       } catch {
         // fs.watch recursive may not be available on all platforms
-        logger.debug('fs.watch recursive unavailable, will use polling');
-      }
-
-      // If fs.watch failed to start, use polling as fallback
-      if (!this.watcher) {
-        const pollInterval = setInterval(async () => {
-          const task = await this.findNextTask();
-          if (task) {
-            clearInterval(pollInterval);
-            // Put task back so main loop can process it
-            this.processedTasks.delete(task.path);
-            this.stopWaiting();
-          }
-        }, 1000);
-
-        // Store interval for cleanup
-        this.pollInterval = pollInterval;
+        // Just resolve immediately and retry on next loop iteration
+        logger.debug('fs.watch unavailable, will retry');
+        resolve();
       }
     });
   }
 
   /**
-   * Stop waiting and clean up watcher/polling.
+   * Stop waiting and clean up watcher.
    */
   private stopWaiting(): void {
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
-    }
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
     }
     if (this.waitResolver) {
       this.waitResolver();
