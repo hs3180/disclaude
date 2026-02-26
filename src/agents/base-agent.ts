@@ -157,6 +157,17 @@ export abstract class BaseAgent {
       sdkOptions.model = this.model;
     }
 
+    // Enable SDK debug mode and capture stderr to project logs
+    // This helps troubleshoot SDK subprocess errors like rate limits and API errors
+    const sdkDebug = Config.SDK_DEBUG;
+    if (sdkDebug) {
+      sdkOptions.debug = true;
+      sdkOptions.stderr = (data: string) => {
+        // Log SDK stderr output to project logs
+        this.logger.debug({ source: 'SDK stderr' }, data.trim());
+      };
+    }
+
     return sdkOptions;
   }
 

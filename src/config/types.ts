@@ -92,6 +92,12 @@ export interface LoggingConfig {
   pretty?: boolean;
   /** Enable log rotation */
   rotate?: boolean;
+  /**
+   * Enable SDK debug mode for Claude Code subprocess.
+   * When true, enables verbose debug logging and captures stderr to project logs.
+   * Debug logs help troubleshoot SDK subprocess errors like rate limits and API errors.
+   */
+  sdkDebug?: boolean;
 }
 
 /**
