@@ -1,12 +1,12 @@
 ---
 name: schedule
-description: Schedule task management specialist. Use when user wants to create, view, modify, or delete scheduled tasks. Triggered by keywords like "schedule", "timer", "cron", "定时任务", "提醒".
+description: Schedule management specialist. Use when user wants to create, view, modify, or delete schedules. Triggered by keywords like "schedule", "timer", "cron", "定时任务", "提醒".
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-# Schedule Task Manager
+# Schedule Manager
 
-Manage scheduled tasks with full CRUD operations.
+Manage schedules with full CRUD operations.
 
 ## Core Principle
 
@@ -21,9 +21,9 @@ When invoked, you receive:
 - **Message ID**: Message ID (from "**Message ID:** xxx")
 - **Sender Open ID**: Sender's open ID (from "**Sender Open ID:** xxx")
 
-**IMPORTANT**: Use `chatId` as task scope to ensure tasks only execute in the correct chat.
+**IMPORTANT**: Use `chatId` as schedule scope to ensure schedules only execute in the correct chat.
 
-## Task File Location
+## Schedule File Location
 
 Files stored in `workspace/schedules/` as Markdown files.
 
@@ -33,12 +33,12 @@ Filename format: `{name}-{uuid}.md`
 
 ## CRUD Operations
 
-### 1. Create Task
+### 1. Create Schedule
 
 **Steps:**
-1. Collect task info:
+1. Collect schedule info:
    - Name (short description for filename)
-   - Schedule (cron format or natural language)
+   - Cron expression (cron format or natural language)
    - Content (prompt to execute)
 
 2. Generate unique filename: `{name}-{uuid}.md`
@@ -50,45 +50,45 @@ Filename format: `{name}-{uuid}.md`
 **File Format:**
 ```markdown
 ---
-name: Task Name
+name: Schedule Name
 cron: "0 9 * * *"
 enabled: true
 chatId: oc_xxx
 createdAt: 2024-01-01T00:00:00.000Z
 ---
 
-Task content prompt here
+Schedule content prompt here
 ```
 
 ---
 
-### 2. Delete Task
+### 2. Delete Schedule
 
 **Steps:**
-1. Find task files with `Glob`: `workspace/schedules/*.md`
+1. Find schedule files with `Glob`: `workspace/schedules/*.md`
 2. Read files with `Read`
 3. Filter by current `chatId`
-4. Confirm task to delete
-5. Verify task belongs to current `chatId`
+4. Confirm schedule to delete
+5. Verify schedule belongs to current `chatId`
 6. Delete with `Bash rm`
 7. **SEND FEEDBACK** confirming deletion
 
 **Error Handling:**
-- Task not found → send feedback with available tasks
+- Schedule not found → send feedback with available schedules
 - chatId mismatch → reject and explain
 
 ---
 
-### 3. Update Task
+### 3. Update Schedule
 
 **Modifiable Properties:**
-- `cron`: Schedule
-- `name`: Task name
+- `cron`: Execution time
+- `name`: Schedule name
 - `enabled`: Enable/disable
 - Content (body text)
 
 **Steps:**
-1. Find task file
+1. Find schedule file
 2. Verify `chatId` ownership
 3. Confirm changes
 4. Modify with `Edit` tool
@@ -96,28 +96,28 @@ Task content prompt here
 
 ---
 
-### 4. List Tasks
+### 4. List Schedules
 
 **Steps:**
-1. Find all task files
+1. Find all schedule files
 2. Read each file
 3. Filter by current `chatId`
 4. Format and display
-5. **SEND FEEDBACK** (even if no tasks found)
+5. **SEND FEEDBACK** (even if no schedules found)
 
 **Output Format:**
 ```
-Scheduled Tasks:
+Schedules:
 
-| Name | Schedule | Status |
-|------|----------|--------|
+| Name | Cron | Status |
+|------|------|--------|
 | Daily Report | Daily 9:00 | Enabled |
 | Weekly Summary | Fri 14:00 | Disabled |
 ```
 
-**No Tasks:**
+**No Schedules:**
 ```
-No scheduled tasks found.
+No schedules found.
 Would you like to create one?
 ```
 
@@ -143,15 +143,15 @@ minute hour day month weekday
 
 After each operation, verify:
 - [ ] Used correct `chatId`?
-- [ ] Verified task ownership?
+- [ ] Verified schedule ownership?
 - [ ] **Sent feedback to user?** (CRITICAL)
 
 ---
 
 ## DO NOT
 
-- Create tasks without confirmation
-- Modify/delete tasks from other chats
+- Create schedules without confirmation
+- Modify/delete schedules from other chats
 - Complete operation without sending feedback
 - Assume directory exists (check first)
-- Execute unrelated tasks
+- Execute unrelated operations
