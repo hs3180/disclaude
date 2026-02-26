@@ -96,7 +96,7 @@ export class TaskFileWatcher {
    * Schedule the next poll.
    */
   private scheduleNextPoll(): void {
-    if (!this.running) return;
+    if (!this.running) {return;}
 
     this.pollTimer = setTimeout(() => {
       this.poll().catch((error) => {

@@ -296,7 +296,7 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
 
-    it('should handle delete and recreate same task ID', async () => {
+    it('should handle delete and recreate same task ID', () => {
       const taskId = 'schedule-same-id';
 
       const task1: ScheduledTask = {

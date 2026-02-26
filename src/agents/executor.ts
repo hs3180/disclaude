@@ -218,7 +218,10 @@ export class Executor extends BaseAgent {
       // Use BaseAgent's handleIteratorError for consistent error handling
       const errorResult = this.handleIteratorError(err, 'executeTask');
       // Extract error message from AgentMessage content
-      error = errorResult.content;
+      // errorResult.content may be string or ContentBlock[], extract string representation
+      error = typeof errorResult.content === 'string'
+        ? errorResult.content
+        : JSON.stringify(errorResult.content);
 
       // Create execution.md even on error
       try {
@@ -229,7 +232,7 @@ export class Executor extends BaseAgent {
 
       yield {
         type: 'error',
-        error,
+        error: error ?? 'Unknown error',
       };
 
       return {
