@@ -12,8 +12,8 @@ import { createLogger } from '../utils/logger.js';
 import { attachmentManager } from '../core/attachment-manager.js';
 import { downloadFile } from '../feishu/file-downloader.js';
 import { messageLogger } from '../feishu/message-logger.js';
-import { FileHandler } from '../feishu/file-handler.js';
-import { MessageSender } from '../feishu/message-sender.js';
+import { FeishuFileHandler } from './platforms/feishu/feishu-file-handler.js';
+import { FeishuMessageSender } from './platforms/feishu/feishu-message-sender.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
@@ -51,8 +51,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private client?: lark.Client;
   private wsClient?: lark.WSClient;
   private eventDispatcher?: lark.EventDispatcher;
-  private messageSender?: MessageSender;
-  private fileHandler: FileHandler;
+  private messageSender?: FeishuMessageSender;
+  private fileHandler: FeishuFileHandler;
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
@@ -65,9 +65,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.taskTracker = new TaskTracker();
 
     // Initialize FileHandler
-    this.fileHandler = new FileHandler(
+    this.fileHandler = new FeishuFileHandler({
       attachmentManager,
-      async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
+      downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
         if (!this.client) {
           logger.error({ fileKey }, 'Client not initialized for file download');
           return { success: false };
@@ -79,8 +79,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error, fileKey, messageType }, 'File download failed');
           return { success: false };
         }
-      }
-    );
+      },
+    });
 
     logger.info({ id: this.id }, 'FeishuChannel created');
   }
@@ -209,7 +209,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         appId: this.appId,
         appSecret: this.appSecret,
       });
-      this.messageSender = new MessageSender({
+      this.messageSender = new FeishuMessageSender({
         client: this.client,
         logger,
       });
