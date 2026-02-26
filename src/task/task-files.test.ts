@@ -1,10 +1,10 @@
 /**
- * Tests for TaskFileManager (src/task/file-manager.ts)
+ * Tests for TaskFileManager (src/task/task-files.ts)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
-import { TaskFileManager } from './file-manager.js';
+import { TaskFileManager } from './task-files.js';
 
 // Mock fs/promises
 vi.mock('fs/promises', () => ({
