@@ -226,6 +226,7 @@ export class ScheduleFileWatcher {
         chatId: frontmatter['chatId'] as string,
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
+        blocking: (frontmatter['blocking'] as boolean) ?? true,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         sourceFile: filePath,
@@ -268,6 +269,7 @@ export class ScheduleFileWatcher {
           frontmatter[key] = value.replace(/^["']|["']$/g, '');
           break;
         case 'enabled':
+        case 'blocking':
           frontmatter[key] = value === 'true';
           break;
       }
