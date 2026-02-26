@@ -220,36 +220,41 @@ ${task.prompt}`;
     // Mark task as running
     this.runningTasks.add(task.id);
 
+    // Generate a unique execution ID for this task execution
+    // This ID is used as threadId to group all messages in this execution
+    const executionId = `${task.id}-${Date.now()}`;
+
     // Set up feedback channel for Pilot's sendMessage callbacks
     // The sendFeedback will be provided by ExecutionRunner to directly send via WebSocket
     // We don't call callbacks.sendMessage here to avoid recursion
     if (this.setFeedbackChannel) {
-      const messageId = `${task.id}-${Date.now()}`;
       this.setFeedbackChannel(task.chatId, {
         // sendFeedback will be implemented by ExecutionRunner to directly use WebSocket
         sendFeedback: () => {
           // This is a placeholder - ExecutionRunner will replace this with actual implementation
         },
-        threadId: messageId,
+        threadId: executionId,
       });
       logger.debug({ chatId: task.chatId, taskId: task.id }, 'Feedback channel set for scheduled task');
     }
 
     try {
-      // Send start notification
+      // Send start notification with threadId for proper threading
       await this.callbacks.sendMessage(
         task.chatId,
-        `⏰ 定时任务「${task.name}」开始执行...`
+        `⏰ 定时任务「${task.name}」开始执行...`,
+        executionId
       );
 
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Execute task using Pilot's executeOnce method
+      // Use the same executionId as messageId for consistency
       await this.pilot.executeOnce(
         task.chatId,
         wrappedPrompt,
-        `${task.id}-${Date.now()}`,
+        executionId,
         task.createdBy
       );
 
@@ -262,10 +267,11 @@ ${task.prompt}`;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
 
-      // Send error notification
+      // Send error notification with threadId for proper threading
       await this.callbacks.sendMessage(
         task.chatId,
-        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`,
+        executionId
       );
     } finally {
       // Always remove from running tasks
