@@ -105,14 +105,16 @@ export class TaskFileWatcher {
    * Find task → execute → wait if no task.
    */
   private async mainLoop(): Promise<void> {
+    logger.info({ tasksDir: this.tasksDir }, 'Task file watcher main loop started');
+
     while (this.running) {
       const task = await this.findNextTask();
 
       if (task) {
         // Execute task (serial, await completion)
         logger.info(
-          { messageId: task.metadata.messageId, chatId: task.metadata.chatId },
-          'Executing task'
+          { messageId: task.metadata.messageId, chatId: task.metadata.chatId, taskPath: task.path },
+          'Task found, starting execution'
         );
 
         try {
@@ -121,11 +123,11 @@ export class TaskFileWatcher {
             task.metadata.messageId,
             task.metadata.chatId
           );
-          logger.info({ messageId: task.metadata.messageId }, 'Task completed');
+          logger.info({ messageId: task.metadata.messageId, taskPath: task.path }, 'Task execution completed');
         } catch (error) {
           logger.error(
-            { err: error, messageId: task.metadata.messageId },
-            'Task failed'
+            { err: error, messageId: task.metadata.messageId, taskPath: task.path },
+            'Task execution failed'
           );
         }
         // Continue to next task immediately (no wait)
@@ -134,6 +136,8 @@ export class TaskFileWatcher {
         await this.waitForNewTask();
       }
     }
+
+    logger.info('Task file watcher main loop exited');
   }
 
   /**
@@ -155,18 +159,25 @@ export class TaskFileWatcher {
 
           // Check if task.md exists
           if (await this.fileExists(taskFile)) {
+            logger.info({ taskFile, dirName: entry.name }, 'Found unprocessed task.md file');
             const metadata = await this.parseTaskFile(taskFile);
 
             if (metadata) {
               // Mark as processed immediately to prevent duplicate detection
               this.processedTasks.add(taskFile);
+              logger.info(
+                { taskFile, messageId: metadata.messageId, chatId: metadata.chatId },
+                'Task file parsed, preparing for execution'
+              );
               return { path: taskFile, metadata };
+            } else {
+              logger.warn({ taskFile }, 'Failed to parse task.md file, skipping');
             }
           }
         }
       }
     } catch (error) {
-      logger.error({ err: error }, 'Error finding next task');
+      logger.error({ err: error, tasksDir: this.tasksDir }, 'Error scanning task directory');
     }
 
     return null;
@@ -184,24 +195,25 @@ export class TaskFileWatcher {
         this.watcher = fs.watch(
           this.tasksDir,
           { recursive: true, persistent: false },
-          (_eventType, filename) => {
+          (eventType, filename) => {
             // Check if it's a task.md file
             if (filename && filename.endsWith('task.md')) {
+              logger.info({ filename, eventType, tasksDir: this.tasksDir }, 'fs.watch detected new task.md file');
               this.stopWaiting();
             }
           }
         );
 
         this.watcher.on('error', (error) => {
-          logger.debug({ err: error }, 'fs.watch error, will retry on next cycle');
+          logger.warn({ err: error, tasksDir: this.tasksDir }, 'fs.watch error occurred, will retry');
           this.stopWaiting();
         });
 
-        logger.debug('Waiting for new task (fs.watch)');
-      } catch {
+        logger.debug('Waiting for new task (fs.watch active)');
+      } catch (error) {
         // fs.watch recursive may not be available on all platforms
         // Just resolve immediately and retry on next loop iteration
-        logger.debug('fs.watch unavailable, will retry');
+        logger.warn({ err: error, tasksDir: this.tasksDir }, 'fs.watch unavailable or failed, will poll instead');
         resolve();
       }
     });
@@ -225,6 +237,8 @@ export class TaskFileWatcher {
    * Scan existing tasks to avoid reprocessing them.
    */
   private async scanExistingTasks(): Promise<void> {
+    logger.info({ tasksDir: this.tasksDir }, 'Scanning for existing tasks');
+
     try {
       const entries = await fs.promises.readdir(this.tasksDir, { withFileTypes: true });
 
@@ -233,14 +247,17 @@ export class TaskFileWatcher {
           const taskFile = path.join(this.tasksDir, entry.name, 'task.md');
           if (await this.fileExists(taskFile)) {
             this.processedTasks.add(taskFile);
-            logger.debug({ taskFile }, 'Existing task registered');
+            logger.debug({ taskFile, dirName: entry.name }, 'Existing task registered');
           }
         }
       }
 
-      logger.info({ count: this.processedTasks.size }, 'Scanned existing tasks');
+      logger.info(
+        { count: this.processedTasks.size, tasksDir: this.tasksDir },
+        'Completed scan for existing tasks'
+      );
     } catch (error) {
-      logger.error({ err: error }, 'Failed to scan existing tasks');
+      logger.error({ err: error, tasksDir: this.tasksDir }, 'Failed to scan existing tasks directory');
     }
   }
 

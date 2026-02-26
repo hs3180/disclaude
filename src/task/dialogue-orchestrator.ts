@@ -176,7 +176,7 @@ export class DialogueOrchestrator {
     let iteration = 0;
 
     logger.info(
-      { taskId: this.taskId, chatId, maxIterations: this.maxIterations },
+      { taskId: this.taskId, chatId, taskPath, maxIterations: this.maxIterations },
       'Starting file-driven Eval-Execute dialogue flow'
     );
 
@@ -185,19 +185,41 @@ export class DialogueOrchestrator {
       iteration++;
       this.iterationCount = iteration;
 
+      logger.info(
+        { taskId: this.taskId, chatId, iteration, maxIterations: this.maxIterations },
+        'Starting iteration'
+      );
+
       // Reset task done flag for this iteration
       this.currentIterationTaskDone = false;
 
       // Process iteration with REAL-TIME streaming
-      for await (const msg of this.processIterationStreaming(iteration)) {
-        // Yield the message immediately to the user
-        yield msg;
+      try {
+        for await (const msg of this.processIterationStreaming(iteration)) {
+          // Yield the message immediately to the user
+          yield msg;
+        }
+      } catch (error) {
+        logger.error(
+          { err: error, taskId: this.taskId, chatId, iteration },
+          'Error during iteration processing'
+        );
+        throw error;
       }
 
       // Check if task was completed during this iteration
       if (this.currentIterationTaskDone) {
+        logger.info(
+          { taskId: this.taskId, chatId, iteration },
+          'Task completed during this iteration'
+        );
         break;
       }
+
+      logger.info(
+        { taskId: this.taskId, chatId, iteration },
+        'Iteration completed, task not yet done'
+      );
     }
 
     // Write final summary when task completes
@@ -217,6 +239,11 @@ export class DialogueOrchestrator {
         'Task stopped after reaching maximum iterations without completion signal'
       );
     }
+
+    logger.info(
+      { taskId: this.taskId, chatId, totalIterations: iteration, completed: this.currentIterationTaskDone },
+      'Dialogue flow finished'
+    );
   }
 
   /**
