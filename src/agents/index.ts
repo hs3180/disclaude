@@ -32,5 +32,14 @@ export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
 export { SessionManager, type PilotSession, type SessionManagerConfig } from './session-manager.js';
 export { ConversationContext, type ConversationContextConfig } from './conversation-context.js';
 
+// Site mining subagent
+export {
+  runSiteMiner,
+  createSiteMiner,
+  isPlaywrightAvailable,
+  type SiteMinerResult,
+  type SiteMinerOptions,
+} from './site-miner.js';
+
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
