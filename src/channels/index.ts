@@ -51,6 +51,9 @@ export type {
   ChannelFactory,
 } from './types.js';
 
+// Base class
+export { BaseChannel } from './base-channel.js';
+
 // Channel implementations
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 export { RestChannel, type RestChannelConfig } from './rest-channel.js';
