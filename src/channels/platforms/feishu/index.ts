@@ -4,7 +4,10 @@
  * Exports Feishu-specific implementations of platform adapters.
  */
 
-// Adapters
+// Platform Adapter
+export { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from './feishu-adapter.js';
+
+// Sub-adapters
 export { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 
