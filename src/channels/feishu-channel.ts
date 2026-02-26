@@ -395,14 +395,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: { args, rawText: trimmedText },
         });
 
-        if (response.message) {
-          await this.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: response.message,
-          });
+        // Only return if command was successfully handled
+        // Unknown commands (success: false) will fall through to normal message processing
+        if (response.success) {
+          if (response.message) {
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: response.message,
+            });
+          }
+          return;
         }
-        return;
+        // Unknown command: fall through to emitMessage for Agent to handle
       }
 
       // Default command handling if no control handler registered

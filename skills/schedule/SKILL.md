@@ -53,12 +53,23 @@ Filename format: `{name}-{uuid}.md`
 name: Schedule Name
 cron: "0 9 * * *"
 enabled: true
+blocking: true
 chatId: oc_xxx
 createdAt: 2024-01-01T00:00:00.000Z
 ---
 
 Schedule content prompt here
 ```
+
+**Field Reference:**
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | - | Schedule display name |
+| `cron` | Yes | - | Cron expression for timing |
+| `enabled` | No | `true` | Whether schedule is active |
+| `blocking` | No | `true` | Skip execution if previous run still in progress |
+| `chatId` | Yes | - | Chat ID for execution context |
+| `createdAt` | No | - | Creation timestamp |
 
 ---
 
@@ -85,6 +96,7 @@ Schedule content prompt here
 - `cron`: Execution time
 - `name`: Schedule name
 - `enabled`: Enable/disable
+- `blocking`: Blocking mode
 - Content (body text)
 
 **Steps:**

@@ -141,7 +141,13 @@ export class CommunicationNode extends EventEmitter {
 
     // Set up message handler
     channel.onMessage(async (message: IncomingMessage) => {
-      await this.handleChannelMessage(channel.id, message);
+      try {
+        logger.debug({ channelId: channel.id, messageId: message.messageId }, 'handleChannelMessage invoked');
+        await this.handleChannelMessage(channel.id, message);
+        logger.debug({ channelId: channel.id, messageId: message.messageId }, 'handleChannelMessage completed');
+      } catch (error) {
+        logger.error({ err: error, channelId: channel.id, messageId: message.messageId }, 'Failed to handle channel message');
+      }
     });
 
     // Set up control handler
@@ -256,6 +262,8 @@ export class CommunicationNode extends EventEmitter {
    * Handle message from a channel.
    */
   private async handleChannelMessage(_channelId: string, message: IncomingMessage): Promise<void> {
+    logger.debug({ chatId: message.chatId, messageId: message.messageId, content: message.content?.substring(0, 100) }, 'Processing channel message');
+
     // Process attachments if present
     let attachments: FileReference[] | undefined;
     if (message.attachments && message.attachments.length > 0 && this.fileStorageService) {
@@ -278,6 +286,7 @@ export class CommunicationNode extends EventEmitter {
     }
 
     // Send prompt to Execution Node
+    logger.debug({ chatId: message.chatId, messageId: message.messageId }, 'Calling sendPrompt');
     await this.sendPrompt({
       type: 'prompt',
       chatId: message.chatId,
@@ -322,6 +331,8 @@ export class CommunicationNode extends EventEmitter {
    * Send prompt to Execution Node via WebSocket.
    */
   private async sendPrompt(message: PromptMessage): Promise<void> {
+    logger.debug({ chatId: message.chatId, messageId: message.messageId, wsState: this.execWs?.readyState }, 'sendPrompt called');
+
     if (!this.execWs || this.execWs.readyState !== WebSocket.OPEN) {
       logger.warn('No Execution Node connected');
       await this.sendMessage(message.chatId, '❌ 没有可用的执行节点');
