@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { retry, retryAsyncIterable, withRetry } from './retry.js';
-import { SDKError, AgentExecutionError } from './errors.js';
+import { AppError, ErrorCategory } from './error-handler.js';
 
 describe('retry', () => {
   describe('successful operation', () => {
@@ -28,8 +28,8 @@ describe('retry', () => {
   });
 
   describe('retryable errors', () => {
-    it('should retry on SDKError with retryable message', async () => {
-      const error = new SDKError('timeout occurred', { code: 'TIMEOUT' });
+    it('should retry on timeout error', async () => {
+      const error = new Error('timeout occurred');
       const operation = vi.fn()
         .mockRejectedValueOnce(error)
         .mockResolvedValueOnce('success');
@@ -40,8 +40,10 @@ describe('retry', () => {
       expect(operation).toHaveBeenCalledTimes(2);
     });
 
-    it('should retry on recoverable AgentExecutionError', async () => {
-      const error = new AgentExecutionError('Agent failed', { recoverable: true });
+    it('should retry on AppError with retryable=true', async () => {
+      const error = new AppError('Agent failed', ErrorCategory.SDK, undefined, {
+        retryable: true,
+      });
       const operation = vi.fn()
         .mockRejectedValueOnce(error)
         .mockResolvedValueOnce('success');
@@ -52,8 +54,8 @@ describe('retry', () => {
       expect(operation).toHaveBeenCalledTimes(2);
     });
 
-    it('should call onRetry callback with attempt and error', async () => {
-      const error = new SDKError('network error', {});
+    it('should retry on network error', async () => {
+      const error = new Error('network connection failed');
       const operation = vi.fn()
         .mockRejectedValueOnce(error)
         .mockResolvedValueOnce('success');
@@ -74,8 +76,10 @@ describe('retry', () => {
       expect(operation).toHaveBeenCalledTimes(1);
     });
 
-    it('should not retry on AgentExecutionError with recoverable=false', async () => {
-      const error = new AgentExecutionError('Fatal error', { recoverable: false });
+    it('should not retry on AppError with retryable=false', async () => {
+      const error = new AppError('Fatal error', ErrorCategory.VALIDATION, undefined, {
+        retryable: false,
+      });
       const operation = vi.fn().mockRejectedValue(error);
 
       await expect(retry(operation, { initialDelayMs: 0 })).rejects.toThrow('Fatal error');
@@ -85,7 +89,7 @@ describe('retry', () => {
 
   describe('max retries', () => {
     it('should exhaust max retries before giving up', async () => {
-      const error = new SDKError('timeout', {});
+      const error = new Error('timeout');
       const operation = vi.fn().mockRejectedValue(error);
       const onRetry = vi.fn();
 
@@ -96,7 +100,7 @@ describe('retry', () => {
     });
 
     it('should use default maxRetries of 3', async () => {
-      const error = new SDKError('timeout', {});
+      const error = new Error('timeout');
       const operation = vi.fn().mockRejectedValue(error);
       const onRetry = vi.fn();
 
@@ -159,7 +163,7 @@ describe('retryAsyncIterable', () => {
 
       async function* operation() {
         attempts++;
-        throw new SDKError('timeout', {});
+        throw new Error('timeout');
       }
 
       await expect(async () => {
@@ -176,7 +180,7 @@ describe('retryAsyncIterable', () => {
 describe('withRetry', () => {
   it('should wrap function with retry logic', async () => {
     const originalFn = vi.fn()
-      .mockRejectedValueOnce(new SDKError('timeout', {}))
+      .mockRejectedValueOnce(new Error('timeout'))
       .mockResolvedValueOnce('success');
 
     const wrappedFn = withRetry(originalFn, { initialDelayMs: 0 });
@@ -197,7 +201,7 @@ describe('withRetry', () => {
   });
 
   it('should apply default options', async () => {
-    const error = new SDKError('timeout', {});
+    const error = new Error('timeout');
     const originalFn = vi.fn()
       .mockRejectedValueOnce(error)
       .mockResolvedValueOnce('success');

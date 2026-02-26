@@ -5,7 +5,7 @@
  * due to transient issues (network, timeouts, etc.).
  */
 
-import { isRetryable } from './errors.js';
+import { isRetryable } from './error-handler.js';
 
 /**
  * Retry configuration options.

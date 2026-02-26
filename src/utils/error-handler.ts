@@ -167,9 +167,19 @@ export function classifyError(error: Error | unknown): ErrorCategory {
   const message = error.message.toLowerCase();
   const name = error.constructor.name.toLowerCase();
 
+  // WebSocket errors (check before network to prioritize)
+  if (
+    name.includes('websocket') ||
+    message.includes('websocket')
+  ) {
+    return ErrorCategory.WEBSOCKET;
+  }
+
   // Network errors
   if (
     name.includes('network') ||
+    message.includes('network') ||
+    message.includes('connection') ||
     name.includes('timeout') ||
     message.includes('etimedout') ||
     message.includes('enotfound') ||
@@ -226,14 +236,6 @@ export function classifyError(error: Error | unknown): ErrorCategory {
     message.includes('permission denied')
   ) {
     return ErrorCategory.FILESYSTEM;
-  }
-
-  // WebSocket errors
-  if (
-    name.includes('websocket') ||
-    message.includes('websocket')
-  ) {
-    return ErrorCategory.WEBSOCKET;
   }
 
   return ErrorCategory.UNKNOWN;
@@ -483,4 +485,29 @@ export function handleError(
   }
 
   return enriched;
+}
+
+/**
+ * Format an error for logging.
+ *
+ * @param error - Error to format
+ * @returns Formatted error object suitable for logging
+ */
+export function formatError(error: Error | unknown): Record<string, unknown> {
+  if (error instanceof AppError) {
+    return error.toJSON();
+  }
+
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return {
+    name: 'UnknownError',
+    message: String(error),
+  };
 }
