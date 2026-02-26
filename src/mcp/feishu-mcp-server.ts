@@ -6,96 +6,22 @@
  * Feishu/Lark integration tools to the Agent SDK via stdio.
  *
  * Tools provided:
+ * - send_user_feedback: Send a message to a Feishu chat
  * - send_file_to_feishu: Send a file to a Feishu chat
  *
  * Environment Variables Required:
  * - FEISHU_APP_ID: Feishu app ID
  * - FEISHU_APP_SECRET: Feishu app secret
  * - WORKSPACE_DIR: Workspace directory (optional, defaults to cwd)
+ *
+ * Note: This is a thin wrapper around feishu-context-mcp.ts.
+ * The actual implementation is in feishu-context-mcp.ts.
  */
 
 import { createLogger } from '../utils/logger.js';
-import { uploadAndSendFile } from '../feishu/file-uploader.js';
-import * as lark from '@larksuiteoapi/node-sdk';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import { send_user_feedback, send_file_to_feishu } from './feishu-context-mcp.js';
 
 const logger = createLogger('FeishuMCPServer');
-
-/**
- * MCP Tool: Send file to Feishu
- */
-async function send_file_to_feishu(args: { filePath: string; chatId: string }) {
-  const { filePath, chatId } = args;
-
-  try {
-    if (!chatId) {
-      throw new Error('chatId is required - cannot send file');
-    }
-
-    const appId = process.env.FEISHU_APP_ID;
-    const appSecret = process.env.FEISHU_APP_SECRET;
-    if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be set in environment variables');
-    }
-
-    // Resolve file path
-    const workspaceDir = process.env.WORKSPACE_DIR || process.cwd();
-    const resolvedPath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(workspaceDir, filePath);
-
-    logger.info({ filePath, resolvedPath, workspaceDir, chatId }, 'MCP tool: send_file_to_feishu called');
-
-    // Check file exists
-    const stats = await fs.stat(resolvedPath);
-    if (!stats.isFile()) {
-      throw new Error(`Path is not a file: ${filePath}`);
-    }
-
-    // Create Lark client
-    const client = new lark.Client({
-      appId,
-      appSecret,
-      domain: lark.Domain.Feishu,
-    });
-
-    // Upload and send file
-    const fileSize = await uploadAndSendFile(client, resolvedPath, chatId);
-
-    const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
-    const fileName = path.basename(resolvedPath);
-
-    logger.info({
-      fileName,
-      fileSize,
-      sizeMB,
-      filePath: resolvedPath,
-      chatId
-    }, 'File sent successfully via MCP tool');
-
-    return {
-      content: [{
-        type: 'text',
-        text: `✅ File sent to Feishu: ${fileName} (${sizeMB} MB)`,
-      }],
-    };
-
-  } catch (error) {
-    logger.error({ err: error, filePath }, 'MCP tool: send_file_to_feishu failed');
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    // Return as soft error (no isError flag) to allow agent to continue
-    // Include detailed error info for agent self-correction
-    return {
-      content: [{
-        type: 'text',
-        text: `⚠️ Failed to send file: ${errorMessage}\n\nPlease verify:\n- File path is correct and file exists\n- Chat ID is valid\n- Feishu credentials are configured`,
-      }],
-    };
-  }
-}
 
 /**
  * Handle MCP requests
@@ -114,8 +40,35 @@ async function handleMessage(message: unknown) {
           result: {
             tools: [
               {
+                name: 'send_user_feedback',
+                description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card".',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    content: {
+                      type: 'string',
+                      description: 'The content to send. String for text messages.',
+                    },
+                    format: {
+                      type: 'string',
+                      enum: ['text', 'card'],
+                      description: 'Format specifier: "text" for plain text, "card" for interactive cards.',
+                    },
+                    chatId: {
+                      type: 'string',
+                      description: 'Feishu chat ID to send the message to',
+                    },
+                    parentMessageId: {
+                      type: 'string',
+                      description: 'Optional parent message ID for thread replies.',
+                    },
+                  },
+                  required: ['content', 'format', 'chatId'],
+                },
+              },
+              {
                 name: 'send_file_to_feishu',
-                description: 'Send a file to a Feishu chat. Use the chatId from the current context (marked as [Current Chat ID: xxx] in the prompt). Supports images, audio, video, and documents.',
+                description: 'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -139,16 +92,44 @@ async function handleMessage(message: unknown) {
         // Call a tool
         const callParams = params as Record<string, unknown>;
         const { name, arguments: toolArgs } = callParams;
-        if (name === 'send_file_to_feishu') {
-          const result = await send_file_to_feishu(toolArgs as { filePath: string; chatId: string });
+
+        if (name === 'send_user_feedback') {
+          const args = toolArgs as { content: string; format: 'text' | 'card'; chatId: string; parentMessageId?: string };
+          const result = await send_user_feedback(args);
+
           return {
             jsonrpc: '2.0',
             id,
-            result,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
           };
-        } else {
-          throw new Error(`Unknown tool: ${name}`);
         }
+
+        if (name === 'send_file_to_feishu') {
+          const args = toolArgs as { filePath: string; chatId: string };
+          const result = await send_file_to_feishu(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        throw new Error(`Unknown tool: ${name}`);
 
       case 'initialize':
         // Initialize connection
