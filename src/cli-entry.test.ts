@@ -6,16 +6,10 @@ import { describe, it, expect } from 'vitest';
 
 describe('CLI Entry Point', () => {
   describe('Module Structure', () => {
-    it('should import runFeishu from bots module', () => {
-      // Import from bots
-      const importPath = './bots.js';
-      expect(importPath).toContain('bots');
-    });
-
-    it('should import runCli from cli/index module', () => {
-      // Import from cli
-      const importPath = './cli/index.js';
-      expect(importPath).toContain('cli');
+    it('should import runCommunicationNode from runners module', () => {
+      // Import from runners
+      const importPath = './runners/index.js';
+      expect(importPath).toContain('runners');
     });
 
     it('should import Config from config module', () => {
@@ -44,26 +38,32 @@ describe('CLI Entry Point', () => {
   });
 
   describe('Command Line Argument Parsing', () => {
-    it('should detect --prompt flag', () => {
-      const args = ['--prompt', 'test message'];
-      const promptIndex = args.indexOf('--prompt');
+    it('should detect start command', () => {
+      const args = ['start', '--mode', 'comm'];
+      const [command] = args;
 
-      expect(promptIndex).toBe(0);
-      expect(promptIndex).not.toBe(-1);
+      expect(command).toBe('start');
     });
 
-    it('should detect feishu platform', () => {
-      const args = ['feishu'];
-      const [platform] = args;
+    it('should detect comm mode', () => {
+      const args = ['start', '--mode', 'comm'];
+      const mode = args[2];
 
-      expect(platform).toBe('feishu');
+      expect(mode).toBe('comm');
     });
 
-    it('should detect missing platform argument', () => {
-      const args: string[] = [];
-      const [platform] = args;
+    it('should detect exec mode', () => {
+      const args = ['start', '--mode', 'exec'];
+      const mode = args[2];
 
-      expect(platform).toBeUndefined();
+      expect(mode).toBe('exec');
+    });
+
+    it('should detect missing mode argument', () => {
+      const args = ['start'];
+      const mode = args[2];
+
+      expect(mode).toBeUndefined();
     });
   });
 
@@ -73,19 +73,19 @@ describe('CLI Entry Point', () => {
       expect(header).toContain('Disclaude');
     });
 
-    it('should show feishu usage', () => {
-      const usage = 'disclaude feishu           Start Feishu/Lark bot';
-      expect(usage).toContain('feishu');
+    it('should show comm mode usage', () => {
+      const usage = 'disclaude start --mode comm           Communication Node (Multi-channel)';
+      expect(usage).toContain('--mode comm');
     });
 
-    it('should show prompt usage', () => {
-      const usage = 'disclaude --prompt <msg>   Execute single prompt';
-      expect(usage).toContain('--prompt');
+    it('should show exec mode usage', () => {
+      const usage = 'disclaude start --mode exec           Execution Node (Pilot Agent)';
+      expect(usage).toContain('--mode exec');
     });
 
-    it('should show feishu-chat-id option', () => {
-      const option = '--feishu-chat-id <id>     Send CLI output to Feishu chat';
-      expect(option).toContain('--feishu-chat-id');
+    it('should show REST API endpoints', () => {
+      const endpoint = 'POST /api/chat          Send message (streaming response)';
+      expect(endpoint).toContain('/api/chat');
     });
   });
 
@@ -145,21 +145,14 @@ describe('CLI Entry Point', () => {
   });
 
   describe('Execution Modes', () => {
-    it('should support prompt mode', () => {
-      const promptMode = '--prompt';
-      expect(promptMode).toBe('--prompt');
+    it('should support comm mode', () => {
+      const commMode = 'comm';
+      expect(commMode).toBe('comm');
     });
 
-    it('should support bot mode', () => {
-      const botMode = 'feishu';
-      expect(botMode).toBe('feishu');
-    });
-
-    it('should pass all args to runCli in prompt mode', () => {
-      const args = ['--prompt', 'test', '--feishu-chat-id', 'chat123'];
-      const passedArgs = args;
-
-      expect(passedArgs).toEqual(args);
+    it('should support exec mode', () => {
+      const execMode = 'exec';
+      expect(execMode).toBe('exec');
     });
   });
 

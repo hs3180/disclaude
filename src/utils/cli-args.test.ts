@@ -7,7 +7,6 @@ import {
   parseGlobalArgs,
   getCommNodeConfig,
   getExecNodeConfig,
-  getCliModeConfig,
   type GlobalArgs,
 } from './cli-args.js';
 
@@ -44,21 +43,11 @@ describe('cli-args', () => {
   });
 
   describe('parseGlobalArgs', () => {
-    it('should parse prompt mode', () => {
-      const args = ['--prompt', 'hello world'];
-      const result = parseGlobalArgs(args);
-
-      expect(result.promptMode).toBe(true);
-      expect(result.promptArgs).toEqual(args);
-      expect(result.mode).toBeNull();
-    });
-
     it('should parse start command with comm mode', () => {
       const args = ['start', '--mode', 'comm'];
       const result = parseGlobalArgs(args);
 
       expect(result.mode).toBe('comm');
-      expect(result.promptMode).toBe(false);
     });
 
     it('should parse start command with exec mode', () => {
@@ -66,7 +55,6 @@ describe('cli-args', () => {
       const result = parseGlobalArgs(args);
 
       expect(result.mode).toBe('exec');
-      expect(result.promptMode).toBe(false);
     });
 
     it('should return null mode for invalid mode', () => {
@@ -95,13 +83,6 @@ describe('cli-args', () => {
       const result = parseGlobalArgs(args);
 
       expect(result.commUrl).toBe('ws://example.com:3001');
-    });
-
-    it('should parse feishu-chat-id argument', () => {
-      const args = ['--prompt', 'test', '--feishu-chat-id', 'oc_test'];
-      const result = parseGlobalArgs(args);
-
-      expect(result.feishuChatId).toBe('oc_test');
     });
 
     it('should parse auth-token argument', () => {
@@ -139,8 +120,6 @@ describe('cli-args', () => {
     it('should extract comm node config from global args', () => {
       const globalArgs: GlobalArgs = {
         mode: 'comm',
-        promptMode: false,
-        promptArgs: [],
         port: 3001,
         host: 'localhost',
         commUrl: 'ws://localhost:3001',
@@ -159,8 +138,6 @@ describe('cli-args', () => {
     it('should extract exec node config from global args', () => {
       const globalArgs: GlobalArgs = {
         mode: 'exec',
-        promptMode: false,
-        promptArgs: [],
         port: 3001,
         host: 'localhost',
         commUrl: 'ws://localhost:3001',
@@ -171,72 +148,6 @@ describe('cli-args', () => {
 
       expect(config.commUrl).toBe('ws://localhost:3001');
       expect(config.authToken).toBe('test-token');
-    });
-  });
-
-  describe('getCliModeConfig', () => {
-    it('should return null when not in prompt mode', () => {
-      const globalArgs: GlobalArgs = {
-        mode: null,
-        promptMode: false,
-        promptArgs: [],
-        port: 3001,
-        host: 'localhost',
-        commUrl: 'ws://localhost:3001',
-      };
-
-      const config = getCliModeConfig(globalArgs);
-
-      expect(config).toBeNull();
-    });
-
-    it('should extract CLI mode config from global args', () => {
-      const globalArgs: GlobalArgs = {
-        mode: null,
-        promptMode: true,
-        promptArgs: ['--prompt', 'test prompt', '--port', '4000'],
-        port: 4000,
-        host: 'localhost',
-        commUrl: 'ws://localhost:4000',
-        feishuChatId: 'oc_test',
-      };
-
-      const config = getCliModeConfig(globalArgs);
-
-      expect(config).not.toBeNull();
-      expect(config?.prompt).toBe('test prompt');
-      expect(config?.port).toBe(4000);
-      expect(config?.feishuChatId).toBe('oc_test');
-    });
-
-    it('should join args as prompt when --prompt value not found', () => {
-      const globalArgs: GlobalArgs = {
-        mode: null,
-        promptMode: true,
-        promptArgs: ['hello', 'world'],
-        port: 3001,
-        host: 'localhost',
-        commUrl: 'ws://localhost:3001',
-      };
-
-      const config = getCliModeConfig(globalArgs);
-
-      expect(config?.prompt).toBe('hello world');
-    });
-
-    it('should return null when prompt is empty', () => {
-      const globalArgs: GlobalArgs = {
-        mode: null,
-        promptMode: true,
-        promptArgs: ['--prompt'],
-        port: 3001,
-        host: 'localhost',
-        commUrl: 'ws://localhost:3001',
-      };
-
-      const config = getCliModeConfig(globalArgs);
-
-      expect(config).toBeNull();
     });
   });
 });
