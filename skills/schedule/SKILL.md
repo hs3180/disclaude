@@ -89,20 +89,40 @@ Schedule content prompt here
 
 ---
 
-### 2. Delete Schedule
+### 2. Delete Schedule (Disable)
+
+**IMPORTANT**: Do NOT delete the schedule file. Instead, disable it by setting `enabled: false`.
+
+This preserves the configuration for potential future reactivation and maintains an audit trail.
 
 **Steps:**
 1. Find schedule files with `Glob`: `workspace/schedules/*.md`
 2. Read files with `Read`
 3. Filter by current `chatId`
-4. Confirm schedule to delete
+4. Confirm schedule to disable
 5. Verify schedule belongs to current `chatId`
-6. Delete with `Bash rm`
-7. **SEND FEEDBACK** confirming deletion
+6. **Disable with `Edit` tool**: Change `enabled: true` to `enabled: false`
+7. **SEND FEEDBACK** confirming the schedule is now disabled
+
+**Example:**
+```yaml
+# Before
+enabled: true
+
+# After
+enabled: false
+```
 
 **Error Handling:**
 - Schedule not found → send feedback with available schedules
 - chatId mismatch → reject and explain
+- Already disabled → inform user it's already disabled
+
+**Why disable instead of delete?**
+- Preserves configuration for future reactivation
+- Maintains audit trail of past schedules
+- Allows reviewing disabled schedules
+- User can permanently delete manually if needed
 
 ---
 
@@ -167,6 +187,82 @@ minute hour day month weekday
 
 ---
 
+## Schedule Prompt Guidelines
+
+**CRITICAL**: Well-written prompts ensure efficient execution. Follow these guidelines:
+
+### 1. Be Self-Contained
+
+❌ **Bad**: "Continue the task from yesterday"
+✅ **Good**: "Check the disclaude repository for new issues and create a PR if applicable"
+
+The prompt must contain ALL necessary context. The scheduler executes in a fresh session with no memory of previous conversations.
+
+### 2. Avoid Creating New Schedules
+
+❌ **Bad**: "Create a daily reminder to check emails"
+✅ **Good**: "Check emails and report new important messages"
+
+Scheduled tasks cannot create other scheduled tasks (anti-recursion protection). If periodic behavior is needed, report to user instead.
+
+### 3. Specify Clear Success Criteria
+
+❌ **Bad**: "Do something with the database"
+✅ **Good**: "Run database backup and verify the backup file exists in /backups/"
+
+Define what "done" looks like. Include verification steps when possible.
+
+### 4. Include Error Handling Instructions
+
+❌ **Bad**: "Send a report"
+✅ **Good**: "Send a report. If the API is unavailable, retry once after 5 minutes, then report failure."
+
+Specify what to do when things go wrong.
+
+### 5. Limit Scope and Dependencies
+
+❌ **Bad**: "Fix all bugs in the system"
+✅ **Good**: "Check issue #123 and report its current status"
+
+Avoid broad or unbounded tasks. Each execution should have clear boundaries.
+
+### 6. Provide Resource References
+
+❌ **Bad**: "Check the config file"
+✅ **Good**: "Check the config file at `/app/workspace/config.yaml`"
+
+Include full paths, URLs, or identifiers. Don't assume the executor knows where things are.
+
+### 7. Consider Execution Time
+
+❌ **Bad**: "Analyze the entire codebase and refactor"
+✅ **Good**: "Run the test suite for the schedule module"
+
+Scheduled tasks should complete within reasonable time. Break large tasks into smaller scheduled checks.
+
+### Prompt Template
+
+```markdown
+## Objective
+[What should be accomplished]
+
+## Context
+[Any necessary background information]
+
+## Steps
+1. [First step]
+2. [Second step]
+...
+
+## Success Criteria
+[How to verify the task completed successfully]
+
+## Error Handling
+[What to do if something fails]
+```
+
+---
+
 ## Checklist
 
 After each operation, verify:
@@ -179,7 +275,10 @@ After each operation, verify:
 ## DO NOT
 
 - Create schedules without confirmation
-- Modify/delete schedules from other chats
+- Modify schedules from other chats
+- Delete schedule files (disable instead with `enabled: false`)
 - Complete operation without sending feedback
 - Assume directory exists (check first)
 - Execute unrelated operations
+- Create new schedules from within a scheduled task execution
+- Write prompts that depend on previous conversation context
