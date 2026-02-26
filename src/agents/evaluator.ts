@@ -22,9 +22,14 @@
 
 import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
-import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { TaskFileManager } from '../task/file-manager.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+
+/**
+ * Allowed tools for Evaluator agent.
+ * These tools are used to read files and write evaluation results.
+ */
+const EVALUATOR_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Write'];
 
 /**
  * Evaluator-specific configuration.
@@ -48,7 +53,6 @@ export interface EvaluatorConfig extends BaseAgentConfig {
  * - Error handling
  */
 export class Evaluator extends BaseAgent {
-  private skill?: ParsedSkill;
   private fileManager: TaskFileManager;
 
   constructor(config: EvaluatorConfig) {
@@ -62,22 +66,12 @@ export class Evaluator extends BaseAgent {
 
   /**
    * Initialize the Evaluator agent.
-   * Loads the evaluator skill which defines allowed tools.
+   * No skill loading needed - tools are defined directly in code.
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
       return;
     }
-
-    // Load skill (required)
-    this.skill = await loadSkillOrThrow('evaluator');
-    this.logger.debug(
-      {
-        skillName: this.skill.name,
-        toolCount: this.skill.allowedTools.length,
-      },
-      'Evaluator skill loaded'
-    );
 
     this.initialized = true;
     this.logger.debug('Evaluator initialized');
@@ -94,14 +88,9 @@ export class Evaluator extends BaseAgent {
       await this.initialize();
     }
 
-    // Skill is required, so allowedTools is always defined after initialize()
-    if (!this.skill) {
-      throw new Error('Evaluator skill not initialized - call initialize() first');
-    }
-
     // Note: send_user_feedback, send_file_to_feishu are intentionally NOT included (Reporter's job)
     const sdkOptions = this.createSdkOptions({
-      allowedTools: this.skill.allowedTools,
+      allowedTools: EVALUATOR_ALLOWED_TOOLS,
       // No MCP servers needed - Evaluator only uses file reading/writing tools
     });
 

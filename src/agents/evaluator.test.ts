@@ -49,14 +49,6 @@ vi.mock('../utils/logger.js', () => ({
   })),
 }));
 
-// Mock skill-loader
-vi.mock('../task/skill-loader.js', () => ({
-  loadSkillOrThrow: vi.fn().mockResolvedValue({
-    name: 'evaluator',
-    allowedTools: ['Read', 'Write', 'Grep', 'Glob'],
-  }),
-}));
-
 // Mock TaskFileManager
 vi.mock('../task/file-manager.js', () => ({
   TaskFileManager: vi.fn().mockImplementation(() => ({
