@@ -9,6 +9,10 @@
  * - FeishuChannel: Feishu/Lark messaging via WebSocket
  * - RestChannel: RESTful API for direct agent interaction
  *
+ * Platform Adapters:
+ * - IMessageSender: Platform-agnostic message sending
+ * - IFileHandler: Platform-agnostic file handling
+ *
  * Usage:
  * ```typescript
  * import { IChannel, FeishuChannel, RestChannel } from './channels/index.js';
@@ -57,3 +61,24 @@ export { BaseChannel } from './base-channel.js';
 // Channel implementations
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 export { RestChannel, type RestChannelConfig } from './rest-channel.js';
+
+// Platform Adapters
+export type {
+  FileAttachment,
+  FileHandlerResult,
+  IMessageSender,
+  IFileHandler,
+  IAttachmentManager,
+  IPlatformAdapter,
+} from './adapters/types.js';
+
+// Platform Implementations
+export {
+  FeishuMessageSender,
+  type FeishuMessageSenderConfig,
+  FeishuFileHandler,
+  type FeishuFileHandlerConfig,
+  buildTextContent,
+  DiffCardBuilder,
+  WriteCardBuilder,
+} from './platforms/feishu/index.js';
