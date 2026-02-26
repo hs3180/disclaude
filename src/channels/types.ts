@@ -38,7 +38,7 @@ export interface IncomingMessage {
   /** Timestamp when message was created (ms since epoch) */
   timestamp?: number;
 
-  /** Thread root message ID for thread replies (from root_id in Feishu) */
+  /** Message ID to reply to (used as parent_id when sending) */
   threadId?: string;
 
   /** Additional metadata from the channel */

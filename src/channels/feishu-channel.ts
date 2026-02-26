@@ -297,12 +297,11 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     if (!message) {return;}
 
-    const { message_id, chat_id, content, message_type, create_time, root_id } = message;
+    const { message_id, chat_id, content, message_type, create_time } = message;
 
-    // Bot always replies to the triggering message, forming or continuing a thread
-    // - In thread: use root_id to keep replies in the same thread
-    // - New message: use message_id to start a new thread
-    const threadId = root_id || message_id;
+    // Bot replies to user message by setting parent_id = message_id
+    // Feishu automatically handles thread affiliation
+    const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
