@@ -350,7 +350,7 @@ describe('Scheduler', () => {
       const task: ScheduledTask = {
         id: 'schedule-blocking-test',
         name: 'Blocking Task',
-        cron: '* * * * * *', // Every second
+        cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
@@ -360,13 +360,16 @@ describe('Scheduler', () => {
 
       scheduler.addTask(task);
 
-      // Trigger execution manually by calling the cron callback
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      // Start first execution (do NOT await - let it run in background)
+      const firstExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Wait a tick for the task to be marked as running
+      await Promise.resolve();
 
       // Task should be marked as running
       expect(scheduler.isTaskRunning(task.id)).toBe(true);
 
-      // Trigger again - should be skipped due to blocking
+      // Trigger again - should be skipped due to blocking (returns immediately)
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
       // ExecuteOnce should have been called only once (second call skipped)
@@ -374,9 +377,7 @@ describe('Scheduler', () => {
 
       // Complete the first execution
       resolveExecute!();
-
-      // Wait a bit for cleanup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await firstExecution;
 
       // Task should no longer be running
       expect(scheduler.isTaskRunning(task.id)).toBe(false);
@@ -393,7 +394,7 @@ describe('Scheduler', () => {
       const task: ScheduledTask = {
         id: 'schedule-nonblocking-test',
         name: 'Non-Blocking Task',
-        cron: '* * * * * *',
+        cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
@@ -401,33 +402,52 @@ describe('Scheduler', () => {
         createdAt: new Date().toISOString(),
       };
 
-      scheduler.addTask(task);
+      // Do NOT add task to scheduler - we're testing executeTask directly
+      // This avoids the cron job interfering with the test
 
-      // Trigger execution
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      // Start first execution (do NOT await - let it run in background)
+      const firstExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
-      // Task should be running
+      // Wait for the first execution to reach executeOnce
+      // Multiple microtask yields to get past await callbacks.sendMessage
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Task should be running (added to runningTasks)
       expect(scheduler.isTaskRunning(task.id)).toBe(true);
 
-      // Trigger again - should NOT be skipped (blocking is false)
-      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+      // Trigger second execution - should NOT be skipped because blocking is false
+      const secondExecution = (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
-      // ExecuteOnce should have been called twice
+      // Wait for the second execution to also reach executeOnce
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // ExecuteOnce should have been called twice (concurrent execution allowed)
       expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
 
       // Complete executions
       resolveExecute!();
+      await Promise.all([firstExecution, secondExecution]);
     });
 
     it('should default blocking to false when not specified', async () => {
+      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
       const task: ScheduledTask = {
         id: 'schedule-default-blocking',
         name: 'Default Blocking Task',
-        cron: '* * * * * *',
+        cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
-        // blocking not specified
+        // blocking not specified - defaults to false
         createdAt: new Date().toISOString(),
       };
 
@@ -446,7 +466,7 @@ describe('Scheduler', () => {
       const task: ScheduledTask = {
         id: 'schedule-blocking-sequential',
         name: 'Blocking Sequential Task',
-        cron: '* * * * * *',
+        cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
