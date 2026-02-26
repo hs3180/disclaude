@@ -21,7 +21,6 @@ async function importRunners() {
   return {
     runCommunicationNode: runners.runCommunicationNode,
     runExecutionNode: runners.runExecutionNode,
-    runCli: runners.runCli,
   };
 }
 
@@ -36,13 +35,12 @@ function showHelp(): void {
   console.log('');
   console.log('═══════════════════════════════════════════════════');
   console.log('  Disclaude - Multi-platform Agent Bot');
-  console.log('  Version: ' + packageJson.version);
+  console.log(`  Version: ${  packageJson.version}`);
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Usage:');
   console.log('  disclaude start --mode comm           Communication Node (Multi-channel)');
   console.log('  disclaude start --mode exec           Execution Node (Pilot Agent)');
-  console.log('  disclaude --prompt <msg>              Execute single prompt');
   console.log('');
   console.log('Options:');
   console.log('  --mode <comm|exec>                    Select run mode (required for start)');
@@ -50,7 +48,6 @@ function showHelp(): void {
   console.log('  --rest-port <port>                    REST API port for comm mode (default: 3000)');
   console.log('  --no-rest                             Disable REST channel');
   console.log('  --comm-url <url>                      Communication Node URL for exec mode (default: ws://localhost:3001)');
-  console.log('  --feishu-chat-id <id>                 Send CLI output to Feishu chat');
   console.log('');
   console.log('Channels (Communication Node):');
   console.log('  - Feishu: Enabled when feishu.appId and feishu.appSecret are configured');
@@ -62,9 +59,6 @@ function showHelp(): void {
   console.log('');
   console.log('  # Execution Node (handles Agent tasks)');
   console.log('  disclaude start --mode exec --comm-url ws://localhost:3001');
-  console.log('');
-  console.log('  # CLI prompt mode');
-  console.log('  disclaude --prompt "What is the weather today?"');
   console.log('');
   console.log('REST API Endpoints (when REST channel is enabled):');
   console.log('  POST /api/chat          Send message (streaming response)');
@@ -90,11 +84,10 @@ async function main(): Promise<void> {
   });
 
   const globalArgs = parseGlobalArgs();
-  const { mode, promptMode, promptArgs } = globalArgs;
+  const { mode } = globalArgs;
 
   logger.info({
     mode,
-    promptMode,
     command: process.argv[2],
     args: process.argv.slice(3)
   }, 'Disclaude starting');
@@ -120,13 +113,7 @@ async function main(): Promise<void> {
   try {
     // Dynamically import runners to avoid loading unnecessary modules
     // This ensures comm mode doesn't load the schedule module (issue #114)
-    const { runCli, runCommunicationNode, runExecutionNode } = await importRunners();
-
-    // Handle prompt mode (CLI single query)
-    if (promptMode) {
-      await runCli(promptArgs);
-      return;
-    }
+    const { runCommunicationNode, runExecutionNode } = await importRunners();
 
     // Show help if no command provided
     if (!process.argv[2] || process.argv[2] === '--help' || process.argv[2] === '-h') {

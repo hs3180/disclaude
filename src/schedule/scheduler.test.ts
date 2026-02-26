@@ -22,7 +22,7 @@ const createMockPilot = (): Pilot => {
   return {
     executeOnce: vi.fn().mockResolvedValue(undefined),
     processMessage: vi.fn().mockResolvedValue(undefined),
-    resetAll: vi.fn(),
+    reset: vi.fn(),
   } as unknown as Pilot;
 };
 
@@ -296,7 +296,7 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
 
-    it('should handle delete and recreate same task ID', async () => {
+    it('should handle delete and recreate same task ID', () => {
       const taskId = 'schedule-same-id';
 
       const task1: ScheduledTask = {
@@ -437,7 +437,7 @@ describe('Scheduler', () => {
       await Promise.all([firstExecution, secondExecution]);
     });
 
-    it('should default blocking to false when not specified', async () => {
+    it('should default blocking to true when not specified', async () => {
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -447,7 +447,7 @@ describe('Scheduler', () => {
         prompt: 'Test',
         chatId: 'test-chat',
         enabled: true,
-        // blocking not specified - defaults to false
+        // blocking not specified - defaults to true
         createdAt: new Date().toISOString(),
       };
 
@@ -456,7 +456,7 @@ describe('Scheduler', () => {
       // Trigger execution
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
-      // Should allow concurrent (blocking defaults to false)
+      // Should allow concurrent (blocking defaults to true, but task completed)
       expect(scheduler.isTaskRunning(task.id)).toBe(false); // Already completed
     });
 

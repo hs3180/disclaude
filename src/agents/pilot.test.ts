@@ -13,6 +13,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       yield { type: 'text', content: 'Test response' };
     },
     close: vi.fn(),
+    streamInput: vi.fn(() => Promise.resolve()),
   }),
   tool: vi.fn(),
   createSdkMcpServer: vi.fn(() => ({})),
@@ -29,6 +30,12 @@ vi.mock('../config/index.js', () => ({
     })),
     getGlobalEnv: vi.fn(() => ({})),
     getMcpServersConfig: vi.fn(() => null),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
   },
 }));
 
@@ -85,42 +92,42 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['callbacks']).toBe(mockCallbacks);
     });
 
-    it('should initialize states map', () => {
-      expect(pilot['states']).toBeInstanceOf(Map);
-      expect(pilot['states'].size).toBe(0);
+    it('should initialize queries map', () => {
+      expect(pilot['queries']).toBeInstanceOf(Map);
+      expect(pilot['queries'].size).toBe(0);
     });
   });
 
   describe('processMessage', () => {
-    it('should create state for new chatId', () => {
+    it('should create query for new chatId', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
 
-      expect(pilot['states'].has('chat-123')).toBe(true);
+      expect(pilot['queries'].has('chat-123')).toBe(true);
     });
 
-    it('should handle multiple messages for same chatId (same state)', () => {
+    it('should handle multiple messages for same chatId (same query)', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
       pilot.processMessage('chat-123', 'World', 'msg-002');
 
-      // Should reuse the same state
-      expect(pilot['states'].size).toBe(1);
-      expect(pilot['states'].has('chat-123')).toBe(true);
+      // Should reuse the same query
+      expect(pilot['queries'].size).toBe(1);
+      expect(pilot['queries'].has('chat-123')).toBe(true);
     });
 
-    it('should handle different chatIds independently (different states)', () => {
+    it('should handle different chatIds independently (different queries)', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
       pilot.processMessage('chat-456', 'Hi', 'msg-002');
 
-      // Should create two separate states
-      expect(pilot['states'].size).toBe(2);
-      expect(pilot['states'].has('chat-123')).toBe(true);
-      expect(pilot['states'].has('chat-456')).toBe(true);
+      // Should create two separate queries
+      expect(pilot['queries'].size).toBe(2);
+      expect(pilot['queries'].has('chat-123')).toBe(true);
+      expect(pilot['queries'].has('chat-456')).toBe(true);
     });
 
     it('should accept optional senderOpenId parameter', () => {
       // Should not throw
       pilot.processMessage('chat-123', 'Hello', 'msg-001', 'user-open-id');
-      expect(pilot['states'].has('chat-123')).toBe(true);
+      expect(pilot['queries'].has('chat-123')).toBe(true);
     });
 
     it('should be non-blocking (returns immediately)', () => {
@@ -131,99 +138,44 @@ describe('Pilot (Streaming Input)', () => {
       // Should return almost immediately (not wait for SDK)
       expect(elapsed).toBeLessThan(100);
     });
-
-    it('should update lastActivity timestamp', () => {
-      const before = Date.now();
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      expect(state?.lastActivity).toBeGreaterThanOrEqual(before);
-    });
-  });
-
-  describe('hasActiveStream', () => {
-    it('should return false when no state exists', () => {
-      expect(pilot.hasActiveStream('chat-123')).toBe(false);
-    });
-
-    it('should return true when state is active', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      // State should be active after creation
-      expect(pilot.hasActiveStream('chat-123')).toBe(true);
-    });
-  });
-
-  describe('clearQueue', () => {
-    it('should clear state', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['states'].has('chat-123')).toBe(true);
-
-      pilot.clearQueue('chat-123');
-
-      expect(pilot['states'].has('chat-123')).toBe(false);
-    });
-
-    it('should handle clearing non-existent state', () => {
-      // Should not throw
-      pilot.clearQueue('chat-nonexistent');
-    });
-  });
-
-  describe('clearPendingFiles', () => {
-    it('should clear pending files in state', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      // Add some pending files
-      state?.pendingWriteFiles.add('file1.txt');
-      state?.pendingWriteFiles.add('file2.txt');
-      expect(state?.pendingWriteFiles.size).toBe(2);
-
-      // Clear pending files
-      pilot.clearPendingFiles('chat-123');
-      expect(state?.pendingWriteFiles.size).toBe(0);
-    });
   });
 
   describe('reset', () => {
     it('should reset specific chatId only', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
       pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['states'].size).toBe(2);
+      expect(pilot['queries'].size).toBe(2);
 
       // Reset only chat-123
       pilot.reset('chat-123');
 
       // chat-123 should be removed, chat-456 should remain
-      expect(pilot['states'].size).toBe(1);
-      expect(pilot['states'].has('chat-123')).toBe(false);
-      expect(pilot['states'].has('chat-456')).toBe(true);
+      expect(pilot['queries'].size).toBe(1);
+      expect(pilot['queries'].has('chat-123')).toBe(false);
+      expect(pilot['queries'].has('chat-456')).toBe(true);
     });
 
     it('should handle non-existent chatId gracefully', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['states'].size).toBe(1);
+      expect(pilot['queries'].size).toBe(1);
 
       // Reset non-existent chatId
       pilot.reset('chat-nonexistent');
 
-      // Original state should remain
-      expect(pilot['states'].size).toBe(1);
-      expect(pilot['states'].has('chat-123')).toBe(true);
+      // Original query should remain
+      expect(pilot['queries'].size).toBe(1);
+      expect(pilot['queries'].has('chat-123')).toBe(true);
     });
 
-    it('should close query instance when resetting', async () => {
+    it('should close query instance when resetting', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
 
-      // Wait a bit for agent loop to start
-      await new Promise(resolve => setTimeout(resolve, 100));
-
+      // Reset should work immediately without waiting
+      // The reset method is synchronous and handles query cleanup
       pilot.reset('chat-123');
 
-      // State should be removed
-      expect(pilot['states'].has('chat-123')).toBe(false);
+      // Query should be removed
+      expect(pilot['queries'].has('chat-123')).toBe(false);
     });
 
     it('should not affect other chatIds in group chat scenario', () => {
@@ -232,37 +184,25 @@ describe('Pilot (Streaming Input)', () => {
       pilot.processMessage('group-chat-2', 'Hello from group 2', 'msg-002');
       pilot.processMessage('group-chat-3', 'Hello from group 3', 'msg-003');
 
-      expect(pilot['states'].size).toBe(3);
+      expect(pilot['queries'].size).toBe(3);
 
       // User in group-chat-1 sends /reset
       pilot.reset('group-chat-1');
 
       // Only group-chat-1 should be reset
-      expect(pilot['states'].size).toBe(2);
-      expect(pilot['states'].has('group-chat-1')).toBe(false);
-      expect(pilot['states'].has('group-chat-2')).toBe(true);
-      expect(pilot['states'].has('group-chat-3')).toBe(true);
-    });
-  });
-
-  describe('resetAll', () => {
-    it('should clear all states', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['states'].size).toBe(2);
-
-      pilot.resetAll();
-
-      expect(pilot['states'].size).toBe(0);
+      expect(pilot['queries'].size).toBe(2);
+      expect(pilot['queries'].has('group-chat-1')).toBe(false);
+      expect(pilot['queries'].has('group-chat-2')).toBe(true);
+      expect(pilot['queries'].has('group-chat-3')).toBe(true);
     });
   });
 
   describe('getActiveSessionCount', () => {
-    it('should return 0 when no states', () => {
+    it('should return 0 when no queries', () => {
       expect(pilot.getActiveSessionCount()).toBe(0);
     });
 
-    it('should return count of active states', () => {
+    it('should return count of active queries', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
       pilot.processMessage('chat-456', 'Hi', 'msg-002');
 
@@ -276,87 +216,37 @@ describe('Pilot (Streaming Input)', () => {
 
       await pilot.shutdown();
 
-      expect(pilot['states'].size).toBe(0);
+      expect(pilot['queries'].size).toBe(0);
     });
   });
 
-  describe('State Management', () => {
-    it('should initialize PerChatIdState correctly', () => {
+  describe('Query Management', () => {
+    it('should create query when processing first message', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
+      const query = pilot['queries'].get('chat-123');
 
-      expect(state).toBeDefined();
-      expect(state?.messageQueue).toEqual(expect.any(Array));
-      expect(state?.pendingWriteFiles).toBeInstanceOf(Set);
-      expect(state?.closed).toBe(false);
-      expect(state?.started).toBe(true);
+      expect(query).toBeDefined();
     });
 
-    it('should queue messages correctly', () => {
+    it('should store thread root for replies', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-123', 'World', 'msg-002');
-      const state = pilot['states'].get('chat-123');
 
-      // Messages should be in queue (they may have been consumed by the generator)
-      expect(state?.messageQueue).toBeDefined();
+      expect(pilot['threadRoots'].get('chat-123')).toBe('msg-001');
     });
   });
 
   describe('executeOnce', () => {
     it('should be an instance method', () => {
       // executeOnce is an instance method, not static
+      // This method is used by the Scheduler for scheduled task execution
       expect(typeof pilot.executeOnce).toBe('function');
     });
 
-    it('should create CLI pilot instance', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
-      expect(cliPilot['isCliMode']).toBe(true);
-    });
-
     it('should accept all parameters', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
       // Test that the method exists and can be called
-      expect(typeof cliPilot.executeOnce).toBe('function');
+      expect(typeof pilot.executeOnce).toBe('function');
     });
   });
-
-  describe('CLI Mode', () => {
-    it('should support isCliMode option', () => {
-      const cliPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-        isCliMode: true,
-      });
-
-      expect(cliPilot['isCliMode']).toBe(true);
-    });
-
-    it('should default isCliMode to false', () => {
-      const defaultPilot = new Pilot({
-        apiKey: 'test-api-key',
-        model: 'test-model',
-        callbacks: mockCallbacks,
-      });
-
-      expect(defaultPilot['isCliMode']).toBe(false);
-    });
-  });
-
-  // Config Fallback tests removed - PilotConfig now requires apiKey and model
-  // Use AgentFactory.createPilot() for convenient instance creation with defaults
 
   describe('Error Handling', () => {
     it('should handle errors in processMessage gracefully', () => {

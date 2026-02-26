@@ -52,7 +52,7 @@ export interface ScheduleFileScannerOptions {
  * - name (required)
  * - cron (required)
  * - enabled (optional, default: true)
- * - blocking (optional, default: false)
+ * - blocking (optional, default: true)
  * - chatId (required)
  * - createdBy (optional)
  * - createdAt (optional)
@@ -104,16 +104,6 @@ function parseScheduleFrontmatter(content: string): {
     frontmatter,
     contentStart: match[0].length
   };
-}
-
-/**
- * Generate a slug from task name for file naming.
- */
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-') // Keep alphanumeric and Chinese
-    .replace(/^-+|-+$/g, ''); // Remove leading/trailing dashes
 }
 
 /**
@@ -202,7 +192,7 @@ export class ScheduleFileScanner {
         chatId: frontmatter['chatId'] as string,
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
-        blocking: (frontmatter['blocking'] as boolean) ?? false,
+        blocking: (frontmatter['blocking'] as boolean) ?? true,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
@@ -240,7 +230,7 @@ export class ScheduleFileScanner {
       `name: "${task.name}"`,
       `cron: "${task.cron}"`,
       `enabled: ${task.enabled}`,
-      `blocking: ${task.blocking ?? false}`,
+      `blocking: ${task.blocking ?? true}`,
       `chatId: ${task.chatId}`,
     ];
 

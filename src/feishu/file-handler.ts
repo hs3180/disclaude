@@ -6,7 +6,7 @@
  * - Store locally for agent processing
  * - Build upload notification prompts
  */
-import type { FileAttachment } from './attachment-manager.js';
+import type { FileAttachment } from '../channels/adapters/types.js';
 import { createLogger } from '../utils/logger.js';
 
 export interface FileHandlerResult {

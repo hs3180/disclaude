@@ -25,6 +25,12 @@ vi.mock('../config/index.js', () => ({
       provider: 'anthropic',
     })),
     getGlobalEnv: vi.fn(() => ({})),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
   },
 }));
 
@@ -46,14 +52,6 @@ vi.mock('../utils/logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   })),
-}));
-
-// Mock skill-loader
-vi.mock('../task/skill-loader.js', () => ({
-  loadSkillOrThrow: vi.fn().mockResolvedValue({
-    name: 'reporter',
-    allowedTools: ['send_user_feedback', 'send_file_to_feishu'],
-  }),
 }));
 
 // Mock feishu-context-mcp

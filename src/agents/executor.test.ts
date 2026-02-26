@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { TaskProgressEvent } from './executor.js';
 
 // Mock SDK
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -25,6 +26,12 @@ vi.mock('../config/index.js', () => ({
       provider: 'anthropic',
     })),
     getGlobalEnv: vi.fn(() => ({})),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
   },
 }));
 

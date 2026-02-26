@@ -27,6 +27,14 @@ interface ActiveJob {
 }
 
 /**
+ * Feedback channel context for scheduled task execution.
+ */
+export interface FeedbackChannelContext {
+  sendFeedback: (feedback: { type: string; chatId: string; text?: string; threadId?: string }) => void;
+  threadId?: string;
+}
+
+/**
  * Scheduler options.
  */
 export interface SchedulerOptions {
@@ -36,6 +44,10 @@ export interface SchedulerOptions {
   pilot: Pilot;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
+  /** Set up feedback channel for scheduled task execution */
+  setFeedbackChannel?: (chatId: string, context: FeedbackChannelContext) => void;
+  /** Clear feedback channel after task completion */
+  clearFeedbackChannel?: (chatId: string) => void;
 }
 
 /**
@@ -63,6 +75,8 @@ export class Scheduler {
   private scheduleManager: ScheduleManager;
   private pilot: Pilot;
   private callbacks: PilotCallbacks;
+  private setFeedbackChannel?: (chatId: string, context: FeedbackChannelContext) => void;
+  private clearFeedbackChannel?: (chatId: string) => void;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -72,6 +86,8 @@ export class Scheduler {
     this.scheduleManager = options.scheduleManager;
     this.pilot = options.pilot;
     this.callbacks = options.callbacks;
+    this.setFeedbackChannel = options.setFeedbackChannel;
+    this.clearFeedbackChannel = options.clearFeedbackChannel;
     logger.info('Scheduler created');
   }
 
@@ -204,6 +220,20 @@ ${task.prompt}`;
     // Mark task as running
     this.runningTasks.add(task.id);
 
+    // Set up feedback channel for Pilot's sendMessage callbacks
+    // The sendFeedback will be provided by ExecutionRunner to directly send via WebSocket
+    // We don't call callbacks.sendMessage here to avoid recursion
+    if (this.setFeedbackChannel) {
+      this.setFeedbackChannel(task.chatId, {
+        // sendFeedback will be implemented by ExecutionRunner to directly use WebSocket
+        sendFeedback: () => {
+          // This is a placeholder - ExecutionRunner will replace this with actual implementation
+        },
+        threadId: undefined,  // Scheduled tasks send new messages, not replies
+      });
+      logger.debug({ chatId: task.chatId, taskId: task.id }, 'Feedback channel set for scheduled task');
+    }
+
     try {
       // Send start notification
       await this.callbacks.sendMessage(
@@ -215,10 +245,11 @@ ${task.prompt}`;
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Execute task using Pilot's executeOnce method
+      // messageId is undefined - scheduled tasks send new messages, not replies
       await this.pilot.executeOnce(
         task.chatId,
         wrappedPrompt,
-        `${task.id}-${Date.now()}`,
+        undefined,
         task.createdBy
       );
 
@@ -239,6 +270,12 @@ ${task.prompt}`;
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);
+
+      // Clear feedback channel
+      if (this.clearFeedbackChannel) {
+        this.clearFeedbackChannel(task.chatId);
+        logger.debug({ chatId: task.chatId, taskId: task.id }, 'Feedback channel cleared for scheduled task');
+      }
     }
   }
 

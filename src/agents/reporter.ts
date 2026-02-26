@@ -34,8 +34,13 @@ import type { AgentMessage } from '../types/agent.js';
 import type { ReporterContext } from '../types/reporter.js';
 import type { TaskProgressEvent } from './executor.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
-import { loadSkillOrThrow, type ParsedSkill } from '../task/skill-loader.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+
+/**
+ * Reporter-specific allowed tools.
+ * Defined directly in code instead of loading from skill files.
+ */
+const REPORTER_ALLOWED_TOOLS = ['send_user_feedback', 'send_file_to_feishu'];
 
 /**
  * Reporter - Communication and instruction generation specialist.
@@ -46,8 +51,6 @@ import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
  * - Error handling
  */
 export class Reporter extends BaseAgent {
-  private skill?: ParsedSkill;
-
   constructor(config: BaseAgentConfig) {
     super(config);
   }
@@ -58,25 +61,18 @@ export class Reporter extends BaseAgent {
 
   /**
    * Initialize the Reporter agent.
-   * Loads the reporter skill which defines allowed tools.
+   * No skill loading needed - allowedTools are defined directly in code.
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
       return;
     }
 
-    // Load skill (required)
-    this.skill = await loadSkillOrThrow('reporter');
-    this.logger.debug(
-      {
-        skillName: this.skill.name,
-        toolCount: this.skill.allowedTools.length,
-      },
-      'Reporter skill loaded'
-    );
-
     this.initialized = true;
-    this.logger.debug('Reporter initialized');
+    this.logger.debug(
+      { toolCount: REPORTER_ALLOWED_TOOLS.length },
+      'Reporter initialized'
+    );
   }
 
   /**
@@ -102,14 +98,9 @@ export class Reporter extends BaseAgent {
       await this.initialize();
     }
 
-    // Skill is required, so allowedTools is always defined after initialize()
-    if (!this.skill) {
-      throw new Error('Reporter skill not initialized - call initialize() first');
-    }
-
     // Note: task_done is intentionally NOT included (Evaluator's job)
     const sdkOptions = this.createSdkOptions({
-      allowedTools: this.skill.allowedTools,
+      allowedTools: REPORTER_ALLOWED_TOOLS,
       mcpServers: {
         'feishu-context': createFeishuSdkMcpServer(),
       },
@@ -138,13 +129,8 @@ export class Reporter extends BaseAgent {
       await this.initialize();
     }
 
-    // Skill is required, so allowedTools is always defined after initialize()
-    if (!this.skill) {
-      throw new Error('Reporter skill not initialized - call initialize() first');
-    }
-
     const sdkOptions = this.createSdkOptions({
-      allowedTools: this.skill.allowedTools,
+      allowedTools: REPORTER_ALLOWED_TOOLS,
       mcpServers: {
         'feishu-context': createFeishuSdkMcpServer(),
       },
@@ -209,7 +195,7 @@ export class Reporter extends BaseAgent {
       chatId: context.chatId,
     });
 
-    if (!prompt) return;
+    if (!prompt) {return;}
 
     try {
       for await (const msg of this.sendFeedback(prompt)) {

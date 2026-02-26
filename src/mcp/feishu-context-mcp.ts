@@ -65,27 +65,34 @@ async function sendMessageToFeishu(
   parentId?: string
 ): Promise<void> {
   const messageData: {
-    receive_id: string;
+    receive_id_type?: string;
     msg_type: string;
     content: string;
-    parent_id?: string;
   } = {
-    receive_id: chatId,
     msg_type: msgType,
     content,
   };
 
-  // Add parent_id for thread replies if provided
+  // When replying to a message, use reply method to properly quote the user's message
   if (parentId) {
-    messageData.parent_id = parentId;
+    await client.im.message.reply({
+      path: {
+        message_id: parentId,
+      },
+      data: messageData,
+    });
+  } else {
+    // New message: use create method with receive_id
+    await client.im.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: chatId,
+        ...messageData,
+      },
+    });
   }
-
-  await client.im.message.create({
-    params: {
-      receive_id_type: 'chat_id',
-    },
-    data: messageData,
-  });
 }
 
 /**
@@ -130,9 +137,9 @@ function getCardValidationError(content: unknown): string {
   const obj = content as Record<string, unknown>;
   const missing: string[] = [];
 
-  if (!('config' in obj)) missing.push('config');
-  if (!('header' in obj)) missing.push('header');
-  if (!('elements' in obj)) missing.push('elements');
+  if (!('config' in obj)) {missing.push('config');}
+  if (!('header' in obj)) {missing.push('header');}
+  if (!('elements' in obj)) {missing.push('elements');}
 
   if (missing.length > 0) {
     return `missing required fields: ${missing.join(', ')}`;
@@ -293,7 +300,7 @@ export async function send_user_feedback(params: {
           return {
             success: false,
             error: `Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Parse failed'}`,
-            message: `❌ Content is not valid JSON. Expected a Feishu card object with: { config, header: { title }, elements: [] }`,
+            message: '❌ Content is not valid JSON. Expected a Feishu card object with: { config, header: { title }, elements: [] }',
           };
         }
       } else {
@@ -308,7 +315,7 @@ export async function send_user_feedback(params: {
         return {
           success: false,
           error: `Invalid content type: expected object or string, got ${actualType}`,
-          message: `❌ Invalid content type. Expected Feishu card object or JSON string.`,
+          message: '❌ Invalid content type. Expected Feishu card object or JSON string.',
         };
       }
     }

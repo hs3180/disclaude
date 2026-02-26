@@ -164,12 +164,12 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
       // Check for tool_use blocks in content
       const toolBlocks = apiMessage.content.filter(
-        (block) => block.type === 'tool_use'
+        (block: ContentBlock) => block.type === 'tool_use'
       );
 
       // Check for text blocks
       const textBlocks = apiMessage.content.filter(
-        (block) => block.type === 'text' && 'text' in block
+        (block: ContentBlock) => block.type === 'text' && 'text' in block
       );
 
       // Accumulate all content blocks (tool uses + text)
@@ -199,8 +199,8 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
 
       // Extract all text content
       const textParts = textBlocks
-        .filter((block) => 'text' in block)
-        .map((block) => (block as { text: string }).text);
+        .filter((block: ContentBlock) => 'text' in block)
+        .map((block: ContentBlock) => (block as { text: string }).text);
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
@@ -376,12 +376,14 @@ export function extractText(message: AgentMessage): string {
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
+ * @param sdkDebug - Enable SDK debug logging (default: true)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
-  extraEnv?: Record<string, string | undefined>
+  extraEnv?: Record<string, string | undefined>,
+  sdkDebug: boolean = true
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
   const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
@@ -399,7 +401,8 @@ export function buildSdkEnv(
     PATH: newPath,
     // Enable SDK debug logging by default for better troubleshooting
     // SDK subprocess errors go to stderr and are critical for debugging
-    DEBUG_CLAUDE_AGENT_SDK: process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1',
+    // Can be disabled via config logging.sdkDebug: false
+    DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
   };
 
   // Set base URL if provided (for GLM or custom endpoints)

@@ -108,7 +108,7 @@ export class TaskTracker {
 
   /**
    * Save task processing record to disk (asynchronous).
-   * Note: Task directories are now used for workflow (Pilot → task skill → Task.md → dialogue).
+   * Note: Task directories are now used for workflow (Pilot → deep-task skill → Task.md → dialogue).
    * Deduplication is handled by MessageLogger via MD file parsing.
    *
    * @param messageId - Unique message identifier
