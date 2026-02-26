@@ -116,16 +116,12 @@ interface PerChatIdState {
   messageResolver?: (() => void);
   /** SDK Query instance */
   queryInstance?: Query;
-  /** Pending Write tool files */
-  pendingWriteFiles: Set<string>;
   /** Whether this chatId is closed */
   closed: boolean;
-  /** Last activity timestamp */
-  lastActivity: number;
   /** Whether the Agent loop has been started */
   started: boolean;
-  /** Current thread root message ID for replies (the latest user message) */
-  currentThreadRootId?: string;
+  /** Current message ID being processed (for thread replies) */
+  currentMessageId?: string;
 }
 
 /**
@@ -211,9 +207,6 @@ export class Pilot extends BaseAgent {
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
 
-    // Track pending Write tool files for this execution
-    const pendingWriteFiles = new Set<string>();
-
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
       for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
@@ -221,46 +214,6 @@ export class Pilot extends BaseAgent {
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
           break;
-        }
-
-        // Track Write tool operations
-        const isWriteTool =
-          parsed.type === 'tool_use' && parsed.metadata?.toolName === 'Write';
-
-        if (isWriteTool && parsed.metadata?.toolInputRaw) {
-          const toolInput = parsed.metadata.toolInputRaw as Record<string, unknown>;
-          const filePath =
-            (toolInput.file_path || toolInput.filePath) as string | undefined;
-
-          if (filePath) {
-            pendingWriteFiles.add(filePath);
-            this.logger.debug({ filePath, chatId }, 'Write tool detected');
-          }
-        }
-
-        // Send file when Write tool completes
-        if (parsed.type === 'tool_result' && pendingWriteFiles.size > 0) {
-          const filePaths = Array.from(pendingWriteFiles);
-          pendingWriteFiles.clear();
-          this.logger.debug(
-            { fileCount: filePaths.length, chatId },
-            'Write tool completed'
-          );
-
-          for (const filePath of filePaths) {
-            try {
-              await this.callbacks.sendFile(chatId, filePath);
-              this.logger.info({ filePath, chatId }, 'File sent');
-            } catch (error) {
-              const err = error as Error;
-              this.logger.error({ err, filePath, chatId }, 'Failed to send file');
-              await this.callbacks.sendMessage(
-                chatId,
-                `❌ Failed to send file: ${filePath}`,
-                messageId // Use current message as thread root for CLI mode
-              );
-            }
-          }
         }
 
         // Send message content to callback (with thread support)
@@ -306,15 +259,8 @@ export class Pilot extends BaseAgent {
     // Get or create state for this chatId (handles health check and restart)
     const state = this.getOrCreateState(chatId);
 
-    // Update last activity
-    state.lastActivity = Date.now();
-
-    // Set this message as the current thread root for replies
-    // All bot responses will be threaded to this user message
-    state.currentThreadRootId = messageId;
-    this.logger.debug({ chatId, messageId }, 'Set current thread root for replies');
-
     // Push message to the queue
+    // The messageId will be used as threadRootId when processing this message
     state.messageQueue.push({ text, messageId, senderOpenId, attachments });
 
     // Log health status for debugging
@@ -378,11 +324,9 @@ export class Pilot extends BaseAgent {
       messageQueue: [],
       messageResolver: undefined,
       queryInstance: undefined,
-      pendingWriteFiles: new Set(),
       closed: false,
-      lastActivity: Date.now(),
       started: false,
-      currentThreadRootId: undefined,
+      currentMessageId: undefined,
     };
 
     this.states.set(chatId, state);
@@ -520,6 +464,10 @@ You can read these files using the Read tool with the local paths above.`;
         }
         this.logger.debug({ messageId: msg.messageId }, 'Yielding message to Agent');
 
+        // Track current message ID for thread replies
+        // This is updated for each message processed
+        state.currentMessageId = msg.messageId;
+
         // Build user message with context
         const enhancedContent = this.buildEnhancedContent(chatId, msg);
 
@@ -614,52 +562,10 @@ You can read these files using the Read tool with the local paths above.`;
           break;
         }
 
-        // Update activity timestamp
-        state.lastActivity = Date.now();
-
-        // Track Write tool operations
-        const isWriteTool =
-          parsed.type === 'tool_use' && parsed.metadata?.toolName === 'Write';
-
-        if (isWriteTool && parsed.metadata?.toolInputRaw) {
-          const toolInput = parsed.metadata.toolInputRaw as Record<string, unknown>;
-          const filePath =
-            (toolInput.file_path || toolInput.filePath) as string | undefined;
-
-          if (filePath) {
-            state.pendingWriteFiles.add(filePath);
-            this.logger.debug({ filePath, chatId }, 'Write tool detected');
-          }
-        }
-
-        // Send file when Write tool completes
-        if (parsed.type === 'tool_result' && state.pendingWriteFiles.size > 0) {
-          const filePaths = Array.from(state.pendingWriteFiles);
-          state.pendingWriteFiles.clear();
-          this.logger.debug(
-            { fileCount: filePaths.length, chatId },
-            'Write tool completed'
-          );
-
-          for (const filePath of filePaths) {
-            try {
-              await this.callbacks.sendFile(chatId, filePath);
-              this.logger.info({ filePath, chatId }, 'File sent');
-            } catch (error) {
-              const err = error as Error;
-              this.logger.error({ err, filePath, chatId }, 'Failed to send file');
-              await this.callbacks.sendMessage(
-                chatId,
-                `❌ Failed to send file: ${filePath}`,
-                state.currentThreadRootId
-              );
-            }
-          }
-        }
-
         // Send message content to callback (with thread support)
+        // Uses currentMessageId which is set by messageGenerator for each message
         if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content, state.currentThreadRootId);
+          await this.callbacks.sendMessage(chatId, parsed.content, state.currentMessageId);
         }
 
         // Check for completion - result type means current turn is done
@@ -670,7 +576,7 @@ You can read these files using the Read tool with the local paths above.`;
           this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
           // Signal completion to communication layer (e.g., REST sync mode)
           if (this.callbacks.onDone) {
-            await this.callbacks.onDone(chatId, state.currentThreadRootId);
+            await this.callbacks.onDone(chatId, state.currentMessageId);
           }
           // Continue the loop - messageGenerator will wait for next user message
         }
@@ -686,28 +592,17 @@ You can read these files using the Read tool with the local paths above.`;
       const err = error as Error;
       this.logger.error({ err, chatId }, 'Agent loop error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentThreadRootId);
+      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, state.currentMessageId);
 
       // Signal completion even on error
       if (this.callbacks.onDone) {
-        await this.callbacks.onDone(chatId, state.currentThreadRootId);
+        await this.callbacks.onDone(chatId, state.currentMessageId);
       }
 
       // Mark as restartable instead of deleting - preserve queue for next session
       state.started = false;
       state.closed = false; // Allow restart
     }
-  }
-
-  /**
-   * Check if an Agent session is active for a chatId.
-   *
-   * @param chatId - Platform-specific chat identifier
-   * @returns true if a session is active
-   */
-  hasActiveStream(chatId: string): boolean {
-    const state = this.states.get(chatId);
-    return state?.started === true && state.closed === false;
   }
 
   /**
@@ -753,22 +648,6 @@ You can read these files using the Read tool with the local paths above.`;
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
     }
-  }
-
-  /**
-   * Clear all pending files for a chatId.
-   *
-   * Note: In the new implementation, file tracking is internal to the state.
-   * This method is kept for API compatibility.
-   *
-   * @param chatId - Platform-specific chat identifier
-   */
-  clearPendingFiles(chatId: string): void {
-    const state = this.states.get(chatId);
-    if (state) {
-      state.pendingWriteFiles.clear();
-    }
-    this.logger.debug({ chatId }, 'Pending files cleared');
   }
 
   /**

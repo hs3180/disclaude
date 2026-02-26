@@ -11,18 +11,13 @@
  */
 
 import http from 'node:http';
-import { EventEmitter } from 'events';
 import { createLogger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
+import { BaseChannel } from './base-channel.js';
 import type {
-  IChannel,
   ChannelConfig,
-  ChannelStatus,
   OutgoingMessage,
   ControlCommand,
-  ControlResponse,
-  MessageHandler,
-  ControlHandler,
 } from './types.js';
 
 const logger = createLogger('RestChannel');
@@ -95,10 +90,7 @@ interface PendingResponse {
  * - Optional authentication via Authorization header
  * - CORS support
  */
-export class RestChannel extends EventEmitter implements IChannel {
-  readonly id: string;
-  readonly name: string = 'REST';
-
+export class RestChannel extends BaseChannel<RestChannelConfig> {
   private port: number;
   private host: string;
   private apiPrefix: string;
@@ -106,9 +98,6 @@ export class RestChannel extends EventEmitter implements IChannel {
   private enableCors: boolean;
 
   private server?: http.Server;
-  private _status: ChannelStatus = 'stopped';
-  private messageHandler?: MessageHandler;
-  private controlHandler?: ControlHandler;
 
   // Pending responses for sync mode (chatId -> PendingResponse)
   private pendingResponses = new Map<string, PendingResponse>();
@@ -118,8 +107,7 @@ export class RestChannel extends EventEmitter implements IChannel {
   private chatToMessage = new Map<string, string>();
 
   constructor(config: RestChannelConfig = {}) {
-    super();
-    this.id = config.id || 'rest';
+    super(config, 'rest', 'REST');
     this.port = config.port || 3000;
     this.host = config.host || '0.0.0.0';
     this.apiPrefix = config.apiPrefix || '/api';
@@ -129,19 +117,51 @@ export class RestChannel extends EventEmitter implements IChannel {
     logger.info({ id: this.id, port: this.port }, 'RestChannel created');
   }
 
-  get status(): ChannelStatus {
-    return this._status;
+  protected async doStart(): Promise<void> {
+    this.server = http.createServer((req, res) => {
+      this.handleRequest(req, res).catch((error) => {
+        logger.error({ err: error }, 'Failed to handle request');
+        this.sendError(res, 500, 'Internal server error');
+      });
+    });
+
+    return new Promise((resolve, reject) => {
+      this.server!.listen(this.port, this.host, () => {
+        logger.info({ port: this.port, host: this.host }, 'RestChannel started');
+        resolve();
+      });
+
+      this.server!.on('error', (error) => {
+        logger.error({ err: error }, 'Failed to start RestChannel');
+        reject(error);
+      });
+    });
   }
 
-  onMessage(handler: MessageHandler): void {
-    this.messageHandler = handler;
+  protected async doStop(): Promise<void> {
+    // Clear all pending responses
+    for (const [_chatId, pending] of this.pendingResponses) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Channel stopped'));
+    }
+    this.pendingResponses.clear();
+    this.responseBuffers.clear();
+    this.chatToMessage.clear();
+
+    return new Promise((resolve) => {
+      if (this.server) {
+        this.server.close(() => {
+          this.server = undefined;
+          logger.info('RestChannel stopped');
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
   }
 
-  onControl(handler: ControlHandler): void {
-    this.controlHandler = handler;
-  }
-
-  async sendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal for sync mode
@@ -181,68 +201,8 @@ export class RestChannel extends EventEmitter implements IChannel {
     logger.debug({ chatId: message.chatId, type: message.type }, 'Message sent through REST channel');
   }
 
-  async start(): Promise<void> {
-    if (this._status === 'running') {
-      logger.warn('RestChannel already running');
-      return;
-    }
-
-    this._status = 'starting';
-
-    this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res).catch((error) => {
-        logger.error({ err: error }, 'Failed to handle request');
-        this.sendError(res, 500, 'Internal server error');
-      });
-    });
-
-    return new Promise((resolve, reject) => {
-      this.server!.listen(this.port, this.host, () => {
-        this._status = 'running';
-        logger.info({ port: this.port, host: this.host }, 'RestChannel started');
-        resolve();
-      });
-
-      this.server!.on('error', (error) => {
-        this._status = 'error';
-        logger.error({ err: error }, 'Failed to start RestChannel');
-        reject(error);
-      });
-    });
-  }
-
-  async stop(): Promise<void> {
-    if (this._status === 'stopped') {
-      return;
-    }
-
-    this._status = 'stopping';
-
-    // Clear all pending responses
-    for (const [_chatId, pending] of this.pendingResponses) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Channel stopped'));
-    }
-    this.pendingResponses.clear();
-    this.responseBuffers.clear();
-    this.chatToMessage.clear();
-
-    return new Promise((resolve) => {
-      if (this.server) {
-        this.server.close(() => {
-          this._status = 'stopped';
-          logger.info('RestChannel stopped');
-          resolve();
-        });
-      } else {
-        this._status = 'stopped';
-        resolve();
-      }
-    });
-  }
-
-  isHealthy(): boolean {
-    return this._status === 'running' && this.server !== undefined;
+  protected checkHealth(): boolean {
+    return this.server !== undefined;
   }
 
   /**
@@ -351,7 +311,7 @@ export class RestChannel extends EventEmitter implements IChannel {
 
     const chatId = chatRequest.chatId || uuidv4();
     const messageId = uuidv4();
-    const userId = chatRequest.userId;
+    const {userId} = chatRequest;
 
     logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
 
@@ -427,12 +387,7 @@ export class RestChannel extends EventEmitter implements IChannel {
 
     logger.info({ type: command.type, chatId: command.chatId }, 'Received control command');
 
-    let response: ControlResponse;
-    if (this.controlHandler) {
-      response = await this.controlHandler(command);
-    } else {
-      response = { success: true, message: 'Command received' };
-    }
+    const response = await this.emitControl(command);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));

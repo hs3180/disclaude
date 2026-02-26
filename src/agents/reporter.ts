@@ -209,7 +209,7 @@ export class Reporter extends BaseAgent {
       chatId: context.chatId,
     });
 
-    if (!prompt) return;
+    if (!prompt) {return;}
 
     try {
       for await (const msg of this.sendFeedback(prompt)) {

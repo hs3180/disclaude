@@ -131,27 +131,6 @@ describe('Pilot (Streaming Input)', () => {
       // Should return almost immediately (not wait for SDK)
       expect(elapsed).toBeLessThan(100);
     });
-
-    it('should update lastActivity timestamp', () => {
-      const before = Date.now();
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      expect(state?.lastActivity).toBeGreaterThanOrEqual(before);
-    });
-  });
-
-  describe('hasActiveStream', () => {
-    it('should return false when no state exists', () => {
-      expect(pilot.hasActiveStream('chat-123')).toBe(false);
-    });
-
-    it('should return true when state is active', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      // State should be active after creation
-      expect(pilot.hasActiveStream('chat-123')).toBe(true);
-    });
   });
 
   describe('clearQueue', () => {
@@ -167,22 +146,6 @@ describe('Pilot (Streaming Input)', () => {
     it('should handle clearing non-existent state', () => {
       // Should not throw
       pilot.clearQueue('chat-nonexistent');
-    });
-  });
-
-  describe('clearPendingFiles', () => {
-    it('should clear pending files in state', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const state = pilot['states'].get('chat-123');
-
-      // Add some pending files
-      state?.pendingWriteFiles.add('file1.txt');
-      state?.pendingWriteFiles.add('file2.txt');
-      expect(state?.pendingWriteFiles.size).toBe(2);
-
-      // Clear pending files
-      pilot.clearPendingFiles('chat-123');
-      expect(state?.pendingWriteFiles.size).toBe(0);
     });
   });
 
@@ -213,12 +176,11 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['states'].has('chat-123')).toBe(true);
     });
 
-    it('should close query instance when resetting', async () => {
+    it('should close query instance when resetting', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
 
-      // Wait a bit for agent loop to start
-      await new Promise(resolve => setTimeout(resolve, 100));
-
+      // Reset should work immediately without waiting
+      // The reset method is synchronous and handles queryInstance cleanup
       pilot.reset('chat-123');
 
       // State should be removed
@@ -286,7 +248,6 @@ describe('Pilot (Streaming Input)', () => {
 
       expect(state).toBeDefined();
       expect(state?.messageQueue).toEqual(expect.any(Array));
-      expect(state?.pendingWriteFiles).toBeInstanceOf(Set);
       expect(state?.closed).toBe(false);
       expect(state?.started).toBe(true);
     });

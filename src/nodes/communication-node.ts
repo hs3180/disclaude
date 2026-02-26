@@ -255,7 +255,7 @@ export class CommunicationNode extends EventEmitter {
   /**
    * Handle message from a channel.
    */
-  private async handleChannelMessage(channelId: string, message: IncomingMessage): Promise<void> {
+  private async handleChannelMessage(_channelId: string, message: IncomingMessage): Promise<void> {
     // Process attachments if present
     let attachments: FileReference[] | undefined;
     if (message.attachments && message.attachments.length > 0 && this.fileStorageService) {

@@ -183,10 +183,10 @@ export class Config {
       logger.error({ errors }, 'Configuration validation failed');
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
-        `Please update your disclaude.config.yaml file:\n` +
-        `  glm:\n` +
-        `    apiKey: \"your-key\"\n` +
-        `    model: \"glm-5\"`
+        'Please update your disclaude.config.yaml file:\n' +
+        '  glm:\n' +
+        '    apiKey: \"your-key\"\n' +
+        '    model: \"glm-5\"'
       );
     }
   }
