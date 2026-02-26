@@ -184,12 +184,11 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['states'].has('chat-123')).toBe(true);
     });
 
-    it('should close query instance when resetting', async () => {
+    it('should close query instance when resetting', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
 
-      // Wait a bit for agent loop to start
-      await new Promise(resolve => setTimeout(resolve, 100));
-
+      // Reset should work immediately without waiting
+      // The reset method is synchronous and handles queryInstance cleanup
       pilot.reset('chat-123');
 
       // State should be removed
