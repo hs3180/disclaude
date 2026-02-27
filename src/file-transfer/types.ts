@@ -238,3 +238,33 @@ export function createOutboundFile(
     threadId: options?.threadId,
   };
 }
+
+/**
+ * Legacy factory function for backward compatibility.
+ * @deprecated Use createFileRef instead
+ */
+export function createFileReference(
+  fileName: string,
+  source: 'user' | 'agent',
+  options?: {
+    mimeType?: string;
+    size?: number;
+    storageKey?: string;
+    chatId?: string;
+    expiresInMs?: number;
+  }
+): FileReference {
+  const now = Date.now();
+  return {
+    id: uuidv4(),
+    fileName,
+    mimeType: options?.mimeType,
+    size: options?.size,
+    source,
+    localPath: options?.storageKey, // Map storageKey to localPath
+    storageKey: options?.storageKey, // Keep for backward compatibility
+    chatId: options?.chatId,
+    createdAt: now,
+    expiresAt: options?.expiresInMs ? now + options.expiresInMs : undefined,
+  };
+}
