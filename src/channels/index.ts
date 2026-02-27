@@ -79,6 +79,4 @@ export {
   FeishuFileHandler,
   type FeishuFileHandlerConfig,
   buildTextContent,
-  DiffCardBuilder,
-  WriteCardBuilder,
 } from './platforms/feishu/index.js';

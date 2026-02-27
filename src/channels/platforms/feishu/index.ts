@@ -12,8 +12,4 @@ export { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-me
 export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 
 // Card Builders
-export {
-  buildTextContent,
-  DiffCardBuilder,
-  WriteCardBuilder,
-} from './card-builders/index.js';
+export { buildTextContent } from './card-builders/index.js';
