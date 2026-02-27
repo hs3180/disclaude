@@ -1,11 +1,9 @@
 /**
  * Nodes module - Primary Node and Worker Node for distributed architecture.
  *
- * The new architecture supports two node types:
+ * The architecture supports two node types:
  * - Primary Node: Main node with both communication and execution capabilities
  * - Worker Node: Worker node with execution-only capability
- *
- * The legacy CommunicationNode is still available for backward compatibility.
  *
  * Usage:
  * ```typescript
@@ -31,7 +29,7 @@
  * ```
  */
 
-// New node types
+// Node types
 export { PrimaryNode, type PrimaryNodeConfig } from './primary-node.js';
 export { WorkerNode, type WorkerNodeConfig } from './worker-node.js';
 export {
@@ -43,5 +41,5 @@ export {
   getNodeCapabilities,
 } from './types.js';
 
-// Legacy export for backward compatibility
-export { CommunicationNode, type CommunicationNodeConfig } from './communication-node.js';
+// Internal components (for PrimaryNode internal use)
+export { ChannelManager } from './channel-manager.js';

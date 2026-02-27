@@ -34,7 +34,7 @@ import {
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
-import { FileClient } from '../transport/file-client.js';
+import { FileClient } from '../file-transfer/node-transfer/file-client.js';
 import type { WorkerNodeConfig, NodeCapabilities } from './types.js';
 
 const logger = createLogger('WorkerNode');

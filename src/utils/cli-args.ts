@@ -7,21 +7,21 @@
 import { Config } from '../config/index.js';
 
 /**
- * Run mode type (legacy and new modes).
+ * Run mode type.
  */
-export type NewRunMode = 'primary' | 'worker' | 'comm' | 'exec';
+export type RunMode = 'primary' | 'worker';
 
 /**
  * Global CLI arguments interface.
  */
 export interface GlobalArgs {
-  /** Run mode (primary, worker, comm, or exec) */
-  mode: NewRunMode | null;
-  /** Port for communication/primary node (default: 3001) */
+  /** Run mode (primary or worker) */
+  mode: RunMode | null;
+  /** Port for primary node (default: 3001) */
   port: number;
-  /** Host for communication/primary node */
+  /** Host for primary node */
   host: string;
-  /** Communication Node / Primary Node WebSocket URL for worker/exec mode */
+  /** Primary Node WebSocket URL for worker mode */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
@@ -29,16 +29,16 @@ export interface GlobalArgs {
   restPort?: number;
   /** Enable REST channel */
   enableRestChannel?: boolean;
-  /** Node ID for worker/exec mode */
+  /** Node ID for worker mode */
   nodeId?: string;
-  /** Node name for worker/exec mode */
+  /** Node name for worker mode */
   nodeName?: string;
 }
 
 /**
- * Communication Node configuration.
+ * Primary Node configuration.
  */
-export interface CommNodeConfig {
+export interface PrimaryNodeConfig {
   /** Port for WebSocket server */
   port: number;
   /** Host for WebSocket server */
@@ -54,16 +54,16 @@ export interface CommNodeConfig {
 }
 
 /**
- * Execution Node configuration.
+ * Worker Node configuration.
  */
-export interface ExecNodeConfig {
-  /** Communication Node WebSocket URL */
+export interface WorkerNodeConfig {
+  /** Primary Node WebSocket URL */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
-  /** Unique identifier for this execution node (auto-generated if not provided) */
+  /** Unique identifier for this worker node (auto-generated if not provided) */
   nodeId?: string;
-  /** Human-readable name for this execution node */
+  /** Human-readable name for this worker node */
   nodeName?: string;
 }
 
@@ -106,11 +106,11 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const defaultEnableRest = channelsConfig?.rest?.enabled ?? true;
 
   // Parse mode
-  let mode: NewRunMode | null = null;
+  let mode: RunMode | null = null;
   if (args[0] === 'start') {
     const modeValue = parseArgValue(args, '--mode');
-    if (modeValue && ['primary', 'worker', 'comm', 'exec'].includes(modeValue)) {
-      mode = modeValue as NewRunMode;
+    if (modeValue && ['primary', 'worker'].includes(modeValue)) {
+      mode = modeValue as RunMode;
     }
   }
 
@@ -138,9 +138,9 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
 }
 
 /**
- * Get Communication Node configuration from global args.
+ * Get Primary Node configuration from global args.
  */
-export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
+export function getPrimaryNodeConfig(globalArgs: GlobalArgs): PrimaryNodeConfig {
   const channelsConfig = Config.getChannelsConfig();
 
   return {
@@ -154,9 +154,9 @@ export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
 }
 
 /**
- * Get Execution Node configuration from global args.
+ * Get Worker Node configuration from global args.
  */
-export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
+export function getWorkerNodeConfig(globalArgs: GlobalArgs): WorkerNodeConfig {
   return {
     commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,

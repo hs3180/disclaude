@@ -6,7 +6,6 @@
  *
  * Components:
  * - MessageHistoryManager: Tracks conversation history per chat
- * - AttachmentManager: Manages pending file attachments per chat
  *
  * These components are extracted from Feishu-specific implementations
  * to enable reuse across all channel types.
@@ -19,8 +18,3 @@ export {
   type ChatMessage,
   type ChatHistory,
 } from './message-history.js';
-
-export {
-  AttachmentManager,
-  attachmentManager,
-} from './attachment-manager.js';

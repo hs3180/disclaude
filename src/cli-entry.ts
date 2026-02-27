@@ -1,11 +1,9 @@
 /**
  * CLI entry point for Disclaude.
  *
- * Supports four modes:
+ * Supports two modes:
  * - primary: Primary Node (comm + exec, recommended for single-machine)
  * - worker: Worker Node (exec only, connects to Primary)
- * - comm: Communication Node (legacy, comm only)
- * - exec: Execution Node (legacy, exec only)
  */
 import { Config } from './config/index.js';
 import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
@@ -16,15 +14,12 @@ import packageJson from '../package.json' with { type: 'json' };
 
 /**
  * Dynamic imports for runners to avoid loading unnecessary modules.
- * This ensures comm mode doesn't load the schedule module (issue #114).
  */
 async function importRunners() {
   const runners = await import('./runners/index.js');
   return {
     runPrimaryNode: runners.runPrimaryNode,
     runWorkerNode: runners.runWorkerNode,
-    runCommunicationNode: runners.runCommunicationNode,
-    runExecutionNode: runners.runExecutionNode,
   };
 }
 
@@ -45,27 +40,23 @@ function showHelp(): void {
   console.log('Usage:');
   console.log('  disclaude start --mode primary       Primary Node (Comm + Exec, recommended)');
   console.log('  disclaude start --mode worker        Worker Node (Exec only, connects to Primary)');
-  console.log('  disclaude start --mode comm          Communication Node (Legacy, Comm only)');
-  console.log('  disclaude start --mode exec          Execution Node (Legacy, Exec only)');
   console.log('');
   console.log('Options:');
-  console.log('  --mode <primary|worker|comm|exec>    Select run mode (required for start)');
-  console.log('  --port <port>                        WebSocket port for primary/comm mode (default: 3001)');
-  console.log('  --rest-port <port>                   REST API port for primary/comm mode (default: 3000)');
+  console.log('  --mode <primary|worker>              Select run mode (required for start)');
+  console.log('  --port <port>                        WebSocket port for primary mode (default: 3001)');
+  console.log('  --rest-port <port>                   REST API port for primary mode (default: 3000)');
   console.log('  --no-rest                            Disable REST channel');
   console.log('  --comm-url <url>                     Primary Node URL for worker mode (default: ws://localhost:3001)');
-  console.log('  --node-id <id>                       Node ID for worker/exec mode (auto-generated if not provided)');
-  console.log('  --node-name <name>                   Display name for worker/exec mode');
+  console.log('  --node-id <id>                       Node ID for worker mode (auto-generated if not provided)');
+  console.log('  --node-name <name>                   Display name for worker mode');
   console.log('');
   console.log('Node Types:');
   console.log('  primary  - Self-contained node with both communication and execution');
   console.log('             Recommended for single-machine deployment');
   console.log('  worker   - Execution-only node that connects to Primary Node');
   console.log('             For horizontal scaling');
-  console.log('  comm     - (Legacy) Communication-only node');
-  console.log('  exec     - (Legacy) Execution-only node that connects to comm node');
   console.log('');
-  console.log('Channels (Primary/Communication Node):');
+  console.log('Channels (Primary Node):');
   console.log('  - Feishu: Enabled when feishu.appId and feishu.appSecret are configured');
   console.log('  - REST:   Enabled by default on port 3000, use --no-rest to disable');
   console.log('');
@@ -77,10 +68,6 @@ function showHelp(): void {
   console.log('  disclaude start --mode primary --port 3001');
   console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-1');
   console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-2');
-  console.log('');
-  console.log('  # Legacy mode (separate comm and exec):');
-  console.log('  disclaude start --mode comm --port 3001');
-  console.log('  disclaude start --mode exec --comm-url ws://localhost:3001');
   console.log('');
   console.log('REST API Endpoints (when REST channel is enabled):');
   console.log('  POST /api/chat          Send message (streaming response)');
@@ -130,8 +117,7 @@ async function main(): Promise<void> {
 
   try {
     // Dynamically import runners to avoid loading unnecessary modules
-    // This ensures comm mode doesn't load the schedule module (issue #114)
-    const { runPrimaryNode, runWorkerNode, runCommunicationNode, runExecutionNode } = await importRunners();
+    const { runPrimaryNode, runWorkerNode } = await importRunners();
 
     // Show help if no command provided
     if (!process.argv[2] || process.argv[2] === '--help' || process.argv[2] === '-h') {
@@ -143,7 +129,7 @@ async function main(): Promise<void> {
     if (process.argv[2] !== 'start') {
       handleError(new Error(`Unknown command "${process.argv[2]}"`), {
         category: ErrorCategory.VALIDATION,
-        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <primary|worker|comm|exec>"`
+        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <primary|worker>"`
       }, {
         log: true,
         throwOnError: true
@@ -154,7 +140,7 @@ async function main(): Promise<void> {
     if (!mode) {
       handleError(new Error('Mode is required'), {
         category: ErrorCategory.VALIDATION,
-        userMessage: 'Mode is required. Use --mode <primary|worker|comm|exec>'
+        userMessage: 'Mode is required. Use --mode <primary|worker>'
       }, {
         log: true,
         throwOnError: true
@@ -204,32 +190,10 @@ async function main(): Promise<void> {
         await runWorkerNode();
         break;
 
-      case 'comm':
-        // Note: Feishu is optional now - REST channel can work without Feishu
-        const hasFeishu = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
-        const hasRest = globalArgs.enableRestChannel !== false;
-
-        if (!hasFeishu && !hasRest) {
-          handleError(new Error('No communication channel configured'), {
-            category: ErrorCategory.CONFIGURATION,
-            userMessage: 'Communication Node requires at least one channel. Configure Feishu (feishu.appId and feishu.appSecret) or enable REST channel.'
-          }, {
-            log: true,
-            throwOnError: true
-          });
-        }
-
-        await runCommunicationNode();
-        break;
-
-      case 'exec':
-        await runExecutionNode();
-        break;
-
       default:
         handleError(new Error(`Unknown mode "${mode}"`), {
           category: ErrorCategory.VALIDATION,
-          userMessage: `Unknown mode "${mode}". Available modes: primary, worker, comm, exec`
+          userMessage: `Unknown mode "${mode}". Available modes: primary, worker`
         }, {
           log: true,
           throwOnError: true

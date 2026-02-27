@@ -35,9 +35,9 @@ import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, Contro
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, ExecNodeInfo as WsExecNodeInfo } from '../types/websocket-messages.js';
-import type { FileReference } from '../types/file-reference.js';
-import { FileStorageService, type FileStorageConfig } from '../services/file-storage-service.js';
-import { createFileTransferAPIHandler } from '../services/file-transfer-api.js';
+import type { FileRef } from '../file-transfer/types.js';
+import { FileStorageService, type FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
+import { createFileTransferAPIHandler } from '../file-transfer/node-transfer/file-api.js';
 import {
   ScheduleManager,
   Scheduler,
@@ -727,7 +727,7 @@ export class PrimaryNode extends EventEmitter {
     logger.debug({ chatId: message.chatId, messageId: message.messageId, content: message.content?.substring(0, 100) }, 'Processing channel message');
 
     // Process attachments if present
-    let attachments: FileReference[] | undefined;
+    let attachments: FileRef[] | undefined;
     if (message.attachments && message.attachments.length > 0 && this.fileStorageService) {
       attachments = [];
       for (const att of message.attachments) {

@@ -19,7 +19,7 @@ import {
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
-import { FileClient } from '../transport/file-client.js';
+import { FileClient } from '../file-transfer/node-transfer/index.js';
 
 const logger = createLogger('ExecRunner');
 
@@ -364,8 +364,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             for (const att of attachments) {
               try {
                 const localPath = await fileClient.downloadToFile(att);
-                // Update storageKey to local path for Pilot to use
-                att.storageKey = localPath;
+                // Update localPath for Pilot to use
+                att.localPath = localPath;
                 logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
               } catch (error) {
                 logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');
