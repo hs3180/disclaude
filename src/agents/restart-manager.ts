@@ -31,9 +31,9 @@ export interface RestartManagerConfig {
   logger: pino.Logger;
   /** Maximum consecutive restarts before circuit opens (default: 3) */
   maxRestarts?: number;
-  /** Initial backoff in milliseconds (default: 1000) */
+  /** Initial backoff in milliseconds (default: 5000) */
   initialBackoffMs?: number;
-  /** Maximum backoff in milliseconds (default: 30000) */
+  /** Maximum backoff in milliseconds (default: 60000) */
   maxBackoffMs?: number;
   /** Backoff multiplier (default: 2) */
   backoffMultiplier?: number;
@@ -118,8 +118,8 @@ export class RestartManager {
   constructor(config: RestartManagerConfig) {
     this.logger = config.logger;
     this.maxRestarts = config.maxRestarts ?? 3;
-    this.initialBackoffMs = config.initialBackoffMs ?? 1000;
-    this.maxBackoffMs = config.maxBackoffMs ?? 30000;
+    this.initialBackoffMs = config.initialBackoffMs ?? 5000;
+    this.maxBackoffMs = config.maxBackoffMs ?? 60000;
     this.backoffMultiplier = config.backoffMultiplier ?? 2;
     this.resetWindowMs = config.resetWindowMs ?? 60000;
   }

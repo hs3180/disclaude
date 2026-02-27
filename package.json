@@ -38,7 +38,7 @@
     "pm2:monit": "pm2 monit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.19",
+    "@anthropic-ai/claude-agent-sdk": "0.2.62",
     "@anthropic-ai/sdk": "^0.32.0",
     "@larksuiteoapi/node-sdk": "^1.34.0",
     "@playwright/mcp": "^0.0.61",
