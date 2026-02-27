@@ -77,9 +77,15 @@ export class IterationBridge {
     logger.info({
       iteration: this.iteration,
       taskId: this.taskId,
-    }, 'Starting iteration');
+      chatId: this.chatId,
+    }, 'Starting iteration (Evaluator → Executor)');
 
     // === Phase 1: Evaluation ===
+    logger.info({
+      iteration: this.iteration,
+      taskId: this.taskId,
+    }, 'Phase 1: Starting Evaluator');
+
     const evaluator = new Evaluator(this.evaluatorConfig);
 
     try {
@@ -91,19 +97,31 @@ export class IterationBridge {
       logger.info({
         iteration: this.iteration,
         taskId: this.taskId,
-      }, 'Evaluation phase complete');
+      }, 'Phase 1 complete: Evaluator finished');
+    } catch (error) {
+      logger.error({
+        err: error,
+        iteration: this.iteration,
+        taskId: this.taskId,
+      }, 'Phase 1 failed: Evaluator error');
+      throw error;
     } finally {
       evaluator.cleanup();
     }
 
     // Check if task is already complete (final_result.md exists)
+    logger.debug({
+      iteration: this.iteration,
+      taskId: this.taskId,
+    }, 'Checking for final_result.md');
+
     const hasFinalResult = await this.fileManager.hasFinalResult(this.taskId);
 
     if (hasFinalResult) {
       logger.info({
         iteration: this.iteration,
         taskId: this.taskId,
-      }, 'Task complete (final_result.md detected) - ending without Executor');
+      }, 'Task complete (final_result.md detected) - skipping Executor phase');
 
       yield {
         content: '✅ Task completed - final result detected',
@@ -116,17 +134,17 @@ export class IterationBridge {
     }
 
     // === Phase 2: Execution ===
-    logger.debug({
+    logger.info({
       iteration: this.iteration,
       taskId: this.taskId,
-    }, 'Phase 2: Execution phase');
+    }, 'Phase 2: Starting Executor (task not yet complete)');
 
     yield* this.executeTask();
 
     logger.info({
       iteration: this.iteration,
       taskId: this.taskId,
-    }, 'Execution phase complete');
+    }, 'Phase 2 complete: Executor finished');
   }
 
   /**
@@ -138,6 +156,11 @@ export class IterationBridge {
    * - No queue management, no busy waiting
    */
   private async *executeTask(): AsyncIterable<AgentMessage> {
+    logger.info({
+      taskId: this.taskId,
+      iteration: this.iteration,
+    }, 'Starting task execution');
+
     yield {
       content: '⚡ **Executing Task**',
       role: 'assistant',
@@ -163,6 +186,11 @@ export class IterationBridge {
 
     try {
       // Create Executor
+      logger.debug({
+        taskId: this.taskId,
+        iteration: this.iteration,
+      }, 'Creating Executor instance');
+
       const executor = new Executor({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
@@ -171,6 +199,12 @@ export class IterationBridge {
       });
 
       // Get Executor event stream
+      logger.info({
+        taskId: this.taskId,
+        iteration: this.iteration,
+        workspaceDir: Config.getWorkspaceDir(),
+      }, 'Starting Executor event stream');
+
       const executorStream = executor.executeTask(
         this.taskId,
         this.iteration,
@@ -178,9 +212,17 @@ export class IterationBridge {
       );
 
       // Process all Executor events through Reporter
+      let eventCount = 0;
       for await (const event of executorStream) {
+        eventCount++;
         yield* reporter.processEvent(event, reporterContext);
       }
+
+      logger.info({
+        taskId: this.taskId,
+        iteration: this.iteration,
+        eventCount,
+      }, 'Executor stream completed');
 
     } catch (error) {
       logger.error(
@@ -195,6 +237,10 @@ export class IterationBridge {
       };
     } finally {
       reporter.cleanup();
+      logger.debug({
+        taskId: this.taskId,
+        iteration: this.iteration,
+      }, 'Executor cleanup complete');
     }
   }
 
