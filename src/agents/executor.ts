@@ -80,6 +80,12 @@ export interface TaskResult {
  * Executor-specific features like TaskProgressEvent yielding.
  */
 export class Executor extends BaseAgent {
+  /** Agent type identifier (Issue #282) */
+  readonly type = 'skill' as const;
+
+  /** Agent name for logging */
+  readonly name = 'Executor';
+
   private readonly config: ExecutorConfig;
   private fileManager: TaskFileManager;
 
