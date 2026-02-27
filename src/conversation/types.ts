@@ -6,7 +6,7 @@
  * agent-agnostic conversation management.
  */
 
-import type { FileReference } from '../types/file-reference.js';
+import type { FileRef } from '../file-transfer/types.js';
 
 /**
  * Message queued for processing.
@@ -19,7 +19,7 @@ export interface QueuedMessage {
   /** Sender's open_id for @ mentions (optional) */
   senderOpenId?: string;
   /** Optional file attachments */
-  attachments?: FileReference[];
+  attachments?: FileRef[];
 }
 
 /**
@@ -136,5 +136,5 @@ export interface MessageContext {
   /** Sender's open_id for @ mentions (optional) */
   senderOpenId?: string;
   /** Optional file attachments */
-  attachments?: FileReference[];
+  attachments?: FileRef[];
 }
