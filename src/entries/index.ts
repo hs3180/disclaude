@@ -1,5 +1,0 @@
-/**
- * Entry points module.
- */
-
-export {};
