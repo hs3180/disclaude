@@ -304,7 +304,7 @@ export abstract class BaseAgent {
   }
 
   /**
-   * Convert legacy AsyncIterable<SDKUserMessage> to SDK UserInput format.
+   * Convert legacy AsyncIterable<StreamingUserMessage> to SDK UserInput format.
    */
   private convertInputToUserInput(input: AsyncIterable<unknown>): UserInput[] | string {
     // For string input, just return it
