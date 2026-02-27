@@ -13,10 +13,16 @@ import { attachmentManager, downloadFile } from '../file-transfer/inbound/index.
 import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
+import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
-import type { FeishuEventData, FeishuMessageEvent } from '../types/platform.js';
+import type {
+  FeishuEventData,
+  FeishuMessageEvent,
+  FeishuCardActionEvent,
+  FeishuCardActionEventData,
+} from '../types/platform.js';
 import type {
   ChannelConfig,
   OutgoingMessage,
@@ -54,6 +60,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private fileHandler: FeishuFileHandler;
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
+  private interactionManager: InteractionManager;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -81,6 +88,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
     });
 
+    // Initialize InteractionManager
+    this.interactionManager = new InteractionManager();
+
     logger.info({ id: this.id }, 'FeishuChannel created');
   }
 
@@ -95,6 +105,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle message receive');
+        }
+      },
+      'im.message.action_v1': async (data: unknown) => {
+        try {
+          await this.handleCardAction(data as FeishuCardActionEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle card action');
         }
       },
       'im.message.message_read_v1': async () => {},
@@ -125,6 +142,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.wsClient = undefined;
     this.client = undefined;
     this.messageSender = undefined;
+
+    // Dispose interaction manager
+    this.interactionManager.dispose();
 
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
@@ -448,5 +468,78 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       timestamp: create_time,
       threadId,
     });
+  }
+
+  /**
+   * Handle card action event from WebSocket.
+   * Triggered when user clicks button, selects menu, etc. on an interactive card.
+   */
+  private async handleCardAction(data: FeishuCardActionEventData): Promise<void> {
+    if (!this.isRunning) {
+      return;
+    }
+
+    const event = (data.event || data) as FeishuCardActionEvent;
+    const { action, message_id, chat_id, user } = event;
+
+    if (!action || !message_id || !chat_id) {
+      logger.warn('Missing required card action fields');
+      return;
+    }
+
+    logger.info(
+      {
+        messageId: message_id,
+        chatId: chat_id,
+        actionType: action.type,
+        actionValue: action.value,
+        trigger: action.trigger,
+        userId: user?.sender_id?.open_id,
+      },
+      'Card action received'
+    );
+
+    try {
+      // Try to handle via InteractionManager
+      const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
+        // Default handler: emit as interaction message
+        await this.emitMessage({
+          messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
+          chatId: defaultEvent.chat_id,
+          userId: defaultEvent.user?.sender_id?.open_id,
+          content: `[card_action] ${defaultEvent.action.value}`,
+          messageType: 'card',
+          timestamp: Date.now(),
+          metadata: {
+            cardAction: defaultEvent.action,
+            cardMessageId: defaultEvent.message_id,
+          },
+        });
+      });
+
+      if (!handled) {
+        logger.debug(
+          { messageId: message_id, actionValue: action.value },
+          'Card action not handled'
+        );
+      }
+    } catch (error) {
+      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+
+      // Notify user of the error
+      await this.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
+      });
+    }
+  }
+
+  /**
+   * Get the InteractionManager for this channel.
+   * Used for registering custom interaction handlers.
+   */
+  getInteractionManager(): InteractionManager {
+    return this.interactionManager;
   }
 }
