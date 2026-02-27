@@ -364,8 +364,8 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
             for (const att of attachments) {
               try {
                 const localPath = await fileClient.downloadToFile(att);
-                // Update storageKey to local path for Pilot to use
-                att.storageKey = localPath;
+                // Update localPath for Pilot to use
+                att.localPath = localPath;
                 logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
               } catch (error) {
                 logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');

@@ -1,9 +1,7 @@
 /**
  * Unified file transfer types.
  *
- * This module consolidates file-related types from across the codebase:
- * - src/types/file-reference.ts (node-to-node file references)
- * - src/channels/adapters/types.ts (FileAttachment for platform handling)
+ * This module consolidates file-related types from across the codebase.
  *
  * @see Issue #194 - Refactor: 统一文件传输系统架构
  */
@@ -84,27 +82,6 @@ export interface OutboundFile extends FileRef {
   /** Thread ID for threaded replies */
   threadId?: string;
 }
-
-/**
- * Legacy compatibility types.
- * These are kept for backward compatibility during migration.
- */
-
-/** @deprecated Use FileRef instead */
-export type FileReference = FileRef & {
-  /** Legacy field - use localPath instead */
-  storageKey?: string;
-  /** Legacy field - now part of base FileRef */
-  chatId?: string;
-};
-
-/** @deprecated Use InboundAttachment instead */
-export type FileAttachment = InboundAttachment & {
-  /** Legacy field - use platformKey instead */
-  fileKey: string;
-  /** Legacy field - use id instead */
-  timestamp?: number;
-};
 
 /**
  * File upload request - exec node uploads file to comm node.
