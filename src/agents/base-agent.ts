@@ -149,7 +149,7 @@ export abstract class BaseAgent {
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode === 'bypassPermissions' ? 'bypass' : 'default',
+      permissionMode: this.permissionMode,
       settingSources: ['project'],
     };
 

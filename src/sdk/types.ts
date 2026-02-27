@@ -171,7 +171,7 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 // ============================================================================
 
 /** 权限模式 */
-export type PermissionMode = 'default' | 'bypass';
+export type PermissionMode = 'default' | 'bypassPermissions';
 
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
@@ -189,10 +189,8 @@ export interface AgentQueryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
   env?: Record<string, string | undefined>;
-  /** 设置来源 */
-  settingSources?: string[];
-  /** 上下文隔离模式 */
-  context?: 'fork' | 'none';
+  /** 设置来源（必填） */
+  settingSources: string[];
 }
 
 // ============================================================================

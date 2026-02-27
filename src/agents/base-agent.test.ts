@@ -71,7 +71,7 @@ class TestAgent extends BaseAgent {
   }
 
   async *testQueryOnce(input: string) {
-    yield* this.queryOnce(input, {});
+    yield* this.queryOnce(input, { settingSources: ['project'] });
   }
 
   testFormatMessage(parsed: IteratorYieldResult['parsed']) {
@@ -127,7 +127,7 @@ describe('BaseAgent', () => {
       const options = agent.testCreateSdkOptions();
 
       expect(options.cwd).toBeDefined();
-      expect(options.permissionMode).toBe('bypass');
+      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.settingSources).toContain('project');
       expect(options.env).toBeDefined();
     });

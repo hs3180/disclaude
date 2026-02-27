@@ -124,7 +124,7 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
   // Build SDK options with forked context for isolation
   const sdkOptions: AgentQueryOptions = {
     cwd: Config.getWorkspaceDir(),
-    permissionMode: 'bypass',
+    permissionMode: 'bypassPermissions',
     settingSources: ['project'],
     // Only allow Playwright MCP tools + basic file operations for saving evidence
     allowedTools: [
@@ -151,8 +151,6 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
       loggingConfig.sdkDebug
     ),
     model: agentConfig.model,
-    // Fork context to run in isolation - prevents stdio conflicts
-    context: 'fork',
   };
 
   // Build the prompt

@@ -169,7 +169,7 @@ describe('ClaudeSDKProvider', () => {
     it('should throw if disposed', async () => {
       provider.dispose();
       await expect(async () => {
-        const gen = provider.queryOnce('test', {});
+        const gen = provider.queryOnce('test', { settingSources: ['project'] });
         await gen.next();
       }).rejects.toThrow('Provider has been disposed');
     });
@@ -182,7 +182,7 @@ describe('ClaudeSDKProvider', () => {
         yield { role: 'user', content: 'test' };
       }
       expect(() => {
-        provider.queryStream(inputGen(), {});
+        provider.queryStream(inputGen(), { settingSources: ['project'] });
       }).toThrow('Provider has been disposed');
     });
   });
