@@ -137,8 +137,8 @@ export class Pilot extends BaseAgent {
     this.restartManager = new RestartManager({
       logger: this.logger,
       maxRestarts: 3,
-      initialBackoffMs: 1000,
-      maxBackoffMs: 30000,
+      initialBackoffMs: 5000,  // Start with 5 seconds
+      maxBackoffMs: 60000,     // Max 1 minute
     });
   }
 

@@ -385,6 +385,10 @@ export function extractText(message: AgentMessage): string {
  * Build SDK environment variables with unified apiBaseUrl handling.
  * This function centralizes environment variable setup for all agents.
  *
+ * IMPORTANT: SDK's env option completely replaces subprocess environment,
+ * so we MUST include PATH for node to be found. Without PATH, the SDK
+ * subprocess will fail with "spawn node ENOENT".
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
@@ -398,7 +402,13 @@ export function buildSdkEnv(
   sdkDebug: boolean = true
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
-  const newPath = `${nodeBinDir}:${process.env.PATH || ''}`;
+
+  // Ensure PATH includes node bin dir at the front
+  // SDK subprocess needs to find 'node' command
+  const originalPath = process.env.PATH || '';
+  const newPath = originalPath.includes(nodeBinDir)
+    ? originalPath
+    : `${nodeBinDir}:${originalPath}`;
 
   // Priority (highest to lowest):
   // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
