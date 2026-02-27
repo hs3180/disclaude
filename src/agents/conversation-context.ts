@@ -1,6 +1,9 @@
 /**
  * ConversationContext - Manages conversation context for Pilot.
  *
+ * @deprecated Use ConversationOrchestrator from '../conversation/index.js' instead.
+ * This class is maintained for backward compatibility and will be removed in a future version.
+ *
  * Extracts context management concerns from Pilot:
  * - Thread root tracking (for reply chains)
  * - Message metadata (chatId, messageId, senderOpenId)

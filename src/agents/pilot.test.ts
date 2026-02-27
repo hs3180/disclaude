@@ -97,9 +97,9 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['sessionManager'].size()).toBe(0);
     });
 
-    it('should initialize conversationContext', () => {
-      expect(pilot['conversationContext']).toBeDefined();
-      expect(pilot['conversationContext'].size()).toBe(0);
+    it('should initialize conversationOrchestrator', () => {
+      expect(pilot['conversationOrchestrator']).toBeDefined();
+      expect(pilot['conversationOrchestrator'].size()).toBe(0);
     });
   });
 
@@ -222,7 +222,7 @@ describe('Pilot (Streaming Input)', () => {
       await pilot.shutdown();
 
       expect(pilot['sessionManager'].size()).toBe(0);
-      expect(pilot['conversationContext'].size()).toBe(0);
+      expect(pilot['conversationOrchestrator'].size()).toBe(0);
     });
   });
 
@@ -239,7 +239,7 @@ describe('Pilot (Streaming Input)', () => {
     it('should store thread root for replies', () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
 
-      expect(pilot['conversationContext'].getThreadRoot('chat-123')).toBe('msg-001');
+      expect(pilot['conversationOrchestrator'].getThreadRoot('chat-123')).toBe('msg-001');
     });
   });
 
