@@ -35,14 +35,14 @@
  * - Error handling
  */
 
-import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileReference } from '../types/file-reference.js';
 import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
-import { ConversationContext } from './conversation-context.js';
+import { ConversationOrchestrator } from '../conversation/index.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -115,14 +115,14 @@ interface MessageData {
  *
  * Refactored to use:
  * - SessionManager for Query/Channel lifecycle
- * - ConversationContext for thread tracking
+ * - ConversationOrchestrator for conversation management (from #237)
  */
 export class Pilot extends BaseAgent {
   private readonly callbacks: PilotCallbacks;
 
   // Separated concerns
   private readonly sessionManager: SessionManager;
-  private readonly conversationContext: ConversationContext;
+  private readonly conversationOrchestrator: ConversationOrchestrator;
 
   constructor(config: PilotConfig) {
     super(config);
@@ -131,7 +131,7 @@ export class Pilot extends BaseAgent {
 
     // Initialize separated managers
     this.sessionManager = new SessionManager({ logger: this.logger });
-    this.conversationContext = new ConversationContext({ logger: this.logger });
+    this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
   }
 
   protected getAgentName(): string {
@@ -239,7 +239,7 @@ export class Pilot extends BaseAgent {
     this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
 
     // Track thread root using ConversationContext
-    this.conversationContext.setThreadRoot(chatId, messageId);
+    this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
     // Get or create session using SessionManager
     if (!this.sessionManager.has(chatId)) {
@@ -337,7 +337,7 @@ export class Pilot extends BaseAgent {
       for await (const { parsed } of iterator) {
         // Send message content to callback
         if (parsed.content) {
-          const threadRoot = this.conversationContext.getThreadRoot(chatId);
+          const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
           await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
         }
 
@@ -345,7 +345,7 @@ export class Pilot extends BaseAgent {
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
           if (this.callbacks.onDone) {
-            const threadRoot = this.conversationContext.getThreadRoot(chatId);
+            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
           }
         }
@@ -354,7 +354,7 @@ export class Pilot extends BaseAgent {
       iteratorError = error as Error;
       this.logger.error({ err: iteratorError, chatId }, 'Iterator error');
 
-      const threadRoot = this.conversationContext.getThreadRoot(chatId);
+      const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
 
       if (this.callbacks.onDone) {
@@ -377,7 +377,7 @@ export class Pilot extends BaseAgent {
     this.logger.warn({ chatId, error: iteratorError?.message }, 'Agent loop ended unexpectedly, attempting restart');
 
     // Notify user about the restart
-    const threadRoot = this.conversationContext.getThreadRoot(chatId);
+    const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';
@@ -508,7 +508,7 @@ You can read these files using the Read tool with the local paths above.`;
 
     if (deleted) {
       // Also clear thread root
-      this.conversationContext.deleteThreadRoot(chatId);
+      this.conversationOrchestrator.deleteThreadRoot(chatId);
       this.logger.info({ chatId }, 'State reset for chatId');
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
@@ -533,7 +533,7 @@ You can read these files using the Read tool with the local paths above.`;
     this.sessionManager.closeAll();
 
     // Clear all context via ConversationContext
-    this.conversationContext.clearAll();
+    this.conversationOrchestrator.clearAll();
 
     this.logger.info('Pilot shutdown complete');
   }
