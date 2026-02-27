@@ -12,7 +12,7 @@
  */
 
 import { z } from 'zod';
-import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import { createLogger } from '../utils/logger.js';
 import { getOAuthManager, OAuthManager } from './oauth-manager.js';
 import type { OAuthProviderConfig } from './types.js';
@@ -80,17 +80,19 @@ function getManager(): OAuthManager {
 }
 
 /**
- * Auth MCP tools for Agent SDK.
+ * Auth MCP tool definitions for Agent SDK.
+ *
+ * Uses InlineToolDefinition format for SDK abstraction.
  */
-export const authSdkTools = [
-  tool(
-    'auth_check',
-    'Check if the user has authorized a service. Returns whether authorization exists and if the token is expired.',
-    {
+export const authToolDefinitions: InlineToolDefinition[] = [
+  {
+    name: 'auth_check',
+    description: 'Check if the user has authorized a service. Returns whether authorization exists and if the token is expired.',
+    parameters: z.object({
       provider: z.string().describe('Provider name (e.g., "github", "gitlab", "notion")'),
       chatId: z.string().describe('Chat ID from the task context'),
-    },
-    async ({ provider, chatId }) => {
+    }),
+    handler: async ({ provider, chatId }) => {
       try {
         const manager = getManager();
         const result = await manager.checkToken(chatId, provider);
@@ -107,13 +109,12 @@ export const authSdkTools = [
       } catch (error) {
         return toolError(`Failed to check authorization: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
-
-  tool(
-    'auth_generate_url',
-    'Generate an OAuth authorization URL for a service. Returns the URL and state. The user must visit this URL to authorize. Use with send_user_feedback to send the URL to the user.',
-    {
+    },
+  },
+  {
+    name: 'auth_generate_url',
+    description: 'Generate an OAuth authorization URL for a service. Returns the URL and state. The user must visit this URL to authorize. Use with send_user_feedback to send the URL to the user.',
+    parameters: z.object({
       providerName: z.string().describe('Provider name (e.g., "github", "gitlab")'),
       authUrl: z.string().describe('OAuth authorization endpoint URL'),
       tokenUrl: z.string().describe('OAuth token endpoint URL'),
@@ -122,8 +123,8 @@ export const authSdkTools = [
       scopes: z.string().describe('Space-separated OAuth scopes to request'),
       callbackUrl: z.string().describe('OAuth callback URL (must match the registered redirect URI)'),
       chatId: z.string().describe('Chat ID from the task context'),
-    },
-    async ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
+    }),
+    handler: async ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
       try {
         const provider: OAuthProviderConfig = {
           name: providerName,
@@ -148,21 +149,20 @@ export const authSdkTools = [
       } catch (error) {
         return toolError(`Failed to generate authorization URL: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
-
-  tool(
-    'auth_request',
-    'Make an authenticated API request on behalf of the user. The token is injected server-side and never exposed. Use this to call APIs after the user has authorized.',
-    {
+    },
+  },
+  {
+    name: 'auth_request',
+    description: 'Make an authenticated API request on behalf of the user. The token is injected server-side and never exposed. Use this to call APIs after the user has authorized.',
+    parameters: z.object({
       chatId: z.string().describe('Chat ID from the task context'),
       provider: z.string().describe('Provider name (e.g., "github", "gitlab")'),
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).describe('HTTP method'),
       url: z.string().describe('Full API URL to call'),
       headers: z.record(z.string(), z.string()).optional().describe('Additional headers (Authorization header is added automatically)'),
       body: z.unknown().optional().describe('Request body (for POST/PUT/PATCH)'),
-    },
-    async ({ chatId, provider, method, url, headers, body }) => {
+    }),
+    handler: async ({ chatId, provider, method, url, headers, body }) => {
       try {
         const manager = getManager();
         const result = await manager.makeAuthenticatedRequest(chatId, provider, {
@@ -191,16 +191,15 @@ export const authSdkTools = [
       } catch (error) {
         return toolError(`API request failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
-
-  tool(
-    'auth_list',
-    'List all services the user has authorized in this chat.',
-    {
-      chatId: z.string().describe('Chat ID from the task context'),
     },
-    async ({ chatId }) => {
+  },
+  {
+    name: 'auth_list',
+    description: 'List all services the user has authorized in this chat.',
+    parameters: z.object({
+      chatId: z.string().describe('Chat ID from the task context'),
+    }),
+    handler: async ({ chatId }) => {
       try {
         const manager = getManager();
         const providers = await manager.listAuthorizations(chatId);
@@ -215,17 +214,16 @@ export const authSdkTools = [
       } catch (error) {
         return toolError(`Failed to list authorizations: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
-
-  tool(
-    'auth_revoke',
-    'Revoke authorization for a service. This deletes the stored token.',
-    {
+    },
+  },
+  {
+    name: 'auth_revoke',
+    description: 'Revoke authorization for a service. This deletes the stored token.',
+    parameters: z.object({
       chatId: z.string().describe('Chat ID from the task context'),
       provider: z.string().describe('Provider name to revoke'),
-    },
-    async ({ chatId, provider }) => {
+    }),
+    handler: async ({ chatId, provider }) => {
       try {
         const manager = getManager();
         const deleted = await manager.revokeToken(chatId, provider);
@@ -238,17 +236,25 @@ export const authSdkTools = [
       } catch (error) {
         return toolError(`Failed to revoke authorization: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
+    },
+  },
 ];
+
+/**
+ * Auth MCP tools for Agent SDK (SDK-compatible format).
+ *
+ * @deprecated Use authToolDefinitions with getProvider().createMcpServer() instead.
+ */
+export const authSdkTools = authToolDefinitions.map(def => getProvider().createInlineTool(def));
 
 /**
  * Create SDK MCP server for authentication tools.
  */
 export function createAuthSdkMcpServer() {
-  return createSdkMcpServer({
+  return getProvider().createMcpServer({
+    type: 'inline',
     name: 'auth',
     version: '1.0.0',
-    tools: authSdkTools,
+    tools: authToolDefinitions,
   });
 }
