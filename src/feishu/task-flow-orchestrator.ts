@@ -143,12 +143,7 @@ export class TaskFlowOrchestrator {
         messageTracker.recordMessageSent();
         await this.messageCallbacks.sendMessage(id, msg, messageId);
       },
-      sendCard: async (id: string, card: Record<string, unknown>) => {
-        messageTracker.recordMessageSent();
-        await this.messageCallbacks.sendCard(id, card, undefined, messageId);
-      },
       chatId,
-      sendFile: this.messageCallbacks.sendFile.bind(null, chatId),
     });
     adapter.clearThrottleState();
     adapter.resetMessageTracking();

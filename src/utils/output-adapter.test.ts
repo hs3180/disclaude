@@ -81,16 +81,13 @@ describe('Output Adapter', () => {
 
   describe('FeishuOutputAdapter', () => {
     let mockSendMessage: ReturnType<typeof vi.fn>;
-    let mockSendCard: ReturnType<typeof vi.fn>;
     let adapter: FeishuOutputAdapter;
 
     beforeEach(() => {
       mockSendMessage = vi.fn().mockResolvedValue(undefined);
-      mockSendCard = vi.fn().mockResolvedValue(undefined);
 
       const options: FeishuOutputAdapterOptions = {
         sendMessage: mockSendMessage,
-        sendCard: mockSendCard,
         chatId: 'test-chat-id',
         throttleIntervalMs: 1000,
       };
@@ -170,7 +167,6 @@ describe('Output Adapter', () => {
     it('should use default throttle interval when not specified', () => {
       const options: FeishuOutputAdapterOptions = {
         sendMessage: mockSendMessage,
-        sendCard: mockSendCard,
         chatId: 'test-chat-id',
       };
 
@@ -187,23 +183,6 @@ describe('Output Adapter', () => {
 
       await adapter.write('Status update', 'status');
       expect(mockSendMessage).toHaveBeenCalledWith('test-chat-id', 'Status update');
-    });
-
-    it('should handle file attachment config', () => {
-      const options: FeishuOutputAdapterOptions = {
-        sendMessage: mockSendMessage,
-        sendCard: mockSendCard,
-        chatId: 'test-chat-id',
-        fileAttachment: {
-          minLines: 1000,
-          minChars: 20000,
-          patterns: ['*.log', '*.txt'],
-        },
-      };
-
-      const adapterWithConfig = new FeishuOutputAdapter(options);
-
-      expect(adapterWithConfig).toBeInstanceOf(FeishuOutputAdapter);
     });
   });
 
