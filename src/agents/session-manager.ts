@@ -1,20 +1,20 @@
 /**
- * SessionManager - Manages Query and MessageChannel lifecycle for Pilot.
+ * SessionManager - Manages QueryHandle and MessageChannel lifecycle for Pilot.
  *
  * Extracts session management concerns from Pilot to improve separation of concerns:
- * - Query instance management (agent interaction)
+ * - QueryHandle instance management (agent interaction)
  * - MessageChannel management (conversation flow)
  * - Session lifecycle (create, get, delete, reset)
  *
  * Architecture:
  * ```
- * Pilot → SessionManager → { Query, MessageChannel }
+ * Pilot → SessionManager → { QueryHandle, MessageChannel }
  *                     ↓
  *              Per-chatId session tracking
  * ```
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { QueryHandle } from '../sdk/types.js';
 import { MessageChannel } from './message-channel.js';
 import type pino from 'pino';
 
@@ -22,8 +22,8 @@ import type pino from 'pino';
  * Represents an active session for a chatId.
  */
 export interface PilotSession {
-  /** The Query instance for SDK interaction */
-  query: Query;
+  /** The QueryHandle for SDK interaction */
+  handle: QueryHandle;
   /** The MessageChannel for streaming input */
   channel: MessageChannel;
   /** When this session was created */
@@ -41,7 +41,7 @@ export interface SessionManagerConfig {
 /**
  * SessionManager - Manages Pilot session lifecycle.
  *
- * Each chatId gets its own session containing a Query and MessageChannel.
+ * Each chatId gets its own session containing a QueryHandle and MessageChannel.
  * This class handles:
  * - Creating new sessions
  * - Retrieving existing sessions
@@ -72,10 +72,10 @@ export class SessionManager {
   }
 
   /**
-   * Get the Query for a chatId, if it exists.
+   * Get the QueryHandle for a chatId, if it exists.
    */
-  getQuery(chatId: string): Query | undefined {
-    return this.sessions.get(chatId)?.query;
+  getHandle(chatId: string): QueryHandle | undefined {
+    return this.sessions.get(chatId)?.handle;
   }
 
   /**
@@ -89,13 +89,13 @@ export class SessionManager {
    * Create a new session for the chatId.
    *
    * @param chatId - The chat identifier
-   * @param query - The Query instance
+   * @param handle - The QueryHandle instance
    * @param channel - The MessageChannel instance
    * @returns The created session
    */
-  create(chatId: string, query: Query, channel: MessageChannel): PilotSession {
+  create(chatId: string, handle: QueryHandle, channel: MessageChannel): PilotSession {
     const session: PilotSession = {
-      query,
+      handle,
       channel,
       createdAt: new Date(),
     };
@@ -126,7 +126,7 @@ export class SessionManager {
 
     // Close resources
     session.channel.close();
-    session.query.close();
+    session.handle.close();
 
     this.logger.debug({ chatId }, 'Session deleted');
     return true;
@@ -145,7 +145,7 @@ export class SessionManager {
   }
 
   /**
-   * Close the channel for a session (keeps the Query alive).
+   * Close the channel for a session (keeps the QueryHandle alive).
    * Used during reset to stop the message generator.
    */
   closeChannel(chatId: string): boolean {
@@ -185,7 +185,7 @@ export class SessionManager {
     // Then close all resources
     for (const [chatId, session] of sessions) {
       session.channel.close();
-      session.query.close();
+      session.handle.close();
       this.logger.debug({ chatId }, 'Session closed during shutdown');
     }
 

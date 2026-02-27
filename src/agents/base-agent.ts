@@ -2,7 +2,7 @@
  * BaseAgent - Abstract base class for all Agent types.
  *
  * Provides common functionality:
- * - SDK configuration building
+ * - SDK configuration building via abstraction layer
  * - GLM logging
  * - Error handling
  *
@@ -11,8 +11,15 @@
  * @module agents/base-agent
  */
 
-import { query, type SDKMessage, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { parseSDKMessage, buildSdkEnv } from '../utils/sdk.js';
+import { getProvider } from '../sdk/index.js';
+import type { IAgentSDKProvider } from '../sdk/interface.js';
+import type {
+  AgentMessage as SDKAgentMessage,
+  AgentQueryOptions,
+  UserInput,
+  QueryHandle,
+} from '../sdk/types.js';
+import { buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
@@ -50,19 +57,24 @@ export interface SdkOptionsExtra {
  * Result from iterator yield.
  */
 export interface IteratorYieldResult {
-  /** Parsed SDK message */
-  parsed: ReturnType<typeof parseSDKMessage>;
-  /** Raw SDK message */
-  raw: SDKMessage;
+  /** Parsed message (legacy format for compatibility) */
+  parsed: {
+    type: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+    sessionId?: string;
+  };
+  /** SDK Agent message */
+  raw: SDKAgentMessage;
 }
 
 /**
  * Result from queryStream with streaming input.
- * Includes Query instance for lifecycle control (close/cancel).
+ * Includes QueryHandle for lifecycle control (close/cancel).
  */
 export interface QueryStreamResult {
-  /** The Query instance for lifecycle control */
-  query: Query;
+  /** The QueryHandle for lifecycle control */
+  handle: QueryHandle;
   /** AsyncGenerator yielding parsed messages */
   iterator: AsyncGenerator<IteratorYieldResult>;
 }
@@ -98,6 +110,7 @@ export abstract class BaseAgent {
 
   protected readonly logger: ReturnType<typeof createLogger>;
   protected initialized = false;
+  protected sdkProvider: IAgentSDKProvider;
 
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
@@ -111,6 +124,9 @@ export abstract class BaseAgent {
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());
+
+    // Get SDK provider instance
+    this.sdkProvider = getProvider();
   }
 
   /**
@@ -127,31 +143,31 @@ export abstract class BaseAgent {
    * while allowing subclasses to add specific options.
    *
    * @param extra - Extra configuration to merge
-   * @returns SDK options object
+   * @returns AgentQueryOptions object
    */
-  protected createSdkOptions(extra: SdkOptionsExtra = {}): Record<string, unknown> {
-    const sdkOptions: Record<string, unknown> = {
+  protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    const options: AgentQueryOptions = {
       cwd: extra.cwd ?? Config.getWorkspaceDir(),
-      permissionMode: this.permissionMode,
+      permissionMode: this.permissionMode === 'bypassPermissions' ? 'bypass' : 'default',
       settingSources: ['project'],
     };
 
     // Add allowed/disallowed tools
     if (extra.allowedTools) {
-      sdkOptions.allowedTools = extra.allowedTools;
+      options.allowedTools = extra.allowedTools;
     }
     if (extra.disallowedTools) {
-      sdkOptions.disallowedTools = extra.disallowedTools;
+      options.disallowedTools = extra.disallowedTools;
     }
 
-    // Add MCP servers
+    // Add MCP servers (convert to SDK format)
     if (extra.mcpServers) {
-      sdkOptions.mcpServers = extra.mcpServers;
+      options.mcpServers = extra.mcpServers as Record<string, import('../sdk/types.js').McpServerConfig>;
     }
 
     // Set environment
     const loggingConfig = Config.getLoggingConfig();
-    sdkOptions.env = buildSdkEnv(
+    options.env = buildSdkEnv(
       this.apiKey,
       this.apiBaseUrl,
       Config.getGlobalEnv(),
@@ -160,10 +176,30 @@ export abstract class BaseAgent {
 
     // Set model
     if (this.model) {
-      sdkOptions.model = this.model;
+      options.model = this.model;
     }
 
-    return sdkOptions;
+    return options;
+  }
+
+  /**
+   * Convert SDK AgentMessage to legacy parsed format for compatibility.
+   */
+  private convertToLegacyFormat(message: SDKAgentMessage): IteratorYieldResult['parsed'] {
+    return {
+      type: message.type,
+      content: message.content,
+      metadata: message.metadata ? {
+        toolName: message.metadata.toolName,
+        toolInput: message.metadata.toolInput,
+        toolInputRaw: message.metadata.toolInput,
+        toolOutput: message.metadata.toolOutput,
+        elapsed: message.metadata.elapsedMs,
+        cost: message.metadata.costUsd,
+        tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
+      } : undefined,
+      sessionId: message.metadata?.sessionId,
+    };
   }
 
   /**
@@ -172,33 +208,26 @@ export abstract class BaseAgent {
    * For task-based agents (Evaluator, Executor, Reporter) that use
    * static prompts. Input is a string or message array.
    *
-   * This method wraps the SDK query iterator with:
+   * This method wraps the SDK provider query with:
    * - Automatic debug logging
    * - Parsed message output
    *
    * @param input - Static prompt string or message array
-   * @param sdkOptions - SDK options
+   * @param options - AgentQueryOptions
    * @yields IteratorYieldResult with parsed and raw message
    */
   protected async *queryOnce(
     input: AgentInput,
-    sdkOptions: Record<string, unknown>
+    options: AgentQueryOptions
   ): AsyncGenerator<IteratorYieldResult> {
-    const queryResult = query({
-      prompt: input,
-      options: sdkOptions as Parameters<typeof query>[0]['options'],
-    });
-    const iterator = queryResult[Symbol.asyncIterator]();
+    // Convert input to SDK format
+    const sdkInput = typeof input === 'string' ? input : this.convertInputToUserInput(input);
 
-    while (true) {
-      const result = await iterator.next();
+    // Use SDK provider
+    const iterator = this.sdkProvider.queryOnce(sdkInput, options);
 
-      if (result.done) {
-        break;
-      }
-
-      const message = result.value;
-      const parsed = parseSDKMessage(message);
+    for await (const message of iterator) {
+      const parsed = this.convertToLegacyFormat(message);
 
       // Log SDK message with full details for debugging
       this.logger.debug({
@@ -219,40 +248,40 @@ export abstract class BaseAgent {
    * For conversational agents (Pilot) that use dynamic input generators.
    * Input is an AsyncGenerator that yields user messages on demand.
    *
-   * This method creates a query and returns both the Query instance
+   * This method creates a query and returns both the QueryHandle
    * (for lifecycle control) and an AsyncGenerator for iterating messages.
    *
    * Features:
    * - Automatic debug logging
    * - Parsed message output
-   * - Query instance for close/cancel operations
+   * - QueryHandle for close/cancel operations
    *
    * @param input - AsyncGenerator yielding user messages
-   * @param sdkOptions - SDK options
-   * @returns QueryStreamResult with query instance and iterator
+   * @param options - AgentQueryOptions
+   * @returns QueryStreamResult with handle and iterator
    */
   protected createQueryStream(
-    input: AsyncGenerator<SDKUserMessage>,
-    sdkOptions: Record<string, unknown>
+    input: AsyncGenerator<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>,
+    options: AgentQueryOptions
   ): QueryStreamResult {
-    const queryResult = query({
-      prompt: input,
-      options: sdkOptions as Parameters<typeof query>[0]['options'],
-    });
+    // Convert SDK UserMessage to SDK UserInput
+    async function* convertInput(): AsyncGenerator<UserInput> {
+      for await (const msg of input) {
+        yield {
+          role: 'user',
+          content: typeof msg.message?.content === 'string'
+            ? msg.message.content
+            : JSON.stringify(msg.message?.content ?? ''),
+        };
+      }
+    }
+
+    const result = this.sdkProvider.queryStream(convertInput(), options);
 
     const self = this;
-    const iterator = queryResult[Symbol.asyncIterator]();
-
     async function* wrappedIterator(): AsyncGenerator<IteratorYieldResult> {
-      while (true) {
-        const result = await iterator.next();
-
-        if (result.done) {
-          break;
-        }
-
-        const message = result.value;
-        const parsed = parseSDKMessage(message);
+      for await (const message of result.iterator) {
+        const parsed = self.convertToLegacyFormat(message);
 
         // Log SDK message with full details for debugging
         self.logger.debug({
@@ -268,9 +297,23 @@ export abstract class BaseAgent {
     }
 
     return {
-      query: queryResult,
+      handle: result.handle,
       iterator: wrappedIterator(),
     };
+  }
+
+  /**
+   * Convert legacy AsyncIterable<SDKUserMessage> to SDK UserInput format.
+   */
+  private convertInputToUserInput(input: AsyncIterable<unknown>): UserInput[] | string {
+    // For string input, just return it
+    if (typeof input === 'string') {
+      return input;
+    }
+
+    // For AsyncIterable, we need to handle it in queryStream
+    // This is a fallback for non-streaming cases
+    return [];
   }
 
   /**
@@ -310,12 +353,12 @@ export abstract class BaseAgent {
    * @param parsed - Parsed SDK message
    * @returns AgentMessage
    */
-  protected formatMessage(parsed: ReturnType<typeof parseSDKMessage>): AgentMessage {
+  protected formatMessage(parsed: IteratorYieldResult['parsed']): AgentMessage {
     return {
       content: parsed.content,
       role: 'assistant',
-      messageType: parsed.type,
-      metadata: parsed.metadata,
+      messageType: parsed.type as AgentMessage['messageType'],
+      metadata: parsed.metadata as AgentMessage['metadata'],
     };
   }
 

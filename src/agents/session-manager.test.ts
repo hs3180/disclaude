@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SessionManager, type PilotSession } from './session-manager.js';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import { SessionManager } from './session-manager.js';
+import type { QueryHandle } from '../sdk/types.js';
 import { MessageChannel } from './message-channel.js';
 import type pino from 'pino';
 
@@ -10,7 +10,7 @@ vi.mock('./message-channel.js');
 describe('SessionManager', () => {
   let sessionManager: SessionManager;
   let mockLogger: pino.Logger;
-  let mockQuery: Query;
+  let mockHandle: QueryHandle;
   let mockChannel: MessageChannel;
 
   beforeEach(() => {
@@ -23,9 +23,10 @@ describe('SessionManager', () => {
       error: vi.fn(),
     } as unknown as pino.Logger;
 
-    mockQuery = {
+    mockHandle = {
       close: vi.fn(),
-    } as unknown as Query;
+      cancel: vi.fn(),
+    } as unknown as QueryHandle;
 
     mockChannel = {
       close: vi.fn(),
@@ -42,7 +43,7 @@ describe('SessionManager', () => {
     });
 
     it('should return true when session exists', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       expect(sessionManager.has('chat1')).toBe(true);
     });
   });
@@ -53,23 +54,23 @@ describe('SessionManager', () => {
     });
 
     it('should return session when it exists', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       const session = sessionManager.get('chat1');
       expect(session).toBeDefined();
-      expect(session?.query).toBe(mockQuery);
+      expect(session?.handle).toBe(mockHandle);
       expect(session?.channel).toBe(mockChannel);
       expect(session?.createdAt).toBeInstanceOf(Date);
     });
   });
 
-  describe('getQuery', () => {
+  describe('getHandle', () => {
     it('should return undefined when no session exists', () => {
-      expect(sessionManager.getQuery('chat1')).toBeUndefined();
+      expect(sessionManager.getHandle('chat1')).toBeUndefined();
     });
 
-    it('should return query when session exists', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
-      expect(sessionManager.getQuery('chat1')).toBe(mockQuery);
+    it('should return handle when session exists', () => {
+      sessionManager.create('chat1', mockHandle, mockChannel);
+      expect(sessionManager.getHandle('chat1')).toBe(mockHandle);
     });
   });
 
@@ -79,23 +80,23 @@ describe('SessionManager', () => {
     });
 
     it('should return channel when session exists', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       expect(sessionManager.getChannel('chat1')).toBe(mockChannel);
     });
   });
 
   describe('create', () => {
     it('should create a new session', () => {
-      const session = sessionManager.create('chat1', mockQuery, mockChannel);
+      const session = sessionManager.create('chat1', mockHandle, mockChannel);
 
-      expect(session.query).toBe(mockQuery);
+      expect(session.handle).toBe(mockHandle);
       expect(session.channel).toBe(mockChannel);
       expect(session.createdAt).toBeInstanceOf(Date);
       expect(sessionManager.has('chat1')).toBe(true);
     });
 
     it('should log session creation', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       expect(mockLogger.debug).toHaveBeenCalledWith(
         { chatId: 'chat1' },
         'Session created'
@@ -103,11 +104,11 @@ describe('SessionManager', () => {
     });
 
     it('should overwrite existing session', () => {
-      const mockQuery2 = { close: vi.fn() } as unknown as Query;
-      sessionManager.create('chat1', mockQuery, mockChannel);
-      sessionManager.create('chat1', mockQuery2, mockChannel);
+      const mockHandle2 = { close: vi.fn(), cancel: vi.fn() } as unknown as QueryHandle;
+      sessionManager.create('chat1', mockHandle, mockChannel);
+      sessionManager.create('chat1', mockHandle2, mockChannel);
 
-      expect(sessionManager.getQuery('chat1')).toBe(mockQuery2);
+      expect(sessionManager.getHandle('chat1')).toBe(mockHandle2);
     });
   });
 
@@ -117,17 +118,17 @@ describe('SessionManager', () => {
     });
 
     it('should delete session and close resources', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       const result = sessionManager.delete('chat1');
 
       expect(result).toBe(true);
       expect(sessionManager.has('chat1')).toBe(false);
       expect(mockChannel.close).toHaveBeenCalled();
-      expect(mockQuery.close).toHaveBeenCalled();
+      expect(mockHandle.close).toHaveBeenCalled();
     });
 
     it('should delete from map before closing resources', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
 
       // Check that has() returns false before close() is called
       let hasDuringClose = true;
@@ -147,13 +148,13 @@ describe('SessionManager', () => {
     });
 
     it('should remove tracking without closing resources', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       const result = sessionManager.deleteTracking('chat1');
 
       expect(result).toBe(true);
       expect(sessionManager.has('chat1')).toBe(false);
       expect(mockChannel.close).not.toHaveBeenCalled();
-      expect(mockQuery.close).not.toHaveBeenCalled();
+      expect(mockHandle.close).not.toHaveBeenCalled();
     });
   });
 
@@ -163,14 +164,14 @@ describe('SessionManager', () => {
     });
 
     it('should close channel and remove tracking', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
       const result = sessionManager.closeChannel('chat1');
 
       expect(result).toBe(true);
       expect(sessionManager.has('chat1')).toBe(false);
       expect(mockChannel.close).toHaveBeenCalled();
-      // Query should NOT be closed
-      expect(mockQuery.close).not.toHaveBeenCalled();
+      // Handle should NOT be closed
+      expect(mockHandle.close).not.toHaveBeenCalled();
     });
   });
 
@@ -180,8 +181,8 @@ describe('SessionManager', () => {
     });
 
     it('should return correct count', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
-      sessionManager.create('chat2', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
+      sessionManager.create('chat2', mockHandle, mockChannel);
       expect(sessionManager.size()).toBe(2);
     });
   });
@@ -192,8 +193,8 @@ describe('SessionManager', () => {
     });
 
     it('should return all active chatIds', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
-      sessionManager.create('chat2', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
+      sessionManager.create('chat2', mockHandle, mockChannel);
 
       const chatIds = sessionManager.getActiveChatIds();
       expect(chatIds).toContain('chat1');
@@ -204,18 +205,18 @@ describe('SessionManager', () => {
 
   describe('closeAll', () => {
     it('should close all sessions', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
-      sessionManager.create('chat2', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
+      sessionManager.create('chat2', mockHandle, mockChannel);
 
       sessionManager.closeAll();
 
       expect(sessionManager.size()).toBe(0);
       expect(mockChannel.close).toHaveBeenCalledTimes(2);
-      expect(mockQuery.close).toHaveBeenCalledTimes(2);
+      expect(mockHandle.close).toHaveBeenCalledTimes(2);
     });
 
     it('should clear map before closing resources', () => {
-      sessionManager.create('chat1', mockQuery, mockChannel);
+      sessionManager.create('chat1', mockHandle, mockChannel);
 
       let sizeDuringClose = -1;
       vi.mocked(mockChannel.close).mockImplementation(() => {
