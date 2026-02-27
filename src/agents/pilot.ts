@@ -102,7 +102,7 @@ export interface PilotConfig extends BaseAgentConfig {
  */
 interface MessageData {
   text: string;
-  messageId: string;
+  messageId?: string;
   senderOpenId?: string;
   attachments?: FileRef[];
 }
@@ -302,13 +302,13 @@ export class Pilot extends BaseAgent {
     const channel = new MessageChannel();
 
     // Create streaming query using channel's generator
-    const { query: queryInstance, iterator } = this.createQueryStream(
+    const { handle, iterator } = this.createQueryStream(
       channel.generator(),
       sdkOptions
     );
 
     // Create session using SessionManager
-    this.sessionManager.create(chatId, queryInstance, channel);
+    this.sessionManager.create(chatId, handle, channel);
 
     // Process SDK messages in background
     this.processIterator(chatId, iterator).catch((err) => {

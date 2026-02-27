@@ -3,15 +3,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BaseAgent, type BaseAgentConfig, type SdkOptionsExtra } from './base-agent.js';
+import { BaseAgent, type BaseAgentConfig, type SdkOptionsExtra, type IteratorYieldResult } from './base-agent.js';
 
-// Mock SDK
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn().mockReturnValue({
-    async *[Symbol.asyncIterator]() {
-      yield { type: 'text', content: 'Hello' };
-    },
-  }),
+// Mock SDK provider
+vi.mock('../sdk/index.js', () => ({
+  getProvider: vi.fn(() => ({
+    queryOnce: vi.fn(async function* () {
+      yield { type: 'text', content: 'Hello', role: 'assistant' };
+    }),
+    queryStream: vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { type: 'text', content: 'Hello', role: 'assistant' };
+      })(),
+    })),
+  })),
 }));
 
 // Mock config
@@ -68,8 +74,8 @@ class TestAgent extends BaseAgent {
     yield* this.queryOnce(input, {});
   }
 
-  testFormatMessage(parsed: { type: string; content: string; metadata?: unknown }) {
-    return this.formatMessage(parsed as ReturnType<typeof import('../utils/sdk.js').parseSDKMessage>);
+  testFormatMessage(parsed: IteratorYieldResult['parsed']) {
+    return this.formatMessage(parsed);
   }
 
   testHandleIteratorError(error: unknown, operation: string) {
@@ -121,7 +127,7 @@ describe('BaseAgent', () => {
       const options = agent.testCreateSdkOptions();
 
       expect(options.cwd).toBeDefined();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBe('bypass');
       expect(options.settingSources).toContain('project');
       expect(options.env).toBeDefined();
     });
@@ -143,7 +149,7 @@ describe('BaseAgent', () => {
     });
 
     it('should include mcpServers when provided', () => {
-      const mcpServers = { 'test-server': { command: 'test' } };
+      const mcpServers = { 'test-server': { type: 'stdio' as const, command: 'test' } };
       const options = agent.testCreateSdkOptions({
         mcpServers,
       });
@@ -167,7 +173,7 @@ describe('BaseAgent', () => {
 
   describe('formatMessage', () => {
     it('should format parsed message as AgentMessage', () => {
-      const parsed = {
+      const parsed: IteratorYieldResult['parsed'] = {
         type: 'text',
         content: 'Hello, world!',
         metadata: { toolName: 'test' },

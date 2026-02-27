@@ -232,7 +232,7 @@ describe('Pilot (Streaming Input)', () => {
       const session = pilot['sessionManager'].get('chat-123');
 
       expect(session).toBeDefined();
-      expect(session?.query).toBeDefined();
+      expect(session?.handle).toBeDefined();
       expect(session?.channel).toBeDefined();
     });
 
