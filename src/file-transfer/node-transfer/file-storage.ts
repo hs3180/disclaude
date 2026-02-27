@@ -6,8 +6,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger } from '../utils/logger.js';
-import { createFileReference, type FileReference, type StoredFile } from '../types/file-reference.js';
+import { createLogger } from '../../utils/logger.js';
+import { createFileReference, type FileReference, type StoredFile } from '../../types/file-reference.js';
 
 const logger = createLogger('FileStorageService');
 

@@ -16,6 +16,9 @@
  *     │  ◄──── POST /callback ───────────   │
  *     │  { chatId, type, text, ... }        │
  * ```
+ *
+ * @deprecated - FileClient has been moved to file-transfer/node-transfer/
  */
 
-export * from './file-client.js';
+// Re-export from new location for backward compatibility
+export * from '../file-transfer/node-transfer/index.js';
