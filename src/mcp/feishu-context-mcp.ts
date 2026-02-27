@@ -584,13 +584,10 @@ export const feishuContextTools = {
 /**
  * SDK-compatible tool definitions.
  *
- * Converts feishuContextTools to the format expected by the Agent SDK:
- * - Array format (not object with keys)
- * - Zod schemas for input validation
- * - Proper SdkMcpToolDefinition structure
+ * Uses InlineToolDefinition format for SDK abstraction.
  */
 import { z } from 'zod';
-import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 
 /**
  * Helper to create a successful tool result.
@@ -602,18 +599,22 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
   };
 }
 
-// SDK-compatible tools array
-export const feishuSdkTools = [
-  tool(
-    'send_user_feedback',
-    'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content.\n\n**Thread Support:**\nWhen parentMessageId is provided, the message is sent as a reply to that message, creating a thread in Feishu.\n\n**Card Format Requirements:**\nWhen format="card", content must be a valid Feishu card object with the following structure:\n\n{\n  "config": {"wide_screen_mode": true},\n  "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},\n  "elements": [\n    {"tag": "markdown", "content": "**Bold** and *italic* text"},\n    {"tag": "hr"},\n    {"tag": "div", "text": {"tag": "plain_text", "content": "Plain text content"}}\n  ]\n}\n\n**Key Elements to Use:**\n- {"tag": "markdown", "content": "..."} - For markdown formatted text\n- {"tag": "hr"} - For horizontal dividers\n- {"tag": "div", "text": {"tag": "plain_text", "content": "..."}} - For plain text in containers\n- {"tag": "column_set", ...} - For tables (see below)\n\n⚠️ **IMPORTANT: Markdown Tables NOT Supported**\nFeishu cards do NOT support Markdown table syntax (| col1 | col2 |). Tables will render as raw text.\n\n**Use column_set for Tables Instead:**\nCreate a column_set element with columns array. Each column has width "weighted" and weight for proportions.\nFor data rows, use multiple column_set elements with alternating background_style ("grey" vs "").\n\n**Reference:**\n- Markdown: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags\n- Column Set: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/column-set',
-    {
+/**
+ * Feishu MCP tool definitions for Agent SDK.
+ *
+ * Uses InlineToolDefinition format for SDK abstraction.
+ */
+export const feishuToolDefinitions: InlineToolDefinition[] = [
+  {
+    name: 'send_user_feedback',
+    description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content.\n\n**Thread Support:**\nWhen parentMessageId is provided, the message is sent as a reply to that message, creating a thread in Feishu.\n\n**Card Format Requirements:**\nWhen format="card", content must be a valid Feishu card object with the following structure:\n\n{\n  "config": {"wide_screen_mode": true},\n  "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},\n  "elements": [\n    {"tag": "markdown", "content": "**Bold** and *italic* text"},\n    {"tag": "hr"},\n    {"tag": "div", "text": {"tag": "plain_text", "content": "Plain text content"}}\n  ]\n}\n\n**Key Elements to Use:**\n- {"tag": "markdown", "content": "..."} - For markdown formatted text\n- {"tag": "hr"} - For horizontal dividers\n- {"tag": "div", "text": {"tag": "plain_text", "content": "..."}} - For plain text in containers\n- {"tag": "column_set", ...} - For tables (see below)\n\n⚠️ **IMPORTANT: Markdown Tables NOT Supported**\nFeishu cards do NOT support Markdown table syntax (| col1 | col2 |). Tables will render as raw text.\n\n**Use column_set for Tables Instead:**\nCreate a column_set element with columns array. Each column has width "weighted" and weight for proportions.\nFor data rows, use multiple column_set elements with alternating background_style ("grey" vs "").\n\n**Reference:**\n- Markdown: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags\n- Column Set: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/column-set',
+    parameters: z.object({
       content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. String for text messages, object for cards (must follow Feishu card structure - see tool description).'),
       format: z.enum(['text', 'card']).describe('Format specifier (required): "text" for plain text, "card" for interactive cards with VALID structure.'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread replies. When provided, the message is sent as a reply to this message.'),
-    },
-    async ({ content, format, chatId, parentMessageId }) => {
+    }),
+    handler: async ({ content, format, chatId, parentMessageId }) => {
       try {
         const result = await send_user_feedback({ content, format, chatId, parentMessageId });
         if (result.success) {
@@ -627,16 +628,16 @@ export const feishuSdkTools = [
         // Return as soft error to avoid SDK subprocess crash
         return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
-  tool(
-    'send_file_to_feishu',
-    'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
-    {
+    },
+  },
+  {
+    name: 'send_file_to_feishu',
+    description: 'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
+    parameters: z.object({
       filePath: z.string().describe('Path to the file to send (relative to workspace or absolute)'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
-    },
-    async ({ filePath, chatId }) => {
+    }),
+    handler: async ({ filePath, chatId }) => {
       try {
         const result = await send_file_to_feishu({ filePath, chatId });
         if (result.success) {
@@ -650,9 +651,16 @@ export const feishuSdkTools = [
         // Return as soft error to avoid SDK subprocess crash
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-  ),
+    },
+  },
 ];
+
+/**
+ * SDK-compatible tools array.
+ *
+ * @deprecated Use feishuToolDefinitions with getProvider().createMcpServer() instead.
+ */
+export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().createInlineTool(def));
 
 /**
  * SDK MCP Server factory for Feishu context tools.
@@ -679,9 +687,10 @@ export const feishuSdkTools = [
  * to the Agent SDK.
  */
 export function createFeishuSdkMcpServer() {
-  return createSdkMcpServer({
+  return getProvider().createMcpServer({
+    type: 'inline',
     name: 'feishu-context',
     version: '1.0.0',
-    tools: feishuSdkTools,
+    tools: feishuToolDefinitions,
   });
 }
