@@ -1,8 +1,13 @@
 /**
- * Nodes module - Communication node.
+ * Nodes module - Communication node and managers.
  *
  * The Communication node handles multiple channels (Feishu, REST, etc.)
  * and forwards prompts to Execution Node via WebSocket.
+ *
+ * Components:
+ * - CommunicationNode: Main entry point for communication management
+ * - ExecNodeManager: Manages execution node connections and routing
+ * - ChannelManager: Manages communication channels
  *
  * Usage:
  * ```typescript
@@ -21,3 +26,5 @@
  */
 
 export { CommunicationNode, type CommunicationNodeConfig } from './communication-node.js';
+export { ExecNodeManager, type ConnectedExecNode } from './exec-node-manager.js';
+export { ChannelManager } from './channel-manager.js';

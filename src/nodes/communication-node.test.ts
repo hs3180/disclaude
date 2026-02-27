@@ -2,6 +2,7 @@
  * Tests for CommunicationNode multi-execution node support.
  *
  * Issue #38: Multi-execution node support
+ * Issue #241: Refactored to use ExecNodeManager and ChannelManager
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -125,8 +126,9 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
     });
   });
 
-  describe('Internal Methods', () => {
+  describe('ExecNodeManager Integration', () => {
     let commNode: CommunicationNode;
+    let execNodeManager: any;
 
     beforeEach(() => {
       commNode = new CommunicationNode({
@@ -136,11 +138,12 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
         appId: undefined,
         appSecret: undefined,
       });
+      execNodeManager = (commNode as any).execNodeManager;
     });
 
     it('registerExecNode should add node to execNodes map', () => {
       const mockWs = { readyState: WebSocket.OPEN } as WebSocket;
-      const nodeId = (commNode as any).registerExecNode(
+      const nodeId = execNodeManager.register(
         mockWs,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node' },
         '127.0.0.1'
@@ -158,13 +161,13 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
       const mockWs1 = { readyState: WebSocket.OPEN, close: vi.fn() } as unknown as WebSocket;
       const mockWs2 = { readyState: WebSocket.OPEN } as WebSocket;
 
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs1,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node 1' },
         '127.0.0.1'
       );
 
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs2,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node 2' },
         '127.0.0.1'
@@ -178,7 +181,7 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
 
     it('unregisterExecNode should remove node', () => {
       const mockWs = { readyState: WebSocket.OPEN } as WebSocket;
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node' },
         '127.0.0.1'
@@ -186,38 +189,38 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
 
       expect(commNode.getExecNodes().length).toBe(1);
 
-      (commNode as any).unregisterExecNode('test-node-1');
+      execNodeManager.unregister('test-node-1');
 
       expect(commNode.getExecNodes().length).toBe(0);
     });
 
     it('getFirstAvailableNode should return first connected node', () => {
       const mockWs = { readyState: WebSocket.OPEN } as WebSocket;
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node' },
         '127.0.0.1'
       );
 
-      const node = (commNode as any).getFirstAvailableNode();
+      const node = execNodeManager.getFirstAvailable();
       expect(node).toBeDefined();
       expect(node.nodeId).toBe('test-node-1');
     });
 
     it('getFirstAvailableNode should return undefined when no nodes connected', () => {
-      const node = (commNode as any).getFirstAvailableNode();
+      const node = execNodeManager.getFirstAvailable();
       expect(node).toBeUndefined();
     });
 
     it('getExecNodeForChat should assign first available node to chat', () => {
       const mockWs = { readyState: WebSocket.OPEN } as WebSocket;
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs,
         { type: 'register', nodeId: 'test-node-1', name: 'Test Node' },
         '127.0.0.1'
       );
 
-      const node = (commNode as any).getExecNodeForChat('chat-1');
+      const node = execNodeManager.getForChat('chat-1');
       expect(node).toBeDefined();
       expect(node.nodeId).toBe('test-node-1');
       expect(commNode.getChatNodeAssignment('chat-1')).toBe('test-node-1');
@@ -227,23 +230,23 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
       const mockWs1 = { readyState: WebSocket.OPEN } as WebSocket;
       const mockWs2 = { readyState: WebSocket.OPEN } as WebSocket;
 
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs1,
         { type: 'register', nodeId: 'node-1', name: 'Node 1' },
         '127.0.0.1'
       );
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs2,
         { type: 'register', nodeId: 'node-2', name: 'Node 2' },
         '127.0.0.1'
       );
 
       // First call assigns to node-1
-      (commNode as any).getExecNodeForChat('chat-1');
+      execNodeManager.getForChat('chat-1');
       expect(commNode.getChatNodeAssignment('chat-1')).toBe('node-1');
 
       // Second call should return same assignment
-      const node = (commNode as any).getExecNodeForChat('chat-1');
+      const node = execNodeManager.getForChat('chat-1');
       expect(node.nodeId).toBe('node-1');
     });
 
@@ -251,19 +254,19 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
       const mockWs1 = { readyState: WebSocket.OPEN } as WebSocket;
       const mockWs2 = { readyState: WebSocket.OPEN } as WebSocket;
 
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs1,
         { type: 'register', nodeId: 'node-1', name: 'Node 1' },
         '127.0.0.1'
       );
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs2,
         { type: 'register', nodeId: 'node-2', name: 'Node 2' },
         '127.0.0.1'
       );
 
       // Assign to node-1
-      (commNode as any).getExecNodeForChat('chat-1');
+      execNodeManager.getForChat('chat-1');
       expect(commNode.getChatNodeAssignment('chat-1')).toBe('node-1');
 
       // Switch to node-2
@@ -276,23 +279,23 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
       const mockWs1 = { readyState: WebSocket.OPEN } as WebSocket;
       const mockWs2 = { readyState: WebSocket.OPEN } as WebSocket;
 
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs1,
         { type: 'register', nodeId: 'node-1', name: 'Node 1' },
         '127.0.0.1'
       );
-      (commNode as any).registerExecNode(
+      execNodeManager.register(
         mockWs2,
         { type: 'register', nodeId: 'node-2', name: 'Node 2' },
         '127.0.0.1'
       );
 
       // Assign chat to node-1
-      (commNode as any).getExecNodeForChat('chat-1');
+      execNodeManager.getForChat('chat-1');
       expect(commNode.getChatNodeAssignment('chat-1')).toBe('node-1');
 
       // Unregister node-1
-      (commNode as any).unregisterExecNode('node-1');
+      execNodeManager.unregister('node-1');
 
       // Chat should be reassigned to node-2
       expect(commNode.getChatNodeAssignment('chat-1')).toBe('node-2');
