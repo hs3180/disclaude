@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 
 describe('CLI Entry Point', () => {
   describe('Module Structure', () => {
-    it('should import runCommunicationNode from runners module', () => {
+    it('should import runPrimaryNode from runners module', () => {
       // Import from runners
       const importPath = './runners/index.js';
       expect(importPath).toContain('runners');
@@ -39,24 +39,24 @@ describe('CLI Entry Point', () => {
 
   describe('Command Line Argument Parsing', () => {
     it('should detect start command', () => {
-      const args = ['start', '--mode', 'comm'];
+      const args = ['start', '--mode', 'primary'];
       const [command] = args;
 
       expect(command).toBe('start');
     });
 
-    it('should detect comm mode', () => {
-      const args = ['start', '--mode', 'comm'];
+    it('should detect primary mode', () => {
+      const args = ['start', '--mode', 'primary'];
       const [, , mode] = args;
 
-      expect(mode).toBe('comm');
+      expect(mode).toBe('primary');
     });
 
-    it('should detect exec mode', () => {
-      const args = ['start', '--mode', 'exec'];
+    it('should detect worker mode', () => {
+      const args = ['start', '--mode', 'worker'];
       const [, , mode] = args;
 
-      expect(mode).toBe('exec');
+      expect(mode).toBe('worker');
     });
 
     it('should detect missing mode argument', () => {
@@ -73,14 +73,14 @@ describe('CLI Entry Point', () => {
       expect(header).toContain('Disclaude');
     });
 
-    it('should show comm mode usage', () => {
-      const usage = 'disclaude start --mode comm           Communication Node (Multi-channel)';
-      expect(usage).toContain('--mode comm');
+    it('should show primary mode usage', () => {
+      const usage = 'disclaude start --mode primary       Primary Node (Comm + Exec, recommended)';
+      expect(usage).toContain('--mode primary');
     });
 
-    it('should show exec mode usage', () => {
-      const usage = 'disclaude start --mode exec           Execution Node (Pilot Agent)';
-      expect(usage).toContain('--mode exec');
+    it('should show worker mode usage', () => {
+      const usage = 'disclaude start --mode worker        Worker Node (Exec only, connects to Primary)';
+      expect(usage).toContain('--mode worker');
     });
 
     it('should show REST API endpoints', () => {
@@ -145,14 +145,14 @@ describe('CLI Entry Point', () => {
   });
 
   describe('Execution Modes', () => {
-    it('should support comm mode', () => {
-      const commMode = 'comm';
-      expect(commMode).toBe('comm');
+    it('should support primary mode', () => {
+      const primaryMode = 'primary';
+      expect(primaryMode).toBe('primary');
     });
 
-    it('should support exec mode', () => {
-      const execMode = 'exec';
-      expect(execMode).toBe('exec');
+    it('should support worker mode', () => {
+      const workerMode = 'worker';
+      expect(workerMode).toBe('worker');
     });
   });
 

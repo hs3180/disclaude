@@ -5,19 +5,23 @@
  */
 
 import { Config } from '../config/index.js';
-import type { RunMode } from '../config/types.js';
+
+/**
+ * Run mode type.
+ */
+export type RunMode = 'primary' | 'worker';
 
 /**
  * Global CLI arguments interface.
  */
 export interface GlobalArgs {
-  /** Run mode (comm or exec) */
+  /** Run mode (primary or worker) */
   mode: RunMode | null;
-  /** Port for communication node (default: 3001) */
+  /** Port for primary node (default: 3001) */
   port: number;
-  /** Host for communication node */
+  /** Host for primary node */
   host: string;
-  /** Communication Node WebSocket URL for exec mode */
+  /** Primary Node WebSocket URL for worker mode */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
@@ -25,12 +29,16 @@ export interface GlobalArgs {
   restPort?: number;
   /** Enable REST channel */
   enableRestChannel?: boolean;
+  /** Node ID for worker mode */
+  nodeId?: string;
+  /** Node name for worker mode */
+  nodeName?: string;
 }
 
 /**
- * Communication Node configuration.
+ * Primary Node configuration.
  */
-export interface CommNodeConfig {
+export interface PrimaryNodeConfig {
   /** Port for WebSocket server */
   port: number;
   /** Host for WebSocket server */
@@ -46,16 +54,16 @@ export interface CommNodeConfig {
 }
 
 /**
- * Execution Node configuration.
+ * Worker Node configuration.
  */
-export interface ExecNodeConfig {
-  /** Communication Node WebSocket URL */
+export interface WorkerNodeConfig {
+  /** Primary Node WebSocket URL */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
-  /** Unique identifier for this execution node (auto-generated if not provided) */
+  /** Unique identifier for this worker node (auto-generated if not provided) */
   nodeId?: string;
-  /** Human-readable name for this execution node */
+  /** Human-readable name for this worker node */
   nodeName?: string;
 }
 
@@ -101,7 +109,7 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   let mode: RunMode | null = null;
   if (args[0] === 'start') {
     const modeValue = parseArgValue(args, '--mode');
-    if (modeValue && ['comm', 'exec'].includes(modeValue)) {
+    if (modeValue && ['primary', 'worker'].includes(modeValue)) {
       mode = modeValue as RunMode;
     }
   }
@@ -113,6 +121,8 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
   const restPort = parseIntArg(parseArgValue(args, '--rest-port'), defaultRestPort);
   const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
+  const nodeId = parseArgValue(args, '--node-id') || process.env.EXEC_NODE_ID;
+  const nodeName = parseArgValue(args, '--node-name') || process.env.EXEC_NODE_NAME;
 
   return {
     mode,
@@ -122,13 +132,15 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
     authToken,
     restPort,
     enableRestChannel,
+    nodeId,
+    nodeName,
   };
 }
 
 /**
- * Get Communication Node configuration from global args.
+ * Get Primary Node configuration from global args.
  */
-export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
+export function getPrimaryNodeConfig(globalArgs: GlobalArgs): PrimaryNodeConfig {
   const channelsConfig = Config.getChannelsConfig();
 
   return {
@@ -142,13 +154,13 @@ export function getCommNodeConfig(globalArgs: GlobalArgs): CommNodeConfig {
 }
 
 /**
- * Get Execution Node configuration from global args.
+ * Get Worker Node configuration from global args.
  */
-export function getExecNodeConfig(globalArgs: GlobalArgs): ExecNodeConfig {
+export function getWorkerNodeConfig(globalArgs: GlobalArgs): WorkerNodeConfig {
   return {
     commUrl: globalArgs.commUrl,
     authToken: globalArgs.authToken,
-    nodeId: process.env.EXEC_NODE_ID,
-    nodeName: process.env.EXEC_NODE_NAME,
+    nodeId: globalArgs.nodeId,
+    nodeName: globalArgs.nodeName,
   };
 }
