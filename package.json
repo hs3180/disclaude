@@ -25,6 +25,8 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
+    "test:integration": "vitest --run --config vitest.integration.config.ts",
+    "test:all": "npm run test && npm run test:integration",
     "pm2:start": "npm run build && pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop disclaude-feishu",
     "pm2:restart": "pm2 restart disclaude-feishu",
