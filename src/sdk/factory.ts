@@ -7,7 +7,7 @@
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
-import { ClaudeSDKProvider } from './providers/index.js';
+import { ClaudeSDKProvider, OpenAISDKProvider, GLMSDKProvider } from './providers/index.js';
 
 /**
  * 已注册的 Provider 类型
@@ -19,6 +19,8 @@ export type ProviderType = 'claude' | string;
  */
 const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['claude', () => new ClaudeSDKProvider()],
+  ['openai', () => new OpenAISDKProvider()],
+  ['glm', () => new GLMSDKProvider()],
 ]);
 
 /**
