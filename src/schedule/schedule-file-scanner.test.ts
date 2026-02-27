@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { ScheduleFileScanner } from './schedule-file-scanner.js';
+import { ScheduleFileScanner } from './schedule-watcher.js';
 
 describe('ScheduleFileScanner', () => {
   let scanner: ScheduleFileScanner;
