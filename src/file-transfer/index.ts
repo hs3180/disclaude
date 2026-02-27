@@ -26,3 +26,38 @@ export {
   createInboundAttachment,
   createOutboundFile,
 } from './types.js';
+
+// Inbound components (user → system)
+export {
+  // Feishu downloader
+  downloadFile,
+  extractFileExtension,
+  // Attachment manager
+  AttachmentManager,
+  attachmentManager,
+} from './inbound/index.js';
+
+// Outbound components (system → user)
+export {
+  // Feishu uploader
+  uploadFile,
+  sendFileMessage,
+  uploadAndSendFile,
+  detectFileType,
+  type FileType,
+  type UploadResult,
+} from './outbound/index.js';
+
+// Node transfer components (distributed mode)
+export {
+  // File client for Execution Node
+  FileClient,
+  type FileClientConfig,
+  // File storage for Communication Node
+  FileStorageService,
+  type FileStorageConfig,
+  // HTTP API handler
+  createFileTransferAPIHandler,
+  type FileTransferAPIConfig,
+  type FileTransferAPIHandler,
+} from './node-transfer/index.js';

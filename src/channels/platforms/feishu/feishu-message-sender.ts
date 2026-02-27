@@ -131,7 +131,7 @@ export class FeishuMessageSender implements IMessageSender {
 
   async sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
     try {
-      const { uploadAndSendFile } = await import('../../../feishu/file-uploader.js');
+      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
       const fileSize = await uploadAndSendFile(this.client, filePath, chatId, threadId);
 
       const fileName = path.basename(filePath);

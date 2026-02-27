@@ -7,13 +7,13 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger } from '../utils/logger.js';
+import { createLogger } from '../../utils/logger.js';
 import type {
   FileReference,
   FileUploadRequest,
   FileUploadResponse,
   FileDownloadResponse,
-} from '../types/file-reference.js';
+} from '../../types/file-reference.js';
 
 const logger = createLogger('FileClient');
 

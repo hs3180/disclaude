@@ -407,7 +407,7 @@ export async function send_file_to_feishu(params: {
     }
 
     // Import Feishu uploader (dynamic import to avoid circular dependencies)
-    const { uploadAndSendFile } = await import('../feishu/file-uploader.js');
+    const { uploadAndSendFile } = await import('../file-transfer/outbound/feishu-uploader.js');
 
     // Create client with credentials from Config
     const client = new lark.Client({
