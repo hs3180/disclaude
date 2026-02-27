@@ -7,7 +7,7 @@
 
 import type * as lark from '@larksuiteoapi/node-sdk';
 import type { Logger } from 'pino';
-import type { IPlatformAdapter } from '../../adapters/types.js';
+import type { IPlatformAdapter } from '../../channels/adapters/types.js';
 import { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 import { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 

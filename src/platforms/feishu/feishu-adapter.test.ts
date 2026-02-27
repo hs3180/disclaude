@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FeishuPlatformAdapter } from './feishu-adapter.js';
-import type { IAttachmentManager } from '../../adapters/types.js';
+import type { IAttachmentManager } from '../../channels/adapters/types.js';
 
 // Mock logger
 const mockLogger = {
@@ -17,7 +17,7 @@ const mockLogger = {
   trace: vi.fn(),
 };
 
-vi.mock('../../../utils/logger.js', () => ({
+vi.mock('../../utils/logger.js', () => ({
   createLogger: vi.fn(() => mockLogger),
 }));
 

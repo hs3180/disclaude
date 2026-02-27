@@ -2,9 +2,10 @@
  * Platform Adapters Module.
  *
  * Exports all platform-specific adapter implementations.
+ * Note: Feishu platform has been moved to src/platforms/feishu/
  */
 
-// Feishu Platform
+// Feishu Platform (re-export from platforms module)
 export {
   FeishuPlatformAdapter,
   FeishuMessageSender,
@@ -12,7 +13,7 @@ export {
   type FeishuPlatformAdapterConfig,
   type FeishuMessageSenderConfig,
   type FeishuFileHandlerConfig,
-} from './feishu/index.js';
+} from '../../platforms/feishu/index.js';
 
 // REST Platform
 export {

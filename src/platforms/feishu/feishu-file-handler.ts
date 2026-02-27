@@ -5,13 +5,13 @@
  * Handles file download and processing from Feishu messages.
  */
 
-import { createLogger } from '../../../utils/logger.js';
+import { createLogger } from '../../utils/logger.js';
 import type {
   IFileHandler,
   FileAttachment,
   FileHandlerResult,
   IAttachmentManager,
-} from '../../adapters/types.js';
+} from '../../channels/adapters/types.js';
 
 const logger = createLogger('FeishuFileHandler');
 

@@ -8,10 +8,10 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import path from 'path';
 import type { Logger } from 'pino';
-import type { IMessageSender } from '../../adapters/types.js';
-import { handleError, ErrorCategory } from '../../../utils/error-handler.js';
+import type { IMessageSender } from '../../channels/adapters/types.js';
+import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
-import { messageLogger } from '../../../feishu/message-logger.js';
+import { messageLogger } from '../../feishu/message-logger.js';
 
 /**
  * Feishu Message Sender Configuration.
@@ -131,7 +131,7 @@ export class FeishuMessageSender implements IMessageSender {
 
   async sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
     try {
-      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
       const fileSize = await uploadAndSendFile(this.client, filePath, chatId, threadId);
 
       const fileName = path.basename(filePath);

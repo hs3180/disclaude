@@ -38,11 +38,11 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
   Client: vi.fn(() => mockClient),
 }));
 
-vi.mock('../../../utils/logger.js', () => ({
+vi.mock('../../utils/logger.js', () => ({
   createLogger: vi.fn(() => mockLogger),
 }));
 
-vi.mock('../../../utils/error-handler.js', () => ({
+vi.mock('../../utils/error-handler.js', () => ({
   handleError: vi.fn(),
   ErrorCategory: {
     API: 'api',
@@ -53,13 +53,13 @@ vi.mock('./card-builders/content-builder.js', () => ({
   buildTextContent: vi.fn((text) => JSON.stringify({ text })),
 }));
 
-vi.mock('../../../feishu/message-logger.js', () => ({
+vi.mock('../../feishu/message-logger.js', () => ({
   messageLogger: {
     logOutgoingMessage: vi.fn(),
   },
 }));
 
-vi.mock('../../../file-transfer/outbound/feishu-uploader.js', () => ({
+vi.mock('../../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
@@ -120,7 +120,7 @@ describe('FeishuMessageSender', () => {
       // Should not throw
       await sender.sendText('chat_456', 'Test message');
 
-      const { handleError } = await import('../../../utils/error-handler.js');
+      const { handleError } = await import('../../utils/error-handler.js');
       expect(handleError).toHaveBeenCalled();
     });
 
@@ -132,7 +132,7 @@ describe('FeishuMessageSender', () => {
 
       await sender.sendText('chat_456', 'Test');
 
-      const { messageLogger } = await import('../../../feishu/message-logger.js');
+      const { messageLogger } = await import('../../feishu/message-logger.js');
       expect(messageLogger.logOutgoingMessage).toHaveBeenCalledWith(
         'bot_msg_123',
         'chat_456',
@@ -181,7 +181,7 @@ describe('FeishuMessageSender', () => {
       // Should not throw
       await sender.sendCard('chat_456', { type: 'test' }, 'Test');
 
-      const { handleError } = await import('../../../utils/error-handler.js');
+      const { handleError } = await import('../../utils/error-handler.js');
       expect(handleError).toHaveBeenCalled();
     });
 
@@ -199,7 +199,7 @@ describe('FeishuMessageSender', () => {
 
   describe('sendFile', () => {
     it('should send file successfully', async () => {
-      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(1024);
 
@@ -214,7 +214,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should send file with thread reply', async () => {
-      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(2048);
 
@@ -229,7 +229,7 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should handle file send error gracefully', async () => {
-      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockRejectedValue(new Error('Upload failed'));
 
@@ -240,11 +240,11 @@ describe('FeishuMessageSender', () => {
     });
 
     it('should log outgoing file message', async () => {
-      const { uploadAndSendFile } = await import('../../../file-transfer/outbound/feishu-uploader.js');
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(5120);
 
-      const { messageLogger } = await import('../../../feishu/message-logger.js');
+      const { messageLogger } = await import('../../feishu/message-logger.js');
 
       await sender.sendFile('chat_456', '/path/to/document.pdf');
 

@@ -72,11 +72,11 @@ export type {
   IPlatformAdapter,
 } from './adapters/types.js';
 
-// Platform Implementations
+// Platform Implementations (re-export from platforms module)
 export {
   FeishuMessageSender,
   type FeishuMessageSenderConfig,
   FeishuFileHandler,
   type FeishuFileHandlerConfig,
   buildTextContent,
-} from './platforms/feishu/index.js';
+} from '../platforms/feishu/index.js';

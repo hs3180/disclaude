@@ -10,10 +10,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FeishuFileHandler, type FileDownloadFunction } from './feishu-file-handler.js';
-import type { IAttachmentManager, FileAttachment } from '../../adapters/types.js';
+import type { IAttachmentManager, FileAttachment } from '../../channels/adapters/types.js';
 
 // Mock logger
-vi.mock('../../../utils/logger.js', () => ({
+vi.mock('../../utils/logger.js', () => ({
   createLogger: vi.fn(() => ({
     debug: vi.fn(),
     info: vi.fn(),
