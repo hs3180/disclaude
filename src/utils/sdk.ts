@@ -389,6 +389,9 @@ export function extractText(message: AgentMessage): string {
  * so we MUST include PATH for node to be found. Without PATH, the SDK
  * subprocess will fail with "spawn node ENOENT".
  *
+ * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
+ * another Claude Code session (nested session detection).
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
@@ -425,6 +428,10 @@ export function buildSdkEnv(
     // SDK subprocess errors go to stderr and are critical for debugging
     // Can be disabled via config logging.sdkDebug: false
     DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
+    // CRITICAL: Unset CLAUDECODE to allow SDK subprocess to run inside
+    // another Claude Code session. Without this, SDK will fail with:
+    // "Claude Code cannot be launched inside another Claude Code session"
+    CLAUDECODE: undefined,
   };
 
   // Set base URL if provided (for GLM or custom endpoints)
