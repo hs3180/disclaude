@@ -22,9 +22,11 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, ExecNodeInfo } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
 import type { FileReference } from '../types/file-reference.js';
 import { FileStorageService, type FileStorageConfig, createFileTransferAPIHandler } from '../file-transfer/node-transfer/index.js';
+import { ExecNodeManager } from './exec-node-manager.js';
+import { ChannelManager } from './channel-manager.js';
 
 const logger = createLogger('CommunicationNode');
 
@@ -53,17 +55,6 @@ export interface CommunicationNodeConfig {
 }
 
 /**
- * Internal representation of a connected execution node.
- */
-interface ConnectedExecNode {
-  ws: WebSocket;
-  nodeId: string;
-  name: string;
-  connectedAt: Date;
-  clientIp?: string;
-}
-
-/**
  * Communication Node - Manages multiple channels and WebSocket communication with Execution Node.
  *
  * Responsibilities:
@@ -82,12 +73,9 @@ export class CommunicationNode extends EventEmitter {
   private wss?: WebSocketServer;
   private running = false;
 
-  // Multiple execution nodes support (Issue #38)
-  private execNodes: Map<string, ConnectedExecNode> = new Map();
-  private chatToNode: Map<string, string> = new Map(); // chatId -> nodeId
-
-  // Registered channels
-  private channels: Map<string, IChannel> = new Map();
+  // Delegated managers
+  private execNodeManager: ExecNodeManager;
+  private channelManager: ChannelManager;
 
   // File storage service
   private fileStorageService?: FileStorageService;
@@ -97,6 +85,10 @@ export class CommunicationNode extends EventEmitter {
     super();
     this.port = config.port;
     this.host = config.host || '0.0.0.0';
+
+    // Initialize managers
+    this.execNodeManager = new ExecNodeManager();
+    this.channelManager = new ChannelManager();
 
     // Store file storage config for later initialization
     this.fileStorageConfig = config.fileStorage;
@@ -144,195 +136,58 @@ export class CommunicationNode extends EventEmitter {
   }
 
   /**
-   * Register an execution node.
-   * If a node with the same ID exists, close the old connection.
-   */
-  private registerExecNode(ws: WebSocket, msg: RegisterMessage, clientIp?: string): string {
-    const { nodeId, name } = msg;
-
-    // Close existing connection with same nodeId if exists
-    const existing = this.execNodes.get(nodeId);
-    if (existing) {
-      logger.warn({ nodeId }, 'Closing existing connection for nodeId');
-      existing.ws.close();
-      this.execNodes.delete(nodeId);
-    }
-
-    // Register the new node
-    this.execNodes.set(nodeId, {
-      ws,
-      nodeId,
-      name: name || `ExecNode-${nodeId.slice(0, 8)}`,
-      connectedAt: new Date(),
-      clientIp,
-    });
-
-    logger.info({ nodeId, name: msg.name, clientIp, totalNodes: this.execNodes.size }, 'Execution Node registered');
-    this.emit('exec:connected', nodeId);
-
-    return nodeId;
-  }
-
-  /**
-   * Unregister an execution node.
-   * Reassign chats that were assigned to this node.
-   */
-  private unregisterExecNode(nodeId: string): void {
-    const node = this.execNodes.get(nodeId);
-    if (!node) {
-      return;
-    }
-
-    this.execNodes.delete(nodeId);
-    logger.info({ nodeId, totalNodes: this.execNodes.size }, 'Execution Node unregistered');
-
-    // Reassign chats that were using this node
-    const chatsToReassign: string[] = [];
-    for (const [chatId, assignedNodeId] of this.chatToNode) {
-      if (assignedNodeId === nodeId) {
-        chatsToReassign.push(chatId);
-      }
-    }
-
-    // Try to reassign to another available node
-    const availableNode = this.getFirstAvailableNode();
-    for (const chatId of chatsToReassign) {
-      if (availableNode) {
-        this.chatToNode.set(chatId, availableNode.nodeId);
-        logger.info({ chatId, oldNode: nodeId, newNode: availableNode.nodeId }, 'Reassigned chat to available node');
-      } else {
-        this.chatToNode.delete(chatId);
-        logger.warn({ chatId, oldNode: nodeId }, 'No available node to reassign chat');
-      }
-    }
-
-    this.emit('exec:disconnected', nodeId);
-  }
-
-  /**
-   * Get the first available execution node.
-   */
-  private getFirstAvailableNode(): ConnectedExecNode | undefined {
-    for (const node of this.execNodes.values()) {
-      if (node.ws.readyState === WebSocket.OPEN) {
-        return node;
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Get the execution node assigned to a chat, or assign the first available one.
-   */
-  private getExecNodeForChat(chatId: string): ConnectedExecNode | undefined {
-    // Check if chat already has an assigned node
-    const assignedNodeId = this.chatToNode.get(chatId);
-    if (assignedNodeId) {
-      const node = this.execNodes.get(assignedNodeId);
-      if (node && node.ws.readyState === WebSocket.OPEN) {
-        return node;
-      }
-      // Assigned node is not available, fall through to assign new one
-    }
-
-    // Assign first available node
-    const availableNode = this.getFirstAvailableNode();
-    if (availableNode) {
-      this.chatToNode.set(chatId, availableNode.nodeId);
-      logger.debug({ chatId, nodeId: availableNode.nodeId }, 'Assigned chat to execution node');
-    }
-    return availableNode;
-  }
-
-  /**
-   * Switch a chat to a specific execution node.
-   */
-  switchChatNode(chatId: string, targetNodeId: string): boolean {
-    const targetNode = this.execNodes.get(targetNodeId);
-    if (!targetNode || targetNode.ws.readyState !== WebSocket.OPEN) {
-      logger.warn({ chatId, targetNodeId }, 'Target node not available for switch');
-      return false;
-    }
-
-    const previousNodeId = this.chatToNode.get(chatId);
-    this.chatToNode.set(chatId, targetNodeId);
-    logger.info({ chatId, previousNode: previousNodeId, newNode: targetNodeId }, 'Switched chat to new execution node');
-    return true;
-  }
-
-  /**
-   * Get list of all connected execution nodes.
-   */
-  getExecNodes(): ExecNodeInfo[] {
-    const result: ExecNodeInfo[] = [];
-    for (const [nodeId, node] of this.execNodes) {
-      // Count active chats for this node
-      let activeChats = 0;
-      for (const assignedNodeId of this.chatToNode.values()) {
-        if (assignedNodeId === nodeId) {
-          activeChats++;
-        }
-      }
-
-      result.push({
-        nodeId,
-        name: node.name,
-        status: node.ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
-        activeChats,
-        connectedAt: node.connectedAt,
-      });
-    }
-    return result;
-  }
-
-  /**
-   * Get the node assignment for a specific chat.
-   */
-  getChatNodeAssignment(chatId: string): string | undefined {
-    return this.chatToNode.get(chatId);
-  }
-
-  /**
    * Register a communication channel.
    */
   registerChannel(channel: IChannel): void {
-    if (this.channels.has(channel.id)) {
-      logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
-    }
+    this.channelManager.register(channel);
 
-    this.channels.set(channel.id, channel);
-
-    // Set up message handler
-    channel.onMessage(async (message: IncomingMessage) => {
-      try {
+    // Set up handlers
+    this.channelManager.setupHandlers(
+      channel,
+      async (message: IncomingMessage) => {
         logger.debug({ channelId: channel.id, messageId: message.messageId }, 'handleChannelMessage invoked');
         await this.handleChannelMessage(channel.id, message);
         logger.debug({ channelId: channel.id, messageId: message.messageId }, 'handleChannelMessage completed');
-      } catch (error) {
-        logger.error({ err: error, channelId: channel.id, messageId: message.messageId }, 'Failed to handle channel message');
-      }
-    });
-
-    // Set up control handler
-    channel.onControl((command: ControlCommand) => {
-      return this.handleControlCommand(command);
-    });
-
-    logger.info({ channelId: channel.id, channelName: channel.name }, 'Channel registered');
+      },
+      (command: ControlCommand) => this.handleControlCommand(command)
+    );
   }
 
   /**
    * Get a registered channel by ID.
    */
   getChannel(channelId: string): IChannel | undefined {
-    return this.channels.get(channelId);
+    return this.channelManager.get(channelId);
   }
 
   /**
    * Get all registered channels.
    */
   getChannels(): IChannel[] {
-    return Array.from(this.channels.values());
+    return this.channelManager.getAll();
+  }
+
+  // ===== ExecNode delegation methods =====
+
+  /**
+   * Get list of all connected execution nodes.
+   */
+  getExecNodes() {
+    return this.execNodeManager.getStats();
+  }
+
+  /**
+   * Get the node assignment for a specific chat.
+   */
+  getChatNodeAssignment(chatId: string): string | undefined {
+    return this.execNodeManager.getChatAssignment(chatId);
+  }
+
+  /**
+   * Switch a chat to a specific execution node.
+   */
+  switchChatNode(chatId: string, targetNodeId: string): boolean {
+    return this.execNodeManager.switchChatNode(chatId, targetNodeId);
   }
 
   /**
@@ -367,7 +222,7 @@ export class CommunicationNode extends EventEmitter {
         res.end(JSON.stringify({
           status: 'ok',
           mode: 'communication',
-          channels: Array.from(this.channels.keys()),
+          channels: this.channelManager.getIds(),
           fileStorage: this.fileStorageService?.getStats(),
         }));
         return;
@@ -394,7 +249,7 @@ export class CommunicationNode extends EventEmitter {
           // Handle registration message
           if (message.type === 'register') {
             const regMsg = message as RegisterMessage;
-            currentNodeId = this.registerExecNode(ws, regMsg, clientIp);
+            currentNodeId = this.execNodeManager.register(ws, regMsg, clientIp);
             return;
           }
 
@@ -408,7 +263,7 @@ export class CommunicationNode extends EventEmitter {
 
       ws.on('close', () => {
         if (currentNodeId) {
-          this.unregisterExecNode(currentNodeId);
+          this.execNodeManager.unregister(currentNodeId);
         }
         this.emit('exec:disconnected', currentNodeId);
       });
@@ -423,7 +278,11 @@ export class CommunicationNode extends EventEmitter {
         if (!currentNodeId && ws.readyState === WebSocket.OPEN) {
           // Auto-register with generated ID for backward compatibility
           const autoNodeId = `exec-${Date.now()}`;
-          currentNodeId = this.registerExecNode(ws, { type: 'register', nodeId: autoNodeId, name: 'Auto-registered Node' }, clientIp);
+          currentNodeId = this.execNodeManager.register(
+            ws,
+            { type: 'register', nodeId: autoNodeId, name: 'Auto-registered Node' },
+            clientIp
+          );
           logger.info({ nodeId: currentNodeId }, 'Auto-registered execution node (backward compatibility)');
         }
       }, 1000);
@@ -492,14 +351,14 @@ export class CommunicationNode extends EventEmitter {
 
       case 'status': {
         const status = this.running ? 'Running' : 'Stopped';
-        const execNodesList = this.getExecNodes();
+        const execNodesList = this.execNodeManager.getStats();
         const execStatus = execNodesList.length > 0
           ? execNodesList.map(n => `${n.name} (${n.status})`).join(', ')
           : 'None';
-        const channelStatus = Array.from(this.channels.entries())
-          .map(([_id, ch]) => `${ch.name}: ${ch.status}`)
+        const channelStatus = this.channelManager.getStatusInfo()
+          .map(ch => `${ch.name}: ${ch.status}`)
           .join(', ');
-        const currentNodeId = this.getChatNodeAssignment(command.chatId);
+        const currentNodeId = this.execNodeManager.getChatAssignment(command.chatId);
         const currentNode = execNodesList.find(n => n.nodeId === currentNodeId);
         return {
           success: true,
@@ -508,11 +367,11 @@ export class CommunicationNode extends EventEmitter {
       }
 
       case 'list-nodes': {
-        const nodes = this.getExecNodes();
+        const nodes = this.execNodeManager.getStats();
         if (nodes.length === 0) {
           return { success: true, message: '📋 **执行节点列表**\n\n暂无连接的执行节点' };
         }
-        const currentNodeId = this.getChatNodeAssignment(command.chatId);
+        const currentNodeId = this.execNodeManager.getChatAssignment(command.chatId);
         const nodesList = nodes.map(n => {
           const isCurrent = n.nodeId === currentNodeId ? ' ✓ (当前)' : '';
           return `- ${n.name} [${n.status}]${isCurrent} (${n.activeChats} 活跃会话)`;
@@ -524,7 +383,7 @@ export class CommunicationNode extends EventEmitter {
         const targetNodeId = command.targetNodeId;
         if (!targetNodeId) {
           // Show usage hint
-          const nodes = this.getExecNodes();
+          const nodes = this.execNodeManager.getStats();
           const nodesList = nodes.map(n => `- \`${n.nodeId}\` (${n.name})`).join('\n');
           return {
             success: false,
@@ -532,9 +391,9 @@ export class CommunicationNode extends EventEmitter {
           };
         }
 
-        const success = this.switchChatNode(command.chatId, targetNodeId);
+        const success = this.execNodeManager.switchChatNode(command.chatId, targetNodeId);
         if (success) {
-          const node = this.execNodes.get(targetNodeId);
+          const node = this.execNodeManager.getNode(targetNodeId);
           return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
         } else {
           return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
@@ -552,7 +411,7 @@ export class CommunicationNode extends EventEmitter {
   private async sendPrompt(message: PromptMessage): Promise<void> {
     logger.debug({ chatId: message.chatId, messageId: message.messageId }, 'sendPrompt called');
 
-    const execNode = this.getExecNodeForChat(message.chatId);
+    const execNode = this.execNodeManager.getForChat(message.chatId);
     if (!execNode) {
       logger.warn('No Execution Node available');
       await this.sendMessage(message.chatId, '❌ 没有可用的执行节点');
@@ -567,7 +426,7 @@ export class CommunicationNode extends EventEmitter {
    * Send command to Execution Node via WebSocket.
    */
   private async sendCommand(message: CommandMessage): Promise<void> {
-    const execNode = this.getExecNodeForChat(message.chatId);
+    const execNode = this.execNodeManager.getForChat(message.chatId);
     if (!execNode) {
       logger.warn('No Execution Node available');
       await this.sendMessage(message.chatId, '❌ 没有可用的执行节点');
@@ -608,7 +467,7 @@ export class CommunicationNode extends EventEmitter {
         case 'done':
           logger.info({ chatId }, 'Execution completed');
           // Broadcast done signal to all channels (important for REST sync mode)
-          await this.broadcastToChannels({ type: 'done', chatId, threadId });
+          await this.channelManager.broadcast({ type: 'done', chatId, threadId });
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');
@@ -625,7 +484,7 @@ export class CommunicationNode extends EventEmitter {
    * Each channel will handle the message if it recognizes the chatId.
    */
   async sendMessage(chatId: string, text: string, threadMessageId?: string): Promise<void> {
-    await this.broadcastToChannels({
+    await this.channelManager.broadcast({
       chatId,
       type: 'text',
       text,
@@ -643,7 +502,7 @@ export class CommunicationNode extends EventEmitter {
     description?: string,
     threadMessageId?: string
   ): Promise<void> {
-    await this.broadcastToChannels({
+    await this.channelManager.broadcast({
       chatId,
       type: 'card',
       card,
@@ -658,46 +517,10 @@ export class CommunicationNode extends EventEmitter {
    */
   async sendFileToUser(chatId: string, filePath: string, _threadId?: string): Promise<void> {
     // TODO: Pass threadId when Issue #68 is implemented
-    await this.broadcastToChannels({
+    await this.channelManager.broadcast({
       chatId,
       type: 'file',
       filePath,
-    });
-  }
-
-  /**
-   * Broadcast a message to all registered channels.
-   * Uses Promise.allSettled to ensure one channel's failure doesn't affect others.
-   */
-  private async broadcastToChannels(message: OutgoingMessage): Promise<void> {
-    if (this.channels.size === 0) {
-      logger.warn({ chatId: message.chatId }, 'No channels registered');
-      return;
-    }
-
-    const results = await Promise.allSettled(
-      Array.from(this.channels.values()).map(async (channel) => {
-        try {
-          await channel.sendMessage(message);
-        } catch (error) {
-          logger.warn(
-            { channelId: channel.id, chatId: message.chatId, error },
-            'Channel failed to send message'
-          );
-          throw error;
-        }
-      })
-    );
-
-    // Log any failures
-    const channelArray = Array.from(this.channels.values());
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        logger.warn(
-          { channelId: channelArray[index].id, chatId: message.chatId },
-          'Message delivery failed'
-        );
-      }
     });
   }
 
@@ -716,22 +539,15 @@ export class CommunicationNode extends EventEmitter {
     await this.startWebSocketServer();
 
     // Start all registered channels
-    for (const [channelId, channel] of this.channels) {
-      try {
-        await channel.start();
-        logger.info({ channelId }, 'Channel started');
-      } catch (error) {
-        logger.error({ err: error, channelId }, 'Failed to start channel');
-      }
-    }
+    await this.channelManager.startAll();
 
     logger.info('CommunicationNode started');
     console.log('✓ Communication Node ready');
     console.log();
     console.log(`WebSocket Server: ws://${this.host}:${this.port}`);
     console.log('Channels:');
-    for (const [id, channel] of this.channels) {
-      console.log(`  - ${channel.name} (${id}): ${channel.status}`);
+    for (const ch of this.channelManager.getStatusInfo()) {
+      console.log(`  - ${ch.name} (${ch.id}): ${ch.status}`);
     }
     console.log('Waiting for Execution Nodes to connect...');
     console.log();
@@ -755,26 +571,21 @@ export class CommunicationNode extends EventEmitter {
     }
 
     // Stop all channels
-    for (const [channelId, channel] of this.channels) {
-      try {
-        await channel.stop();
-        logger.info({ channelId }, 'Channel stopped');
-      } catch (error) {
-        logger.error({ err: error, channelId }, 'Failed to stop channel');
-      }
-    }
+    await this.channelManager.stopAll();
 
     // Close all Execution Node connections
-    for (const [nodeId, node] of this.execNodes) {
-      try {
-        node.ws.close();
-        logger.info({ nodeId }, 'Execution Node connection closed');
-      } catch (error) {
-        logger.error({ err: error, nodeId }, 'Failed to close Execution Node connection');
+    for (const nodeId of this.execNodeManager.getNodeIds()) {
+      const node = this.execNodeManager.getNode(nodeId);
+      if (node) {
+        try {
+          node.ws.close();
+          logger.info({ nodeId }, 'Execution Node connection closed');
+        } catch (error) {
+          logger.error({ err: error, nodeId }, 'Failed to close Execution Node connection');
+        }
       }
     }
-    this.execNodes.clear();
-    this.chatToNode.clear();
+    this.execNodeManager.clear();
 
     // Close WebSocket server
     if (this.wss) {
