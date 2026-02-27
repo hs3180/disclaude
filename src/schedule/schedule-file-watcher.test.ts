@@ -11,8 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { ScheduleFileWatcher } from './schedule-file-watcher.js';
-import type { ScheduleFileTask } from './schedule-file-scanner.js';
+import { ScheduleFileWatcher, type ScheduleFileTask } from './schedule-watcher.js';
 
 // Helper to wait for async events
 const waitFor = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
