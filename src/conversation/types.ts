@@ -6,7 +6,7 @@
  * and platform-specific concerns (Feishu, REST API, etc.)
  */
 
-import type { FileReference } from '../types/file-reference.js';
+import type { FileRef } from '../file-transfer/types.js';
 
 /**
  * Message queued for processing.
@@ -22,7 +22,7 @@ export interface QueuedMessage {
   /** Sender's platform-specific identifier (e.g., Feishu open_id) */
   senderOpenId?: string;
   /** Optional file attachments */
-  attachments?: FileReference[];
+  attachments?: FileRef[];
 }
 
 /**
@@ -60,7 +60,7 @@ export interface SessionCallbacks {
   /** Called when a message should be sent to the user */
   onMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
   /** Called when a file should be processed */
-  onFile: (chatId: string, filePath: string) => Promise<void>;
+  onFile?: (chatId: string, filePath: string) => Promise<void>;
   /** Called when the session completes normally */
   onDone?: (chatId: string, threadId?: string) => Promise<void>;
   /** Called when an error occurs during processing */
@@ -76,7 +76,7 @@ export interface CreateSessionOptions {
   /** Optional initial message to process */
   initialMessage?: QueuedMessage;
   /** Callbacks for session events */
-  callbacks: SessionCallbacks;
+  callbacks?: SessionCallbacks;
 }
 
 /**
@@ -84,9 +84,31 @@ export interface CreateSessionOptions {
  */
 export interface ProcessMessageResult {
   /** Whether the message was successfully queued */
-  queued: boolean;
-  /** Whether this triggered a new session creation */
-  newSession: boolean;
+  success: boolean;
+  /** Queue length after adding the message */
+  queueLength: number;
+  /** Error if queuing failed */
+  error?: Error;
+}
+
+/**
+ * Statistics about a conversation session.
+ */
+export interface SessionStats {
+  /** Chat ID for this session */
+  chatId: string;
+  /** Number of messages in queue */
+  queueLength: number;
+  /** Whether the session is closed */
+  isClosed: boolean;
+  /** When the session was created (ms since epoch) */
+  createdAt: number;
+  /** Time of last activity (ms since epoch) */
+  lastActivity: number;
+  /** Whether the session has started processing */
+  started: boolean;
+  /** Current thread root ID if set */
+  threadRootId?: string;
 }
 
 /**
@@ -111,4 +133,18 @@ export interface ConversationOrchestratorOptions {
   maxRetries?: number;
   /** Enable debug logging */
   debug?: boolean;
+}
+
+/**
+ * Message context for building enhanced content.
+ */
+export interface MessageContext {
+  /** Platform-specific chat identifier */
+  chatId: string;
+  /** Unique message identifier */
+  messageId: string;
+  /** Sender's open_id for @ mentions (optional) */
+  senderOpenId?: string;
+  /** Optional file attachments */
+  attachments?: FileRef[];
 }

@@ -66,11 +66,19 @@ export type {
   ProcessMessageResult,
   ConversationStats,
   ConversationOrchestratorOptions,
+  SessionStats,
+  MessageContext,
 } from './types.js';
 
 // Components
 export { MessageQueue } from './message-queue.js';
-export { ConversationSessionManager } from './session-manager.js';
-export type { ConversationSessionManagerConfig, CreateSessionOptions as SessionCreateOptions } from './session-manager.js';
-export { ConversationOrchestrator } from './conversation-orchestrator.js';
-export type { ConversationOrchestratorConfig, OnCreateSession } from './conversation-orchestrator.js';
+export {
+  ConversationSessionManager,
+  type ConversationSessionManagerConfig,
+  type CreateSessionOptions as SessionCreateOptions,
+} from './session-manager.js';
+export {
+  ConversationOrchestrator,
+  type ConversationOrchestratorConfig,
+  type OnCreateSession,
+} from './conversation-orchestrator.js';

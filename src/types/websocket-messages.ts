@@ -6,7 +6,7 @@
  * - Execution Node sends: FeedbackMessage
  */
 
-import type { FileReference } from './file-reference.js';
+import type { FileRef } from '../file-transfer/types.js';
 
 /**
  * Message sent from Communication Node to Execution Node when a user sends a prompt.
@@ -20,7 +20,7 @@ export interface PromptMessage {
   /** Thread root message ID for thread replies */
   threadId?: string;
   /** File attachments (if any) */
-  attachments?: FileReference[];
+  attachments?: FileRef[];
 }
 
 /**
@@ -76,7 +76,7 @@ export interface FeedbackMessage {
   // ===== File transfer fields =====
 
   /** File reference */
-  fileRef?: FileReference;
+  fileRef?: FileRef;
 
   /** File name (redundant field for convenience) */
   fileName?: string;

@@ -23,7 +23,7 @@
 
 import type pino from 'pino';
 import { MessageQueue } from './message-queue.js';
-import type { SessionCallbacks, SessionState } from './types.js';
+import type { SessionCallbacks, SessionState, SessionStats } from './types.js';
 
 /**
  * Internal session representation with queue.
@@ -194,6 +194,28 @@ export class ConversationSessionManager {
     this.sessions.delete(chatId);
     this.logger.debug({ chatId }, 'Session tracking removed');
     return true;
+  }
+
+  /**
+   * Get statistics for a session.
+   *
+   * @param chatId - The chat identifier
+   * @returns Session statistics, or undefined if no session
+   */
+  getStats(chatId: string): SessionStats | undefined {
+    const session = this.sessions.get(chatId);
+    if (!session) {
+      return undefined;
+    }
+    return {
+      chatId,
+      queueLength: session.queue.size(),
+      isClosed: session.state.closed,
+      createdAt: session.createdAt.getTime(),
+      lastActivity: session.state.lastActivity,
+      started: session.state.started,
+      threadRootId: session.state.currentThreadRootId,
+    };
   }
 
   /**

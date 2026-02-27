@@ -8,7 +8,7 @@
  * Key features:
  * - Process messages with automatic session creation
  * - Reset sessions (for /reset commands)
- * - Get active session count
+ * - Get active session count and statistics
  * - Graceful shutdown
  *
  * Architecture:
@@ -28,6 +28,11 @@
  * ```typescript
  * const orchestrator = new ConversationOrchestrator({ logger });
  *
+ * // Set up agent loop callback
+ * orchestrator.setOnCreateSession((chatId, queue, callbacks) => {
+ *   // Set up your agent to consume from queue
+ * });
+ *
  * // Process a message (auto-creates session if needed)
  * orchestrator.processMessage(chatId, message, callbacks);
  *
@@ -45,7 +50,12 @@
 import type pino from 'pino';
 import { ConversationSessionManager } from './session-manager.js';
 import { MessageQueue } from './message-queue.js';
-import type { QueuedMessage, SessionCallbacks, ConversationStats } from './types.js';
+import type {
+  QueuedMessage,
+  SessionCallbacks,
+  ConversationStats,
+  SessionStats,
+} from './types.js';
 
 /**
  * Configuration for ConversationOrchestrator.
@@ -239,6 +249,28 @@ export class ConversationOrchestrator {
   }
 
   /**
+   * Get session statistics for a specific chatId.
+   */
+  getSessionStats(chatId: string): SessionStats | undefined {
+    return this.sessionManager.getStats(chatId);
+  }
+
+  /**
+   * Get all active chat IDs.
+   */
+  getActiveChatIds(): string[] {
+    return this.sessionManager.getActiveChatIds();
+  }
+
+  /**
+   * Reset all sessions.
+   */
+  resetAll(): void {
+    this.sessionManager.closeAll();
+    this.logger.info('All sessions reset');
+  }
+
+  /**
    * Cleanup resources on shutdown.
    */
   async shutdown(): Promise<void> {
@@ -263,11 +295,11 @@ export class ConversationOrchestrator {
   }
 
   /**
-   * Clear all sessions (alias for shutdown without logging).
-   * @deprecated Use reset() for individual sessions or shutdown() for all
+   * Clear all sessions (alias for resetAll).
+   * @deprecated Use reset() for individual sessions or resetAll() for all
    */
   clearAll(): void {
-    this.sessionManager.clearAll();
+    this.resetAll();
   }
 
   /**

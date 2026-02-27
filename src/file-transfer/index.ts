@@ -15,8 +15,6 @@ export {
   type FileRef,
   type InboundAttachment,
   type OutboundFile,
-  type FileReference,
-  type FileAttachment,
   type FileUploadRequest,
   type FileUploadResponse,
   type FileDownloadResponse,

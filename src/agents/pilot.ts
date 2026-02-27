@@ -35,11 +35,11 @@
  * - Error handling
  */
 
-import type { SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { FileReference } from '../types/file-reference.js';
+import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
@@ -104,7 +104,7 @@ interface MessageData {
   text: string;
   messageId: string;
   senderOpenId?: string;
-  attachments?: FileReference[];
+  attachments?: FileRef[];
 }
 
 /**
@@ -234,7 +234,7 @@ export class Pilot extends BaseAgent {
     text: string,
     messageId: string,
     senderOpenId?: string,
-    attachments?: FileReference[]
+    attachments?: FileRef[]
   ): void {
     this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
 
@@ -467,7 +467,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
   /**
    * Build attachments info string for the message content.
    */
-  private buildAttachmentsInfo(attachments?: FileReference[]): string {
+  private buildAttachmentsInfo(attachments?: FileRef[]): string {
     if (!attachments || attachments.length === 0) {
       return '';
     }
@@ -477,7 +477,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
         const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
         return `${index + 1}. **${att.fileName}**${sizeInfo}
    - File ID: \`${att.id}\`
-   - Local path: \`${att.storageKey}\`
+   - Local path: \`${att.localPath}\`
    - MIME type: ${att.mimeType || 'unknown'}`;
       })
       .join('\n');

@@ -9,11 +9,11 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../../utils/logger.js';
 import type {
-  FileReference,
+  FileRef,
   FileUploadRequest,
   FileUploadResponse,
   FileDownloadResponse,
-} from '../../types/file-reference.js';
+} from '../types.js';
 
 const logger = createLogger('FileClient');
 
@@ -121,9 +121,9 @@ export class FileClient {
    *
    * @param filePath - Local file path to upload
    * @param chatId - Optional chat ID for context association
-   * @returns FileReference for the uploaded file
+   * @returns FileRef for the uploaded file
    */
-  async uploadFile(filePath: string, chatId?: string): Promise<FileReference> {
+  async uploadFile(filePath: string, chatId?: string): Promise<FileRef> {
     const buffer = await fs.readFile(filePath);
     const fileName = path.basename(filePath);
     const mimeType = detectMimeType(filePath);
@@ -176,7 +176,7 @@ export class FileClient {
    * @param fileRef - File reference to download
    * @returns File content as Buffer
    */
-  async downloadFile(fileRef: FileReference): Promise<Buffer> {
+  async downloadFile(fileRef: FileRef): Promise<Buffer> {
     logger.info({ fileId: fileRef.id, fileName: fileRef.fileName }, 'Downloading file');
 
     const controller = new AbortController();
@@ -217,7 +217,7 @@ export class FileClient {
    * @param localPath - Optional local path (auto-generated if not provided)
    * @returns Local path where the file was saved
    */
-  async downloadToFile(fileRef: FileReference, localPath?: string): Promise<string> {
+  async downloadToFile(fileRef: FileRef, localPath?: string): Promise<string> {
     const buffer = await this.downloadFile(fileRef);
 
     const savePath =
@@ -238,7 +238,7 @@ export class FileClient {
    * @param fileId - File ID to get info for
    * @returns File reference or null if not found
    */
-  async getFileInfo(fileId: string): Promise<FileReference | null> {
+  async getFileInfo(fileId: string): Promise<FileRef | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
@@ -256,7 +256,7 @@ export class FileClient {
         throw new Error(`Failed to get file info: ${response.status} ${text}`);
       }
 
-      const result = (await response.json()) as APIResponse<{ fileRef: FileReference }>;
+      const result = (await response.json()) as APIResponse<{ fileRef: FileRef }>;
 
       if (!result.success || !result.data) {
         return null;
