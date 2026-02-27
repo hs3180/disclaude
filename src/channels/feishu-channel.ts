@@ -499,28 +499,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       'Card action received'
     );
 
-    // Try to handle via InteractionManager
-    const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-      // Default handler: emit as interaction message
-      await this.emitMessage({
-        messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
-        chatId: defaultEvent.chat_id,
-        userId: defaultEvent.user?.sender_id?.open_id,
-        content: `[card_action] ${defaultEvent.action.value}`,
-        messageType: 'card',
-        timestamp: Date.now(),
-        metadata: {
-          cardAction: defaultEvent.action,
-          cardMessageId: defaultEvent.message_id,
-        },
+    try {
+      // Try to handle via InteractionManager
+      const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
+        // Default handler: emit as interaction message
+        await this.emitMessage({
+          messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
+          chatId: defaultEvent.chat_id,
+          userId: defaultEvent.user?.sender_id?.open_id,
+          content: `[card_action] ${defaultEvent.action.value}`,
+          messageType: 'card',
+          timestamp: Date.now(),
+          metadata: {
+            cardAction: defaultEvent.action,
+            cardMessageId: defaultEvent.message_id,
+          },
+        });
       });
-    });
 
-    if (!handled) {
-      logger.debug(
-        { messageId: message_id, actionValue: action.value },
-        'Card action not handled'
-      );
+      if (!handled) {
+        logger.debug(
+          { messageId: message_id, actionValue: action.value },
+          'Card action not handled'
+        );
+      }
+    } catch (error) {
+      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+
+      // Notify user of the error
+      await this.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
+      });
     }
   }
 

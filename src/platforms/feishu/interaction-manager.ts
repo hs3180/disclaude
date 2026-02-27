@@ -5,12 +5,12 @@
  * Supports timeout handling and automatic cleanup.
  */
 
-import { createLogger } from '../../../utils/logger.js';
+import { createLogger } from '../../utils/logger.js';
 import type {
   FeishuCardActionEvent,
   InteractionContext,
   InteractionHandler,
-} from '../../../types/platform.js';
+} from '../../types/platform.js';
 
 const logger = createLogger('InteractionManager');
 
@@ -217,16 +217,11 @@ export class InteractionManager {
     }
 
     // Call the handler
-    try {
-      if (context.handler) {
-        await context.handler(event);
-        logger.debug({ id: context.id, actionKey }, 'Action handled successfully');
-      }
-      return true;
-    } catch (error) {
-      logger.error({ err: error, id: context.id, actionKey }, 'Handler error');
-      return false;
+    if (context.handler) {
+      await context.handler(event);
+      logger.debug({ id: context.id, actionKey }, 'Action handled successfully');
     }
+    return true;
   }
 
   /**
