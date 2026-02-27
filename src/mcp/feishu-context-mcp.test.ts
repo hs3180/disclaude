@@ -27,7 +27,9 @@ const mockClient = {
 };
 
 vi.mock('@larksuiteoapi/node-sdk', () => ({
-  Client: vi.fn(() => mockClient),
+  Client: vi.fn(function () {
+    return mockClient;
+  }),
   Domain: {
     Feishu: 'https://open.feishu.cn',
   },

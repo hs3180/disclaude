@@ -57,13 +57,13 @@ vi.mock('../utils/logger.js', () => ({
 
 // Mock TaskFileManager
 vi.mock('../task/task-files.js', () => ({
-  TaskFileManager: vi.fn().mockImplementation(() => ({
-    createIteration: vi.fn().mockResolvedValue(undefined),
-    getTaskSpecPath: vi.fn(() => '/test/workspace/tasks/task_123/task.md'),
-    getEvaluationPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/evaluation.md'),
-    getExecutionPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/execution.md'),
-    getFinalResultPath: vi.fn(() => '/test/workspace/tasks/task_123/final_result.md'),
-  })),
+  TaskFileManager: vi.fn().mockImplementation(function () {
+    this.createIteration = vi.fn().mockResolvedValue(undefined);
+    this.getTaskSpecPath = vi.fn(() => '/test/workspace/tasks/task_123/task.md');
+    this.getEvaluationPath = vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/evaluation.md');
+    this.getExecutionPath = vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/execution.md');
+    this.getFinalResultPath = vi.fn(() => '/test/workspace/tasks/task_123/final_result.md');
+  }),
 }));
 
 describe('EvaluatorConfig type', () => {

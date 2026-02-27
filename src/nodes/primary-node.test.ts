@@ -55,16 +55,18 @@ vi.mock('../utils/task-tracker.js', () => ({
 }));
 
 vi.mock('../channels/feishu-channel.js', () => ({
-  FeishuChannel: vi.fn(() => ({
-    id: 'feishu',
-    name: 'Feishu',
-    status: 'running',
-    start: vi.fn(),
-    stop: vi.fn(),
-    onMessage: vi.fn(),
-    onControl: vi.fn(),
-    initTaskFlowOrchestrator: vi.fn(),
-  })),
+  FeishuChannel: vi.fn(function () {
+    return {
+      id: 'feishu',
+      name: 'Feishu',
+      status: 'running',
+      start: vi.fn(),
+      stop: vi.fn(),
+      onMessage: vi.fn(),
+      onControl: vi.fn(),
+      initTaskFlowOrchestrator: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('../channels/rest-channel.js', () => ({

@@ -33,16 +33,16 @@ vi.mock('./task-plan-extractor.js', () => ({
 vi.mock('./dialogue-message-tracker.js', () => {
   let messageSent = false;
   return {
-    DialogueMessageTracker: vi.fn().mockImplementation(() => ({
-      recordMessageSent: vi.fn(() => {
+    DialogueMessageTracker: vi.fn().mockImplementation(function () {
+      this.recordMessageSent = vi.fn(() => {
         messageSent = true;
-      }),
-      hasAnyMessage: vi.fn(() => messageSent),
-      reset: vi.fn(() => {
+      });
+      this.hasAnyMessage = vi.fn(() => messageSent);
+      this.reset = vi.fn(() => {
         messageSent = false;
-      }),
-      buildWarning: vi.fn(() => 'Warning message'),
-    })),
+      });
+      this.buildWarning = vi.fn(() => 'Warning message');
+    }),
   };
 });
 

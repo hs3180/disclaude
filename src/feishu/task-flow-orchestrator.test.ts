@@ -15,25 +15,25 @@ import { TaskFlowOrchestrator, type MessageCallbacks } from './task-flow-orchest
 const mockStart = vi.fn().mockResolvedValue(undefined);
 const mockStop = vi.fn();
 vi.mock('../task/task-file-watcher.js', () => ({
-  TaskFileWatcher: vi.fn().mockImplementation(() => ({
-    start: mockStart,
-    stop: mockStop,
-    isRunning: vi.fn(() => true),
-  })),
+  TaskFileWatcher: vi.fn().mockImplementation(function () {
+    this.start = mockStart;
+    this.stop = mockStop;
+    this.isRunning = vi.fn(() => true);
+  }),
 }));
 
 // Mock DialogueOrchestrator
 vi.mock('../task/index.js', () => ({
-  DialogueOrchestrator: vi.fn().mockImplementation(() => ({
-    runDialogue: vi.fn().mockImplementation(async function* () {
+  DialogueOrchestrator: vi.fn().mockImplementation(function () {
+    this.runDialogue = vi.fn().mockImplementation(async function* () {
       yield { content: 'Test message', messageType: 'text', metadata: {} };
-    }),
-    getMessageTracker: vi.fn(() => ({
+    });
+    this.getMessageTracker = vi.fn(() => ({
       recordMessageSent: vi.fn(),
       hasAnyMessage: vi.fn(() => true),
       buildWarning: vi.fn(() => 'Warning message'),
-    })),
-  })),
+    }));
+  }),
   extractText: vi.fn((msg) => msg.content || ''),
 }));
 
@@ -51,11 +51,11 @@ vi.mock('../config/index.js', () => ({
 
 // Mock FeishuOutputAdapter
 vi.mock('../utils/output-adapter.js', () => ({
-  FeishuOutputAdapter: vi.fn().mockImplementation(() => ({
-    write: vi.fn().mockResolvedValue(undefined),
-    clearThrottleState: vi.fn(),
-    resetMessageTracking: vi.fn(),
-  })),
+  FeishuOutputAdapter: vi.fn().mockImplementation(function () {
+    this.write = vi.fn().mockResolvedValue(undefined);
+    this.clearThrottleState = vi.fn();
+    this.resetMessageTracking = vi.fn();
+  }),
 }));
 
 // Mock feishu-context-mcp
@@ -87,9 +87,9 @@ vi.mock('../utils/error-handler.js', () => ({
 
 // Mock TaskTracker
 vi.mock('../utils/task-tracker.js', () => ({
-  TaskTracker: vi.fn().mockImplementation(() => ({
-    getDialogueTaskPath: vi.fn(() => '/test/workspace/tasks/test-task.md'),
-  })),
+  TaskTracker: vi.fn().mockImplementation(function () {
+    this.getDialogueTaskPath = vi.fn(() => '/test/workspace/tasks/test-task.md');
+  }),
 }));
 
 describe('TaskFlowOrchestrator', () => {

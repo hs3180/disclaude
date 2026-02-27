@@ -23,31 +23,31 @@ vi.mock('../../utils/logger.js', () => ({
 
 // Mock FeishuMessageSender
 vi.mock('./feishu-message-sender.js', () => ({
-  FeishuMessageSender: vi.fn().mockImplementation(() => ({
-    sendText: vi.fn(),
-    sendCard: vi.fn(),
-    sendFile: vi.fn(),
-    addReaction: vi.fn(),
-  })),
+  FeishuMessageSender: vi.fn().mockImplementation(function () {
+    this.sendText = vi.fn();
+    this.sendCard = vi.fn();
+    this.sendFile = vi.fn();
+    this.addReaction = vi.fn();
+  }),
 }));
 
 // Mock FeishuFileHandler
 vi.mock('./feishu-file-handler.js', () => ({
-  FeishuFileHandler: vi.fn().mockImplementation(() => ({
-    handleFileMessage: vi.fn(),
-    buildUploadPrompt: vi.fn().mockReturnValue('Mock upload prompt'),
-  })),
+  FeishuFileHandler: vi.fn().mockImplementation(function () {
+    this.handleFileMessage = vi.fn();
+    this.buildUploadPrompt = vi.fn().mockReturnValue('Mock upload prompt');
+  }),
 }));
 
 // Mock @larksuiteoapi/node-sdk
 vi.mock('@larksuiteoapi/node-sdk', () => ({
-  Client: vi.fn().mockImplementation(() => ({
-    im: {
+  Client: vi.fn().mockImplementation(function () {
+    this.im = {
       message: {
         create: vi.fn(),
       },
-    },
-  })),
+    };
+  }),
 }));
 
 describe('FeishuPlatformAdapter', () => {

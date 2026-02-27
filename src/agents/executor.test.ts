@@ -66,14 +66,14 @@ vi.mock('fs/promises', () => ({
 
 // Mock TaskFileManager
 vi.mock('../task/task-files.js', () => ({
-  TaskFileManager: vi.fn().mockImplementation(() => ({
-    readEvaluation: vi.fn().mockResolvedValue('# Evaluation\nStatus: NEED_EXECUTE'),
-    writeExecution: vi.fn().mockResolvedValue(undefined),
-    getTaskSpecPath: vi.fn(() => '/test/workspace/tasks/task_123/task.md'),
-    getEvaluationPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/evaluation.md'),
-    getExecutionPath: vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/execution.md'),
-    getFinalResultPath: vi.fn(() => '/test/workspace/tasks/task_123/final_result.md'),
-  })),
+  TaskFileManager: vi.fn().mockImplementation(function () {
+    this.readEvaluation = vi.fn().mockResolvedValue('# Evaluation\nStatus: NEED_EXECUTE');
+    this.writeExecution = vi.fn().mockResolvedValue(undefined);
+    this.getTaskSpecPath = vi.fn(() => '/test/workspace/tasks/task_123/task.md');
+    this.getEvaluationPath = vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/evaluation.md');
+    this.getExecutionPath = vi.fn(() => '/test/workspace/tasks/task_123/iterations/iter-1/execution.md');
+    this.getFinalResultPath = vi.fn(() => '/test/workspace/tasks/task_123/final_result.md');
+  }),
 }));
 
 describe('Executor class', () => {

@@ -11,13 +11,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before importing
 vi.mock('@larksuiteoapi/node-sdk', () => ({
-  Client: vi.fn(() => ({})),
-  WSClient: vi.fn(() => ({
-    start: vi.fn().mockResolvedValue(undefined),
-  })),
-  EventDispatcher: vi.fn(() => ({
-    register: vi.fn().mockReturnThis(),
-  })),
+  Client: vi.fn(function () {}),
+  WSClient: vi.fn(function () {
+    this.start = vi.fn().mockResolvedValue(undefined);
+  }),
+  EventDispatcher: vi.fn(function () {
+    this.register = vi.fn().mockReturnThis();
+  }),
   LoggerLevel: { info: 'info' },
 }));
 
@@ -60,26 +60,26 @@ vi.mock('../file-transfer/inbound/index.js', () => ({
 }));
 
 vi.mock('../platforms/feishu/feishu-file-handler.js', () => ({
-  FeishuFileHandler: vi.fn(() => ({
-    handleFileMessage: vi.fn().mockResolvedValue({ success: false }),
-    buildUploadPrompt: vi.fn().mockReturnValue(''),
-  })),
+  FeishuFileHandler: vi.fn(function () {
+    this.handleFileMessage = vi.fn().mockResolvedValue({ success: false });
+    this.buildUploadPrompt = vi.fn().mockReturnValue('');
+  }),
 }));
 
 vi.mock('../platforms/feishu/feishu-message-sender.js', () => ({
-  FeishuMessageSender: vi.fn(() => ({
-    sendText: vi.fn().mockResolvedValue(undefined),
-    sendCard: vi.fn().mockResolvedValue(undefined),
-    sendFile: vi.fn().mockResolvedValue(undefined),
-    addReaction: vi.fn().mockResolvedValue(undefined),
-  })),
+  FeishuMessageSender: vi.fn(function () {
+    this.sendText = vi.fn().mockResolvedValue(undefined);
+    this.sendCard = vi.fn().mockResolvedValue(undefined);
+    this.sendFile = vi.fn().mockResolvedValue(undefined);
+    this.addReaction = vi.fn().mockResolvedValue(undefined);
+  }),
 }));
 
 vi.mock('../platforms/feishu/interaction-manager.js', () => ({
-  InteractionManager: vi.fn(() => ({
-    handleAction: vi.fn(),
-    dispose: vi.fn(),
-  })),
+  InteractionManager: vi.fn(function () {
+    this.handleAction = vi.fn();
+    this.dispose = vi.fn();
+  }),
 }));
 
 vi.mock('../feishu/task-flow-orchestrator.js', () => ({

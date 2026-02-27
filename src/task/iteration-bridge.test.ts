@@ -21,33 +21,33 @@ let mockEvaluatorInstance: Record<string, unknown>;
 
 // Mock Evaluator and Executor classes
 vi.mock('../agents/evaluator.js', () => ({
-  Evaluator: vi.fn().mockImplementation(() => {
+  Evaluator: vi.fn().mockImplementation(function () {
     return (globalThis as unknown as { mockEvaluatorInstance: Record<string, unknown> }).mockEvaluatorInstance;
   }),
 }));
 
 vi.mock('../agents/executor.js', () => ({
-  Executor: vi.fn().mockImplementation(() => ({
-    executeTask: vi.fn().mockImplementation(async function* () {
+  Executor: vi.fn().mockImplementation(function () {
+    this.executeTask = vi.fn().mockImplementation(async function* () {
       yield { type: 'start', title: 'Test' };
       yield { type: 'output', content: 'Test output', messageType: 'text' };
       yield { type: 'complete', summaryFile: 'test.md', files: [] };
       return { success: true, summaryFile: 'test.md', files: [], output: 'Test output' };
-    }),
-  })),
+    });
+  }),
 }));
 
 vi.mock('../agents/reporter.js', () => {
-  const MockReporter = vi.fn().mockImplementation(() => ({
-    initialize: vi.fn().mockResolvedValue(undefined),
-    sendFeedback: vi.fn().mockImplementation(async function* () {
+  const MockReporter = vi.fn().mockImplementation(function () {
+    this.initialize = vi.fn().mockResolvedValue(undefined);
+    this.sendFeedback = vi.fn().mockImplementation(async function* () {
       yield { content: 'Reporter output', role: 'assistant', messageType: 'text' };
-    }),
-    processEvent: vi.fn().mockImplementation(async function* () {
+    });
+    this.processEvent = vi.fn().mockImplementation(async function* () {
       yield { content: 'Reporter output', role: 'assistant', messageType: 'text' };
-    }),
-    cleanup: vi.fn(),
-  }));
+    });
+    this.cleanup = vi.fn();
+  });
 
   // Add static method as a regular function (not a mock)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,12 +57,12 @@ vi.mock('../agents/reporter.js', () => {
 });
 
 vi.mock('./task-files.js', () => ({
-  TaskFileManager: vi.fn().mockImplementation(() => ({
-    hasFinalResult: vi.fn().mockResolvedValue(false),
-    readEvaluation: vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nNEED_EXECUTE'),
-    getExecutionPath: vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md'),
-    writeExecution: vi.fn().mockResolvedValue(undefined),
-  })),
+  TaskFileManager: vi.fn().mockImplementation(function () {
+    this.hasFinalResult = vi.fn().mockResolvedValue(false);
+    this.readEvaluation = vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nNEED_EXECUTE');
+    this.getExecutionPath = vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md');
+    this.writeExecution = vi.fn().mockResolvedValue(undefined);
+  }),
 }));
 
 describe('IterationBridge (File-Driven Architecture)', () => {
@@ -321,12 +321,12 @@ describe('IterationBridge (File-Driven Architecture)', () => {
 
       it('should track task completion status', async () => {
         // Mock hasFinalResult to return true (task complete)
-        vi.mocked(TaskFileManager).mockImplementation(() => ({
-          hasFinalResult: vi.fn().mockResolvedValue(true),
-          readEvaluation: vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nCOMPLETE'),
-          getExecutionPath: vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md'),
-          writeExecution: vi.fn().mockResolvedValue(undefined),
-        }));
+        vi.mocked(TaskFileManager).mockImplementation(function () {
+          this.hasFinalResult = vi.fn().mockResolvedValue(true);
+          this.readEvaluation = vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nCOMPLETE');
+          this.getExecutionPath = vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md');
+          this.writeExecution = vi.fn().mockResolvedValue(undefined);
+        });
 
         bridge = new IterationBridge({
           ...config,
