@@ -1,7 +1,7 @@
 /**
  * MessageChannel - Producer-consumer pattern for SDK message streaming.
  *
- * Provides an AsyncGenerator that yields SDKUserMessages as they are pushed.
+ * Provides an AsyncGenerator that yields StreamingUserMessages as they are pushed.
  * This enables the Pilot agent to forward user messages to the SDK's streaming
  * input without using streamInput() directly.
  *
@@ -22,10 +22,10 @@
  * ```
  */
 
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { StreamingUserMessage } from '../sdk/index.js';
 
 export class MessageChannel {
-  private queue: SDKUserMessage[] = [];
+  private queue: StreamingUserMessage[] = [];
   private resolver: (() => void) | null = null;
   private closed = false;
 
@@ -33,9 +33,9 @@ export class MessageChannel {
    * Push a message to the channel.
    * Resolves the pending promise in the generator if waiting.
    *
-   * @param message - The SDK user message to push
+   * @param message - The user message to push
    */
-  push(message: SDKUserMessage): void {
+  push(message: StreamingUserMessage): void {
     if (this.closed) {
       return;
     }
@@ -50,9 +50,9 @@ export class MessageChannel {
    * Generator that yields messages as they arrive.
    * Returns when the channel is closed and queue is empty.
    *
-   * @yields SDKUserMessage when available
+   * @yields StreamingUserMessage when available
    */
-  async *generator(): AsyncGenerator<SDKUserMessage> {
+  async *generator(): AsyncGenerator<StreamingUserMessage> {
     while (!this.closed || this.queue.length > 0) {
       // Yield all queued messages
       while (this.queue.length > 0) {

@@ -37,6 +37,24 @@ export interface UserInput {
   content: string | ContentBlock[];
 }
 
+/** API 消息格式（用于流式输入） */
+export interface StreamingMessageContent {
+  role: 'user' | 'assistant';
+  content: string | ContentBlock[];
+}
+
+/**
+ * 流式用户消息（用于 MessageChannel 和 Pilot）
+ *
+ * 这是 SDKUserMessage 的统一抽象，与具体 SDK 无关。
+ */
+export interface StreamingUserMessage {
+  type: 'user';
+  message: StreamingMessageContent;
+  parent_tool_use_id: string | null;
+  session_id: string;
+}
+
 // ============================================================================
 // Agent 消息类型（统一的 SDK 消息抽象）
 // ============================================================================

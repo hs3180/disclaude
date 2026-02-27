@@ -11,6 +11,8 @@ import {
   type SiteMinerResult,
 } from './site-miner.js';
 import { Config } from '../config/index.js';
+import * as sdkModule from '../sdk/index.js';
+import type { AgentMessage, IAgentSDKProvider } from '../sdk/index.js';
 
 // Mock the Config module
 vi.mock('../config/index.js', () => ({
@@ -38,9 +40,12 @@ vi.mock('../config/index.js', () => ({
   },
 }));
 
-// Mock the SDK query function
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(),
+// Mock the SDK provider
+const mockQueryOnce = vi.fn();
+vi.mock('../sdk/index.js', () => ({
+  getProvider: vi.fn(() => ({
+    queryOnce: mockQueryOnce,
+  })),
 }));
 
 describe('SiteMiner', () => {
@@ -78,8 +83,7 @@ describe('SiteMiner', () => {
     });
 
     it('should handle successful mining operation', async () => {
-      const mockQuery = vi.mocked(await import('@anthropic-ai/claude-agent-sdk')).query;
-      mockQuery.mockImplementation(async function* () {
+      mockQueryOnce.mockImplementation(async function* () {
         yield {
           type: 'result',
           content: JSON.stringify({
@@ -89,7 +93,8 @@ describe('SiteMiner', () => {
             summary: 'Found the title',
             confidence: 0.95,
           }),
-        };
+          role: 'assistant',
+        } as AgentMessage;
       });
 
       const result = await runSiteMiner({
@@ -103,8 +108,7 @@ describe('SiteMiner', () => {
     });
 
     it('should handle query error', async () => {
-      const mockQuery = vi.mocked(await import('@anthropic-ai/claude-agent-sdk')).query;
-      mockQuery.mockImplementation(async function* () {
+      mockQueryOnce.mockImplementation(async function* () {
         throw new Error('Query failed');
       });
 
@@ -118,12 +122,12 @@ describe('SiteMiner', () => {
     });
 
     it('should handle malformed JSON response', async () => {
-      const mockQuery = vi.mocked(await import('@anthropic-ai/claude-agent-sdk')).query;
-      mockQuery.mockImplementation(async function* () {
+      mockQueryOnce.mockImplementation(async function* () {
         yield {
           type: 'result',
           content: 'This is not valid JSON',
-        };
+          role: 'assistant',
+        } as AgentMessage;
       });
 
       const result = await runSiteMiner({
@@ -136,12 +140,12 @@ describe('SiteMiner', () => {
     });
 
     it('should handle partial JSON response', async () => {
-      const mockQuery = vi.mocked(await import('@anthropic-ai/claude-agent-sdk')).query;
-      mockQuery.mockImplementation(async function* () {
+      mockQueryOnce.mockImplementation(async function* () {
         yield {
           type: 'result',
           content: 'Here is the result: {"success": true, "information_found": {"title": "Test"}, "confidence": 0.8} and some extra text',
-        };
+          role: 'assistant',
+        } as AgentMessage;
       });
 
       const result = await runSiteMiner({

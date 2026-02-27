@@ -1,7 +1,6 @@
 /**
- * Shared utilities for Claude Agent SDK integration.
+ * Shared utilities for Agent SDK integration.
  */
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentMessage,
   ContentBlock,
@@ -142,8 +141,21 @@ function formatEditToolUse(input: Record<string, unknown>): string {
  *
  * IMPORTANT: Accumulates ALL content blocks from assistant messages,
  * not just the first one. This ensures all tool uses and text are sent.
+ *
+ * @deprecated Use SDK provider's message adapter instead. This function
+ * is kept for backward compatibility with existing tests.
+ *
+ * @param message - SDK message (type erased for SDK independence)
+ * @returns Parsed message structure
  */
-export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
+export function parseSDKMessage(message: unknown): ParsedSDKMessage {
+  // Type guard: ensure message is an object with type property
+  if (!message || typeof message !== 'object') {
+    return { type: 'text', content: '' };
+  }
+
+  const msg = message as Record<string, unknown>;
+
   const result: ParsedSDKMessage = {
     type: 'text',
     content: '',
@@ -151,13 +163,13 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
   };
 
   // Extract session_id from any message that has it
-  if ('session_id' in message && message.session_id) {
-    result.sessionId = message.session_id;
+  if ('session_id' in msg && msg.session_id) {
+    result.sessionId = msg.session_id as string;
   }
 
-  switch (message.type) {
+  switch (msg.type) {
     case 'assistant': {
-      const apiMessage = message.message;
+      const apiMessage = msg.message as Record<string, unknown> | undefined;
       if (!apiMessage || !Array.isArray(apiMessage.content)) {
         return { type: 'text', content: '' };
       }
@@ -218,9 +230,9 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
     case 'tool_progress': {
       // Tool execution progress update
       // SDKToolProgressMessage has tool_name and elapsed_time_seconds fields
-      if ('tool_name' in message && 'elapsed_time_seconds' in message) {
-        const toolName = message.tool_name as string;
-        const elapsed = message.elapsed_time_seconds as number;
+      if ('tool_name' in msg && 'elapsed_time_seconds' in msg) {
+        const toolName = msg.tool_name as string;
+        const elapsed = msg.elapsed_time_seconds as number;
         result.type = 'tool_progress';
         result.content = `⏳ Running ${toolName} (${elapsed.toFixed(1)}s)`;
         result.metadata = {
@@ -235,8 +247,8 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
     case 'tool_use_summary': {
       // Tool execution completed
       // SDKToolUseSummaryMessage has summary field, not name
-      if ('summary' in message) {
-        const summary = message.summary as string;
+      if ('summary' in msg) {
+        const summary = msg.summary as string;
         result.type = 'tool_result';
         result.content = `✓ ${summary}`;
         return result;
@@ -245,12 +257,12 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
     }
 
     case 'result': {
-      if (message.subtype === 'success') {
+      if (msg.subtype === 'success') {
         // Successful completion with usage stats
         let statsText = '✅ Complete';
 
-        if ('usage' in message && message.usage) {
-          const usage = message.usage as { total_cost?: number; total_tokens?: number };
+        if ('usage' in msg && msg.usage) {
+          const usage = msg.usage as { total_cost?: number; total_tokens?: number };
           const parts: string[] = [];
 
           if (usage.total_cost !== undefined) {
@@ -268,14 +280,14 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
         result.type = 'result';
         result.content = statsText;
         result.metadata = {
-          cost: (message.usage as { total_cost?: number })?.total_cost,
-          tokens: (message.usage as { total_tokens?: number })?.total_tokens,
+          cost: (msg.usage as { total_cost?: number })?.total_cost,
+          tokens: (msg.usage as { total_tokens?: number })?.total_tokens,
         };
         return result;
       }
 
-      if (message.subtype === 'error_during_execution' && 'errors' in message) {
-        const errors = message.errors as string[];
+      if (msg.subtype === 'error_during_execution' && 'errors' in msg) {
+        const errors = msg.errors as string[];
         result.type = 'error';
         result.content = `❌ Error: ${errors.join(', ')}`;
         return result;
@@ -285,19 +297,19 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
     }
 
     case 'system': {
-      if (message.subtype === 'status') {
+      if (msg.subtype === 'status') {
         // System status update (e.g., compacting)
-        if ('status' in message && message.status === 'compacting') {
+        if ('status' in msg && msg.status === 'compacting') {
           result.type = 'status';
           result.content = '🔄 Compacting conversation history...';
           return result;
         }
       }
 
-      if (message.subtype === 'hook_started') {
+      if (msg.subtype === 'hook_started') {
         // Hook execution started
-        if ('hook' in message && 'event' in message) {
-          const hook = message.hook as string;
+        if ('hook' in msg && 'event' in msg) {
+          const hook = msg.hook as string;
           result.type = 'notification';
           result.content = `🪝 Hook: ${hook}`;
           result.metadata = { status: hook };
@@ -305,11 +317,11 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
         }
       }
 
-      if (message.subtype === 'hook_response') {
+      if (msg.subtype === 'hook_response') {
         // Hook execution completed
-        if ('hook' in message && 'outcome' in message) {
-          const hook = message.hook as string;
-          const outcome = message.outcome as string;
+        if ('hook' in msg && 'outcome' in msg) {
+          const hook = msg.hook as string;
+          const outcome = msg.outcome as string;
           result.type = 'notification';
           result.content = `🪝 Hook ${hook}: ${outcome}`;
           result.metadata = { status: outcome };
@@ -317,12 +329,12 @@ export function parseSDKMessage(message: SDKMessage): ParsedSDKMessage {
         }
       }
 
-      if (message.subtype === 'task_notification') {
+      if (msg.subtype === 'task_notification') {
         // Task completion notification
-        if ('status' in message && 'task_id' in message) {
-          const status = message.status as string;
+        if ('status' in msg && 'task_id' in msg) {
+          const status = msg.status as string;
           result.type = 'notification';
-          result.content = `📋 Task ${message.task_id as string}: ${status}`;
+          result.content = `📋 Task ${msg.task_id as string}: ${status}`;
           result.metadata = { status };
           return result;
         }
