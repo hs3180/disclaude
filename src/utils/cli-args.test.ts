@@ -5,8 +5,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseGlobalArgs,
-  getCommNodeConfig,
-  getExecNodeConfig,
+  getPrimaryNodeConfig,
+  getWorkerNodeConfig,
   type GlobalArgs,
 } from './cli-args.js';
 
@@ -43,18 +43,18 @@ describe('cli-args', () => {
   });
 
   describe('parseGlobalArgs', () => {
-    it('should parse start command with comm mode', () => {
-      const args = ['start', '--mode', 'comm'];
+    it('should parse start command with primary mode', () => {
+      const args = ['start', '--mode', 'primary'];
       const result = parseGlobalArgs(args);
 
-      expect(result.mode).toBe('comm');
+      expect(result.mode).toBe('primary');
     });
 
-    it('should parse start command with exec mode', () => {
-      const args = ['start', '--mode', 'exec'];
+    it('should parse start command with worker mode', () => {
+      const args = ['start', '--mode', 'worker'];
       const result = parseGlobalArgs(args);
 
-      expect(result.mode).toBe('exec');
+      expect(result.mode).toBe('worker');
     });
 
     it('should return null mode for invalid mode', () => {
@@ -72,21 +72,21 @@ describe('cli-args', () => {
     });
 
     it('should parse port argument', () => {
-      const args = ['start', '--mode', 'exec', '--port', '4000'];
+      const args = ['start', '--mode', 'worker', '--port', '4000'];
       const result = parseGlobalArgs(args);
 
       expect(result.port).toBe(4000);
     });
 
     it('should parse comm-url argument', () => {
-      const args = ['start', '--mode', 'exec', '--comm-url', 'ws://example.com:3001'];
+      const args = ['start', '--mode', 'worker', '--comm-url', 'ws://example.com:3001'];
       const result = parseGlobalArgs(args);
 
       expect(result.commUrl).toBe('ws://example.com:3001');
     });
 
     it('should parse auth-token argument', () => {
-      const args = ['start', '--mode', 'comm', '--auth-token', 'my-token'];
+      const args = ['start', '--mode', 'primary', '--auth-token', 'my-token'];
       const result = parseGlobalArgs(args);
 
       expect(result.authToken).toBe('my-token');
@@ -104,29 +104,29 @@ describe('cli-args', () => {
     it('should handle multiple arguments', () => {
       const args = [
         'start',
-        '--mode', 'exec',
+        '--mode', 'worker',
         '--port', '5000',
         '--auth-token', 'secret',
       ];
       const result = parseGlobalArgs(args);
 
-      expect(result.mode).toBe('exec');
+      expect(result.mode).toBe('worker');
       expect(result.port).toBe(5000);
       expect(result.authToken).toBe('secret');
     });
   });
 
-  describe('getCommNodeConfig', () => {
-    it('should extract comm node config from global args', () => {
+  describe('getPrimaryNodeConfig', () => {
+    it('should extract primary node config from global args', () => {
       const globalArgs: GlobalArgs = {
-        mode: 'comm',
+        mode: 'primary',
         port: 3001,
         host: 'localhost',
         commUrl: 'ws://localhost:3001',
         authToken: 'test-token',
       };
 
-      const config = getCommNodeConfig(globalArgs);
+      const config = getPrimaryNodeConfig(globalArgs);
 
       expect(config.port).toBe(3001);
       expect(config.host).toBe('localhost');
@@ -134,17 +134,17 @@ describe('cli-args', () => {
     });
   });
 
-  describe('getExecNodeConfig', () => {
-    it('should extract exec node config from global args', () => {
+  describe('getWorkerNodeConfig', () => {
+    it('should extract worker node config from global args', () => {
       const globalArgs: GlobalArgs = {
-        mode: 'exec',
+        mode: 'worker',
         port: 3001,
         host: 'localhost',
         commUrl: 'ws://localhost:3001',
         authToken: 'test-token',
       };
 
-      const config = getExecNodeConfig(globalArgs);
+      const config = getWorkerNodeConfig(globalArgs);
 
       expect(config.commUrl).toBe('ws://localhost:3001');
       expect(config.authToken).toBe('test-token');
