@@ -51,7 +51,7 @@ vi.mock('../agents/reporter.js', () => {
   return { Reporter: MockReporter };
 });
 
-vi.mock('./file-manager.js', () => ({
+vi.mock('./task-files.js', () => ({
   TaskFileManager: vi.fn().mockImplementation(() => ({
     hasFinalResult: vi.fn().mockResolvedValue(false),
     readEvaluation: vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nNEED_EXECUTE'),

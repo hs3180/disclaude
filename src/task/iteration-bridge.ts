@@ -27,7 +27,7 @@ import { Evaluator, type EvaluatorConfig } from '../agents/evaluator.js';
 import { Reporter } from '../agents/reporter.js';
 import { Executor } from '../agents/executor.js';
 import { createLogger } from '../utils/logger.js';
-import { TaskFileManager } from './file-manager.js';
+import { TaskFileManager } from './task-files.js';
 import { Config } from '../config/index.js';
 
 const logger = createLogger('IterationBridge');

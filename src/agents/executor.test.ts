@@ -65,7 +65,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 // Mock TaskFileManager
-vi.mock('../task/file-manager.js', () => ({
+vi.mock('../task/task-files.js', () => ({
   TaskFileManager: vi.fn().mockImplementation(() => ({
     readEvaluation: vi.fn().mockResolvedValue('# Evaluation\nStatus: NEED_EXECUTE'),
     writeExecution: vi.fn().mockResolvedValue(undefined),

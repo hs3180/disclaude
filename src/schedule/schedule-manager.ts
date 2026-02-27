@@ -13,7 +13,7 @@
 
 import { createLogger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
-import { ScheduleFileScanner } from './schedule-file-scanner.js';
+import { ScheduleFileScanner } from './schedule-watcher.js';
 
 const logger = createLogger('ScheduleManager');
 

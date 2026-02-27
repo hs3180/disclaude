@@ -15,7 +15,7 @@
 
 import * as fs from 'fs/promises';
 import type { ParsedSDKMessage } from '../types/agent.js';
-import { TaskFileManager } from '../task/file-manager.js';
+import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
 /**
