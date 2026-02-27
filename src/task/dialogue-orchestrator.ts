@@ -30,7 +30,7 @@ import * as path from 'path';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
 import { IterationBridge } from './iteration-bridge.js';
 import { DialogueMessageTracker } from './dialogue-message-tracker.js';
-import { TaskFileManager } from './file-manager.js';
+import { TaskFileManager } from './task-files.js';
 
 const logger = createLogger('DialogueOrchestrator', {});
 

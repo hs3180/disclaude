@@ -56,7 +56,7 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 // Mock TaskFileManager
-vi.mock('../task/file-manager.js', () => ({
+vi.mock('../task/task-files.js', () => ({
   TaskFileManager: vi.fn().mockImplementation(() => ({
     createIteration: vi.fn().mockResolvedValue(undefined),
     getTaskSpecPath: vi.fn(() => '/test/workspace/tasks/task_123/task.md'),

@@ -15,5 +15,13 @@
 
 export { ScheduleManager, type ScheduledTask, type CreateScheduleOptions, type ScheduleManagerOptions } from './schedule-manager.js';
 export { Scheduler, type SchedulerOptions, type FeedbackChannelContext } from './scheduler.js';
-export { ScheduleFileScanner, type ScheduleFileTask, type ScheduleFileScannerOptions } from './schedule-file-scanner.js';
-export { ScheduleFileWatcher, type OnFileAdded, type OnFileChanged, type OnFileRemoved, type ScheduleFileWatcherOptions } from './schedule-file-watcher.js';
+export {
+  ScheduleFileScanner,
+  ScheduleFileWatcher,
+  type ScheduleFileTask,
+  type ScheduleFileScannerOptions,
+  type OnFileAdded,
+  type OnFileChanged,
+  type OnFileRemoved,
+  type ScheduleFileWatcherOptions,
+} from './schedule-watcher.js';
