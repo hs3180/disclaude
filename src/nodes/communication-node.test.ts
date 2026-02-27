@@ -28,6 +28,17 @@ vi.mock('../utils/logger.js', () => ({
   }),
 }));
 
+// Mock FeishuChannel to avoid loading platform-specific dependencies
+vi.mock('../channels/feishu-channel.js', () => ({
+  FeishuChannel: vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    onMessage: vi.fn(),
+    onControl: vi.fn(),
+    initTaskFlowOrchestrator: vi.fn(),
+  })),
+}));
+
 // We need to import CommunicationNode after mocking
 import { CommunicationNode } from './communication-node.js';
 

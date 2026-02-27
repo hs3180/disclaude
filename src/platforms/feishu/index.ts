@@ -1,11 +1,17 @@
 /**
  * Feishu Platform Module.
  *
- * Re-exports from channels/platforms/feishu/ for backward compatibility.
- * Future migration will consolidate all Feishu-specific code here.
+ * Exports Feishu-specific implementations of platform adapters.
  *
- * @see Issue #194 - Refactor: 统一文件传输系统架构
+ * @see Issue #267 - Phase 2: 合并平台模块
  */
 
-// Re-export from existing location for backward compatibility
-export * from '../../channels/platforms/feishu/index.js';
+// Platform Adapter
+export { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from './feishu-adapter.js';
+
+// Sub-adapters
+export { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
+export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
+
+// Card Builders
+export { buildTextContent } from './card-builders/index.js';

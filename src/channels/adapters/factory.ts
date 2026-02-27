@@ -7,7 +7,7 @@
 
 import type { Logger } from 'pino';
 import type { IPlatformAdapter, IAttachmentManager } from './types.js';
-import { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from '../platforms/feishu/index.js';
+import { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from '../../../platforms/feishu/index.js';
 import { RestPlatformAdapter, type RestPlatformAdapterConfig } from '../platforms/rest/index.js';
 
 /**

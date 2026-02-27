@@ -22,7 +22,7 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 // Mock Feishu platform adapter
-vi.mock('../platforms/feishu/index.js', () => ({
+vi.mock('../../../platforms/feishu/index.js', () => ({
   FeishuPlatformAdapter: vi.fn().mockImplementation((config) => ({
     platformId: 'feishu',
     platformName: 'Feishu/Lark',
@@ -41,7 +41,7 @@ vi.mock('../platforms/feishu/index.js', () => ({
 }));
 
 // Mock REST platform adapter
-vi.mock('../platforms/rest/index.js', () => ({
+vi.mock('../../../platforms/rest/index.js', () => ({
   RestPlatformAdapter: vi.fn().mockImplementation((config) => ({
     platformId: 'rest',
     platformName: 'REST API',

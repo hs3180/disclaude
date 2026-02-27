@@ -79,4 +79,4 @@ export {
   FeishuFileHandler,
   type FeishuFileHandlerConfig,
   buildTextContent,
-} from './platforms/feishu/index.js';
+} from '../../platforms/feishu/index.js';
