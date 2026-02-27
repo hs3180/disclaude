@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-02-28
+
+### Changed
+
+- **Channel Architecture Refactoring** - Decoupled platform-specific implementations from core channel logic (#163)
+- **Unified File Transfer System** - Consolidated file transfer architecture, removed redundant modules (#194, #235, #267)
+- **Dead Code Cleanup** - Removed unused code, incorrect exports, and duplicate implementations (#260)
+
+### Added
+
+- **Test Coverage Improvements** - Added unit tests for missing modules (#262, #290)
+
 ## [0.3.0] - 2026-02-27
 
 ### Highlights
