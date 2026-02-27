@@ -5,11 +5,16 @@
  * - Phase 1: Evaluator writes evaluation.md
  * - Phase 2: If final_result.md not present, Executor executes tasks
  * - File-driven communication without JSON parsing
+ *
+ * Observability tests (Issue #271 Phase 3):
+ * - Event emission for monitoring
+ * - Metrics collection
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IterationBridge, type IterationBridgeConfig } from './iteration-bridge.js';
+import { IterationBridge, type IterationBridgeConfig, type IterationEvent } from './iteration-bridge.js';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
+import { TaskFileManager } from './file-manager.js';
 
 // Create mock instances that will be used in tests
 let mockEvaluatorInstance: Record<string, unknown>;
@@ -142,6 +147,200 @@ describe('IterationBridge (File-Driven Architecture)', () => {
       }
 
       expect(mockEvaluatorInstance.cleanup).toHaveBeenCalled();
+    });
+  });
+
+  // ========================================================================
+  // Observability Tests (Issue #271 Phase 3)
+  // ========================================================================
+  describe('Observability (Issue #271 Phase 3)', () => {
+    describe('Event Emission', () => {
+      it('should emit iteration_start and iteration_end events', async () => {
+        const events: IterationEvent[] = [];
+        const onEvent = (event: IterationEvent) => {
+          events.push(event);
+        };
+
+        bridge = new IterationBridge({
+          ...config,
+          onEvent,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        expect(events.some((e) => e.type === 'iteration_start')).toBe(true);
+        expect(events.some((e) => e.type === 'iteration_end')).toBe(true);
+      });
+
+      it('should emit phase_start and phase_end events', async () => {
+        const events: IterationEvent[] = [];
+        const onEvent = (event: IterationEvent) => {
+          events.push(event);
+        };
+
+        bridge = new IterationBridge({
+          ...config,
+          onEvent,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const phaseStartEvents = events.filter((e) => e.type === 'phase_start');
+        const phaseEndEvents = events.filter((e) => e.type === 'phase_end');
+
+        expect(phaseStartEvents.length).toBeGreaterThan(0);
+        expect(phaseEndEvents.length).toBeGreaterThan(0);
+
+        // Check that evaluate phase events exist
+        expect(
+          phaseStartEvents.some((e) => e.data?.phase === 'evaluate')
+        ).toBe(true);
+      });
+
+      it('should include taskId and iteration in events', async () => {
+        const events: IterationEvent[] = [];
+        const onEvent = (event: IterationEvent) => {
+          events.push(event);
+        };
+
+        bridge = new IterationBridge({
+          ...config,
+          taskId: 'custom-task-id',
+          iteration: 5,
+          onEvent,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        for (const event of events) {
+          expect(event.taskId).toBe('custom-task-id');
+          expect(event.iteration).toBe(5);
+          expect(event.timestamp).toBeInstanceOf(Date);
+        }
+      });
+
+      it('should include duration in phase_end events', async () => {
+        const events: IterationEvent[] = [];
+        const onEvent = (event: IterationEvent) => {
+          events.push(event);
+        };
+
+        bridge = new IterationBridge({
+          ...config,
+          onEvent,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const phaseEndEvents = events.filter((e) => e.type === 'phase_end');
+        for (const event of phaseEndEvents) {
+          expect(event.data?.durationMs).toBeDefined();
+          expect(typeof event.data?.durationMs).toBe('number');
+        }
+      });
+    });
+
+    describe('Metrics Collection', () => {
+      it('should collect metrics when enabled', async () => {
+        bridge = new IterationBridge({
+          ...config,
+          enableMetrics: true,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const metrics = bridge.getMetrics();
+        expect(metrics).toBeDefined();
+        expect(metrics?.taskId).toBe('test-task-id');
+        expect(metrics?.iteration).toBe(1);
+        expect(metrics?.startTime).toBeInstanceOf(Date);
+      });
+
+      it('should track phase metrics', async () => {
+        bridge = new IterationBridge({
+          ...config,
+          enableMetrics: true,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const metrics = bridge.getMetrics();
+        expect(metrics?.phases.evaluate).toBeDefined();
+        expect(metrics?.phases.evaluate.phase).toBe('evaluate');
+        expect(metrics?.phases.evaluate.messageCount).toBeGreaterThan(0);
+        expect(metrics?.phases.evaluate.durationMs).toBeGreaterThanOrEqual(0);
+      });
+
+      it('should return undefined metrics when disabled', async () => {
+        bridge = new IterationBridge({
+          ...config,
+          enableMetrics: false,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const metrics = bridge.getMetrics();
+        expect(metrics).toBeUndefined();
+      });
+
+      it('should track total messages', async () => {
+        bridge = new IterationBridge({
+          ...config,
+          enableMetrics: true,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const metrics = bridge.getMetrics();
+        expect(metrics?.totalMessages).toBeGreaterThan(0);
+      });
+
+      it('should track task completion status', async () => {
+        // Mock hasFinalResult to return true (task complete)
+        vi.mocked(TaskFileManager).mockImplementation(() => ({
+          hasFinalResult: vi.fn().mockResolvedValue(true),
+          readEvaluation: vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nCOMPLETE'),
+          getExecutionPath: vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md'),
+          writeExecution: vi.fn().mockResolvedValue(undefined),
+        }));
+
+        bridge = new IterationBridge({
+          ...config,
+          enableMetrics: true,
+        });
+
+        // Consume all messages
+        for await (const _ of bridge.runIterationStreaming()) {
+          // Just consume
+        }
+
+        const metrics = bridge.getMetrics();
+        expect(metrics?.taskComplete).toBe(true);
+      });
     });
   });
 });
