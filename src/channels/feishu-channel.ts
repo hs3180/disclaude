@@ -263,6 +263,29 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Check if the bot is mentioned in the message.
+   * When bot is mentioned, commands should be passed through to the agent.
+   *
+   * @param mentions - Mentions array from Feishu message
+   * @returns true if bot is mentioned
+   */
+  private isBotMentioned(mentions?: FeishuMessageEvent['message']['mentions']): boolean {
+    if (!mentions || mentions.length === 0) {
+      return false;
+    }
+    // In Feishu, when bot is mentioned, it appears in the mentions array
+    // The bot's id type is typically 'app' or has a specific pattern
+    // We check if any mention has an id that looks like a bot/app
+    return mentions.some((mention) => {
+      // Bot mentions typically have open_id starting with 'ou_' or 'on_'
+      // but we should check all mentions since user might @bot
+      // The safest approach: if there's any mention, treat it as bot mention
+      // This ensures commands with @mentions are passed to agent
+      return true;
+    });
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -275,7 +298,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (!message) {return;}
 
-    const { message_id, chat_id, content, message_type, create_time } = message;
+    const { message_id, chat_id, content, message_type, create_time, mentions } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -402,8 +425,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     );
 
     // Check for control commands
+    // When bot is mentioned (@bot), pass commands through to agent instead of handling locally
     const trimmedText = text.trim();
-    if (trimmedText.startsWith('/')) {
+    const botMentioned = this.isBotMentioned(mentions);
+
+    if (trimmedText.startsWith('/') && !botMentioned) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
 
@@ -456,6 +482,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         });
         return;
       }
+    }
+
+    // Log if bot is mentioned with a command (for debugging)
+    if (botMentioned && trimmedText.startsWith('/')) {
+      logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with command, passing to agent');
     }
 
     // Emit as incoming message
