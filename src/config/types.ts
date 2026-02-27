@@ -192,6 +192,43 @@ export interface ChannelsConfig {
 }
 
 /**
+ * Messaging routing configuration section.
+ *
+ * Controls how messages are routed between admin and user chats.
+ * @see Issue #266
+ */
+export interface MessagingConfig {
+  /** Admin chat configuration */
+  admin?: {
+    /** Admin chat ID (receives all messages including progress/debug) */
+    chatId?: string;
+    /** Enable/disable admin chat routing */
+    enabled?: boolean;
+  };
+  /** Message routing configuration */
+  routing?: {
+    /** Message levels visible to users (debug, progress, info, notice, important, error, result) */
+    userLevels?: string[];
+    /** Task lifecycle message visibility */
+    taskLifecycle?: {
+      /** Show task start message */
+      showStart?: boolean;
+      /** Show progress messages */
+      showProgress?: boolean;
+      /** Show task complete message */
+      showComplete?: boolean;
+    };
+    /** Error handling options */
+    errors?: {
+      /** Show stack traces to users */
+      showStack?: boolean;
+      /** Who can see detailed errors: 'admin' | 'all' */
+      showDetails?: 'admin' | 'all';
+    };
+  };
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -221,6 +258,8 @@ export interface DisclaudeConfig {
   transport?: TransportConfig;
   /** Channels configuration */
   channels?: ChannelsConfig;
+  /** Message routing configuration */
+  messaging?: MessagingConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
