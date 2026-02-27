@@ -131,6 +131,12 @@ export interface ReflectionConfig {
   enableMetrics: boolean;
   /** Event handler for observability */
   onEvent?: (event: ReflectionEvent) => void;
+  /**
+   * Whether to run Evaluate phase before Execute phase (default: false).
+   * When true: Evaluate → Execute → Reflect (for Eval-Exec pattern)
+   * When false: Execute → Evaluate → Reflect (standard Reflection pattern)
+   */
+  evaluateFirst?: boolean;
 }
 
 /**
@@ -140,6 +146,7 @@ export const DEFAULT_REFLECTION_CONFIG: ReflectionConfig = {
   maxIterations: 10,
   confidenceThreshold: 0.8,
   enableMetrics: true,
+  evaluateFirst: false,
 };
 
 // ============================================================================
@@ -370,6 +377,9 @@ export class ReflectionController {
 
   /**
    * Run a single iteration of the reflection cycle.
+   *
+   * When evaluateFirst is true: Evaluate → Execute → Reflect
+   * When evaluateFirst is false: Execute → Evaluate → Reflect
    */
   private async *runIteration(
     taskId: string,
@@ -388,34 +398,7 @@ export class ReflectionController {
     this.emitEvent('iteration_start', taskId, iteration);
     const iterationStart = Date.now();
 
-    // Phase 1: Execute
-    this.emitEvent('phase_start', taskId, iteration, { phase: 'execute' });
-    const executeStart = Date.now();
     let executeFailed = false;
-
-    try {
-      for await (const msg of executePhase(context)) {
-        yield msg;
-      }
-    } catch (error) {
-      executeFailed = true;
-      logger.error({ err: error, taskId, iteration }, 'Execute phase failed');
-      yield {
-        content: `❌ Execute phase failed: ${error instanceof Error ? error.message : String(error)}`,
-        role: 'assistant',
-        messageType: 'error',
-      };
-    }
-
-    const executeDuration = Date.now() - executeStart;
-    if (this.config.enableMetrics) {
-      updatePhaseMetrics(this.metrics, 'execute', executeDuration, executeFailed);
-    }
-    this.emitEvent('phase_end', taskId, iteration, { phase: 'execute', durationMs: executeDuration });
-
-    // Phase 2: Evaluate
-    this.emitEvent('phase_start', taskId, iteration, { phase: 'evaluate' });
-    const evaluateStart = Date.now();
     let evaluateFailed = false;
     let evaluationResult: ReflectionEvaluationResult = {
       isComplete: false,
@@ -423,37 +406,23 @@ export class ReflectionController {
       reasoning: 'Evaluation not completed',
     };
 
-    try {
-      // Collect evaluation messages and determine result
-      for await (const msg of evaluatePhase(context)) {
-        yield msg;
-        // Note: In real implementation, the Evaluator writes evaluation.md
-        // and we would parse it to determine the result
+    if (this.config.evaluateFirst) {
+      // Eval-Exec Pattern: Evaluate → Execute → Reflect
+      // Phase 1: Evaluate
+      evaluationResult = yield* this.runEvaluatePhase(taskId, iteration, context, evaluatePhase);
+
+      // Phase 2: Execute (only if task not complete)
+      if (!evaluationResult.isComplete) {
+        executeFailed = yield* this.runExecutePhase(taskId, iteration, context, executePhase);
       }
+    } else {
+      // Standard Pattern: Execute → Evaluate → Reflect
+      // Phase 1: Execute
+      executeFailed = yield* this.runExecutePhase(taskId, iteration, context, executePhase);
 
-      // Default evaluation - task needs more work
-      // In real implementation, this would be determined by parsing evaluation.md
-      evaluationResult = {
-        isComplete: false,
-        confidence: 0.5,
-        reasoning: 'Evaluation completed, task needs more work',
-        nextActions: ['Continue execution'],
-      };
-    } catch (error) {
-      evaluateFailed = true;
-      logger.error({ err: error, taskId, iteration }, 'Evaluate phase failed');
-      yield {
-        content: `❌ Evaluate phase failed: ${error instanceof Error ? error.message : String(error)}`,
-        role: 'assistant',
-        messageType: 'error',
-      };
+      // Phase 2: Evaluate
+      evaluationResult = yield* this.runEvaluatePhase(taskId, iteration, context, evaluatePhase);
     }
-
-    const evaluateDuration = Date.now() - evaluateStart;
-    if (this.config.enableMetrics) {
-      updatePhaseMetrics(this.metrics, 'evaluate', evaluateDuration, evaluateFailed);
-    }
-    this.emitEvent('phase_end', taskId, iteration, { phase: 'evaluate', durationMs: evaluateDuration });
 
     // Phase 3: Reflect (optional)
     if (reflectPhase && !evaluationResult.isComplete) {
@@ -493,6 +462,96 @@ export class ReflectionController {
       durationMs: iterationDuration,
       evaluationResult,
     });
+
+    return evaluationResult;
+  }
+
+  /**
+   * Run the Execute phase.
+   * @returns Whether the phase failed
+   */
+  private async *runExecutePhase(
+    taskId: string,
+    iteration: number,
+    context: ReflectionContext,
+    executePhase: ExecutePhaseExecutor
+  ): AsyncGenerator<AgentMessage, boolean> {
+    this.emitEvent('phase_start', taskId, iteration, { phase: 'execute' });
+    const executeStart = Date.now();
+    let executeFailed = false;
+
+    try {
+      for await (const msg of executePhase(context)) {
+        yield msg;
+      }
+    } catch (error) {
+      executeFailed = true;
+      logger.error({ err: error, taskId, iteration }, 'Execute phase failed');
+      yield {
+        content: `❌ Execute phase failed: ${error instanceof Error ? error.message : String(error)}`,
+        role: 'assistant',
+        messageType: 'error',
+      };
+    }
+
+    const executeDuration = Date.now() - executeStart;
+    if (this.config.enableMetrics) {
+      updatePhaseMetrics(this.metrics, 'execute', executeDuration, executeFailed);
+    }
+    this.emitEvent('phase_end', taskId, iteration, { phase: 'execute', durationMs: executeDuration });
+
+    return executeFailed;
+  }
+
+  /**
+   * Run the Evaluate phase.
+   * @returns The evaluation result
+   */
+  private async *runEvaluatePhase(
+    taskId: string,
+    iteration: number,
+    context: ReflectionContext,
+    evaluatePhase: EvaluatePhaseExecutor
+  ): AsyncGenerator<AgentMessage, ReflectionEvaluationResult> {
+    this.emitEvent('phase_start', taskId, iteration, { phase: 'evaluate' });
+    const evaluateStart = Date.now();
+
+    let evaluationResult: ReflectionEvaluationResult = {
+      isComplete: false,
+      confidence: 0,
+      reasoning: 'Evaluation not completed',
+    };
+
+    try {
+      // Collect evaluation messages and determine result
+      for await (const msg of evaluatePhase(context)) {
+        yield msg;
+        // Note: In real implementation, the Evaluator writes evaluation.md
+        // and we would parse it to determine the result
+      }
+
+      // Default evaluation - task needs more work
+      // In real implementation, this would be determined by parsing evaluation.md
+      evaluationResult = {
+        isComplete: false,
+        confidence: 0.5,
+        reasoning: 'Evaluation completed, task needs more work',
+        nextActions: ['Continue execution'],
+      };
+    } catch (error) {
+      logger.error({ err: error, taskId, iteration }, 'Evaluate phase failed');
+      yield {
+        content: `❌ Evaluate phase failed: ${error instanceof Error ? error.message : String(error)}`,
+        role: 'assistant',
+        messageType: 'error',
+      };
+    }
+
+    const evaluateDuration = Date.now() - evaluateStart;
+    if (this.config.enableMetrics) {
+      updatePhaseMetrics(this.metrics, 'evaluate', evaluateDuration, false);
+    }
+    this.emitEvent('phase_end', taskId, iteration, { phase: 'evaluate', durationMs: evaluateDuration });
 
     return evaluationResult;
   }

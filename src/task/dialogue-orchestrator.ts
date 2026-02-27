@@ -8,6 +8,13 @@
  * - Direct architecture: No intermediate layers, no JSON parsing
  * - Loop continues until max iterations reached or final_result.md detected
  *
+ * ## Integration with ReflectionController (Issue #283)
+ *
+ * This module uses ReflectionController for:
+ * - Iteration management with configurable termination conditions
+ * - Unified metrics collection
+ * - Event-based observability
+ *
  * ## File-Driven Architecture
  *
  * - Evaluator writes: iterations/iter-N/evaluation.md
@@ -31,6 +38,14 @@ import type { EvaluatorConfig } from '../agents/evaluator.js';
 import { IterationBridge } from './iteration-bridge.js';
 import { DialogueMessageTracker } from './dialogue-message-tracker.js';
 import { TaskFileManager } from './task-files.js';
+import {
+  ReflectionController,
+  TerminationConditions,
+  type ReflectionContext,
+  type ReflectionEvaluationResult,
+  type ReflectionEvent,
+  type ReflectionMetrics,
+} from './reflection.js';
 
 const logger = createLogger('DialogueOrchestrator', {});
 
@@ -44,6 +59,8 @@ export interface DialogueOrchestratorConfig {
 
 /**
  * DialogueOrchestrator - Manages streaming dialogue loop with Eval-Execute.
+ *
+ * Uses ReflectionController for unified iteration management (Issue #283).
  *
  * File-driven architecture:
  * - Message tracking delegated to DialogueMessageTracker
@@ -68,9 +85,10 @@ export class DialogueOrchestrator {
   private fileManager: TaskFileManager;
 
   private taskId: string = '';
-  private currentIterationTaskDone = false;
   private currentChatId?: string;
   private iterationCount: number = 0;
+  private reflectionController?: ReflectionController;
+  private taskComplete = false;
 
   constructor(config: DialogueOrchestratorConfig) {
     this.evaluatorConfig = config.evaluatorConfig;
@@ -90,6 +108,15 @@ export class DialogueOrchestrator {
   }
 
   /**
+   * Get the reflection metrics (if available).
+   *
+   * @returns Reflection metrics or undefined
+   */
+  getReflectionMetrics(): ReflectionMetrics | undefined {
+    return this.reflectionController?.getMetrics();
+  }
+
+  /**
    * Cleanup resources held by the dialogue orchestrator.
    *
    * **IMPORTANT**: Call this method when the dialogue is complete to prevent memory leaks.
@@ -101,49 +128,19 @@ export class DialogueOrchestrator {
     this.taskId = '';
     this.currentChatId = undefined;
     this.messageTracker.reset();
+    this.reflectionController?.resetMetrics();
   }
 
   /**
-   * Process a single dialogue iteration with REAL-TIME streaming Evaluator-Executor communication.
-   *
-   * File-driven Flow:
-   *   1. Create IterationBridge with task context
-   *   2. Run iteration with streaming: Agent messages are yielded immediately
-   *   3. Check for final_result.md to determine task completion
-   *
-   * @param iteration - Current iteration number
-   * @returns Async iterable of AgentMessage (real-time execution output)
+   * Create a termination condition that checks for final_result.md.
    */
-  private async *processIterationStreaming(
-    iteration: number
-  ): AsyncIterable<AgentMessage> {
-    logger.debug({ iteration }, 'Processing iteration with file-driven Eval-Execute architecture');
-
-    // Create IterationBridge with all necessary context
-    const bridge = new IterationBridge({
-      evaluatorConfig: this.evaluatorConfig,
-      iteration,
-      taskId: this.taskId,
-      chatId: this.currentChatId,
-    });
-
-    // Run the iteration with streaming
-    for await (const msg of bridge.runIterationStreaming()) {
-      // Yield the message for immediate delivery to user
-      yield msg;
-    }
-
-    // Check for task completion via final_result.md (created by Executor)
-    const hasFinalResult = await this.fileManager.hasFinalResult(this.taskId);
-
-    // Log completion status
-    logger.info({
-      iteration,
-      hasFinalResult,
-    }, 'Streaming iteration complete');
-
-    // Update completion status for return value check
-    this.currentIterationTaskDone = hasFinalResult;
+  private createFinalResultCondition(): (taskId: string) => ((context: ReflectionContext, result: ReflectionEvaluationResult) => Promise<boolean>) {
+    return (taskId: string) => {
+      return async () => {
+        const hasFinalResult = await this.fileManager.hasFinalResult(taskId);
+        return hasFinalResult;
+      };
+    };
   }
 
   /**
@@ -153,6 +150,11 @@ export class DialogueOrchestrator {
    * - Evaluator writes evaluation.md
    * - Executor reads evaluation.md and writes execution.md + final_result.md
    * - Task completion detected when final_result.md is created
+   *
+   * **Uses ReflectionController** (Issue #283) for:
+   * - Iteration management
+   * - Metrics collection
+   * - Event-based observability
    *
    * @param taskPath - Path to Task.md file
    * @param _originalRequest - Original user request text (unused)
@@ -169,71 +171,75 @@ export class DialogueOrchestrator {
     // Extract taskId from the parent directory name (e.g., /path/to/tasks/cli-123/task.md -> cli-123)
     const taskDir = path.dirname(taskPath);
     this.taskId = path.basename(taskDir);
-    this.currentIterationTaskDone = false;
     this.currentChatId = chatId;
     this.iterationCount = 0;
-
-    let iteration = 0;
+    this.taskComplete = false;
 
     logger.info(
       { taskId: this.taskId, chatId, taskPath, maxIterations: this.maxIterations },
-      'Starting file-driven Eval-Execute dialogue flow'
+      'Starting file-driven Eval-Execute dialogue flow with ReflectionController'
     );
 
-    // Main dialogue loop: Evaluator → Executor → Evaluator → Executor → ...
-    while (iteration < this.maxIterations) {
-      iteration++;
-      this.iterationCount = iteration;
+    // Create ReflectionController with evaluateFirst mode for Eval-Exec pattern
+    this.reflectionController = new ReflectionController(
+      {
+        maxIterations: this.maxIterations,
+        confidenceThreshold: 0.8,
+        enableMetrics: true,
+        evaluateFirst: true, // Eval-Exec pattern: Evaluate → Execute
+        onEvent: (event: ReflectionEvent) => {
+          logger.debug({ event }, 'Reflection event');
+        },
+      },
+      [
+        TerminationConditions.maxIterations(this.maxIterations),
+        this.createFinalResultCondition()(this.taskId),
+      ]
+    );
 
-      logger.info(
-        { taskId: this.taskId, chatId, iteration, maxIterations: this.maxIterations },
-        'Starting iteration'
+    // Create phase executors that wrap IterationBridge
+    const evaluatePhase = this.createEvaluatePhase();
+    const executePhase = this.createExecutePhase();
+
+    try {
+      // Run reflection cycle
+      const generator = this.reflectionController.run(
+        this.taskId,
+        executePhase,
+        evaluatePhase
       );
 
-      // Reset task done flag for this iteration
-      this.currentIterationTaskDone = false;
-
-      // Process iteration with REAL-TIME streaming
-      try {
-        for await (const msg of this.processIterationStreaming(iteration)) {
-          // Yield the message immediately to the user
-          yield msg;
-        }
-      } catch (error) {
-        logger.error(
-          { err: error, taskId: this.taskId, chatId, iteration },
-          'Error during iteration processing'
-        );
-        throw error;
+      // Yield all messages
+      let result = await generator.next();
+      while (!result.done) {
+        yield result.value;
+        result = await generator.next();
       }
 
-      // Check if task was completed during this iteration
-      if (this.currentIterationTaskDone) {
-        logger.info(
-          { taskId: this.taskId, chatId, iteration },
-          'Task completed during this iteration'
-        );
-        break;
-      }
+      // Check if task completed
+      this.taskComplete = await this.fileManager.hasFinalResult(this.taskId);
+      this.iterationCount = this.reflectionController.getMetrics().totalIterations;
 
-      logger.info(
-        { taskId: this.taskId, chatId, iteration },
-        'Iteration completed, task not yet done'
+    } catch (error) {
+      logger.error(
+        { err: error, taskId: this.taskId, chatId },
+        'Error during reflection cycle'
       );
+      throw error;
     }
 
     // Write final summary when task completes
-    if (this.currentIterationTaskDone) {
+    if (this.taskComplete) {
       await this.writeFinalSummary();
     }
 
     // Log warning if max iterations reached without task completion
-    if (iteration >= this.maxIterations && !this.currentIterationTaskDone) {
+    if (this.iterationCount >= this.maxIterations && !this.taskComplete) {
       logger.warn(
         {
           taskId: this.taskId,
           chatId,
-          iteration,
+          iteration: this.iterationCount,
           maxIterations: this.maxIterations,
         },
         'Task stopped after reaching maximum iterations without completion signal'
@@ -241,9 +247,47 @@ export class DialogueOrchestrator {
     }
 
     logger.info(
-      { taskId: this.taskId, chatId, totalIterations: iteration, completed: this.currentIterationTaskDone },
+      { taskId: this.taskId, chatId, totalIterations: this.iterationCount, completed: this.taskComplete },
       'Dialogue flow finished'
     );
+  }
+
+  /**
+   * Create the Evaluate phase executor.
+   *
+   * Uses IterationBridge to run the Evaluator.
+   */
+  private createEvaluatePhase() {
+    return async function* (this: DialogueOrchestrator, context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      const bridge = new IterationBridge({
+        evaluatorConfig: this.evaluatorConfig,
+        iteration: context.iteration,
+        taskId: context.taskId,
+        chatId: this.currentChatId,
+      });
+
+      // Run evaluator phase only (not the full iteration)
+      yield* bridge.runEvaluatorOnly();
+    }.bind(this);
+  }
+
+  /**
+   * Create the Execute phase executor.
+   *
+   * Uses IterationBridge to run the Executor.
+   */
+  private createExecutePhase() {
+    return async function* (this: DialogueOrchestrator, context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      const bridge = new IterationBridge({
+        evaluatorConfig: this.evaluatorConfig,
+        iteration: context.iteration,
+        taskId: context.taskId,
+        chatId: this.currentChatId,
+      });
+
+      // Run executor phase only
+      yield* bridge.runExecutorOnly();
+    }.bind(this);
   }
 
   /**
@@ -265,6 +309,7 @@ export class DialogueOrchestrator {
   private generateFinalSummary(): string {
     const timestamp = new Date().toISOString();
     const duration = this.iterationCount > 0 ? `${this.iterationCount} iterations` : 'Unknown';
+    const metrics = this.reflectionController?.getMetrics();
 
     return `# Final Summary: ${this.taskId}
 
@@ -280,6 +325,13 @@ Task completed successfully after ${this.iterationCount} iteration(s).
 ## Iteration History
 
 ${Array.from({ length: this.iterationCount }, (_, i) => `- Iteration ${i + 1}: Executed`).join('\n')}
+
+## Reflection Metrics
+
+- Total Iterations: ${metrics?.totalIterations ?? 'N/A'}
+- Successful: ${metrics?.successfulIterations ?? 'N/A'}
+- Failed: ${metrics?.failedIterations ?? 'N/A'}
+- Avg Duration: ${metrics?.avgIterationDurationMs?.toFixed(0) ?? 'N/A'}ms
 
 ## Final Results
 
