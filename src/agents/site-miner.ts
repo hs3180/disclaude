@@ -13,7 +13,7 @@
  * @module agents/site-miner
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { getProvider, type AgentQueryOptions } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { buildSdkEnv } from '../utils/sdk.js';
@@ -122,9 +122,9 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
   }
 
   // Build SDK options with forked context for isolation
-  const sdkOptions: Record<string, unknown> = {
+  const sdkOptions: AgentQueryOptions = {
     cwd: Config.getWorkspaceDir(),
-    permissionMode: 'bypassPermissions',
+    permissionMode: 'bypass',
     settingSources: ['project'],
     // Only allow Playwright MCP tools + basic file operations for saving evidence
     allowedTools: [
@@ -143,7 +143,7 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
       'mcp__playwright__browser_press',
       'mcp__playwright__browser_file_upload',
     ],
-    mcpServers,
+    mcpServers: mcpServers as Record<string, import('../sdk/types.js').McpServerConfig>,
     env: buildSdkEnv(
       agentConfig.apiKey,
       agentConfig.apiBaseUrl,
@@ -168,32 +168,31 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
       logger.warn({ url, timeout }, 'Site mining timed out');
     }, timeout);
 
+    // Get SDK provider
+    const provider = getProvider();
+
     // Run the query in isolated context
-    const queryResult = query({
-      prompt,
-      options: sdkOptions as Parameters<typeof query>[0]['options'],
-      signal: controller.signal,
-    });
+    const queryIterator = provider.queryOnce(prompt, sdkOptions);
 
     // Collect results
     let finalContent = '';
     let resultReceived = false;
 
-    for await (const message of queryResult) {
+    for await (const message of queryIterator) {
+      // Check for abort
+      if (controller.signal.aborted) {
+        break;
+      }
+
       // Parse message type
       if (message.type === 'result') {
         resultReceived = true;
-        finalContent = typeof message.content === 'string'
-          ? message.content
-          : JSON.stringify(message.content);
+        finalContent = message.content;
         logger.debug({ contentLength: finalContent.length }, 'Result received');
-      } else if (message.type === 'assistant') {
+      } else if (message.type === 'text') {
         // Intermediate output
-        const content = typeof message.content === 'string'
-          ? message.content
-          : '';
-        if (content) {
-          logger.debug({ contentLength: content.length }, 'Intermediate output');
+        if (message.content) {
+          logger.debug({ contentLength: message.content.length }, 'Intermediate output');
         }
       }
     }
@@ -340,7 +339,7 @@ function parseSiteMinerResult(content: string, url: string): SiteMinerResult {
 /**
  * Export a factory function for convenience.
  */
-export function createSiteMiner(config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
+export function createSiteMiner(_config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
   // SiteMiner uses global config, but this allows for future customization
   return runSiteMiner;
 }

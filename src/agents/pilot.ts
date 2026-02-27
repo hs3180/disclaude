@@ -35,7 +35,7 @@
  * - Error handling
  */
 
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { StreamingUserMessage } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
@@ -249,7 +249,7 @@ export class Pilot extends BaseAgent {
     // Build the user message
     const enhancedContent = this.buildEnhancedContent(chatId, { text, messageId, senderOpenId, attachments });
 
-    const userMessage: SDKUserMessage = {
+    const userMessage: StreamingUserMessage = {
       type: 'user',
       message: {
         role: 'user',

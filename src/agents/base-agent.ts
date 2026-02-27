@@ -18,6 +18,7 @@ import type {
   AgentQueryOptions,
   UserInput,
   QueryHandle,
+  StreamingUserMessage,
 } from '../sdk/types.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { Config } from '../config/index.js';
@@ -261,7 +262,7 @@ export abstract class BaseAgent {
    * @returns QueryStreamResult with handle and iterator
    */
   protected createQueryStream(
-    input: AsyncGenerator<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>,
+    input: AsyncGenerator<StreamingUserMessage>,
     options: AgentQueryOptions
   ): QueryStreamResult {
     // Convert SDK UserMessage to SDK UserInput

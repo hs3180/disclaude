@@ -69,6 +69,8 @@ export type {
 
   // 消息类型
   UserInput,
+  StreamingUserMessage,
+  StreamingMessageContent,
   AgentMessage,
   AgentMessageType,
   MessageRole,

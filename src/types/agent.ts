@@ -1,4 +1,7 @@
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { StreamingUserMessage } from '../sdk/index.js';
+
+// Re-export for backward compatibility
+export type { StreamingUserMessage };
 
 // Agent message type enum
 export type AgentMessageType =
@@ -68,4 +71,4 @@ export interface AgentOptions {
  * Union type for agent input supporting both string prompts and streaming message arrays.
  * This enables Streaming Input Mode for multi-turn conversation support.
  */
-export type AgentInput = string | AsyncIterable<SDKUserMessage>;
+export type AgentInput = string | AsyncIterable<StreamingUserMessage>;
