@@ -12,7 +12,7 @@ import type {
   FileUploadRequest,
   FileUploadResponse,
   FileDownloadResponse,
-} from '../../types/file-reference.js';
+} from '../types.js';
 
 const logger = createLogger('FileTransferAPI');
 
