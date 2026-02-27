@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IterationBridge, type IterationBridgeConfig, type IterationEvent } from './iteration-bridge.js';
 import type { EvaluatorConfig } from '../agents/evaluator.js';
-import { TaskFileManager } from './file-manager.js';
+import { TaskFileManager } from './task-files.js';
 
 // Create mock instances that will be used in tests
 let mockEvaluatorInstance: Record<string, unknown>;
