@@ -38,6 +38,7 @@
 import type { StreamingUserMessage } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
+import { createAuthSdkMcpServer } from '../auth/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
@@ -159,7 +160,9 @@ export class Pilot extends BaseAgent {
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
     // Add MCP servers
-    const mcpServers: Record<string, unknown> = {};
+    const mcpServers: Record<string, unknown> = {
+      'auth': createAuthSdkMcpServer(),
+    };
 
     // CLI mode doesn't need Feishu MCP server
     // Merge configured external MCP servers from config file
@@ -275,6 +278,7 @@ export class Pilot extends BaseAgent {
     // Add MCP servers
     const mcpServers: Record<string, unknown> = {
       'feishu-context': createFeishuSdkMcpServer(),
+      'auth': createAuthSdkMcpServer(),
     };
 
     // Merge configured external MCP servers from config file

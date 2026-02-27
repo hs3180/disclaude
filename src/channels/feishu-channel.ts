@@ -17,6 +17,7 @@ import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
+import { getOAuthManager } from '../auth/index.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -478,8 +479,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         await this.sendMessage({
           chatId: chat_id,
           type: 'text',
-          text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
+          text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /auth list - 查看已授权服务\n- /auth revoke <服务名> - 撤销授权\n- /help - 显示帮助',
         });
+        return;
+      }
+
+      // Handle /auth command
+      if (cmd === 'auth') {
+        await this.handleAuthCommand(chat_id, args);
         return;
       }
     }
@@ -498,6 +505,95 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       messageType: message_type as any,
       timestamp: create_time,
       threadId,
+    });
+  }
+
+  /**
+   * Handle /auth command for managing OAuth authorizations.
+   *
+   * Subcommands:
+   * - list: Show all authorized services
+   * - revoke <provider>: Revoke authorization for a service
+   */
+  private async handleAuthCommand(chatId: string, args: string[]): Promise<void> {
+    const subCommand = args[0]?.toLowerCase();
+
+    if (!subCommand || subCommand === 'list') {
+      // List authorized services
+      try {
+        const oauthManager = getOAuthManager();
+        const providers = await oauthManager.listAuthorizations(chatId);
+
+        if (providers.length === 0) {
+          await this.sendMessage({
+            chatId,
+            type: 'text',
+            text: '🔐 **授权管理**\n\n当前没有已授权的服务。\n\n当 Agent 需要访问第三方服务时，会引导您完成授权流程。',
+          });
+          return;
+        }
+
+        const providerList = providers.map(p => `- ${p}`).join('\n');
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `🔐 **授权管理**\n\n已授权的服务:\n${providerList}\n\n使用 /auth revoke <服务名> 可撤销授权。`,
+        });
+      } catch (error) {
+        logger.error({ err: error, chatId }, 'Failed to list authorizations');
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ 获取授权列表失败：${error instanceof Error ? error.message : '未知错误'}`,
+        });
+      }
+      return;
+    }
+
+    if (subCommand === 'revoke') {
+      const provider = args[1];
+      if (!provider) {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: '❌ 请指定要撤销的服务名\n\n用法: /auth revoke <服务名>',
+        });
+        return;
+      }
+
+      try {
+        const oauthManager = getOAuthManager();
+        const deleted = await oauthManager.revokeToken(chatId, provider);
+
+        if (deleted) {
+          await this.sendMessage({
+            chatId,
+            type: 'text',
+            text: `✅ 已撤销 **${provider}** 的授权`,
+          });
+        } else {
+          await this.sendMessage({
+            chatId,
+            type: 'text',
+            text: `⚠️ 没有找到 **${provider}** 的授权`,
+          });
+        }
+      } catch (error) {
+        logger.error({ err: error, chatId, provider }, 'Failed to revoke authorization');
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ 撤销授权失败：${error instanceof Error ? error.message : '未知错误'}`,
+        });
+      }
+      return;
+    }
+
+    // Unknown subcommand
+    await this.sendMessage({
+      chatId,
+      type: 'text',
+      text: `❌ 未知的授权命令: ${subCommand}\n\n可用命令:\n- /auth list - 查看已授权服务\n- /auth revoke <服务名> - 撤销授权`,
     });
   }
 
