@@ -42,6 +42,7 @@ import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
+import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
 
 /**
@@ -123,6 +124,7 @@ export class Pilot extends BaseAgent {
   // Separated concerns
   private readonly sessionManager: SessionManager;
   private readonly conversationOrchestrator: ConversationOrchestrator;
+  private readonly restartManager: RestartManager;
 
   constructor(config: PilotConfig) {
     super(config);
@@ -132,6 +134,12 @@ export class Pilot extends BaseAgent {
     // Initialize separated managers
     this.sessionManager = new SessionManager({ logger: this.logger });
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
+    this.restartManager = new RestartManager({
+      logger: this.logger,
+      maxRestarts: 3,
+      initialBackoffMs: 1000,
+      maxBackoffMs: 30000,
+    });
   }
 
   protected getAgentName(): string {
@@ -184,7 +192,7 @@ export class Pilot extends BaseAgent {
     // Build enhanced content with context
     const enhancedContent = this.buildEnhancedContent(chatId, {
       text,
-      messageId,
+      messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
     });
 
@@ -324,8 +332,10 @@ export class Pilot extends BaseAgent {
    * when the iterator ends unexpectedly. Only explicit close (reset)
    * removes the Query and Channel from the maps.
    *
-   * If the iterator ends without explicit close, we attempt to restart the agent loop
-   * and notify the user, preserving the conversation context.
+   * If the iterator ends without explicit close, we use RestartManager to:
+   * - Limit consecutive restarts (max 3 by default)
+   * - Apply exponential backoff between restarts
+   * - Open circuit breaker after max restarts exceeded
    */
   private async processIterator(
     chatId: string,
@@ -344,6 +354,10 @@ export class Pilot extends BaseAgent {
         // Check for completion
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
+
+          // Record success to reset restart state
+          this.restartManager.recordSuccess(chatId);
+
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
@@ -372,9 +386,38 @@ export class Pilot extends BaseAgent {
     }
 
     // Iterator ended without explicit close - this is unexpected
-    // Remove the stale session tracking, then attempt to restart
+    // Remove the stale session tracking, then check restart policy
     this.sessionManager.deleteTracking(chatId);
-    this.logger.warn({ chatId, error: iteratorError?.message }, 'Agent loop ended unexpectedly, attempting restart');
+
+    // Use RestartManager to decide if we should restart
+    const errorMessage = iteratorError?.message ?? 'Unknown error';
+    const decision = this.restartManager.shouldRestart(chatId, errorMessage);
+
+    if (!decision.allowed) {
+      // Circuit breaker opened - notify user and stop
+      this.logger.error(
+        { chatId, reason: decision.reason, restartCount: decision.restartCount },
+        'Restart blocked by circuit breaker'
+      );
+
+      const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+      const blockMessage = decision.reason === 'max_restarts_exceeded'
+        ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
+        : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
+      await this.callbacks.sendMessage(chatId, blockMessage, threadRoot);
+      return;
+    }
+
+    // Restart allowed - apply backoff
+    this.logger.warn(
+      { chatId, error: errorMessage, restartCount: decision.restartCount, waitMs: decision.waitMs },
+      'Agent loop ended unexpectedly, attempting restart with backoff'
+    );
+
+    // Wait for backoff period
+    if (decision.waitMs && decision.waitMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, decision.waitMs));
+    }
 
     // Notify user about the restart
     const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -506,6 +549,9 @@ You can read these files using the Read tool with the local paths above.`;
     // Delete session (this closes channel and query)
     const deleted = this.sessionManager.delete(chatId);
 
+    // Reset restart state
+    this.restartManager.reset(chatId);
+
     if (deleted) {
       // Also clear thread root
       this.conversationOrchestrator.deleteThreadRoot(chatId);
@@ -534,6 +580,9 @@ You can read these files using the Read tool with the local paths above.`;
 
     // Clear all context via ConversationContext
     this.conversationOrchestrator.clearAll();
+
+    // Clear restart states
+    this.restartManager.clearAll();
 
     this.logger.info('Pilot shutdown complete');
   }
