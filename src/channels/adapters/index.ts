@@ -14,15 +14,3 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './types.js';
-
-// Factory
-export {
-  PlatformAdapterFactory,
-  createPlatformAdapterFactory,
-  type PlatformType,
-  type BasePlatformConfig,
-  type FeishuConfig,
-  type RestConfig,
-  type PlatformConfig,
-  type PlatformAdapterFactoryFn,
-} from './factory.js';
