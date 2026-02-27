@@ -38,3 +38,77 @@ export interface FeishuEventData {
   event?: FeishuMessageEvent;
   [key: string]: unknown;
 }
+
+/**
+ * Feishu card action event structure.
+ * Triggered when user interacts with card buttons, menus, etc.
+ * @see https://open.feishu.cn/document/client-docs/bot-v3/events/card-action-trigger
+ */
+export interface FeishuCardActionEvent {
+  /** The action that was triggered */
+  action: {
+    /** Action type: button, menu, date_picker, etc. */
+    type: string;
+    /** Action value set when creating the card */
+    value: string;
+    /** What triggered the action: button, menu, date, etc. */
+    trigger: 'button' | 'menu' | 'date' | 'input' | 'static';
+    /** For menu/dropdown: the selected option */
+    option?: string;
+  };
+  /** The message containing the card */
+  message_id: string;
+  /** Chat ID */
+  chat_id: string;
+  /** User who triggered the action */
+  user: {
+    sender_id: {
+      open_id: string;
+      union_id?: string;
+      user_id?: string;
+    };
+  };
+  /** Tenant key */
+  tenant_key?: string;
+  /** Token for updating the card */
+  token?: string;
+  /** Open message ID for card update */
+  open_message_id?: string;
+  /** Open card ID */
+  open_card_id?: string;
+}
+
+/**
+ * Feishu card action event data wrapper.
+ */
+export interface FeishuCardActionEventData {
+  event?: FeishuCardActionEvent;
+  [key: string]: unknown;
+}
+
+/**
+ * Interaction context stored for pending interactions.
+ */
+export interface InteractionContext {
+  /** Unique interaction ID */
+  id: string;
+  /** Chat ID where interaction was created */
+  chatId: string;
+  /** Message ID of the card */
+  messageId: string;
+  /** Action keys expected in this interaction */
+  expectedActions: string[];
+  /** Timestamp when interaction was created */
+  createdAt: number;
+  /** Timestamp when interaction expires */
+  expiresAt: number;
+  /** Additional metadata */
+  metadata?: Record<string, unknown>;
+  /** Callback to handle the interaction */
+  handler?: (action: FeishuCardActionEvent) => Promise<void>;
+}
+
+/**
+ * Interaction handler function type.
+ */
+export type InteractionHandler = (action: FeishuCardActionEvent) => Promise<void>;
