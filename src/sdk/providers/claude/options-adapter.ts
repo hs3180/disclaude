@@ -25,11 +25,9 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.model = options.model;
   }
 
-  // 权限模式
+  // 权限模式（直接传递，无需转换）
   if (options.permissionMode) {
-    sdkOptions.permissionMode = options.permissionMode === 'bypass'
-      ? 'bypassPermissions'
-      : options.permissionMode;
+    sdkOptions.permissionMode = options.permissionMode;
   }
 
   // 设置来源
@@ -54,11 +52,6 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 环境变量
   if (options.env) {
     sdkOptions.env = options.env;
-  }
-
-  // 上下文隔离
-  if (options.context) {
-    sdkOptions.context = options.context;
   }
 
   return sdkOptions;
