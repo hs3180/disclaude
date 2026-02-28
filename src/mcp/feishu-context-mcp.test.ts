@@ -63,6 +63,7 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
 
 // Import after mocks
 import * as fs from 'fs/promises';
+import type * as fsStats from 'fs';
 import {
   send_user_feedback,
   send_file_to_feishu,
@@ -425,7 +426,7 @@ describe('Feishu Context MCP Tools', () => {
 
   describe('send_file_to_feishu', () => {
     it('should require chatId', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
 
       const result = await send_file_to_feishu({
         filePath: '/test/file.txt',
@@ -437,7 +438,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should resolve relative file path to workspace directory', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(1024);
 
       const result = await send_file_to_feishu({
@@ -454,7 +455,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should use absolute file path as-is', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(1024);
 
       const result = await send_file_to_feishu({
@@ -471,7 +472,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should return file details on success', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(2048);
 
       const result = await send_file_to_feishu({
@@ -498,7 +499,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should handle directory path error', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => false, size: 0 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => false, size: 0 } as fsStats.Stats);
 
       const result = await send_file_to_feishu({
         filePath: '/some/directory',
@@ -510,7 +511,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should handle upload errors', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockRejectedValueOnce(new Error('Upload failed'));
 
       const result = await send_file_to_feishu({
@@ -523,7 +524,7 @@ describe('Feishu Context MCP Tools', () => {
     });
 
     it('should extract Feishu API error details', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fs.Stats);
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
 
       const apiError = new Error('API Error') as Error & {
         response: { data: Array<{ code: number; msg: string; log_id: string }> };

@@ -29,13 +29,14 @@ export interface RestPlatformAdapterConfig {
  * Supports both sync and async modes.
  */
 export class RestMessageSender implements IMessageSender {
-  private baseUrl: string;
-  private apiKey?: string;
+  // Reserved for future HTTP callback support
+  private _baseUrl: string;
+  private _apiKey?: string;
   private logger: Logger;
 
   constructor(config: RestPlatformAdapterConfig) {
-    this.baseUrl = config.baseUrl || 'http://localhost:3000';
-    this.apiKey = config.apiKey;
+    this._baseUrl = config.baseUrl || 'http://localhost:3000';
+    this._apiKey = config.apiKey;
     this.logger = config.logger;
   }
 
@@ -48,7 +49,8 @@ export class RestMessageSender implements IMessageSender {
 
   sendCard(
     chatId: string,
-    card: Record<string, unknown>,
+    // Card parameter is required by interface but not used in REST implementation
+    _card: Record<string, unknown>,
     description?: string,
     threadId?: string
   ): Promise<void> {
@@ -90,11 +92,12 @@ export class RestPlatformAdapter implements IPlatformAdapter {
   // REST adapter does not support file handling
   readonly fileHandler = undefined;
 
-  private logger: Logger;
+  // Reserved for future logging needs
+  private _logger: Logger;
   private baseUrl: string;
 
   constructor(config: RestPlatformAdapterConfig) {
-    this.logger = config.logger;
+    this._logger = config.logger;
     this.baseUrl = config.baseUrl || 'http://localhost:3000';
 
     // Use custom message sender if provided (for testing)
