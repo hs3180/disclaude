@@ -25,6 +25,7 @@ import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
+import type { Disposable } from './types.js';
 
 /**
  * Base configuration for all agents.
@@ -87,6 +88,8 @@ export interface QueryStreamResult {
  * - Common logic in base class
  * - Specific logic in subclasses via abstract/protected methods
  *
+ * Implements Disposable interface for resource cleanup (Issue #328).
+ *
  * @example
  * ```typescript
  * class MyAgent extends BaseAgent {
@@ -101,7 +104,7 @@ export interface QueryStreamResult {
  * }
  * ```
  */
-export abstract class BaseAgent {
+export abstract class BaseAgent implements Disposable {
   // Common properties
   readonly apiKey: string;
   readonly model: string;
@@ -364,12 +367,28 @@ export abstract class BaseAgent {
   }
 
   /**
+   * Dispose of resources held by this agent.
+   *
+   * This method is idempotent - safe to call multiple times.
+   * Subclasses should call super.dispose() if overriding.
+   *
+   * Implements Disposable interface (Issue #328).
+   */
+  dispose(): void {
+    if (!this.initialized) {
+      return; // Already disposed, idempotent
+    }
+    this.logger.debug(`${this.getAgentName()} disposed`);
+    this.initialized = false;
+  }
+
+  /**
    * Cleanup resources.
    *
-   * Subclasses should call super.cleanup() if overriding.
+   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
+   * Subclasses should override dispose() instead.
    */
   cleanup(): void {
-    this.logger.debug(`${this.getAgentName()} cleaned up`);
-    this.initialized = false;
+    this.dispose();
   }
 }

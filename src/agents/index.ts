@@ -18,6 +18,7 @@
 
 // Type definitions
 export {
+  type Disposable,
   type ChatAgent,
   type SkillAgent,
   type Subagent,
@@ -27,6 +28,7 @@ export {
   isChatAgent,
   isSkillAgent,
   isSubagent,
+  isDisposable,
 } from './types.js';
 
 // Base class

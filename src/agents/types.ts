@@ -39,6 +39,40 @@ import type { AgentMessage } from '../types/agent.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
 
 // ============================================================================
+// Disposable Interface (Issue #328)
+// ============================================================================
+
+/**
+ * Disposable - Interface for resource cleanup.
+ *
+ * All agents should implement this interface to ensure proper resource release.
+ * The dispose() method is called when the agent is no longer needed.
+ *
+ * @example
+ * ```typescript
+ * const agent = new Pilot(config);
+ * try {
+ *   await agent.start();
+ *   // use agent...
+ * } finally {
+ *   agent.dispose();
+ * }
+ * ```
+ */
+export interface Disposable {
+  /**
+   * Dispose of resources held by this agent.
+   *
+   * This method should:
+   * - Release all held resources
+   * - Close any open connections
+   * - Clear any cached data
+   * - Be idempotent (safe to call multiple times)
+   */
+  dispose(): void;
+}
+
+// ============================================================================
 // User Input Types
 // ============================================================================
 
@@ -93,9 +127,12 @@ export interface UserInput {
  *
  * // Reset session when done
  * chatAgent.reset();
+ *
+ * // Dispose when agent is no longer needed
+ * chatAgent.dispose();
  * ```
  */
-export interface ChatAgent {
+export interface ChatAgent extends Disposable {
   /** Agent type identifier */
   readonly type: 'chat';
 
@@ -124,7 +161,7 @@ export interface ChatAgent {
 
   /**
    * Cleanup resources.
-   * Called when agent is no longer needed.
+   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
    */
   cleanup(): void;
 }
@@ -155,10 +192,10 @@ export interface ChatAgent {
  *   console.log(response.content);
  * }
  *
- * skillAgent.cleanup();
+ * skillAgent.dispose();
  * ```
  */
-export interface SkillAgent {
+export interface SkillAgent extends Disposable {
   /** Agent type identifier */
   readonly type: 'skill';
 
@@ -175,7 +212,7 @@ export interface SkillAgent {
 
   /**
    * Cleanup resources.
-   * Called when agent is no longer needed.
+   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
    */
   cleanup(): void;
 }
@@ -271,6 +308,18 @@ export function isSubagent(agent: unknown): agent is Subagent {
     isSkillAgent(agent) &&
     'asTool' in agent &&
     typeof (agent as { asTool: unknown }).asTool === 'function'
+  );
+}
+
+/**
+ * Type guard to check if an object is Disposable.
+ */
+export function isDisposable(obj: unknown): obj is Disposable {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'dispose' in obj &&
+    typeof (obj as { dispose: unknown }).dispose === 'function'
   );
 }
 
