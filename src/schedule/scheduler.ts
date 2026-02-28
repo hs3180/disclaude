@@ -253,9 +253,6 @@ ${task.prompt}`;
         task.createdBy
       );
 
-      // Update last execution time (in-memory only, not persisted to file)
-      this.scheduleManager.markExecuted(task.id);
-
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
     } catch (error) {
