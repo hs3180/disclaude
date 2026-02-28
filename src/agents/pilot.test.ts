@@ -152,7 +152,7 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['sessionManager'].size()).toBe(2);
 
       // Reset only chat-123
-      pilot.reset('chat-123');
+      pilot.resetSession('chat-123');
 
       // chat-123 should be removed, chat-456 should remain
       expect(pilot['sessionManager'].size()).toBe(1);
@@ -165,7 +165,7 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['sessionManager'].size()).toBe(1);
 
       // Reset non-existent chatId
-      pilot.reset('chat-nonexistent');
+      pilot.resetSession('chat-nonexistent');
 
       // Original session should remain
       expect(pilot['sessionManager'].size()).toBe(1);
@@ -177,7 +177,7 @@ describe('Pilot (Streaming Input)', () => {
 
       // Reset should work immediately without waiting
       // The reset method is synchronous and handles session cleanup
-      pilot.reset('chat-123');
+      pilot.resetSession('chat-123');
 
       // Session should be removed
       expect(pilot['sessionManager'].has('chat-123')).toBe(false);
@@ -192,13 +192,25 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['sessionManager'].size()).toBe(3);
 
       // User in group-chat-1 sends /reset
-      pilot.reset('group-chat-1');
+      pilot.resetSession('group-chat-1');
 
       // Only group-chat-1 should be reset
       expect(pilot['sessionManager'].size()).toBe(2);
       expect(pilot['sessionManager'].has('group-chat-1')).toBe(false);
       expect(pilot['sessionManager'].has('group-chat-2')).toBe(true);
       expect(pilot['sessionManager'].has('group-chat-3')).toBe(true);
+    });
+
+    it('should reset all sessions when reset() called without arguments', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      pilot.processMessage('chat-456', 'Hi', 'msg-002');
+      expect(pilot['sessionManager'].size()).toBe(2);
+
+      // Reset all sessions
+      pilot.reset();
+
+      // All sessions should be removed
+      expect(pilot['sessionManager'].size()).toBe(0);
     });
   });
 
@@ -262,6 +274,67 @@ describe('Pilot (Streaming Input)', () => {
       expect(() => {
         pilot.processMessage('chat-123', 'Hello', 'msg-001');
       }).not.toThrow();
+    });
+  });
+
+  describe('ChatAgent Interface', () => {
+    it('should have type property set to "chat"', () => {
+      expect(pilot.type).toBe('chat');
+    });
+
+    it('should have name property', () => {
+      expect(pilot.name).toBe('Pilot');
+    });
+
+    it('should implement start() method', async () => {
+      // start() should not throw
+      await expect(pilot.start()).resolves.toBeUndefined();
+    });
+
+    it('should implement cleanup() method', async () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      expect(pilot['sessionManager'].size()).toBe(1);
+
+      // cleanup() should clear all sessions
+      pilot.cleanup();
+
+      // Wait for async cleanup to complete
+      await vi.waitFor(() => {
+        expect(pilot['sessionManager'].size()).toBe(0);
+      });
+    });
+
+    it('should implement reset() method (no args)', () => {
+      pilot.processMessage('chat-123', 'Hello', 'msg-001');
+      pilot.processMessage('chat-456', 'Hi', 'msg-002');
+      expect(pilot['sessionManager'].size()).toBe(2);
+
+      // reset() should clear all sessions
+      pilot.reset();
+      expect(pilot['sessionManager'].size()).toBe(0);
+    });
+
+    it('should implement handleInput() method', async () => {
+      // Create a simple input generator
+      async function* inputGen() {
+        yield {
+          role: 'user' as const,
+          content: 'Hello',
+          metadata: { chatId: 'test-chat', parentMessageId: 'msg-001' },
+        };
+      }
+
+      // handleInput should return an async generator
+      const output = pilot.handleInput(inputGen());
+
+      // Consume the output
+      const results = [];
+      for await (const msg of output) {
+        results.push(msg);
+      }
+
+      // Should have received at least one message
+      expect(results.length).toBeGreaterThan(0);
     });
   });
 });
