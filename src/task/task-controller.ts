@@ -290,7 +290,7 @@ export class TaskController {
   /**
    * Check if final_result.md exists.
    */
-  private async hasFinalResult(): Promise<boolean> {
+  private hasFinalResult(): Promise<boolean> {
     return this.fileManager.hasFinalResult(this.taskId);
   }
 

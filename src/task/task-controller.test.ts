@@ -10,7 +10,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskController, type TaskControllerConfig } from './task-controller.js';
-import type { EvaluatorConfig } from '../agents/evaluator.js';
 
 // Mock Evaluator
 vi.mock('../agents/evaluator.js', () => ({
