@@ -278,6 +278,139 @@ check_prerequisites() {
 }
 
 # =============================================================================
+# Response Parsing Helpers
+# =============================================================================
+
+# Global variables for parsed response
+RESPONSE_STATUS=""
+RESPONSE_BODY=""
+
+# Parse response from make_request format "status|body"
+# Usage: parse_response "result"
+# Sets: RESPONSE_STATUS, RESPONSE_BODY
+parse_response() {
+    local result="$1"
+    RESPONSE_STATUS="${result%%|*}"
+    RESPONSE_BODY="${result#*|}"
+}
+
+# Assert HTTP status code equals expected
+# Usage: assert_status "expected_status" "test_name"
+assert_status() {
+    local expected="$1"
+    local test_name="${2:-status check}"
+
+    if [ "$RESPONSE_STATUS" = "$expected" ]; then
+        log_pass "$test_name: status is $expected"
+        return 0
+    else
+        log_fail "$test_name: expected status $expected, got $RESPONSE_STATUS"
+        return 1
+    fi
+}
+
+# Assert JSON body contains a string
+# Usage: assert_body_contains "pattern" "test_name"
+assert_body_contains() {
+    local pattern="$1"
+    local test_name="${2:-body check}"
+
+    if echo "$RESPONSE_BODY" | grep -q "$pattern"; then
+        log_pass "$test_name: body contains '$pattern'"
+        return 0
+    else
+        log_fail "$test_name: body does not contain '$pattern'"
+        log_debug "Body: $RESPONSE_BODY"
+        return 1
+    fi
+}
+
+# Extract JSON field value using grep (simple extraction)
+# Usage: value=$(extract_json_field "fieldName")
+extract_json_field() {
+    local field="$1"
+    echo "$RESPONSE_BODY" | grep -o "\"$field\":\"[^\"]*\"" | cut -d'"' -f4
+}
+
+# Extract JSON boolean field
+# Usage: value=$(extract_json_bool "fieldName")
+extract_json_bool() {
+    local field="$1"
+    echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
+}
+
+# =============================================================================
+# Common Test Functions
+# =============================================================================
+
+# Test health check endpoint - shared by all integration tests
+# Usage: test_health_check
+test_health_check() {
+    log_info "Testing: GET /api/health"
+
+    local result
+    result=$(make_request "GET" "/api/health")
+    parse_response "$result"
+
+    if [ "$RESPONSE_STATUS" = "200" ] && echo "$RESPONSE_BODY" | grep -q '"status":"ok"'; then
+        log_pass "Health check returns 200 with status: ok"
+        return 0
+    else
+        log_fail "Health check returned status $RESPONSE_STATUS (expected 200)"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Argument Parsing Helpers
+# =============================================================================
+
+# Common argument parser for integration tests
+# Sets: VERBOSE, DRY_RUN, TIMEOUT, REST_PORT
+# Usage: parse_common_args "$@"
+parse_common_args() {
+    VERBOSE=false
+    DRY_RUN=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --timeout)
+                TIMEOUT="$2"
+                shift 2
+                ;;
+            --port)
+                REST_PORT="$2"
+                shift 2
+                ;;
+            --verbose)
+                VERBOSE=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [options]"
+                echo ""
+                echo "Options:"
+                echo "  --timeout SECONDS   Request timeout (default: ${TIMEOUT:-30})"
+                echo "  --port PORT         REST API port (default: ${REST_PORT:-3099})"
+                echo "  --verbose           Enable verbose output"
+                echo "  --dry-run           Show test plan without executing"
+                echo "  --help, -h          Show this help message"
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# =============================================================================
 # Test Summary
 # =============================================================================
 
