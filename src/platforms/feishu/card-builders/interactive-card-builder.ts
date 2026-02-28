@@ -79,6 +79,14 @@ export interface ColumnConfig {
 }
 
 /**
+ * Plain text element (used inside note, etc.)
+ */
+export interface PlainTextElement {
+  tag: 'plain_text';
+  content: string;
+}
+
+/**
  * Card element types.
  */
 export type CardElement =
@@ -86,7 +94,7 @@ export type CardElement =
   | { tag: 'markdown'; content: string; text_align?: 'left' | 'center' | 'right' }
   | { tag: 'action'; actions: ActionElement[] }
   | { tag: 'hr' }
-  | { tag: 'note'; elements: CardElement[] }
+  | { tag: 'note'; elements: PlainTextElement[] }
   | { tag: 'img'; img_key: string; alt: { tag: 'plain_text'; content: string } }
   | { tag: 'column_set'; columns: ColumnConfig[] };
 
@@ -141,6 +149,21 @@ export interface CardConfig {
   elements: CardElement[];
   /** Whether card can be dismissed */
   dismissible?: boolean;
+}
+
+/**
+ * Built card structure for Feishu API.
+ */
+export interface BuiltCard {
+  config: {
+    wide_screen_mode: boolean;
+  };
+  header?: {
+    title: PlainTextElement;
+    template?: string;
+    subtitle?: PlainTextElement;
+  };
+  elements: CardElement[];
 }
 
 /**
@@ -272,7 +295,7 @@ export function buildNote(text: string): CardElement {
         tag: 'plain_text',
         content: text,
       },
-    ] as CardElement[],
+    ],
   };
 }
 
@@ -286,8 +309,7 @@ export function buildColumnSet(columns: ColumnConfig[]): CardElement {
   return {
     tag: 'column_set',
     columns: columns.map((col) => ({
-      width: col.width || 'weighted',
-      weight: col.width,
+      width: col.width,
       vertical_align: col.verticalAlign || 'center',
       elements: col.elements,
     })),
@@ -312,9 +334,9 @@ export function buildColumnSet(columns: ColumnConfig[]): CardElement {
  *   ],
  * });
  */
-export function buildCard(config: CardConfig): Record<string, unknown> {
+export function buildCard(config: CardConfig): BuiltCard {
   // Build custom card structure without template
-  const customCard: Record<string, unknown> = {
+  const customCard: BuiltCard = {
     config: {
       wide_screen_mode: true,
     },
@@ -355,7 +377,7 @@ export function buildConfirmCard(
   message: string,
   confirmValue = 'confirm',
   cancelValue = 'cancel'
-): Record<string, unknown> {
+): BuiltCard {
   return buildCard({
     header: { title, template: 'blue' },
     elements: [
@@ -384,7 +406,7 @@ export function buildSelectionCard(
   placeholder: string,
   actionValue: string,
   options: MenuOptionConfig[]
-): Record<string, unknown> {
+): BuiltCard {
   return buildCard({
     header: { title, template: 'turquoise' },
     elements: [

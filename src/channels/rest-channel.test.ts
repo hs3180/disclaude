@@ -300,6 +300,7 @@ describe('RestChannel', () => {
             type: 'done',
           });
         }, 100);
+        return Promise.resolve();
       });
 
       const response = await makeRequest(port, {

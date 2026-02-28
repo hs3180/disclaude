@@ -228,7 +228,7 @@ export function adaptUserInput(input: UserInput): SDKUserMessage {
     type: 'user',
     message: {
       role: 'user',
-      content: input.content,
+      content: input.content as unknown as string,
     },
     parent_tool_use_id: null,
     session_id: '',

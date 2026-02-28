@@ -49,6 +49,8 @@ export interface ParsedSDKMessage {
 
 // Agent message interface (wraps SDK message)
 export interface AgentMessage {
+  /** Message type (for SDK compatibility) */
+  type?: AgentMessageType;
   content: string | ContentBlock[];
   role?: 'user' | 'assistant';
   messageType?: AgentMessageType;

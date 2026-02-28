@@ -12,7 +12,7 @@ import {
   type SiteMinerResult,
 } from './site-miner.js';
 import { Config } from '../config/index.js';
-import type { AgentMessage } from '../sdk/index.js';
+import type { AgentMessage } from '../types/agent.js';
 import { isSubagent, isSkillAgent } from './types.js';
 
 // Mock the Config module
@@ -308,7 +308,9 @@ describe('SiteMiner Subagent Interface', () => {
       }
 
       expect(messages.length).toBe(1);
-      const result = JSON.parse(messages[0].content);
+      const content = messages[0].content;
+      expect(typeof content).toBe('string');
+      const result = JSON.parse(content as string);
       expect(result.success).toBe(false);
       expect(result.summary).toContain('Playwright MCP not configured');
     });

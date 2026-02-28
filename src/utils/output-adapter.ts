@@ -69,6 +69,8 @@ export interface OutputAdapter {
 export interface MessageMetadata {
   /** Tool name if this is a tool use message */
   toolName?: string;
+  /** Raw tool input for processing (e.g., building diff cards) */
+  toolInputRaw?: Record<string, unknown>;
 }
 
 /**

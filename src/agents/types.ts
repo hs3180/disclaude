@@ -37,6 +37,7 @@
 
 import type { AgentMessage } from '../types/agent.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
+import type { FileRef } from '../file-transfer/types.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -154,10 +155,44 @@ export interface ChatAgent extends Disposable {
   handleInput(input: AsyncGenerator<UserInput>): AsyncGenerator<AgentMessage>;
 
   /**
+   * Process a message from a user.
+   *
+   * @param chatId - Chat/conversation ID
+   * @param text - Message text
+   * @param messageId - Unique message identifier
+   * @param senderOpenId - Optional sender's open_id for @ mentions
+   * @param attachments - Optional file attachments
+   */
+  processMessage(
+    chatId: string,
+    text: string,
+    messageId: string,
+    senderOpenId?: string,
+    attachments?: FileRef[]
+  ): void;
+
+  /**
+   * Execute a one-shot query (for CLI and scheduled tasks).
+   *
+   * @param chatId - Chat/conversation ID
+   * @param text - Message text
+   * @param messageId - Optional message identifier
+   * @param senderOpenId - Optional sender's open_id
+   */
+  executeOnce(
+    chatId: string,
+    text: string,
+    messageId?: string,
+    senderOpenId?: string
+  ): Promise<void>;
+
+  /**
    * Reset the agent session.
    * Clears conversation history and state.
+   *
+   * @param chatId - Optional chat ID to reset specific session
    */
-  reset(): void;
+  reset(chatId?: string): void;
 }
 
 // ============================================================================

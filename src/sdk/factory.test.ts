@@ -158,7 +158,7 @@ describe('ClaudeSDKProvider', () => {
         name: 'test_tool',
         description: 'A test tool',
         parameters: z.object({ input: z.string() }),
-        handler: () => 'result',
+        handler: async () => 'result',
       };
       const tool = provider.createInlineTool(toolDef);
       expect(tool).toBeDefined();

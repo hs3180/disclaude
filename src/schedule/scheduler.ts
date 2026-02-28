@@ -13,7 +13,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
-import type { Pilot, PilotCallbacks } from '../agents/pilot.js';
+import type { PilotCallbacks } from '../agents/pilot.js';
 
 const logger = createLogger('Scheduler');
 
@@ -40,8 +40,8 @@ export interface FeedbackChannelContext {
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
-  /** Pilot instance for task execution */
-  pilot: Pilot;
+  /** ChatAgent instance for task execution */
+  pilot: import('../agents/types.js').ChatAgent;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
   /** Set up feedback channel for scheduled task execution */
@@ -73,7 +73,7 @@ export interface SchedulerOptions {
  */
 export class Scheduler {
   private scheduleManager: ScheduleManager;
-  private pilot: Pilot;
+  private pilot: import('../agents/types.js').ChatAgent;
   private callbacks: PilotCallbacks;
   private setFeedbackChannel?: (chatId: string, context: FeedbackChannelContext) => void;
   private clearFeedbackChannel?: (chatId: string) => void;
