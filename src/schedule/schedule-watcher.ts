@@ -255,9 +255,8 @@ export class ScheduleFileScanner {
     if (task.createdAt) {
       frontmatter.push(`createdAt: "${task.createdAt}"`);
     }
-    if (task.lastExecutedAt) {
-      frontmatter.push(`lastExecutedAt: "${task.lastExecutedAt}"`);
-    }
+    // Note: lastExecutedAt is intentionally NOT written to file
+    // Execution state is tracked in memory only to prevent file contention
 
     frontmatter.push('---', '');
 

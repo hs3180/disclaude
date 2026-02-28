@@ -270,7 +270,7 @@ Prompt`;
       expect(content).toContain('Task prompt');
     });
 
-    it('should include optional fields when present', async () => {
+    it('should include optional fields when present (except lastExecutedAt)', async () => {
       const task = {
         id: 'schedule-task',
         name: 'Task',
@@ -281,7 +281,7 @@ Prompt`;
         prompt: 'Prompt',
         createdBy: 'ou_user1',
         createdAt: '2024-01-01T00:00:00.000Z',
-        lastExecutedAt: '2024-06-15T09:00:00.000Z',
+        lastExecutedAt: '2024-06-15T09:00:00.000Z', // Should NOT be written to file
       };
 
       const filePath = await scanner.writeTask(task);
@@ -289,7 +289,8 @@ Prompt`;
 
       expect(content).toContain('createdBy: ou_user1');
       expect(content).toContain('createdAt: "2024-01-01T00:00:00.000Z"');
-      expect(content).toContain('lastExecutedAt: "2024-06-15T09:00:00.000Z"');
+      // lastExecutedAt is NOT written to file (tracked in memory only)
+      expect(content).not.toContain('lastExecutedAt');
     });
 
     it('should create directory if it does not exist', async () => {

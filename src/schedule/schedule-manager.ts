@@ -70,6 +70,9 @@ export interface ScheduleManagerOptions {
  * No cache: all operations read directly from file system.
  * This ensures perfect consistency - file system is the single source of truth.
  *
+ * Note: Execution state (lastExecutedAt) is tracked in memory, not persisted to files.
+ * This prevents file contention during scheduled task execution.
+ *
  * Usage:
  * ```typescript
  * const manager = new ScheduleManager({ schedulesDir: './workspace/schedules' });
@@ -94,6 +97,8 @@ export interface ScheduleManagerOptions {
  */
 export class ScheduleManager {
   private fileScanner: ScheduleFileScanner;
+  /** In-memory cache for last execution times (not persisted to files) */
+  private lastExecutedAtCache: Map<string, Date> = new Map();
 
   constructor(options: ScheduleManagerOptions) {
     this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
@@ -241,12 +246,36 @@ export class ScheduleManager {
   }
 
   /**
-   * Update last execution time.
+   * Update last execution time (in-memory only, not persisted to file).
+   *
+   * This method only updates the in-memory cache to avoid file contention
+   * during scheduled task execution. The schedule.md files remain read-only
+   * during execution.
    *
    * @param id - Task ID
    */
-  async markExecuted(id: string): Promise<void> {
-    await this.update(id, { lastExecutedAt: new Date().toISOString() });
+  markExecuted(id: string): void {
+    this.lastExecutedAtCache.set(id, new Date());
+    logger.debug({ taskId: id }, 'Marked task as executed (in-memory)');
+  }
+
+  /**
+   * Get the last execution time for a task.
+   *
+   * @param id - Task ID
+   * @returns Last execution time or undefined if never executed
+   */
+  getLastExecutedAt(id: string): Date | undefined {
+    return this.lastExecutedAtCache.get(id);
+  }
+
+  /**
+   * Clear the last execution time cache for a task.
+   *
+   * @param id - Task ID
+   */
+  clearLastExecutedAt(id: string): void {
+    this.lastExecutedAtCache.delete(id);
   }
 
   /**
@@ -261,6 +290,9 @@ export class ScheduleManager {
     if (!deleted) {
       return false;
     }
+
+    // Clear in-memory cache
+    this.lastExecutedAtCache.delete(id);
 
     logger.info({ taskId: id }, 'Deleted scheduled task');
     return true;
