@@ -47,7 +47,6 @@ export {
 // Base class
 export {
   BaseAgent,
-  type BaseAgentConfig,
   type SdkOptionsExtra,
   type IteratorYieldResult,
   type QueryStreamResult,

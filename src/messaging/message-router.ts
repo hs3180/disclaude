@@ -8,7 +8,16 @@
  * @see Issue #266
  */
 
-import type { ILogger } from '../utils/logger.js';
+/**
+ * Logger interface compatible with Pino.
+ * Allows for optional logger with debug, info, warn, error methods.
+ */
+export interface ILogger {
+  debug(msg: string, obj?: unknown): void;
+  info(msg: string, obj?: unknown): void;
+  warn(msg: string, obj?: unknown): void;
+  error(msg: string, obj?: unknown): void;
+}
 import {
   type IMessageRouter,
   type IMessageSender,

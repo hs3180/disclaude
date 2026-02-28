@@ -30,12 +30,14 @@
  */
 
 // Node types
-export { PrimaryNode, type PrimaryNodeConfig } from './primary-node.js';
-export { WorkerNode, type WorkerNodeConfig } from './worker-node.js';
+export { PrimaryNode } from './primary-node.js';
+export { WorkerNode } from './worker-node.js';
 export {
   type NodeType,
   type BaseNodeConfig,
   type NodeConfig,
+  type PrimaryNodeConfig,
+  type WorkerNodeConfig,
   type ExecNodeInfo,
   type NodeCapabilities,
   getNodeCapabilities,
