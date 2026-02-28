@@ -208,6 +208,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         );
       }
     }
+
+    return Promise.resolve();
   }
 
   protected checkHealth(): boolean {
