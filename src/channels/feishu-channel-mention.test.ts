@@ -1,10 +1,13 @@
 /**
- * Tests for FeishuChannel command pass-through behavior when bot is mentioned.
+ * Tests for FeishuChannel command handling behavior when bot is mentioned.
  *
- * Issue #280: @bot 无法正确透传 /reset 指令给 agent
+ * Issue #387: /reset 命令在 @提及 时不生效
  *
- * When bot is mentioned (@bot), commands should be passed through to the agent
- * instead of being handled locally by the channel.
+ * Control commands (reset, status, help, restart, list-nodes, switch-node) should
+ * ALWAYS be handled locally through the control channel, regardless of @mentions.
+ * This ensures session/agent lifecycle commands work correctly.
+ *
+ * Non-control commands with @mention should be passed to the agent.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -92,7 +95,7 @@ vi.mock('../utils/task-tracker.js', () => ({
 
 import { FeishuChannel } from './feishu-channel.js';
 
-describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
+describe('FeishuChannel - Control Command Handling (Issue #387)', () => {
   let channel: FeishuChannel;
   let messageHandler: ReturnType<typeof vi.fn>;
   let controlHandler: ReturnType<typeof vi.fn>;
@@ -123,41 +126,41 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
     }
   });
 
-  describe('isBotMentioned helper (indirectly tested via command behavior)', () => {
-    /**
-     * Helper to simulate receiving a message.
-     * We access the private method via type casting for testing.
-     */
-    async function simulateMessageReceive(options: {
-      text: string;
-      mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
-    }): Promise<void> {
-      // Create a mock event that matches FeishuEventData structure
-      const mockEvent = {
-        message: {
-          message_id: 'test-msg-id',
-          chat_id: 'test-chat-id',
-          content: JSON.stringify({ text: options.text }),
-          message_type: 'text',
-          create_time: Date.now(),
-          mentions: options.mentions,
-        },
-        sender: {
-          sender_type: 'user',
-          sender_id: { open_id: 'user-open-id' },
-        },
-      };
+  /**
+   * Helper to simulate receiving a message.
+   * We access the private method via type casting for testing.
+   */
+  async function simulateMessageReceive(options: {
+    text: string;
+    mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
+  }): Promise<void> {
+    // Create a mock event that matches FeishuEventData structure
+    const mockEvent = {
+      message: {
+        message_id: 'test-msg-id',
+        chat_id: 'test-chat-id',
+        content: JSON.stringify({ text: options.text }),
+        message_type: 'text',
+        create_time: Date.now(),
+        mentions: options.mentions,
+      },
+      sender: {
+        sender_type: 'user',
+        sender_id: { open_id: 'user-open-id' },
+      },
+    };
 
-      // Access private method for testing
-      const handler = (channel as unknown as { handleMessageReceive: (data: unknown) => Promise<void> }).handleMessageReceive.bind(channel);
+    // Access private method for testing
+    const handler = (channel as unknown as { handleMessageReceive: (data: unknown) => Promise<void> }).handleMessageReceive.bind(channel);
 
-      // Start the channel first to set isRunning = true
-      await channel.start();
+    // Start the channel first to set isRunning = true
+    await channel.start();
 
-      await handler({ event: mockEvent });
-    }
+    await handler({ event: mockEvent });
+  }
 
-    it('should handle command locally when bot is NOT mentioned', async () => {
+  describe('Control commands should ALWAYS be handled locally (Issue #387)', () => {
+    it('should handle /reset locally when bot is NOT mentioned', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: undefined, // No mentions
@@ -175,7 +178,7 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should pass command to agent when bot IS mentioned', async () => {
+    it('should handle /reset locally even when bot IS mentioned (Issue #387 fix)', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: [
@@ -187,19 +190,19 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // Control handler should NOT be called (command passed to agent)
-      expect(controlHandler).not.toHaveBeenCalled();
-
-      // Message should be passed to agent
-      expect(messageHandler).toHaveBeenCalledWith(
+      // Control handler SHOULD be called - control commands always handled locally
+      expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
+          type: 'reset',
           chatId: 'test-chat-id',
-          content: '/reset',
         })
       );
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should pass command to agent when there are multiple mentions', async () => {
+    it('should handle /reset locally when there are multiple mentions', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: [
@@ -216,11 +219,80 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // Command should be passed to agent
+      // Control command should be handled locally
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'reset',
+          chatId: 'test-chat-id',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /status locally when bot is mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/status',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should be called
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'status',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /help locally when bot is mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/help',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should be called
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'help',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Non-control commands with @mention should be passed to agent', () => {
+    it('should pass unknown commands directly to agent when bot is mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/unknown-command',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should NOT be called for unknown commands with @mention
+      // (unknown commands with @mention are passed directly to agent)
       expect(controlHandler).not.toHaveBeenCalled();
+
+      // Message should be passed to agent
       expect(messageHandler).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: '/reset',
+          content: '/unknown-command',
         })
       );
     });
@@ -247,8 +319,10 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         })
       );
     });
+  });
 
-    it('should handle command without mentions normally', async () => {
+  describe('Commands without mentions', () => {
+    it('should handle /status without mentions', async () => {
       await simulateMessageReceive({
         text: '/status',
         mentions: undefined,
