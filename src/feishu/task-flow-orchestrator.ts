@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - TaskFileWatcher for detecting new Task.md files
- * - DialogueOrchestrator execution (Evaluator → Executor → Reporter)
+ * - ReflectionController execution (Evaluator → Executor → Reporter)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
@@ -15,16 +15,29 @@
  * - Resource contention (API quota exhaustion)
  * - Complex state tracking
  * - Debugging difficulties with interleaved logs
+ *
+ * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  */
 
 import * as path from 'path';
-import { DialogueOrchestrator, extractText } from '../task/index.js';
+import {
+  ReflectionController,
+  TerminationConditions,
+  DialogueMessageTracker,
+} from '../task/index.js';
 import { TaskFileWatcher } from '../task/task-file-watcher.js';
 import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
 import type { TaskTracker } from '../utils/task-tracker.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
+import type { AgentMessage } from '../types/agent.js';
+import type { ReflectionContext } from '../task/reflection.js';
+import { Evaluator } from '../agents/evaluator.js';
+import { Executor } from '../agents/executor.js';
+import { Reporter } from '../agents/reporter.js';
+import { TaskFileManager } from '../task/task-files.js';
+import { DIALOGUE } from '../config/constants.js';
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -109,7 +122,9 @@ export class TaskFlowOrchestrator {
   }
 
   /**
-   * Run the dialogue phase (Evaluator → Executor → Reporter).
+   * Run the dialogue phase using ReflectionController (Evaluator → Executor → Reporter).
+   *
+   * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
    */
   private async runDialogue(
     chatId: string,
@@ -120,18 +135,14 @@ export class TaskFlowOrchestrator {
     // Import MCP tools to set message tracking callback
     const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
 
-    // Create bridge with agent configs
-    const bridge = new DialogueOrchestrator({
-      evaluatorConfig: {
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        permissionMode: 'bypassPermissions',
-      },
-    });
+    // Extract taskId from taskPath
+    const taskDir = path.dirname(taskPath);
+    const taskId = path.basename(taskDir);
+
+    // Create message tracker
+    const messageTracker = new DialogueMessageTracker();
 
     // Set the message sent callback to track when MCP tools send messages
-    const messageTracker = bridge.getMessageTracker();
     setMessageSentCallback((_chatId: string) => {
       messageTracker.recordMessageSent();
     });
@@ -148,16 +159,113 @@ export class TaskFlowOrchestrator {
     adapter.clearThrottleState();
     adapter.resetMessageTracking();
 
+    // Create file manager for checking final_result.md
+    const fileManager = new TaskFileManager();
+
     let completionReason = 'unknown';
 
-    try {
-      this.logger.debug({ chatId, taskId: path.basename(taskPath, '.md') }, 'Starting dialogue');
+    // Create ReflectionController with termination conditions
+    const controller = new ReflectionController(
+      {
+        maxIterations: DIALOGUE.MAX_ITERATIONS,
+        confidenceThreshold: 0.8,
+        enableMetrics: true,
+      },
+      [
+        // Terminate when task is complete (final_result.md exists)
+        (context: ReflectionContext) => {
+          return fileManager.hasFinalResult(context.taskId);
+        },
+        // Terminate when max iterations reached
+        TerminationConditions.maxIterations(DIALOGUE.MAX_ITERATIONS),
+      ]
+    );
 
-      // Run dialogue loop (text is extracted from Task.md by DialogueOrchestrator)
-      for await (const message of bridge.runDialogue(taskPath, '', chatId, messageId)) {
+    // Create execute phase: runs Evaluator
+    const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      const evaluator = new Evaluator({
+        apiKey: agentConfig.apiKey,
+        model: agentConfig.model,
+        apiBaseUrl: agentConfig.apiBaseUrl,
+        permissionMode: 'bypassPermissions',
+      });
+
+      try {
+        yield* evaluator.evaluate(context.taskId, context.iteration);
+      } finally {
+        evaluator.dispose();
+      }
+    };
+
+    // Create evaluate phase: runs Executor (after Evaluator)
+    const evaluatePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      // Check if task is already complete
+      const hasFinalResult = await fileManager.hasFinalResult(context.taskId);
+      if (hasFinalResult) {
+        yield {
+          content: '✅ Task completed - final result detected',
+          role: 'assistant',
+          messageType: 'task_completion',
+          metadata: { status: 'complete' },
+        };
+        return;
+      }
+
+      yield {
+        content: '⚡ **Executing Task**',
+        role: 'assistant',
+        messageType: 'status',
+      };
+
+      const reporter = new Reporter({
+        apiKey: agentConfig.apiKey,
+        model: agentConfig.model,
+        apiBaseUrl: agentConfig.apiBaseUrl,
+        permissionMode: 'bypassPermissions',
+      });
+
+      const executor = new Executor({
+        apiKey: agentConfig.apiKey,
+        model: agentConfig.model,
+        apiBaseUrl: agentConfig.apiBaseUrl,
+        permissionMode: 'bypassPermissions',
+      });
+
+      const reporterContext = {
+        taskId: context.taskId,
+        iteration: context.iteration,
+        chatId,
+      };
+
+      try {
+        const executorStream = executor.executeTask(
+          context.taskId,
+          context.iteration,
+          Config.getWorkspaceDir()
+        );
+
+        for await (const event of executorStream) {
+          yield* reporter.processEvent(event, reporterContext);
+        }
+      } catch (error) {
+        yield {
+          content: `❌ **Task execution failed**: ${error instanceof Error ? error.message : String(error)}`,
+          role: 'assistant',
+          messageType: 'error',
+        };
+      } finally {
+        reporter.dispose();
+      }
+    };
+
+    try {
+      this.logger.debug({ chatId, taskId }, 'Starting dialogue with ReflectionController');
+
+      // Run reflection cycle
+      for await (const message of controller.run(taskId, executePhase, evaluatePhase)) {
         const content = typeof message.content === 'string'
           ? message.content
-          : extractText(message);
+          : '';
 
         if (!content) {
           continue;
@@ -174,7 +282,15 @@ export class TaskFlowOrchestrator {
           completionReason = 'task_done';
         } else if (message.messageType === 'error') {
           completionReason = 'error';
+        } else if (message.messageType === 'task_completion') {
+          completionReason = 'task_done';
         }
+      }
+
+      // Check final result
+      const hasFinalResult = await fileManager.hasFinalResult(taskId);
+      if (hasFinalResult) {
+        completionReason = 'task_done';
       }
     } catch (error) {
       this.logger.error({ err: error, chatId }, 'Task flow failed');
@@ -193,12 +309,10 @@ export class TaskFlowOrchestrator {
       await this.messageCallbacks.sendMessage(chatId, errorMsg, messageId);
     } finally {
       // Clean up message tracking callback to prevent memory leaks
-      const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
       setMessageSentCallback(null);
 
       // Check if no user message was sent and send warning
       if (!messageTracker.hasAnyMessage()) {
-        const taskId = path.basename(taskPath, '.md');
         const warning = messageTracker.buildWarning(completionReason, taskId);
         this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
         await this.messageCallbacks.sendMessage(chatId, warning, messageId);
