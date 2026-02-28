@@ -46,12 +46,6 @@ interface ApiResponse {
   body: ApiResponseBody;
 }
 
-/**
- * Type guard to check if body is an ApiResponseBody
- */
-function isApiResponseBody(body: unknown): body is ApiResponseBody {
-  return typeof body === 'object' && body !== null;
-}
 
 /**
  * Helper to make HTTP requests to the test server.
@@ -294,7 +288,7 @@ describe('RestChannel', () => {
     });
 
     it('should wait for done message in sync mode', async () => {
-      channel.onMessage(async (msg) => {
+      channel.onMessage((msg) => {
         // Simulate async processing and response
         setTimeout(() => {
           void channel.sendMessage({

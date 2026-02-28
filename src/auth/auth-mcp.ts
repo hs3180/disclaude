@@ -124,7 +124,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       callbackUrl: z.string().describe('OAuth callback URL (must match the registered redirect URI)'),
       chatId: z.string().describe('Chat ID from the task context'),
     }),
-    handler: async ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
+    handler: ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
       try {
         const provider: OAuthProviderConfig = {
           name: providerName,
