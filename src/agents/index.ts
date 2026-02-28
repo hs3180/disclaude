@@ -9,7 +9,25 @@
  * - Pilot: Platform-agnostic direct chat with streaming input
  * - SessionManager: Pilot session lifecycle management
  * - ConversationContext: Pilot conversation context tracking
+ *
+ * Agent Type Classification (Issue #282):
+ * - ChatAgent: Continuous conversation agents (Pilot)
+ * - SkillAgent: Single-shot task agents (Evaluator, Executor, Reporter)
+ * - Subagent: SkillAgent that can be used as a tool (SiteMiner)
  */
+
+// Type definitions
+export {
+  type ChatAgent,
+  type SkillAgent,
+  type Subagent,
+  type UserInput,
+  type AgentConfig,
+  type AgentFactoryInterface,
+  isChatAgent,
+  isSkillAgent,
+  isSubagent,
+} from './types.js';
 
 // Base class
 export {
