@@ -308,7 +308,7 @@ describe('SiteMiner Subagent Interface', () => {
       }
 
       expect(messages.length).toBe(1);
-      const content = messages[0].content;
+      const [{ content }] = messages;
       expect(typeof content).toBe('string');
       const result = JSON.parse(content as string);
       expect(result.success).toBe(false);
