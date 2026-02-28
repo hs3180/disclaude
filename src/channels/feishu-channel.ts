@@ -14,6 +14,7 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
@@ -529,6 +530,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
       'Card action received'
     );
+
+    // First, try to resolve any pending wait_for_interaction calls
+    const resolved = resolvePendingInteraction(
+      message_id,
+      action.value,
+      action.type,
+      user?.sender_id?.open_id || 'unknown'
+    );
+
+    if (resolved) {
+      logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
+      return;
+    }
 
     try {
       // Try to handle via InteractionManager

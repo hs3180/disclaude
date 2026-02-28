@@ -522,6 +522,282 @@ export async function send_file_to_feishu(params: {
   }
 }
 
+// ============================================================================
+// Card Interaction Tools (Issue #275 Phase 4)
+// ============================================================================
+
+/**
+ * Pending interaction tracker for wait_for_interaction tool.
+ */
+interface PendingInteraction {
+  messageId: string;
+  chatId: string;
+  resolve: (action: { actionValue: string; actionType: string; userId: string }) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Global map of pending interactions waiting for user response.
+ */
+const pendingInteractions = new Map<string, PendingInteraction>();
+
+/**
+ * Handle incoming card action for wait_for_interaction.
+ * Called by FeishuChannel when a card action is received.
+ *
+ * @param messageId - The card message ID
+ * @param actionValue - The action value from the button click
+ * @param actionType - The action type (button, menu, etc.)
+ * @param userId - The user who triggered the action
+ */
+export function resolvePendingInteraction(
+  messageId: string,
+  actionValue: string,
+  actionType: string,
+  userId: string
+): boolean {
+  const pending = pendingInteractions.get(messageId);
+  if (pending) {
+    clearTimeout(pending.timeout);
+    pendingInteractions.delete(messageId);
+    pending.resolve({ actionValue, actionType, userId });
+    logger.debug({ messageId, actionValue, actionType, userId }, 'Pending interaction resolved');
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Tool: Update an existing interactive card message.
+ *
+ * Updates the content of a previously sent interactive card.
+ * Requires the message_id of the card to update.
+ *
+ * @param params - Tool parameters
+ * @returns Result object with success status
+ */
+export async function update_card(params: {
+  messageId: string;
+  card: Record<string, unknown>;
+  chatId: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  error?: string;
+}> {
+  const { messageId, card, chatId } = params;
+
+  logger.info({
+    messageId,
+    chatId,
+    cardPreview: JSON.stringify(card).substring(0, 100),
+  }, 'update_card called');
+
+  try {
+    if (!messageId) {
+      throw new Error('messageId is required');
+    }
+    if (!card) {
+      throw new Error('card is required');
+    }
+    if (!chatId) {
+      throw new Error('chatId is required');
+    }
+
+    // Validate card structure
+    if (!isValidFeishuCard(card)) {
+      const validationError = getCardValidationError(card);
+      return {
+        success: false,
+        error: `Invalid card structure: ${validationError}`,
+        message: `❌ Card validation failed. ${validationError}`,
+      };
+    }
+
+    // CLI mode: Log the update instead of calling API
+    if (chatId.startsWith('cli-')) {
+      logger.info({ messageId, chatId }, 'CLI mode: Card update simulated');
+      return {
+        success: true,
+        message: `✅ Card updated (CLI mode)`,
+      };
+    }
+
+    // Read credentials from Config
+    const appId = Config.FEISHU_APP_ID;
+    const appSecret = Config.FEISHU_APP_SECRET;
+
+    if (!appId || !appSecret) {
+      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured');
+    }
+
+    // Create Lark client
+    const client = new lark.Client({
+      appId,
+      appSecret,
+      domain: lark.Domain.Feishu,
+    });
+
+    // Update the card using patch API
+    await client.im.message.patch({
+      path: {
+        message_id: messageId,
+      },
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        content: JSON.stringify(card),
+      },
+    });
+
+    logger.debug({ messageId, chatId }, 'Card updated successfully');
+
+    return {
+      success: true,
+      message: `✅ Card updated successfully`,
+    };
+
+  } catch (error) {
+    logger.error({
+      err: error,
+      messageId,
+      chatId,
+    }, 'update_card failed');
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    return {
+      success: false,
+      error: errorMessage,
+      message: `❌ Failed to update card: ${errorMessage}`,
+    };
+  }
+}
+
+/**
+ * Tool: Wait for user to interact with a card.
+ *
+ * Registers a wait handler for the specified card and returns when
+ * the user clicks a button or interacts with the card.
+ *
+ * Note: This tool will block until the user interacts or timeout is reached.
+ * The interaction is resolved via resolvePendingInteraction() called by FeishuChannel.
+ *
+ * @param params - Tool parameters
+ * @returns Result object with the action taken by the user
+ */
+export async function wait_for_interaction(params: {
+  messageId: string;
+  chatId: string;
+  timeoutSeconds?: number;
+}): Promise<{
+  success: boolean;
+  message: string;
+  actionValue?: string;
+  actionType?: string;
+  userId?: string;
+  error?: string;
+}> {
+  const { messageId, chatId, timeoutSeconds = 300 } = params;
+
+  logger.info({
+    messageId,
+    chatId,
+    timeoutSeconds,
+  }, 'wait_for_interaction called');
+
+  try {
+    if (!messageId) {
+      throw new Error('messageId is required');
+    }
+    if (!chatId) {
+      throw new Error('chatId is required');
+    }
+
+    // CLI mode: Simulate immediate response
+    if (chatId.startsWith('cli-')) {
+      logger.info({ messageId, chatId }, 'CLI mode: Simulating interaction response');
+      return {
+        success: true,
+        message: `✅ Interaction received (CLI mode - simulated)`,
+        actionValue: 'simulated',
+        actionType: 'button',
+        userId: 'cli-user',
+      };
+    }
+
+    // Check if there's already a pending interaction for this message
+    if (pendingInteractions.has(messageId)) {
+      return {
+        success: false,
+        error: 'Already waiting for interaction on this message',
+        message: '❌ Another wait is already pending for this card',
+      };
+    }
+
+    // Create a promise that resolves when the user interacts
+    const interactionPromise = new Promise<{
+      actionValue: string;
+      actionType: string;
+      userId: string;
+    }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pendingInteractions.delete(messageId);
+        reject(new Error(`Interaction timeout after ${timeoutSeconds} seconds`));
+      }, timeoutSeconds * 1000);
+
+      pendingInteractions.set(messageId, {
+        messageId,
+        chatId,
+        resolve,
+        reject,
+        timeout,
+      });
+
+      logger.debug({ messageId, chatId, timeoutSeconds }, 'Waiting for interaction');
+    });
+
+    // Wait for the interaction
+    const result = await interactionPromise;
+
+    logger.info({
+      messageId,
+      chatId,
+      actionValue: result.actionValue,
+      actionType: result.actionType,
+      userId: result.userId,
+    }, 'Interaction received');
+
+    return {
+      success: true,
+      message: `✅ User interaction received: ${result.actionValue}`,
+      actionValue: result.actionValue,
+      actionType: result.actionType,
+      userId: result.userId,
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    // Clean up pending interaction on error
+    pendingInteractions.delete(messageId);
+
+    logger.error({
+      err: error,
+      messageId,
+      chatId,
+    }, 'wait_for_interaction failed');
+
+    return {
+      success: false,
+      error: errorMessage,
+      message: `❌ Wait failed: ${errorMessage}`,
+    };
+  }
+}
+
 /**
  * Tool definitions for Agent SDK integration.
  *
@@ -578,6 +854,50 @@ export const feishuContextTools = {
       required: ['filePath', 'chatId'],
     },
     handler: send_file_to_feishu,
+  },
+  update_card: {
+    description: 'Update an existing interactive card message. Use this to change the content of a card that was already sent, such as updating a progress indicator or changing button states.',
+    parameters: {
+      type: 'object',
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The message ID of the card to update',
+        },
+        card: {
+          type: 'object',
+          description: 'The new card content (must be a valid Feishu card structure)',
+        },
+        chatId: {
+          type: 'string',
+          description: 'Feishu chat ID where the card was sent',
+        },
+      },
+      required: ['messageId', 'card', 'chatId'],
+    },
+    handler: update_card,
+  },
+  wait_for_interaction: {
+    description: 'Wait for the user to interact with a card (click a button, select from menu, etc.). This tool blocks until the user interacts or a timeout is reached. Returns the action value from the button or menu that was clicked.',
+    parameters: {
+      type: 'object',
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The message ID of the card to wait for',
+        },
+        chatId: {
+          type: 'string',
+          description: 'Feishu chat ID where the card was sent',
+        },
+        timeoutSeconds: {
+          type: 'number',
+          description: 'Maximum time to wait in seconds (default: 300)',
+        },
+      },
+      required: ['messageId', 'chatId'],
+    },
+    handler: wait_for_interaction,
   },
 };
 
@@ -650,6 +970,48 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
       } catch (error) {
         // Return as soft error to avoid SDK subprocess crash
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'update_card',
+    description: 'Update an existing interactive card message. Use this to change the content of a card that was already sent.\n\n**Use Cases:**\n- Update progress indicators\n- Change button states (enable/disable)\n- Show results after user action\n- Display dynamic content\n\n**Note:** The card must have been sent previously using send_user_feedback with format="card".',
+    parameters: z.object({
+      messageId: z.string().describe('The message ID of the card to update (from the original send_user_feedback response)'),
+      card: z.object({}).passthrough().describe('The new card content (must be a valid Feishu card structure with config, header, elements)'),
+      chatId: z.string().describe('Feishu chat ID where the card was sent'),
+    }),
+    handler: async ({ messageId, card, chatId }) => {
+      try {
+        const result = await update_card({ messageId, card, chatId });
+        if (result.success) {
+          return toolSuccess(result.message);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Card update failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'wait_for_interaction',
+    description: 'Wait for the user to interact with a card (click a button, select from menu, etc.).\n\n**This tool blocks** until the user interacts or a timeout is reached.\n\n**Returns:**\n- actionValue: The value of the button or menu option that was clicked\n- actionType: The type of interaction (button, menu, etc.)\n- userId: The ID of the user who interacted\n\n**Use Cases:**\n- Wait for user confirmation before proceeding\n- Get user selection from a menu\n- Handle multi-step card workflows\n\n**Note:** This tool will timeout after the specified duration (default: 5 minutes).',
+    parameters: z.object({
+      messageId: z.string().describe('The message ID of the card to wait for'),
+      chatId: z.string().describe('Feishu chat ID where the card was sent'),
+      timeoutSeconds: z.number().optional().describe('Maximum time to wait in seconds (default: 300 = 5 minutes)'),
+    }),
+    handler: async ({ messageId, chatId, timeoutSeconds }) => {
+      try {
+        const result = await wait_for_interaction({ messageId, chatId, timeoutSeconds });
+        if (result.success) {
+          return toolSuccess(`${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

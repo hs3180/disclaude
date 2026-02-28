@@ -6,6 +6,9 @@
  * - getCardValidationError: Detailed validation error messages (via behavior testing)
  * - send_user_feedback: Message sending to Feishu
  * - send_file_to_feishu: File sending to Feishu
+ * - update_card: Update existing card message
+ * - wait_for_interaction: Wait for user card interaction
+ * - resolvePendingInteraction: Resolve pending interaction
  * - setMessageSentCallback: Callback management
  */
 
@@ -22,6 +25,7 @@ const mockClient = {
     message: {
       create: vi.fn(),
       reply: vi.fn(),
+      patch: vi.fn(),
     },
   },
 };
@@ -62,6 +66,9 @@ import * as fs from 'fs/promises';
 import {
   send_user_feedback,
   send_file_to_feishu,
+  update_card,
+  wait_for_interaction,
+  resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
 } from './feishu-context-mcp.js';
@@ -540,6 +547,213 @@ describe('Feishu Context MCP Tools', () => {
       expect(result.feishuCode).toBe(99991663);
       expect(result.feishuMsg).toBe('permission denied');
       expect(result.feishuLogId).toBe('log-123');
+    });
+  });
+
+  describe('update_card', () => {
+    it('should have update_card tool definition', () => {
+      expect(feishuContextTools.update_card).toBeDefined();
+      expect(feishuContextTools.update_card.description).toContain('Update an existing interactive card');
+      expect(feishuContextTools.update_card.handler).toBe(update_card);
+    });
+
+    it('should require messageId', async () => {
+      const result = await update_card({
+        messageId: '',
+        card: { config: {}, header: {}, elements: [] },
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('messageId is required');
+    });
+
+    it('should require card', async () => {
+      const result = await update_card({
+        messageId: 'msg-123',
+        card: null as unknown as Record<string, unknown>,
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('card is required');
+    });
+
+    it('should require chatId', async () => {
+      const result = await update_card({
+        messageId: 'msg-123',
+        card: { config: {}, header: {}, elements: [] },
+        chatId: '',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('chatId is required');
+    });
+
+    it('should validate card structure', async () => {
+      const result = await update_card({
+        messageId: 'msg-123',
+        card: { invalid: 'structure' },
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid card structure');
+    });
+
+    it('should update card in CLI mode', async () => {
+      const result = await update_card({
+        messageId: 'msg-123',
+        card: {
+          config: { wide_screen_mode: true },
+          header: {
+            title: { tag: 'plain_text', content: 'Updated Card' },
+            template: 'blue',
+          },
+          elements: [{ tag: 'markdown', content: '**Updated**' }],
+        },
+        chatId: 'cli-test',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('CLI mode');
+    });
+
+    it('should call Feishu API patch endpoint', async () => {
+      mockClient.im.message.patch.mockResolvedValueOnce({});
+
+      const card = {
+        config: { wide_screen_mode: true },
+        header: {
+          title: { tag: 'plain_text', content: 'Updated Card' },
+          template: 'blue',
+        },
+        elements: [{ tag: 'markdown', content: '**Updated**' }],
+      };
+
+      const result = await update_card({
+        messageId: 'msg-123',
+        card,
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockClient.im.message.patch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: { message_id: 'msg-123' },
+        })
+      );
+    });
+
+    it('should handle API errors', async () => {
+      mockClient.im.message.patch.mockRejectedValueOnce(new Error('Patch failed'));
+
+      const result = await update_card({
+        messageId: 'msg-123',
+        card: {
+          config: { wide_screen_mode: true },
+          header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
+          elements: [],
+        },
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Patch failed');
+    });
+  });
+
+  describe('wait_for_interaction', () => {
+    it('should have wait_for_interaction tool definition', () => {
+      expect(feishuContextTools.wait_for_interaction).toBeDefined();
+      expect(feishuContextTools.wait_for_interaction.description).toContain('Wait for the user to interact');
+      expect(feishuContextTools.wait_for_interaction.handler).toBe(wait_for_interaction);
+    });
+
+    it('should require messageId', async () => {
+      const result = await wait_for_interaction({
+        messageId: '',
+        chatId: 'chat-123',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('messageId is required');
+    });
+
+    it('should require chatId', async () => {
+      const result = await wait_for_interaction({
+        messageId: 'msg-123',
+        chatId: '',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('chatId is required');
+    });
+
+    it('should simulate interaction in CLI mode', async () => {
+      const result = await wait_for_interaction({
+        messageId: 'msg-123',
+        chatId: 'cli-test',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.actionValue).toBe('simulated');
+      expect(result.actionType).toBe('button');
+    });
+
+    it('should resolve when interaction is received', async () => {
+      // Start waiting for interaction
+      const waitPromise = wait_for_interaction({
+        messageId: 'msg-456',
+        chatId: 'chat-123',
+        timeoutSeconds: 5,
+      });
+
+      // Simulate interaction being received
+      setTimeout(() => {
+        resolvePendingInteraction('msg-456', 'confirm', 'button', 'user-789');
+      }, 50);
+
+      const result = await waitPromise;
+
+      expect(result.success).toBe(true);
+      expect(result.actionValue).toBe('confirm');
+      expect(result.actionType).toBe('button');
+      expect(result.userId).toBe('user-789');
+    });
+
+    it('should timeout if no interaction received', async () => {
+      const result = await wait_for_interaction({
+        messageId: 'msg-timeout',
+        chatId: 'chat-123',
+        timeoutSeconds: 1,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('timeout');
+    });
+
+    it('should reject duplicate wait for same message', async () => {
+      // Start first wait
+      const firstWait = wait_for_interaction({
+        messageId: 'msg-dup',
+        chatId: 'chat-123',
+        timeoutSeconds: 5,
+      });
+
+      // Try to wait again for same message
+      const secondResult = await wait_for_interaction({
+        messageId: 'msg-dup',
+        chatId: 'chat-123',
+        timeoutSeconds: 1,
+      });
+
+      expect(secondResult.success).toBe(false);
+      expect(secondResult.error).toContain('Already waiting');
+
+      // Clean up first wait
+      resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
+      await firstWait;
     });
   });
 });
