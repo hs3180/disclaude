@@ -12,10 +12,16 @@ npm run build
 
 ### 2. Start the Test Server
 
-Start the Communication Node with REST Channel:
+Start the Primary Node with REST Channel:
 
 ```bash
-node dist/cli-entry.js start --mode comm --rest-port 3099 --host 127.0.0.1
+node dist/cli-entry.js start --mode primary --rest-port 3099 --host 127.0.0.1
+```
+
+With a custom config file:
+
+```bash
+node dist/cli-entry.js start --mode primary --rest-port 3099 --config ./path/to/disclaude.config.yaml
 ```
 
 ### 3. Run Integration Tests
@@ -36,14 +42,28 @@ Integration tests are configured via **environment variables**:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
+| `DISCLAUDE_CONFIG` | (auto-detect) | Path to config file (passed to --config) |
 | `REST_PORT` | 3099 | REST API port for testing |
 | `HOST` | 127.0.0.1 | Test server host |
 | `TIMEOUT` | 10 | Request timeout in seconds |
+| `START_SERVER` | false | Set to 'true' to auto-start server |
 
 Example:
 
 ```bash
 REST_PORT=3099 HOST=127.0.0.1 ./tests/integration/rest-channel-test.sh
+```
+
+With custom config:
+
+```bash
+DISCLAUDE_CONFIG=./test-config.yaml ./tests/integration/rest-channel-test.sh
+```
+
+Auto-start server with custom config:
+
+```bash
+START_SERVER=true DISCLAUDE_CONFIG=./test-config.yaml ./tests/integration/rest-channel-test.sh
 ```
 
 ## Available Tests

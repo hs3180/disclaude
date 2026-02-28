@@ -33,6 +33,23 @@ export interface GlobalArgs {
   nodeId?: string;
   /** Node name for worker mode */
   nodeName?: string;
+  /** Configuration file path */
+  config?: string;
+}
+
+/**
+ * Parse config path from arguments.
+ * This function is used early before Config is loaded.
+ *
+ * @param args - Command line arguments
+ * @returns Config file path or undefined
+ */
+export function parseConfigPath(args: string[] = process.argv.slice(2)): string | undefined {
+  const index = args.indexOf('--config');
+  if (index !== -1 && args[index + 1]) {
+    return args[index + 1];
+  }
+  return undefined;
 }
 
 /**
@@ -123,6 +140,7 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
   const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
   const nodeId = parseArgValue(args, '--node-id') || process.env.EXEC_NODE_ID;
   const nodeName = parseArgValue(args, '--node-name') || process.env.EXEC_NODE_NAME;
+  const config = parseArgValue(args, '--config');
 
   return {
     mode,
@@ -134,6 +152,7 @@ export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalA
     enableRestChannel,
     nodeId,
     nodeName,
+    config,
   };
 }
 

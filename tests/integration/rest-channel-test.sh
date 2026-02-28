@@ -12,6 +12,13 @@
 # Usage:
 #   ./tests/integration/rest-channel-test.sh
 #
+# Environment variables:
+#   DISCLAUDE_CONFIG - Path to config file (passed to --config)
+#   REST_PORT        - REST API port (default: 3099)
+#   HOST             - Test server host (default: 127.0.0.1)
+#   TIMEOUT          - Request timeout in seconds (default: 10)
+#   START_SERVER     - Set to 'true' to auto-start server (default: false)
+#
 # Exit codes:
 #   0 - All tests passed
 #   1 - One or more tests failed
@@ -28,6 +35,9 @@ REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
 TIMEOUT=10
+CONFIG_PATH="${DISCLAUDE_CONFIG:-}"
+START_SERVER="${START_SERVER:-false}"
+SERVER_PID=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -61,6 +71,70 @@ log_fail() {
 log_skip() {
     echo -e "${YELLOW}[SKIP]${NC} $1"
 }
+
+# Start the test server
+start_server() {
+    log_info "Starting test server..."
+
+    cd "$PROJECT_ROOT"
+
+    # Build config argument if provided
+    local config_arg=""
+    if [ -n "$CONFIG_PATH" ]; then
+        config_arg="--config ${CONFIG_PATH}"
+        log_info "Using config file: ${CONFIG_PATH}"
+    fi
+
+    # Start server in background
+    node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT} --host ${HOST} ${config_arg} > /tmp/disclaude-test-server.log 2>&1 &
+    SERVER_PID=$!
+
+    # Wait for server to be ready
+    log_info "Waiting for server to be ready..."
+    local max_retries=30
+    local retry=0
+    while [ $retry -lt $max_retries ]; do
+        if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
+            log_info "Server is ready (PID: ${SERVER_PID})"
+            return 0
+        fi
+        sleep 1
+        retry=$((retry + 1))
+    done
+
+    log_fail "Server failed to start within ${max_retries} seconds"
+    show_server_logs
+    return 1
+}
+
+# Stop the test server
+stop_server() {
+    if [ -n "$SERVER_PID" ]; then
+        log_info "Stopping test server (PID: ${SERVER_PID})..."
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+        SERVER_PID=""
+    fi
+}
+
+# Show server logs for debugging
+show_server_logs() {
+    if [ -f /tmp/disclaude-test-server.log ]; then
+        echo ""
+        echo "Server logs:"
+        echo "----------------------------------------"
+        tail -50 /tmp/disclaude-test-server.log
+        echo "----------------------------------------"
+    fi
+}
+
+# Cleanup on exit
+cleanup() {
+    stop_server
+}
+
+# Register cleanup handler
+trap cleanup EXIT
 
 # Make HTTP request and return status code and body
 make_request() {
@@ -306,21 +380,39 @@ main() {
     echo ""
     echo "API URL: ${API_URL}"
     echo "Timeout: ${TIMEOUT}s"
+    if [ -n "$CONFIG_PATH" ]; then
+        echo "Config: ${CONFIG_PATH}"
+    fi
     echo ""
 
-    # Check if server is running
+    # Check if server is running or should be started
     log_info "Checking if REST server is running..."
     if ! curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
-        echo ""
-        echo -e "${RED}Error: REST server is not running at ${API_URL}${NC}"
-        echo ""
-        echo "Please start the server first:"
-        echo "  npm run build"
-        echo "  node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT}"
-        echo ""
-        exit 1
+        if [ "$START_SERVER" = "true" ]; then
+            log_info "Server not running, starting automatically..."
+            if ! start_server; then
+                exit 1
+            fi
+        else
+            echo ""
+            echo -e "${RED}Error: REST server is not running at ${API_URL}${NC}"
+            echo ""
+            echo "Please start the server first:"
+            echo "  npm run build"
+            echo "  node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT}"
+            if [ -n "$CONFIG_PATH" ]; then
+                echo "  # Or with custom config:"
+                echo "  node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT} --config ${CONFIG_PATH}"
+            fi
+            echo ""
+            echo "Or set START_SERVER=true to auto-start the server:"
+            echo "  START_SERVER=true ./tests/integration/rest-channel-test.sh"
+            echo ""
+            exit 1
+        fi
+    else
+        log_info "Server is already running"
     fi
-    log_info "Server is running"
     echo ""
 
     # Run tests
@@ -349,6 +441,9 @@ main() {
     echo ""
 
     if [ "$TESTS_FAILED" -gt 0 ]; then
+        if [ "$START_SERVER" = "true" ]; then
+            show_server_logs
+        fi
         exit 1
     fi
 

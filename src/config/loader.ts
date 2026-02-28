@@ -118,6 +118,32 @@ export function getConfigFromFile(fileConfig: LoadedConfig): DisclaudeConfig {
 }
 
 /**
+ * Pre-loaded configuration set via CLI --config argument.
+ * This allows the configuration to be set before the Config class is loaded.
+ */
+let preloadedConfig: LoadedConfig | null = null;
+
+/**
+ * Set pre-loaded configuration from CLI --config argument.
+ * Must be called before importing Config class.
+ *
+ * @param config - Pre-loaded configuration
+ */
+export function setLoadedConfig(config: LoadedConfig): void {
+  preloadedConfig = config;
+  logger.debug({ source: config._source }, 'Pre-loaded configuration set');
+}
+
+/**
+ * Get pre-loaded configuration if set.
+ *
+ * @returns Pre-loaded configuration or null
+ */
+export function getPreloadedConfig(): LoadedConfig | null {
+  return preloadedConfig;
+}
+
+/**
  * Validate configuration structure.
  *
  * Performs basic validation to ensure the configuration is well-formed.

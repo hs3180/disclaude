@@ -5,12 +5,76 @@
  * - primary: Primary Node (comm + exec, recommended for single-machine)
  * - worker: Worker Node (exec only, connects to Primary)
  */
-import { Config } from './config/index.js';
-import { initLogger, flushLogger, getRootLogger } from './utils/logger.js';
-import { handleError, ErrorCategory } from './utils/error-handler.js';
-import { setupSkillsInWorkspace } from './utils/skills-setup.js';
-import { parseGlobalArgs } from './utils/cli-args.js';
+
+// Parse --config argument BEFORE importing Config
+// This must be done first to allow loading a custom config file
+import { loadConfigFile, setLoadedConfig } from './config/loader.js';
 import packageJson from '../package.json' with { type: 'json' };
+
+/**
+ * Parse --config argument from command line.
+ * This is done before any other imports to allow custom config loading.
+ */
+function parseConfigPath(): string | undefined {
+  const args = process.argv.slice(2);
+  const index = args.indexOf('--config');
+  if (index !== -1 && args[index + 1]) {
+    return args[index + 1];
+  }
+  return undefined;
+}
+
+// Load and set config from --config argument if provided
+// This MUST be done before any dynamic imports of Config-dependent modules
+const configPath = parseConfigPath();
+if (configPath) {
+  const fileConfig = loadConfigFile(configPath);
+  setLoadedConfig(fileConfig);
+}
+
+// Type declarations for dynamically imported modules
+type ConfigType = typeof import('./config/index.js').Config;
+type InitLoggerFn = typeof import('./utils/logger.js').initLogger;
+type FlushLoggerFn = typeof import('./utils/logger.js').flushLogger;
+type GetRootLoggerFn = typeof import('./utils/logger.js').getRootLogger;
+type HandleErrorFn = typeof import('./utils/error-handler.js').handleError;
+type ErrorCategoryType = typeof import('./utils/error-handler.js').ErrorCategory;
+type SetupSkillsFn = typeof import('./utils/skills-setup.js').setupSkillsInWorkspace;
+type ParseGlobalArgsFn = typeof import('./utils/cli-args.js').parseGlobalArgs;
+
+// Module references (populated by loadDependencies)
+let Config: ConfigType;
+let initLogger: InitLoggerFn;
+let flushLogger: FlushLoggerFn;
+let getRootLogger: GetRootLoggerFn;
+let handleError: HandleErrorFn;
+let ErrorCategory: ErrorCategoryType;
+let setupSkillsInWorkspace: SetupSkillsFn;
+let parseGlobalArgs: ParseGlobalArgsFn;
+
+/**
+ * Load all dependencies after config is set.
+ * Uses dynamic imports to ensure Config is initialized with the correct config file.
+ */
+async function loadDependencies(): Promise<void> {
+  const configModule = await import('./config/index.js');
+  Config = configModule.Config;
+
+  const loggerModule = await import('./utils/logger.js');
+  initLogger = loggerModule.initLogger;
+  flushLogger = loggerModule.flushLogger;
+  getRootLogger = loggerModule.getRootLogger;
+
+  const errorHandlerModule = await import('./utils/error-handler.js');
+  handleError = errorHandlerModule.handleError;
+  ErrorCategory = errorHandlerModule.ErrorCategory;
+
+  const skillsModule = await import('./utils/skills-setup.js');
+  setupSkillsInWorkspace = skillsModule.setupSkillsInWorkspace;
+
+  const cliArgsModule = await import('./utils/cli-args.js');
+  parseGlobalArgs = cliArgsModule.parseGlobalArgs;
+}
 
 /**
  * Dynamic imports for runners to avoid loading unnecessary modules.
@@ -43,6 +107,7 @@ function showHelp(): void {
   console.log('');
   console.log('Options:');
   console.log('  --mode <primary|worker>              Select run mode (required for start)');
+  console.log('  --config <path>                      Path to configuration file (default: auto-detect)');
   console.log('  --port <port>                        WebSocket port for primary mode (default: 3001)');
   console.log('  --rest-port <port>                   REST API port for primary mode (default: 3000)');
   console.log('  --no-rest                            Disable REST channel');
@@ -64,6 +129,9 @@ function showHelp(): void {
   console.log('  # Single machine (recommended):');
   console.log('  disclaude start --mode primary');
   console.log('');
+  console.log('  # With custom config file:');
+  console.log('  disclaude start --mode primary --config /path/to/config.yaml');
+  console.log('');
   console.log('  # Horizontal scaling (multiple workers):');
   console.log('  disclaude start --mode primary --port 3001');
   console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-1');
@@ -80,6 +148,9 @@ function showHelp(): void {
  * Main CLI entry point with enhanced error handling.
  */
 async function main(): Promise<void> {
+  // Load all dependencies after config is set
+  await loadDependencies();
+
   const logger = await initLogger({
     metadata: {
       version: packageJson.version,
@@ -94,7 +165,8 @@ async function main(): Promise<void> {
   logger.info({
     mode,
     command: process.argv[2],
-    args: process.argv.slice(3)
+    args: process.argv.slice(3),
+    configPath: configPath || 'auto-detect'
   }, 'Disclaude starting');
 
   // Change working directory to workspace directory
@@ -212,6 +284,10 @@ async function main(): Promise<void> {
 
 // Handle shutdown gracefully
 process.on('SIGINT', async () => {
+  // Ensure dependencies are loaded before using them
+  if (!flushLogger) {
+    await loadDependencies();
+  }
   const logger = await initLogger();
   logger.info('Received SIGINT, shutting down gracefully');
 
@@ -224,7 +300,11 @@ process.on('SIGINT', async () => {
 });
 
 // Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', async (error) => {
+  // Ensure dependencies are loaded before using them
+  if (!getRootLogger) {
+    await loadDependencies();
+  }
   const logger = getRootLogger();
   logger.fatal({ err: error }, 'Uncaught exception');
   void flushLogger().finally(() => process.exit(1));
@@ -232,6 +312,12 @@ process.on('uncaughtException', (error) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
+  // Use console as fallback if logger not initialized
+  if (!getRootLogger || !flushLogger) {
+    console.error('Unhandled promise rejection:', reason);
+    process.exit(1);
+    return;
+  }
   const logger = getRootLogger();
   logger.fatal({ err: reason, promise }, 'Unhandled promise rejection');
   void flushLogger().finally(() => process.exit(1));
@@ -239,6 +325,12 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Run main with error handling
 main().catch(async (error) => {
+  // Ensure dependencies are loaded before using them
+  if (!initLogger || !flushLogger) {
+    console.error('Fatal error in main:', error);
+    process.exit(1);
+    return;
+  }
   const logger = await initLogger();
   logger.fatal({ err: error }, 'Fatal error in main');
   await flushLogger();
