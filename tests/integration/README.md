@@ -90,6 +90,25 @@ Options:
 - `--verbose`: Enable verbose output
 - `--dry-run`: Show test plan without executing
 
+### Use Case 2 - Task Execution (`use-case-2-task-execution.sh`)
+
+Tests task execution scenario: User sends a task, Agent executes and returns result.
+
+- **Health Check**: Verifies server is running
+- **Calculation Task**: Agent computes 25 * 17
+- **File Listing Task**: Agent lists directory contents
+- **Text Analysis Task**: Agent summarizes text
+
+```bash
+./tests/integration/use-case-2-task-execution.sh
+```
+
+Options:
+- `--timeout SECONDS`: Maximum wait time for response (default: 60)
+- `--port PORT`: REST API port (default: 3099)
+- `--verbose`: Enable verbose output
+- `--dry-run`: Show test plan without executing
+
 ## Adding New Tests
 
 To add a new integration test:
