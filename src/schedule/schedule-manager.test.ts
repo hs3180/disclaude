@@ -220,7 +220,7 @@ describe('ScheduleManager', () => {
   });
 
   describe('markExecuted', () => {
-    it('should update lastExecutedAt', async () => {
+    it('should update lastExecutedAt in memory (not in file)', async () => {
       const task = await manager.create({
         name: 'Test Task',
         cron: '0 9 * * *',
@@ -228,12 +228,35 @@ describe('ScheduleManager', () => {
         chatId: 'test-chat',
       });
 
-      expect(task.lastExecutedAt).toBeUndefined();
+      // Initially no lastExecutedAt
+      expect(manager.getLastExecutedAt(task.id)).toBeUndefined();
 
-      await manager.markExecuted(task.id);
+      // Mark as executed (synchronous, in-memory only)
+      manager.markExecuted(task.id);
 
-      const updated = await manager.get(task.id);
-      expect(updated?.lastExecutedAt).toBeDefined();
+      // Should be available in memory
+      const lastExecutedAt = manager.getLastExecutedAt(task.id);
+      expect(lastExecutedAt).toBeDefined();
+      expect(lastExecutedAt instanceof Date).toBe(true);
+
+      // Should NOT be persisted to file
+      const taskFromFile = await manager.get(task.id);
+      expect(taskFromFile?.lastExecutedAt).toBeUndefined();
+    });
+
+    it('should clear lastExecutedAt cache on delete', async () => {
+      const task = await manager.create({
+        name: 'Test Task',
+        cron: '0 9 * * *',
+        prompt: 'Test prompt',
+        chatId: 'test-chat',
+      });
+
+      manager.markExecuted(task.id);
+      expect(manager.getLastExecutedAt(task.id)).toBeDefined();
+
+      await manager.delete(task.id);
+      expect(manager.getLastExecutedAt(task.id)).toBeUndefined();
     });
   });
 
