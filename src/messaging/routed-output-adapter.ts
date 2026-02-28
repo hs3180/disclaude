@@ -34,7 +34,9 @@ export interface RoutedOutputAdapterOptions {
  */
 export class RoutedOutputAdapter implements OutputAdapter {
   private readonly router: IMessageRouter;
+  // Reserved for future use when router has no admin configured
   private readonly defaultChatId?: string;
+  // Reserved for debug logging
   private readonly debug: boolean;
 
   // Throttle state for progress messages
@@ -48,6 +50,16 @@ export class RoutedOutputAdapter implements OutputAdapter {
     this.router = options.router;
     this.defaultChatId = options.defaultChatId;
     this.debug = options.debug ?? false;
+  }
+
+  /** Get the default chat ID (reserved for future use) */
+  getDefaultChatId(): string | undefined {
+    return this.defaultChatId;
+  }
+
+  /** Check if debug mode is enabled */
+  isDebugEnabled(): boolean {
+    return this.debug;
   }
 
   /**

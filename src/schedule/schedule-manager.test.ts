@@ -424,7 +424,8 @@ Updated`;
       const expectedId = getTaskId('test-task');
 
       // Create second manager (simulating another process)
-      const _manager2 = new ScheduleManager({ schedulesDir: testDir });
+      // The manager is created to simulate another process but not directly used
+      void new ScheduleManager({ schedulesDir: testDir });
 
       // Modify file directly (simulating update via another process)
       const filePath = path.join(testDir, 'test-task.md');

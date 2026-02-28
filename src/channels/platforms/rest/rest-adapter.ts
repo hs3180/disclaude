@@ -29,8 +29,9 @@ export interface RestPlatformAdapterConfig {
  * Supports both sync and async modes.
  */
 export class RestMessageSender implements IMessageSender {
-  // Reserved for future HTTP callback support
+  // Reserved for future HTTP callback support - accessed via getter
   private _baseUrl: string;
+  // Reserved for future HTTP callback support - accessed via getter
   private _apiKey?: string;
   private logger: Logger;
 
@@ -38,6 +39,16 @@ export class RestMessageSender implements IMessageSender {
     this._baseUrl = config.baseUrl || 'http://localhost:3000';
     this._apiKey = config.apiKey;
     this.logger = config.logger;
+  }
+
+  /** Get the base URL (reserved for future HTTP callback support) */
+  getBaseUrl(): string {
+    return this._baseUrl;
+  }
+
+  /** Get the API key (reserved for future HTTP callback support) */
+  getApiKey(): string | undefined {
+    return this._apiKey;
   }
 
   sendText(chatId: string, text: string, threadId?: string): Promise<void> {
@@ -92,7 +103,7 @@ export class RestPlatformAdapter implements IPlatformAdapter {
   // REST adapter does not support file handling
   readonly fileHandler = undefined;
 
-  // Reserved for future logging needs
+  // Reserved for future logging needs - accessed via getter
   private _logger: Logger;
   private baseUrl: string;
 
@@ -110,5 +121,12 @@ export class RestPlatformAdapter implements IPlatformAdapter {
    */
   getBaseUrl(): string {
     return this.baseUrl;
+  }
+
+  /**
+   * Get the logger instance (reserved for future use).
+   */
+  getLogger(): Logger {
+    return this._logger;
   }
 }

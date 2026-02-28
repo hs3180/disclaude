@@ -256,6 +256,7 @@ Prompt`;
         blocking: true,
         chatId: 'oc_test',
         prompt: 'Task prompt',
+        createdAt: '2024-01-01T00:00:00.000Z',
       };
 
       const filePath = await scanner.writeTask(task);
@@ -305,6 +306,7 @@ Prompt`;
         blocking: true,
         chatId: 'oc_test',
         prompt: 'Prompt',
+        createdAt: '2024-01-01T00:00:00.000Z',
       });
 
       const exists = await fs.access(newDir).then(() => true).catch(() => false);
@@ -323,6 +325,7 @@ Prompt`;
         blocking: true,
         chatId: 'oc_test',
         prompt: 'Prompt',
+        createdAt: '2024-01-01T00:00:00.000Z',
       });
 
       const deleted = await scanner.deleteTask('schedule-task-to-delete');
@@ -366,6 +369,7 @@ Prompt`;
         chatId: 'oc_roundtrip',
         prompt: 'Multi-line\nprompt\nwith special chars: é, 中文, 🎉',
         createdBy: 'ou_creator',
+        createdAt: '2024-01-01T00:00:00.000Z',
       };
 
       await scanner.writeTask(originalTask);
