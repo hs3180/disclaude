@@ -10,10 +10,10 @@
 # - Valid disclaude.config.yaml with AI provider configured
 #
 # Usage:
-#   ./use-case-2-task-execution.sh [options]
+#   ./tests/integration/use-case-2-task-execution.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Maximum wait time for response (default: 60)
+#   --timeout SECONDS   Request timeout (default: 60)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -26,37 +26,16 @@ set -e
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-VERBOSE=false
-DRY_RUN=false
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --timeout)
-            TIMEOUT="$2"
-            shift 2
-            ;;
-        --port)
-            REST_PORT="$2"
-            shift 2
-            ;;
-        --verbose)
-            VERBOSE=true
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
+# Set defaults before sourcing common.sh
+REST_PORT="${REST_PORT:-3099}"
+TIMEOUT="${TIMEOUT:-60}"
 
 # Source common functions
 source "$SCRIPT_DIR/common.sh"
+
+# Parse common arguments
+parse_common_args "$@"
 
 # Register cleanup handler
 register_cleanup
@@ -65,69 +44,45 @@ register_cleanup
 # Test Functions
 # =============================================================================
 
-# Test 1: Health check endpoint
-test_health_check() {
-    log_info "Test 1: Health check..."
-
-    local result
-    result=$(make_request "GET" "/api/health")
-
-    local status="${result%%|*}"
-    local body="${result#*|}"
-
-    log_debug "Health response: $body"
-
-    if [ "$status" = "200" ] && echo "$body" | grep -q '"status":"ok"'; then
-        log_pass "Health check returns 200 with status: ok"
-        return 0
-    else
-        log_fail "Health check returned status $status (expected 200)"
-        return 1
-    fi
-}
-
 # Test 2: Simple calculation task - Agent executes a math operation
 test_calculation_task() {
     log_info "Test 2: Calculation task (25 * 17)..."
 
     local test_message="请帮我计算 25 乘以 17 等于多少？"
     local result
-    local status
-    local body
 
     log_debug "Sending message: $test_message"
 
     # Send synchronous chat request
     result=$(make_sync_request "$test_message")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    log_debug "HTTP code: $status"
-    log_debug "Response: $body"
+    log_debug "HTTP code: $RESPONSE_STATUS"
+    log_debug "Response: $RESPONSE_BODY"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Request failed with HTTP $status"
-        log_debug "Response: $body"
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Request failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check success status
     local success
-    success=$(echo "$body" | grep -o '"success":[^,}]*' | cut -d':' -f2)
+    success=$(extract_json_bool "success")
 
     if [ "$success" != "true" ]; then
         log_fail "Request was not successful"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check if we got a response
     local response_text
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    response_text=$(extract_json_field "response")
 
     if [ -z "$response_text" ]; then
         log_fail "No response text received"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
@@ -150,42 +105,39 @@ test_file_listing_task() {
     local test_message="请列出当前目录下的所有文件"
     local custom_chat_id="test-use-case-2-files-$$"
     local result
-    local status
-    local body
 
     log_debug "Sending message with chatId: $custom_chat_id"
 
     # Send synchronous chat request
     result=$(make_sync_request "$test_message" "$custom_chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    log_debug "HTTP code: $status"
-    log_debug "Response: $body"
+    log_debug "HTTP code: $RESPONSE_STATUS"
+    log_debug "Response: $RESPONSE_BODY"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Request failed with HTTP $status"
-        log_debug "Response: $body"
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Request failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check success status
     local success
-    success=$(echo "$body" | grep -o '"success":[^,}]*' | cut -d':' -f2)
+    success=$(extract_json_bool "success")
 
     if [ "$success" != "true" ]; then
         log_fail "Request was not successful"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check if we got a response
     local response_text
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    response_text=$(extract_json_field "response")
 
     if [ -z "$response_text" ]; then
         log_fail "No response text received"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
@@ -208,42 +160,39 @@ test_text_analysis_task() {
     local test_message="请用一句话总结：人工智能是计算机科学的一个分支，它试图理解智能的本质，并开发出一种新的能以人类智能相似的方式做出反应的智能机器。"
     local custom_chat_id="test-use-case-2-text-$$"
     local result
-    local status
-    local body
 
     log_debug "Sending message with chatId: $custom_chat_id"
 
     # Send synchronous chat request
     result=$(make_sync_request "$test_message" "$custom_chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    log_debug "HTTP code: $status"
-    log_debug "Response: $body"
+    log_debug "HTTP code: $RESPONSE_STATUS"
+    log_debug "Response: $RESPONSE_BODY"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Request failed with HTTP $status"
-        log_debug "Response: $body"
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Request failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check success status
     local success
-    success=$(echo "$body" | grep -o '"success":[^,}]*' | cut -d':' -f2)
+    success=$(extract_json_bool "success")
 
     if [ "$success" != "true" ]; then
         log_fail "Request was not successful"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
     # Check if we got a response
     local response_text
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    response_text=$(extract_json_field "response")
 
     if [ -z "$response_text" ]; then
         log_fail "No response text received"
-        log_debug "Response: $body"
+        log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
 
