@@ -1,0 +1,10 @@
+# Test configuration with secrets
+feishu-test-config.yaml
+
+# Test artifacts
+*.log
+*.tmp
+test-results/
+
+# Node modules (if any local installs)
+node_modules/

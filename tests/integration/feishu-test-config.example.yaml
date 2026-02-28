@@ -1,0 +1,35 @@
+# Feishu Channel Integration Test Configuration
+#
+# Copy this file to feishu-test-config.yaml and fill in your values.
+# DO NOT commit the actual config file with secrets!
+#
+# Usage:
+#   cp feishu-test-config.example.yaml feishu-test-config.yaml
+#   # Edit feishu-test-config.yaml with your Feishu sandbox credentials
+#
+
+# Feishu App credentials (required)
+# Get these from Feishu Open Platform: https://open.feishu.cn/app
+feishu:
+  app_id: ""        # Your Feishu App ID
+  app_secret: ""    # Your Feishu App Secret
+
+# Test configuration (optional)
+test:
+  # Chat ID for testing message operations
+  # If not provided, tests will be skipped
+  chat_id: ""
+
+  # User ID for testing user info retrieval
+  # If not provided, this test will be skipped
+  user_id: ""
+
+  # Test timeout in seconds
+  timeout: 120
+
+# API endpoints (usually don't need to change)
+api:
+  base_url: "https://open.feishu.cn"
+  auth_endpoint: "/open-apis/auth/v3/tenant_access_token/internal"
+  message_endpoint: "/open-apis/im/v1/messages"
+  user_endpoint: "/open-apis/contact/v3/users"
