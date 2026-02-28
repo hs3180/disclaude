@@ -119,6 +119,12 @@ interface MessageData {
  * - ConversationOrchestrator for conversation management (from #237)
  */
 export class Pilot extends BaseAgent {
+  /** Agent type identifier (Issue #282) */
+  readonly type = 'chat' as const;
+
+  /** Agent name for logging */
+  readonly name = 'Pilot';
+
   private readonly callbacks: PilotCallbacks;
 
   // Separated concerns

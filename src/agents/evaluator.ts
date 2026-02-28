@@ -53,6 +53,12 @@ export interface EvaluatorConfig extends BaseAgentConfig {
  * - Error handling
  */
 export class Evaluator extends BaseAgent {
+  /** Agent type identifier (Issue #282) */
+  readonly type = 'skill' as const;
+
+  /** Agent name for logging */
+  readonly name = 'Evaluator';
+
   private fileManager: TaskFileManager;
 
   constructor(config: EvaluatorConfig) {

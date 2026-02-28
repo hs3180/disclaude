@@ -51,6 +51,12 @@ const REPORTER_ALLOWED_TOOLS = ['send_user_feedback', 'send_file_to_feishu'];
  * - Error handling
  */
 export class Reporter extends BaseAgent {
+  /** Agent type identifier (Issue #282) */
+  readonly type = 'skill' as const;
+
+  /** Agent name for logging */
+  readonly name = 'Reporter';
+
   constructor(config: BaseAgentConfig) {
     super(config);
   }
