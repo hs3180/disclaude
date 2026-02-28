@@ -102,7 +102,7 @@ export class PrimaryNode extends EventEmitter {
 
   // Local execution
   private localExecEnabled: boolean;
-  private sharedPilot?: ReturnType<typeof AgentFactory.createPilot>;
+  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
@@ -433,7 +433,7 @@ export class PrimaryNode extends EventEmitter {
     console.log('Initializing local execution capability...');
 
     // Create shared Pilot instance
-    this.sharedPilot = AgentFactory.createPilot({
+    this.sharedPilot = AgentFactory.createChatAgent('pilot', {
       sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
         const ctx = this.activeFeedbackChannels.get(chatId);
         if (ctx) {
