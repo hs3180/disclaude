@@ -24,7 +24,7 @@ import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
+import type { SkillAgent, UserInput } from './types.js';
 
 /**
  * Evaluator-specific allowed tools.

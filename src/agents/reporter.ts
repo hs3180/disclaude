@@ -33,7 +33,7 @@
 import type { AgentMessage } from '../types/agent.js';
 import type { ReporterContext } from '../types/reporter.js';
 import type { TaskProgressEvent } from './executor.js';
-import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
+import type { SkillAgent, UserInput } from './types.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 

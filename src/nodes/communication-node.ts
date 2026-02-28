@@ -19,7 +19,7 @@ import http from 'node:http';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
-import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
+import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';

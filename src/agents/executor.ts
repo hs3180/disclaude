@@ -17,7 +17,7 @@ import * as fs from 'fs/promises';
 import type { ParsedSDKMessage, AgentMessage } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
+import type { SkillAgent, UserInput } from './types.js';
 
 /**
  * Executor configuration.

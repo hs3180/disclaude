@@ -619,7 +619,7 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
  * Export a factory function for convenience.
  * @deprecated Use `new SiteMiner(config)` instead
  */
-export function createSiteMiner(config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
+export function createSiteMiner(_config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
   // SiteMiner uses global config, but this allows for future customization
   return runSiteMiner;
 }
