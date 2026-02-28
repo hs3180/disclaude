@@ -1,0 +1,4 @@
+# Integration test temporary files
+*.log
+*.pid
+test-env.yaml
