@@ -22,17 +22,17 @@ vi.mock('../task/task-file-watcher.js', () => ({
   })),
 }));
 
-// Mock DialogueOrchestrator
+// Mock TaskController (Issue #283)
 vi.mock('../task/index.js', () => ({
-  DialogueOrchestrator: vi.fn().mockImplementation(() => ({
-    runDialogue: vi.fn().mockImplementation(async function* () {
+  TaskController: vi.fn().mockImplementation(() => ({
+    run: vi.fn().mockImplementation(async function* () {
       yield { content: 'Test message', messageType: 'text', metadata: {} };
     }),
-    getMessageTracker: vi.fn(() => ({
-      recordMessageSent: vi.fn(),
-      hasAnyMessage: vi.fn(() => true),
-      buildWarning: vi.fn(() => 'Warning message'),
-    })),
+  })),
+  DialogueMessageTracker: vi.fn().mockImplementation(() => ({
+    recordMessageSent: vi.fn(),
+    hasAnyMessage: vi.fn(() => true),
+    buildWarning: vi.fn(() => 'Warning message'),
   })),
   extractText: vi.fn((msg) => msg.content || ''),
 }));
@@ -209,19 +209,14 @@ describe('TaskFlowOrchestrator', () => {
 
   describe('Error Handling', () => {
     it('should handle errors in dialogue gracefully', async () => {
-      // Import DialogueOrchestrator mock
-      const { DialogueOrchestrator } = await import('../task/index.js');
+      // Import TaskController mock
+      const { TaskController } = await import('../task/index.js');
 
-      // Reset the mock for DialogueOrchestrator to throw
-      (vi.mocked(DialogueOrchestrator).mockImplementationOnce as any)((): any => ({
-        runDialogue: vi.fn().mockImplementation(async function* () {
-          throw new Error('Dialogue failed');
+      // Reset the mock for TaskController to throw
+      (vi.mocked(TaskController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          throw new Error('TaskController failed');
         }),
-        getMessageTracker: vi.fn(() => ({
-          recordMessageSent: vi.fn(),
-          hasAnyMessage: vi.fn(() => false),
-          buildWarning: vi.fn(() => 'Warning'),
-        })),
       }));
 
       const errorOrchestrator = new TaskFlowOrchestrator(

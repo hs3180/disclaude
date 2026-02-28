@@ -1,15 +1,15 @@
 /**
  * Agent module exports.
  *
- * Architecture (Evaluation-Execution):
+ * Architecture (Evaluation-Execution - Issue #283):
  * - Pilot: Handles user messages with deep-task skill for Task.md creation
  * - Evaluator: Task completion evaluation
  * - Executor: Executes tasks directly with Reporter for progress updates
- * - DialogueOrchestrator: Manages direct Evaluator-Executor flow
+ * - TaskController: Unified controller for Evaluate → Execute → Repeat pattern
  *
  * Complete Workflow:
  * Flow 1: User request → Pilot (with deep-task skill) → Task.md
- * Flow 2: Task.md → Evaluator (evaluate) → Executor (execute directly) → ...
+ * Flow 2: Task.md → TaskController → Evaluator → Executor → ...
  *
  * Evaluation-Execution Flow:
  * - Evaluator assesses task completion and identifies missing items
@@ -17,25 +17,20 @@
  * - No intermediate planning layer - direct execution for faster response
  * - Real-time streaming of agent messages for immediate user feedback
  *
- * Session Management:
- * - Orchestrator internally manages sessions per messageId
- * - Each iteration creates fresh agent instances
- * - Context maintained via previousExecutorOutput between iterations
+ * TaskController (Issue #283):
+ * - Replaces DialogueOrchestrator + IterationBridge
+ * - Single point of state management
+ * - File-based completion detection (final_result.md)
  */
 
 // Core agents
 export { Evaluator } from '../agents/evaluator.js';
 
-// Bridges
+// Task Controller (Issue #283 - replaces DialogueOrchestrator + IterationBridge)
 export {
-  DialogueOrchestrator,
-  type DialogueOrchestratorConfig,
-} from './dialogue-orchestrator.js';
-
-export {
-  IterationBridge,
-  type IterationBridgeConfig,
-} from './iteration-bridge.js';
+  TaskController,
+  type TaskControllerConfig,
+} from './task-controller.js';
 
 // Supporting modules
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';

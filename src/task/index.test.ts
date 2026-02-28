@@ -3,7 +3,7 @@
  *
  * Tests the following functionality:
  * - All core agents are exported correctly
- * - All bridges are exported correctly
+ * - TaskController is exported correctly (Issue #283)
  * - Supporting modules are exported correctly
  * - Feishu context MCP tools are exported correctly
  * - Utility functions are exported correctly
@@ -18,22 +18,12 @@ describe('Task Module Exports', () => {
       expect(TaskModule.Evaluator).toBeDefined();
       expect(typeof TaskModule.Evaluator).toBe('function');
     });
-
-    it('should export Evaluator', () => {
-      expect(TaskModule.Evaluator).toBeDefined();
-      expect(typeof TaskModule.Evaluator).toBe('function');
-    });
   });
 
-  describe('Bridges', () => {
-    it('should export DialogueOrchestrator', () => {
-      expect(TaskModule.DialogueOrchestrator).toBeDefined();
-      expect(typeof TaskModule.DialogueOrchestrator).toBe('function');
-    });
-
-    it('should export IterationBridge', () => {
-      expect(TaskModule.IterationBridge).toBeDefined();
-      expect(typeof TaskModule.IterationBridge).toBe('function');
+  describe('Task Controller (Issue #283)', () => {
+    it('should export TaskController', () => {
+      expect(TaskModule.TaskController).toBeDefined();
+      expect(typeof TaskModule.TaskController).toBe('function');
     });
   });
 
@@ -84,20 +74,8 @@ describe('Task Module Exports', () => {
   });
 
   describe('Exported Types', () => {
-    it('should export ExecutorConfig type', () => {
+    it('should export TaskControllerConfig type', () => {
       // Type exports don't exist at runtime, but we can verify the module structure
-      expect(TaskModule).toBeDefined();
-    });
-
-    it('should export DialogueOrchestratorConfig type', () => {
-      expect(TaskModule).toBeDefined();
-    });
-
-    it('should export TaskPlanData type', () => {
-      expect(TaskModule).toBeDefined();
-    });
-
-    it('should export IterationBridgeConfig type', () => {
       expect(TaskModule).toBeDefined();
     });
   });
@@ -107,12 +85,10 @@ describe('Task Module Exports', () => {
       const exports = Object.keys(TaskModule);
 
       // Core agents
-      // Scout removed - no longer exported
       expect(exports).toContain('Evaluator');
 
-      // Bridges
-      expect(exports).toContain('DialogueOrchestrator');
-      expect(exports).toContain('IterationBridge');
+      // Task Controller (Issue #283)
+      expect(exports).toContain('TaskController');
 
       // Supporting modules
       expect(exports).toContain('DialogueMessageTracker');
