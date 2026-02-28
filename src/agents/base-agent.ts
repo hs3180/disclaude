@@ -25,21 +25,10 @@ import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
-import type { Disposable } from './types.js';
+import type { Disposable, BaseAgentConfig, AgentProvider } from './types.js';
 
-/**
- * Base configuration for all agents.
- */
-export interface BaseAgentConfig {
-  /** API key for authentication */
-  apiKey: string;
-  /** Model identifier */
-  model: string;
-  /** Optional API base URL (e.g., for GLM) */
-  apiBaseUrl?: string;
-  /** Permission mode for tool execution */
-  permissionMode?: 'default' | 'bypassPermissions';
-}
+// Re-export BaseAgentConfig for backward compatibility
+export type { BaseAgentConfig } from './types.js';
 
 /**
  * Extra SDK options configuration.
@@ -110,7 +99,7 @@ export abstract class BaseAgent implements Disposable {
   readonly model: string;
   readonly apiBaseUrl?: string;
   readonly permissionMode: 'default' | 'bypassPermissions';
-  readonly provider: 'anthropic' | 'glm';
+  readonly provider: AgentProvider;
 
   protected readonly logger: ReturnType<typeof createLogger>;
   protected initialized = false;
@@ -122,9 +111,10 @@ export abstract class BaseAgent implements Disposable {
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
-    // Detect provider from Config
-    const agentConfig = Config.getAgentConfig();
-    this.provider = agentConfig.provider;
+    // Get provider from config, fallback to Config.getAgentConfig()
+    // This allows agents to be created with explicit provider setting
+    // while maintaining backward compatibility
+    this.provider = config.provider ?? Config.getAgentConfig().provider;
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());

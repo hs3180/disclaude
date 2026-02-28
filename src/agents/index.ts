@@ -14,6 +14,12 @@
  * - ChatAgent: Continuous conversation agents (Pilot)
  * - SkillAgent: Single-shot task agents (Evaluator, Executor, Reporter)
  * - Subagent: SkillAgent that can be used as a tool (SiteMiner)
+ *
+ * Unified Configuration Types (Issue #327):
+ * - BaseAgentConfig: Base configuration for all agents
+ * - ChatAgentConfig: Configuration for ChatAgent (Pilot)
+ * - SkillAgentConfig: Configuration for SkillAgent (Evaluator, Executor, Reporter)
+ * - SubagentConfig: Configuration for Subagent (SiteMiner)
  */
 
 // Type definitions
@@ -25,6 +31,13 @@ export {
   type UserInput,
   type AgentConfig,
   type AgentFactoryInterface,
+  // Unified configuration types (Issue #327)
+  type AgentProvider,
+  type BaseAgentConfig,
+  type ChatAgentConfig,
+  type SkillAgentConfig,
+  type SubagentConfig,
+  // Type guards
   isChatAgent,
   isSkillAgent,
   isSubagent,

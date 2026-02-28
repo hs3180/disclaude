@@ -7,6 +7,8 @@
  * - createSkillAgent: Create skill agents (evaluator, executor, reporter)
  * - createSubagent: Create subagents (site-miner)
  *
+ * Uses unified configuration types from Issue #327.
+ *
  * @example
  * ```typescript
  * // Create a Pilot (ChatAgent)
@@ -25,7 +27,7 @@
  */
 
 import { Config } from '../config/index.js';
-import type { BaseAgentConfig } from './base-agent.js';
+import type { BaseAgentConfig, AgentProvider } from './types.js';
 import { Evaluator, type EvaluatorConfig } from './evaluator.js';
 import { Executor, type ExecutorConfig } from './executor.js';
 import { Reporter } from './reporter.js';
@@ -35,12 +37,15 @@ import type { ChatAgent, SkillAgent, Subagent } from './types.js';
 
 /**
  * Options for creating agents with custom configuration.
+ * Uses unified configuration structure (Issue #327).
  */
 export interface AgentCreateOptions {
   /** Override API key */
   apiKey?: string;
   /** Override model */
   model?: string;
+  /** Override API provider */
+  provider?: AgentProvider;
   /** Override API base URL */
   apiBaseUrl?: string;
   /** Override permission mode */
@@ -71,6 +76,7 @@ export class AgentFactory {
     return {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
       model: options.model ?? defaultConfig.model,
+      provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };

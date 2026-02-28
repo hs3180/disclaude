@@ -19,7 +19,7 @@ import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { Subagent, UserInput } from './types.js';
+import type { Subagent, UserInput, SubagentConfig } from './types.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
 import type { AgentMessage } from '../types/agent.js';
 
@@ -102,7 +102,11 @@ export class SiteMiner extends BaseAgent implements Subagent {
   /** Default timeout for mining operations */
   private readonly defaultTimeout: number;
 
-  constructor(config: BaseAgentConfig & { defaultTimeout?: number } = {}) {
+  /**
+   * Create a SiteMiner instance.
+   * Uses SubagentConfig for unified configuration structure (Issue #327).
+   */
+  constructor(config: SubagentConfig = {}) {
     super(config);
     this.defaultTimeout = config.defaultTimeout ?? 60000;
   }

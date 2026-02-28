@@ -39,7 +39,7 @@ import type { StreamingUserMessage } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { ChatAgent, UserInput } from './types.js';
+import type { ChatAgent, UserInput, ChatAgentConfig } from './types.js';
 import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
@@ -87,7 +87,7 @@ export interface PilotCallbacks {
 /**
  * Configuration options for Pilot.
  *
- * All configuration fields extend BaseAgentConfig for consistency with other agents.
+ * Uses ChatAgentConfig for unified configuration structure (Issue #327).
  * Use AgentFactory.createPilot() for convenient instance creation with defaults.
  *
  * Note: The special default value logic from Config.getAgentConfig() has been removed.

@@ -24,7 +24,7 @@ import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { SkillAgent, UserInput } from './types.js';
+import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
 
 /**
  * Evaluator-specific allowed tools.
@@ -34,6 +34,7 @@ const EVALUATOR_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Write'];
 
 /**
  * Evaluator-specific configuration.
+ * Uses SkillAgentConfig for unified configuration structure (Issue #327).
  */
 export interface EvaluatorConfig extends BaseAgentConfig {
   /** Optional subdirectory for task files (e.g., 'regular' for CLI tasks) */
