@@ -1,10 +1,12 @@
 /**
- * Tests for FeishuChannel command pass-through behavior when bot is mentioned.
+ * Tests for FeishuChannel command handling behavior.
  *
- * Issue #280: @bot 无法正确透传 /reset 指令给 agent
+ * Issue #280: @bot 无法正确透传 /reset 指令给 agent (original behavior)
+ * Issue #387: /reset 命令在 @提及 时不生效 (fix: control commands always handled locally)
  *
- * When bot is mentioned (@bot), commands should be passed through to the agent
- * instead of being handled locally by the channel.
+ * Control commands (reset, status, help) should ALWAYS be handled locally,
+ * regardless of mentions. Only non-control commands with @mention are passed
+ * to agent for context-aware handling.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -92,7 +94,7 @@ vi.mock('../utils/task-tracker.js', () => ({
 
 import { FeishuChannel } from './feishu-channel.js';
 
-describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
+describe('FeishuChannel - Command Handling (Issue #387)', () => {
   let channel: FeishuChannel;
   let messageHandler: ReturnType<typeof vi.fn>;
   let controlHandler: ReturnType<typeof vi.fn>;
@@ -123,7 +125,7 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
     }
   });
 
-  describe('isBotMentioned helper (indirectly tested via command behavior)', () => {
+  describe('Control commands should ALWAYS be handled locally (Issue #387)', () => {
     /**
      * Helper to simulate receiving a message.
      * We access the private method via type casting for testing.
@@ -157,7 +159,7 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
       await handler({ event: mockEvent });
     }
 
-    it('should handle command locally when bot is NOT mentioned', async () => {
+    it('should handle /reset locally when bot is NOT mentioned', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: undefined, // No mentions
@@ -175,7 +177,7 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should pass command to agent when bot IS mentioned', async () => {
+    it('should handle /reset locally EVEN WHEN bot IS mentioned (Issue #387 fix)', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: [
@@ -187,40 +189,98 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // Control handler should NOT be called (command passed to agent)
-      expect(controlHandler).not.toHaveBeenCalled();
-
-      // Message should be passed to agent
-      expect(messageHandler).toHaveBeenCalledWith(
+      // Control handler SHOULD be called (local handling) - this is the fix for Issue #387
+      expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
+          type: 'reset',
           chatId: 'test-chat-id',
-          content: '/reset',
         })
       );
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should pass command to agent when there are multiple mentions', async () => {
+    it('should handle /status locally when bot IS mentioned', async () => {
       await simulateMessageReceive({
-        text: '/reset',
+        text: '/status',
         mentions: [
           {
-            key: '@_user1',
-            id: { open_id: 'user1-open-id' },
-            name: 'User1',
-          },
-          {
-            key: '@_user2',
-            id: { open_id: 'user2-open-id' },
-            name: 'User2',
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
           },
         ],
       });
 
-      // Command should be passed to agent
+      // Control handler should be called (local handling)
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'status',
+        })
+      );
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /help locally when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/help',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should be called (local handling)
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'help',
+        })
+      );
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should pass NON-CONTROL command to agent when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/custom-command',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should NOT be called for non-control commands with mention
       expect(controlHandler).not.toHaveBeenCalled();
+
+      // Message should be passed to agent for context-aware handling
       expect(messageHandler).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: '/reset',
+          chatId: 'test-chat-id',
+          content: '/custom-command',
+        })
+      );
+    });
+
+    it('should try control handler for unknown commands WITHOUT mention', async () => {
+      await simulateMessageReceive({
+        text: '/unknown-cmd',
+        mentions: undefined,
+      });
+
+      // Control handler should be tried (will return success: false for unknown)
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'unknown-cmd',
         })
       );
     });
@@ -248,18 +308,32 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
       );
     });
 
-    it('should handle command without mentions normally', async () => {
+    it('should handle command with multiple mentions', async () => {
       await simulateMessageReceive({
-        text: '/status',
-        mentions: undefined,
+        text: '/reset',
+        mentions: [
+          {
+            key: '@_user1',
+            id: { open_id: 'user1-open-id' },
+            name: 'User1',
+          },
+          {
+            key: '@_user2',
+            id: { open_id: 'user2-open-id' },
+            name: 'User2',
+          },
+        ],
       });
 
-      // Control handler should be called
+      // Control command should STILL be handled locally
       expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: 'status',
+          type: 'reset',
         })
       );
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
     });
   });
 });
