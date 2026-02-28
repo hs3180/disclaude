@@ -263,8 +263,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Note: EnterPlanMode is disabled for Pilot as it's a task dispatch agent
+    // that should not proactively enter plan mode (Issue #403)
     const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['AskUserQuestion'],
+      disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
     });
 
@@ -384,8 +386,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Note: EnterPlanMode is disabled for Pilot as it's a task dispatch agent
+    // that should not proactively enter plan mode (Issue #403)
     const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['AskUserQuestion'],
+      disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
     });
 
