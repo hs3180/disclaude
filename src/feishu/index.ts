@@ -9,3 +9,5 @@
 // Re-export commonly used components
 export { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 export { messageLogger } from './message-logger.js';
+export { ChatManager } from './chat-manager.js';
+export type { ChatManagerConfig, CreateGroupOptions, ChatInfo } from './chat-manager.js';
