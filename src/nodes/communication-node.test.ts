@@ -138,7 +138,7 @@ describe('CommunicationNode Multi-Execution Node Support', () => {
         appId: undefined,
         appSecret: undefined,
       });
-      execNodeManager = (commNode as any).execNodeManager;
+      ({ execNodeManager } = commNode as any);
     });
 
     it('registerExecNode should add node to execNodes map', () => {
