@@ -14,9 +14,10 @@
  */
 
 import * as fs from 'fs/promises';
-import type { ParsedSDKMessage } from '../types/agent.js';
+import type { ParsedSDKMessage, AgentMessage } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import type { SkillAgent, UserInput } from './types.js';
 
 /**
  * Executor configuration.
@@ -79,7 +80,7 @@ export interface TaskResult {
  * Extends BaseAgent to inherit common functionality while adding
  * Executor-specific features like TaskProgressEvent yielding.
  */
-export class Executor extends BaseAgent {
+export class Executor extends BaseAgent implements SkillAgent {
   /** Agent type identifier (Issue #282) */
   readonly type = 'skill' as const;
 
@@ -355,5 +356,29 @@ ${error ? `## Error\n\n${error}\n` : ''}
     }
 
     return files;
+  }
+
+  /**
+   * Execute a single task and yield results.
+   * Implements SkillAgent interface.
+   *
+   * @param input - Task input as string or structured data
+   * @yields AgentMessage responses
+   */
+  async *execute(input: string | UserInput[]): AsyncGenerator<AgentMessage> {
+    // Convert UserInput[] to string if needed
+    const prompt: string = typeof input === 'string'
+      ? input
+      : input.map(u => u.content).join('\n');
+
+    const sdkOptions = this.createSdkOptions({});
+
+    try {
+      for await (const { parsed } of this.queryOnce(prompt, sdkOptions)) {
+        yield this.formatMessage(parsed);
+      }
+    } catch (error) {
+      yield this.handleIteratorError(error, 'execute');
+    }
   }
 }

@@ -33,6 +33,7 @@
 import type { AgentMessage } from '../types/agent.js';
 import type { ReporterContext } from '../types/reporter.js';
 import type { TaskProgressEvent } from './executor.js';
+import type { SkillAgent, UserInput } from './types.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
@@ -50,7 +51,7 @@ const REPORTER_ALLOWED_TOOLS = ['send_user_feedback', 'send_file_to_feishu'];
  * - GLM logging
  * - Error handling
  */
-export class Reporter extends BaseAgent {
+export class Reporter extends BaseAgent implements SkillAgent {
   /** Agent type identifier (Issue #282) */
   readonly type = 'skill' as const;
 
@@ -477,5 +478,21 @@ You ONLY format and communicate feedback to users.
 `;
 
     return prompt;
+  }
+
+  /**
+   * Execute a single task and yield results.
+   * Implements SkillAgent interface.
+   *
+   * @param input - Task input as string or structured data
+   * @yields AgentMessage responses
+   */
+  async *execute(input: string | UserInput[]): AsyncGenerator<AgentMessage> {
+    // Convert UserInput[] to string if needed
+    const prompt: string = typeof input === 'string'
+      ? input
+      : input.map(u => u.content).join('\n');
+
+    yield* this.sendFeedback(prompt);
   }
 }

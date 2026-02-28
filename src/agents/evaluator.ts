@@ -24,6 +24,7 @@ import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import type { SkillAgent, UserInput } from './types.js';
 
 /**
  * Evaluator-specific allowed tools.
@@ -52,7 +53,7 @@ export interface EvaluatorConfig extends BaseAgentConfig {
  * - GLM logging
  * - Error handling
  */
-export class Evaluator extends BaseAgent {
+export class Evaluator extends BaseAgent implements SkillAgent {
   /** Agent type identifier (Issue #282) */
   readonly type = 'skill' as const;
 
@@ -250,5 +251,21 @@ Task completed successfully.
 **Now start your evaluation.**`;
 
     return prompt;
+  }
+
+  /**
+   * Execute a single task and yield results.
+   * Implements SkillAgent interface.
+   *
+   * @param input - Task input as string or structured data
+   * @yields AgentMessage responses
+   */
+  async *execute(input: string | UserInput[]): AsyncGenerator<AgentMessage> {
+    // Convert UserInput[] to string if needed
+    const prompt: string = typeof input === 'string'
+      ? input
+      : input.map(u => u.content).join('\n');
+
+    yield* this.queryStream(prompt);
   }
 }

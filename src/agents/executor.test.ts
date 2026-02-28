@@ -165,3 +165,68 @@ describe('Executor class', () => {
     });
   });
 });
+
+describe('Executor SkillAgent Interface', () => {
+  let Executor: typeof import('./executor.js').Executor;
+  let isSkillAgent: typeof import('./types.js').isSkillAgent;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    ({ Executor } = await import('./executor.js'));
+    ({ isSkillAgent } = await import('./types.js'));
+  });
+
+  it('should implement SkillAgent interface', () => {
+    const executor = new Executor({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(executor.type).toBe('skill');
+    expect(executor.name).toBe('Executor');
+    expect(typeof executor.execute).toBe('function');
+    expect(typeof executor.cleanup).toBe('function');
+  });
+
+  it('should pass isSkillAgent type guard', () => {
+    const executor = new Executor({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(isSkillAgent(executor)).toBe(true);
+  });
+
+  describe('execute', () => {
+    it('should accept string input', async () => {
+      const executor = new Executor({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of executor.execute('Test prompt')) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+
+    it('should accept UserInput array', async () => {
+      const executor = new Executor({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of executor.execute([
+        { role: 'user', content: 'First message' },
+        { role: 'user', content: 'Second message' },
+      ])) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
+});

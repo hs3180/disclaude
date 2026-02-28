@@ -186,3 +186,68 @@ describe('Evaluator class', () => {
     });
   });
 });
+
+describe('Evaluator SkillAgent Interface', () => {
+  let Evaluator: typeof import('./evaluator.js').Evaluator;
+  let isSkillAgent: typeof import('./types.js').isSkillAgent;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    ({ Evaluator } = await import('./evaluator.js'));
+    ({ isSkillAgent } = await import('./types.js'));
+  });
+
+  it('should implement SkillAgent interface', () => {
+    const evaluator = new Evaluator({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(evaluator.type).toBe('skill');
+    expect(evaluator.name).toBe('Evaluator');
+    expect(typeof evaluator.execute).toBe('function');
+    expect(typeof evaluator.cleanup).toBe('function');
+  });
+
+  it('should pass isSkillAgent type guard', () => {
+    const evaluator = new Evaluator({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(isSkillAgent(evaluator)).toBe(true);
+  });
+
+  describe('execute', () => {
+    it('should accept string input', async () => {
+      const evaluator = new Evaluator({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of evaluator.execute('Test prompt')) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+
+    it('should accept UserInput array', async () => {
+      const evaluator = new Evaluator({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of evaluator.execute([
+        { role: 'user', content: 'First message' },
+        { role: 'user', content: 'Second message' },
+      ])) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
+});

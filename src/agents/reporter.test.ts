@@ -303,3 +303,68 @@ describe('buildReportPrompt', () => {
     expect(prompt).toContain('DO NOT');
   });
 });
+
+describe('Reporter SkillAgent Interface', () => {
+  let Reporter: typeof import('./reporter.js').Reporter;
+  let isSkillAgent: typeof import('./types.js').isSkillAgent;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    ({ Reporter } = await import('./reporter.js'));
+    ({ isSkillAgent } = await import('./types.js'));
+  });
+
+  it('should implement SkillAgent interface', () => {
+    const reporter = new Reporter({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(reporter.type).toBe('skill');
+    expect(reporter.name).toBe('Reporter');
+    expect(typeof reporter.execute).toBe('function');
+    expect(typeof reporter.cleanup).toBe('function');
+  });
+
+  it('should pass isSkillAgent type guard', () => {
+    const reporter = new Reporter({
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    expect(isSkillAgent(reporter)).toBe(true);
+  });
+
+  describe('execute', () => {
+    it('should accept string input', async () => {
+      const reporter = new Reporter({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of reporter.execute('Test prompt')) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+
+    it('should accept UserInput array', async () => {
+      const reporter = new Reporter({
+        apiKey: 'test-key',
+        model: 'test-model',
+      });
+
+      const messages = [];
+      for await (const msg of reporter.execute([
+        { role: 'user', content: 'First message' },
+        { role: 'user', content: 'Second message' },
+      ])) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
+});
