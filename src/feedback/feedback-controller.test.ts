@@ -111,7 +111,7 @@ describe('FeedbackController', () => {
       await controller.sendMessage('oc_test', card);
 
       const call = mockClient.im.message.create as ReturnType<typeof vi.fn>;
-      const callArgs = call.mock.calls[0][0];
+      const [[callArgs]] = call.mock.calls;
       const content = JSON.parse(callArgs.data.content);
 
       expect(content.config).toBeDefined();
@@ -123,7 +123,7 @@ describe('FeedbackController', () => {
       await controller.sendMessage('oc_test', 'Reply', 'parent_msg_id');
 
       const call = mockClient.im.message.create as ReturnType<typeof vi.fn>;
-      const callArgs = call.mock.calls[0][0];
+      const [[callArgs]] = call.mock.calls;
 
       expect(callArgs.data.parent_id).toBe('parent_msg_id');
     });
