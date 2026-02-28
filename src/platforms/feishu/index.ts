@@ -11,5 +11,15 @@ export { FeishuPlatformAdapter, type FeishuPlatformAdapterConfig } from './feish
 export { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 
+// Chat Manager (Issue #347)
+export {
+  FeishuChatManager,
+  getFeishuChatManager,
+  setFeishuChatManager,
+  resetFeishuChatManager,
+  type LogChatResult,
+  type FeishuChatManagerOptions,
+} from './feishu-chat-manager.js';
+
 // Card Builders
 export { buildTextContent } from './card-builders/index.js';

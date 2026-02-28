@@ -63,3 +63,20 @@ export {
   SimpleUserOutputAdapter,
   type RoutedOutputAdapterOptions,
 } from './routed-output-adapter.js';
+
+// Admin Status Manager (Issue #347)
+export {
+  AdminStatusManager,
+  getAdminStatusManager,
+  resetAdminStatusManager,
+  type AdminStatus,
+  type AdminStatusManagerOptions,
+} from './admin-status-manager.js';
+
+// Admin Intent Recognizer (Issue #347)
+export {
+  AdminIntent,
+  recognizeAdminIntent,
+  isAdminModeRequest,
+  type AdminIntentResult,
+} from './admin-intent-recognizer.js';
