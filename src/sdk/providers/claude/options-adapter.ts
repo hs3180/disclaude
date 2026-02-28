@@ -25,17 +25,13 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.model = options.model;
   }
 
-  // 权限模式
+  // 权限模式 - 直接传递，使用原始 SDK 格式
   if (options.permissionMode) {
-    sdkOptions.permissionMode = options.permissionMode === 'bypass'
-      ? 'bypassPermissions'
-      : options.permissionMode;
+    sdkOptions.permissionMode = options.permissionMode;
   }
 
-  // 设置来源
-  if (options.settingSources) {
-    sdkOptions.settingSources = options.settingSources;
-  }
+  // 设置来源（必填）
+  sdkOptions.settingSources = options.settingSources;
 
   // 工具配置
   if (options.allowedTools) {
@@ -54,11 +50,6 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 环境变量
   if (options.env) {
     sdkOptions.env = options.env;
-  }
-
-  // 上下文隔离
-  if (options.context) {
-    sdkOptions.context = options.context;
   }
 
   return sdkOptions;
