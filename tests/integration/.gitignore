@@ -1,0 +1,7 @@
+# Test artifacts
+*.log
+*.pid
+
+# Test-specific configuration (may contain secrets)
+test-env.yaml
+.env.local
