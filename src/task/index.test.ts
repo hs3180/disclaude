@@ -2,13 +2,14 @@
  * Tests for task module exports (src/task/index.ts)
  *
  * Tests the following functionality:
- * - All core agents are exported correctly
+ * - Core agents are exported correctly (SkillAgentImpl)
  * - ReflectionController and related types are exported correctly
  * - Supporting modules are exported correctly
  * - Feishu context MCP tools are exported correctly
  * - Utility functions are exported correctly
  *
  * Refactored (Issue #283): Tests ReflectionController instead of DialogueOrchestrator.
+ * Refactored (Issue #413): Tests SkillAgentImpl instead of specialized classes.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,9 +17,9 @@ import * as TaskModule from './index.js';
 
 describe('Task Module Exports', () => {
   describe('Core Agents', () => {
-    it('should export Evaluator', () => {
-      expect(TaskModule.Evaluator).toBeDefined();
-      expect(typeof TaskModule.Evaluator).toBe('function');
+    it('should export SkillAgentImpl', () => {
+      expect(TaskModule.SkillAgentImpl).toBeDefined();
+      expect(typeof TaskModule.SkillAgentImpl).toBe('function');
     });
   });
 
@@ -102,14 +103,22 @@ describe('Task Module Exports', () => {
     it('should export ReflectionEvent type', () => {
       expect(TaskModule).toBeDefined();
     });
+
+    it('should export SkillAgentImplConfig type', () => {
+      expect(TaskModule).toBeDefined();
+    });
+
+    it('should export SkillContext type', () => {
+      expect(TaskModule).toBeDefined();
+    });
   });
 
   describe('Module Structure', () => {
     it('should have all expected exports', () => {
       const exports = Object.keys(TaskModule);
 
-      // Core agents
-      expect(exports).toContain('Evaluator');
+      // Core agents (Issue #413)
+      expect(exports).toContain('SkillAgentImpl');
 
       // Reflection Pattern (Issue #283)
       expect(exports).toContain('ReflectionController');

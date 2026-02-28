@@ -3,17 +3,16 @@
  *
  * Architecture (Evaluation-Execution):
  * - Pilot: Handles user messages with deep-task skill for Task.md creation
- * - Evaluator: Task completion evaluation
- * - Executor: Executes tasks directly with Reporter for progress updates
+ * - SkillAgentImpl: Generic skill execution agent (Issue #413)
  * - ReflectionController: Manages iterative Execute-Evaluate-Reflect cycles
  *
  * Complete Workflow:
  * Flow 1: User request → Pilot (with deep-task skill) → Task.md
- * Flow 2: Task.md → ReflectionController (Evaluator → Executor) → ...
+ * Flow 2: Task.md → ReflectionController (SkillAgentImpl) → ...
  *
  * Evaluation-Execution Flow:
- * - Evaluator assesses task completion and identifies missing items
- * - Executor executes tasks directly with a single pseudo-subtask
+ * - SkillAgentImpl (with evaluator skill) assesses task completion
+ * - SkillAgentImpl (with executor skill) executes tasks
  * - No intermediate planning layer - direct execution for faster response
  * - Real-time streaming of agent messages for immediate user feedback
  *
@@ -23,10 +22,11 @@
  * - Context maintained via file-based communication (evaluation.md, execution.md)
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+ * Refactored (Issue #413): Uses generic SkillAgentImpl instead of specialized classes.
  */
 
 // Core agents
-export { Evaluator } from '../agents/evaluator.js';
+export { SkillAgent as SkillAgentImpl, type SkillAgentImplConfig, type SkillContext } from '../agents/skill-agent.js';
 
 // Reflection Pattern (Issue #283)
 export {

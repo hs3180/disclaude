@@ -8,6 +8,7 @@
  * - createSubagent: Create subagents (site-miner)
  *
  * Uses unified configuration types from Issue #327.
+ * Refactored (Issue #413): Uses generic SkillAgent instead of specialized classes.
  *
  * @example
  * ```typescript
@@ -27,12 +28,10 @@
  */
 
 import { Config } from '../config/index.js';
-import { Evaluator, type EvaluatorConfig } from './evaluator.js';
-import { Executor, type ExecutorConfig } from './executor.js';
-import { Reporter } from './reporter.js';
+import { SkillAgent as SkillAgentImpl, type SkillAgentImplConfig } from './skill-agent.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
-import type { ChatAgent, SkillAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
+import type { ChatAgent, SkillAgent as ISkillAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
 
 /**
  * Options for creating agents with custom configuration.
@@ -122,16 +121,11 @@ export class AgentFactory {
   /**
    * Create a SkillAgent instance by name.
    *
+   * Refactored (Issue #413): Uses generic SkillAgent with skill file.
+   *
    * @param name - Agent name ('evaluator', 'executor', 'reporter')
    * @param args - Additional arguments:
-   *   - For 'evaluator':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
-   *     - args[1]: string - Optional subdirectory for task files
-   *   - For 'executor':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
-   *     - args[1]: AbortSignal - Optional abort signal for cancellation
-   *   - For 'reporter':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
+   *   - args[0]: AgentCreateOptions - Optional configuration overrides
    * @returns SkillAgent instance
    *
    * @example
@@ -139,44 +133,45 @@ export class AgentFactory {
    * // Evaluator with default config
    * const evaluator = AgentFactory.createSkillAgent('evaluator');
    *
-   * // Evaluator with subdirectory
-   * const evaluator = AgentFactory.createSkillAgent('evaluator', {}, 'regular');
-   *
-   * // Executor with abort signal
-   * const controller = new AbortController();
-   * const executor = AgentFactory.createSkillAgent('executor', {}, controller.signal);
+   * // Executor
+   * const executor = AgentFactory.createSkillAgent('executor');
    *
    * // Reporter
    * const reporter = AgentFactory.createSkillAgent('reporter');
    * ```
    */
-  static createSkillAgent(name: string, ...args: unknown[]): SkillAgent {
+  static createSkillAgent(name: string, ...args: unknown[]): ISkillAgent {
     const options = (args[0] as AgentCreateOptions) || {};
+    const baseConfig = this.getBaseConfig(options);
 
-    switch (name) {
-      case 'evaluator': {
-        const subdirectory = args[1] as string | undefined;
-        const config: EvaluatorConfig = {
-          ...this.getBaseConfig(options),
-          subdirectory,
-        };
-        return new Evaluator(config) as unknown as SkillAgent;
-      }
-      case 'executor': {
-        const abortSignal = args[1] as AbortSignal | undefined;
-        const config: ExecutorConfig = {
-          ...this.getBaseConfig(options),
-          abortSignal,
-        };
-        return new Executor(config) as unknown as SkillAgent;
-      }
-      case 'reporter': {
-        const config: BaseAgentConfig = this.getBaseConfig(options);
-        return new Reporter(config) as unknown as SkillAgent;
-      }
-      default:
-        throw new Error(`Unknown SkillAgent: ${name}`);
+    // Skill configurations (Issue #413)
+    const skillConfigs: Record<string, { path: string; tools: string[] }> = {
+      evaluator: {
+        path: 'evaluator/SKILL.md',
+        tools: ['Read', 'Grep', 'Glob', 'Write'],
+      },
+      executor: {
+        path: 'executor/SKILL.md',
+        tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+      },
+      reporter: {
+        path: 'reporter/SKILL.md',
+        tools: ['send_user_feedback', 'send_file_to_feishu'],
+      },
+    };
+
+    const skillConfig = skillConfigs[name];
+    if (!skillConfig) {
+      throw new Error(`Unknown SkillAgent: ${name}`);
     }
+
+    const config: SkillAgentImplConfig = {
+      ...baseConfig,
+      skillPath: skillConfig.path,
+      allowedTools: skillConfig.tools,
+    };
+
+    return new SkillAgentImpl(config);
   }
 
   /**

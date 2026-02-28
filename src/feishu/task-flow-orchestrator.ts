@@ -17,6 +17,7 @@
  * - Debugging difficulties with interleaved logs
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+ * Refactored (Issue #413): Uses generic SkillAgent instead of specialized classes.
  */
 
 import * as path from 'path';
@@ -33,9 +34,7 @@ import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
 import type { AgentMessage } from '../types/agent.js';
 import type { ReflectionContext } from '../task/reflection.js';
-import { Evaluator } from '../agents/evaluator.js';
-import { Executor } from '../agents/executor.js';
-import { Reporter } from '../agents/reporter.js';
+import { SkillAgent as SkillAgentImpl, type SkillContext } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
 
@@ -181,23 +180,123 @@ export class TaskFlowOrchestrator {
       ]
     );
 
-    // Create execute phase: runs Evaluator
+    // Create execute phase: runs Evaluator (using SkillAgent)
     const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
-      const evaluator = new Evaluator({
+      const evaluator = new SkillAgentImpl({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
+        skillPath: 'evaluator/SKILL.md',
+        allowedTools: ['Read', 'Grep', 'Glob', 'Write'],
       });
 
+      // Build evaluation prompt
+      const taskMdPath = fileManager.getTaskSpecPath(context.taskId);
+      const evaluationPath = fileManager.getEvaluationPath(context.taskId, context.iteration);
+      const previousExecutionPath = context.iteration > 1
+        ? fileManager.getExecutionPath(context.taskId, context.iteration - 1)
+        : null;
+
+      let prompt = `# Evaluator Task
+
+## Context
+- Task ID: ${context.taskId}
+- Iteration: ${context.iteration}
+
+## Your Job
+
+1. Read the task specification:
+   \`${taskMdPath}\`
+`;
+
+      if (previousExecutionPath) {
+        prompt += `
+2. Read the previous execution output:
+   \`${previousExecutionPath}\`
+`;
+      } else {
+        prompt += `
+2. This is the first iteration - no previous execution exists.
+`;
+      }
+
+      prompt += `
+3. Evaluate if the task is complete based on Expected Results
+
+4. Write your evaluation to:
+   \`${evaluationPath}\`
+
+## Output Format for evaluation.md
+
+\`\`\`markdown
+# Evaluation: Iteration ${context.iteration}
+
+## Status
+[COMPLETE | NEED_EXECUTE]
+
+## Assessment
+(Your evaluation reasoning)
+
+## Next Actions (only if NEED_EXECUTE)
+- Action 1
+- Action 2
+\`\`\`
+
+## Status Rules
+
+### COMPLETE
+When ALL conditions are met:
+- ✅ All Expected Results satisfied
+- ✅ Code actually modified (not just explained)
+- ✅ Build passed (if required)
+- ✅ Tests passed (if required)
+
+### NEED_EXECUTE
+When ANY condition is true:
+- ❌ First iteration (no previous execution)
+- ❌ Executor only explained (no code changes)
+- ❌ Build failed or tests failed
+- ❌ Expected Results not fully satisfied
+
+## Important Notes
+
+- Write the evaluation file to \`${evaluationPath}\`
+- Do NOT output JSON - write markdown directly
+- **When status=COMPLETE**: You MUST also create \`final_result.md\` to signal task completion
+
+**If status is COMPLETE, also create final_result.md:**
+
+Create this file: \`${fileManager.getFinalResultPath(context.taskId)}\`
+
+\`\`\`markdown
+# Final Result
+
+Task completed successfully.
+
+## Summary
+(Brief summary of what was accomplished)
+
+## Deliverables
+- Deliverable 1
+- Deliverable 2
+\`\`\`
+
+**Now start your evaluation.**`;
+
+      const skillContext: SkillContext = {
+        taskId: context.taskId,
+        iteration: context.iteration,
+      };
+
       try {
-        yield* evaluator.evaluate(context.taskId, context.iteration);
+        yield* evaluator.executeWithContext(prompt, skillContext);
       } finally {
         evaluator.dispose();
       }
     };
 
-    // Create evaluate phase: runs Executor (after Evaluator)
+    // Create evaluate phase: runs Executor (using SkillAgent)
     const evaluatePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
       // Check if task is already complete
       const hasFinalResult = await fileManager.hasFinalResult(context.taskId);
@@ -217,35 +316,107 @@ export class TaskFlowOrchestrator {
         messageType: 'status',
       };
 
-      const reporter = new Reporter({
+      const executor = new SkillAgentImpl({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
+        skillPath: 'executor/SKILL.md',
+        allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
       });
 
-      const executor = new Executor({
+      const reporter = new SkillAgentImpl({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
+        skillPath: 'reporter/SKILL.md',
+        allowedTools: ['send_user_feedback', 'send_file_to_feishu'],
       });
 
-      const reporterContext = {
+      // Build executor prompt
+      const taskMdPath = fileManager.getTaskSpecPath(context.taskId);
+      const executionPath = fileManager.getExecutionPath(context.taskId, context.iteration);
+      const evaluationPath = fileManager.getEvaluationPath(context.taskId, context.iteration);
+      const workspaceDir = Config.getWorkspaceDir();
+
+      const executorPrompt = `# Executor Task
+
+## Context
+- Task ID: ${context.taskId}
+- Iteration: ${context.iteration}
+- Workspace: ${workspaceDir}
+
+## Your Job
+
+1. Read the task specification: \`${taskMdPath}\`
+2. Read the evaluation guidance: \`${evaluationPath}\`
+3. Execute the task:
+   - Make code changes
+   - Run tests if required
+   - Verify expected results
+4. Create execution.md: \`${executionPath}\`
+
+## Output File
+
+Create \`${executionPath}\` with this format:
+
+\`\`\`markdown
+# Execution: Iteration ${context.iteration}
+
+**Timestamp**: {ISO timestamp}
+**Status**: Completed
+
+## Summary
+(Brief description of what you did)
+
+## Changes Made
+- Change 1
+- Change 2
+
+## Files Modified
+- file1.ts
+- file2.ts
+
+## Expected Results Satisfied
+✅ Requirement 1
+   - Verification: How you verified it
+\`\`\`
+
+**Now start executing the task.**`;
+
+      const skillContext: SkillContext = {
         taskId: context.taskId,
         iteration: context.iteration,
         chatId,
       };
 
       try {
-        const executorStream = executor.executeTask(
-          context.taskId,
-          context.iteration,
-          Config.getWorkspaceDir()
-        );
+        // Execute task
+        for await (const msg of executor.executeWithContext(executorPrompt, skillContext)) {
+          yield msg;
+        }
 
-        for await (const event of executorStream) {
-          yield* reporter.processEvent(event, reporterContext);
+        // Send completion report
+        const reporterPrompt = `# Reporter Task
+
+## Context
+- Task ID: ${context.taskId}
+- Iteration: ${context.iteration}
+- Chat ID: ${chatId}
+
+## Your Job
+
+1. Check for any report files in the task directory
+2. Send report files using send_file_to_feishu
+3. Send completion feedback using send_user_feedback
+
+**Chat ID for Feishu tools**: \`${chatId}\`
+
+**Now check for and send any report files.**`;
+
+        for await (const msg of reporter.executeWithContext(reporterPrompt, skillContext)) {
+          yield msg;
         }
       } catch (error) {
         yield {
@@ -254,6 +425,7 @@ export class TaskFlowOrchestrator {
           messageType: 'error',
         };
       } finally {
+        executor.dispose();
         reporter.dispose();
       }
     };

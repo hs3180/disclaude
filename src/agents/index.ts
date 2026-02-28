@@ -3,23 +3,25 @@
  *
  * Provides:
  * - BaseAgent: Abstract base class for all agents
- * - Evaluator: Task completion evaluation specialist
- * - Executor: Task execution specialist
- * - Reporter: Communication and instruction generation specialist
+ * - SkillAgent: Generic skill execution agent (Issue #413)
  * - Pilot: Platform-agnostic direct chat with streaming input
  * - SessionManager: Pilot session lifecycle management
  * - ConversationContext: Pilot conversation context tracking
  *
  * Agent Type Classification (Issue #282):
  * - ChatAgent: Continuous conversation agents (Pilot)
- * - SkillAgent: Single-shot task agents (Evaluator, Executor, Reporter)
+ * - SkillAgent: Single-shot task agents (SkillAgent with skill files)
  * - Subagent: SkillAgent that can be used as a tool (SiteMiner)
  *
  * Unified Configuration Types (Issue #327):
  * - BaseAgentConfig: Base configuration for all agents
  * - ChatAgentConfig: Configuration for ChatAgent (Pilot)
- * - SkillAgentConfig: Configuration for SkillAgent (Evaluator, Executor, Reporter)
+ * - SkillAgentConfig: Configuration for SkillAgent
  * - SubagentConfig: Configuration for Subagent (SiteMiner)
+ *
+ * Refactored (Issue #413):
+ * - Removed specialized Evaluator/Executor/Reporter classes
+ * - Unified under generic SkillAgent that reads skill files
  */
 
 // Type definitions
@@ -52,10 +54,8 @@ export {
   type QueryStreamResult,
 } from './base-agent.js';
 
-// Task agents
-export { Evaluator, type EvaluatorConfig } from './evaluator.js';
-export { Executor, type ExecutorConfig, type TaskProgressEvent, type TaskResult } from './executor.js';
-export { Reporter } from './reporter.js';
+// Generic skill agent (Issue #413)
+export { SkillAgent as SkillAgentImpl, type SkillAgentImplConfig, type SkillContext } from './skill-agent.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
