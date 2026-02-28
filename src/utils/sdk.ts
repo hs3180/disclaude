@@ -428,11 +428,13 @@ export function buildSdkEnv(
     // SDK subprocess errors go to stderr and are critical for debugging
     // Can be disabled via config logging.sdkDebug: false
     DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
-    // CRITICAL: Unset CLAUDECODE to allow SDK subprocess to run inside
-    // another Claude Code session. Without this, SDK will fail with:
-    // "Claude Code cannot be launched inside another Claude Code session"
-    CLAUDECODE: undefined,
   };
+
+  // CRITICAL: Remove CLAUDECODE to allow SDK subprocess to run inside
+  // another Claude Code session. Without this, SDK will fail with:
+  // "Claude Code cannot be launched inside another Claude Code session"
+  // Must use delete to completely remove the key, not just set to undefined.
+  delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {

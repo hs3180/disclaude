@@ -17,6 +17,9 @@ import type {
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions, adaptInput } from './options-adapter.js';
+import { createLogger } from '../../../utils/logger.js';
+
+const logger = createLogger('ClaudeSDKProvider');
 
 /**
  * Claude SDK Provider
@@ -72,9 +75,19 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const sdkOptions = adaptOptions(options);
 
     // 创建输入适配器生成器
+    // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
+    let inputCount = 0;
     async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
-      for await (const userInput of input) {
-        yield adaptUserInput(userInput);
+      // Manual iteration - only pull one value at a time
+      const iterator = input[Symbol.asyncIterator]();
+      while (true) {
+        const { value, done } = await iterator.next();
+        if (done) {
+          return;
+        }
+        inputCount++;
+        logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
+        yield adaptUserInput(value);
       }
     }
 
@@ -84,9 +97,20 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     });
 
     // 创建消息适配迭代器
+    let messageCount = 0;
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
-      for await (const message of queryResult) {
-        yield adaptSDKMessage(message);
+      try {
+        for await (const message of queryResult) {
+          messageCount++;
+          logger.info(
+            { messageCount, messageType: message.type },
+            'SDK message received'
+          );
+          yield adaptSDKMessage(message);
+        }
+      } catch (error) {
+        logger.error({ err: error, messageCount }, 'adaptIterator error');
+        throw error;
       }
     }
 

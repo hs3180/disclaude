@@ -323,13 +323,17 @@ export class Pilot extends BaseAgent implements ChatAgent {
     senderOpenId?: string,
     attachments?: FileRef[]
   ): void {
-    this.logger.debug({ chatId, messageId, textLength: text.length, hasAttachments: !!attachments }, 'Processing message');
+    this.logger.info(
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments },
+      'processMessage called'
+    );
 
     // Track thread root using ConversationContext
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
     // Get or create session using SessionManager
     if (!this.sessionManager.has(chatId)) {
+      this.logger.info({ chatId }, 'No existing session, starting agent loop');
       this.startAgentLoop(chatId);
     }
 
@@ -350,6 +354,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const channel = this.sessionManager.getChannel(chatId);
     if (channel) {
       channel.push(userMessage);
+    } else {
+      this.logger.error({ chatId, messageId }, 'No channel found after session creation');
     }
   }
 
@@ -383,7 +389,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
       mcpServers,
     });
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting SDK query with message channel');
+    this.logger.info(
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) },
+      'Starting SDK query with message channel'
+    );
 
     // Create message channel for this chatId
     const channel = new MessageChannel();
@@ -421,9 +430,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
     iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
   ): Promise<void> {
     let iteratorError: Error | null = null;
+    let messageCount = 0;
 
     try {
       for await (const { parsed } of iterator) {
+        messageCount++;
+        this.logger.debug(
+          { chatId, messageCount, type: parsed.type },
+          'SDK message received'
+        );
+
         // Send message content to callback
         if (parsed.content) {
           const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -432,7 +448,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
         // Check for completion
         if (parsed.type === 'result') {
-          this.logger.debug({ chatId, content: parsed.content }, 'Result received, turn complete');
+          this.logger.info({ chatId, content: parsed.content }, 'Result received, turn complete');
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
@@ -445,7 +461,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       }
     } catch (error) {
       iteratorError = error as Error;
-      this.logger.error({ err: iteratorError, chatId }, 'Iterator error');
+      this.logger.error({ err: iteratorError, chatId, messageCount }, 'Iterator error');
 
       const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);

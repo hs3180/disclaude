@@ -302,14 +302,15 @@ export class PrimaryNode extends EventEmitter {
           return node;
         }
       }
-      // Assigned node is not available, fall through to assign new one
     }
 
     // Assign first available node
     const availableNode = this.getFirstAvailableNode();
     if (availableNode) {
       this.chatToNode.set(chatId, availableNode.nodeId);
-      logger.debug({ chatId, nodeId: availableNode.nodeId }, 'Assigned chat to execution node');
+      logger.info({ chatId, nodeId: availableNode.nodeId, isLocal: availableNode.isLocal }, 'Assigned chat to execution node');
+    } else {
+      logger.warn({ chatId }, 'No available execution node found');
     }
     return availableNode;
   }
@@ -589,7 +590,10 @@ export class PrimaryNode extends EventEmitter {
     }
 
     const { chatId, prompt, messageId, senderOpenId, threadId, attachments } = message;
-    logger.info({ chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments }, 'Executing prompt locally');
+    logger.info(
+      { chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments },
+      'Executing prompt locally'
+    );
 
     // Create send feedback function
     const sendFeedback = (feedback: FeedbackMessage) => {
@@ -722,7 +726,10 @@ export class PrimaryNode extends EventEmitter {
    * Handle message from a channel.
    */
   private async handleChannelMessage(_channelId: string, message: IncomingMessage): Promise<void> {
-    logger.debug({ chatId: message.chatId, messageId: message.messageId, content: message.content?.substring(0, 100) }, 'Processing channel message');
+    logger.info(
+      { chatId: message.chatId, messageId: message.messageId },
+      'Processing channel message'
+    );
 
     // Process attachments if present
     let attachments: FileRef[] | undefined;
@@ -746,7 +753,6 @@ export class PrimaryNode extends EventEmitter {
     }
 
     // Send prompt to execution node
-    logger.debug({ chatId: message.chatId, messageId: message.messageId }, 'Calling sendPrompt');
     await this.sendPrompt({
       type: 'prompt',
       chatId: message.chatId,
@@ -831,8 +837,6 @@ export class PrimaryNode extends EventEmitter {
    * Send prompt to execution node (local or remote).
    */
   private async sendPrompt(message: PromptMessage): Promise<void> {
-    logger.debug({ chatId: message.chatId, messageId: message.messageId }, 'sendPrompt called');
-
     const execNode = this.getExecNodeForChat(message.chatId);
     if (!execNode) {
       logger.warn('No Execution Node available');
@@ -843,7 +847,6 @@ export class PrimaryNode extends EventEmitter {
     // Execute locally
     if (execNode.isLocal) {
       await this.executeLocally(message);
-      logger.info({ chatId: message.chatId, messageId: message.messageId, threadId: message.threadId, nodeId: 'local' }, 'Prompt sent to local execution');
       return;
     }
 
