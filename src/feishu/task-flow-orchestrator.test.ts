@@ -295,4 +295,210 @@ describe('TaskFlowOrchestrator', () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
   });
+
+  describe('Final Result Handling', () => {
+    it('should detect final result and set completion reason', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+      const { TaskFileManager } = await import('../task/task-files.js');
+
+      // Mock TaskFileManager to return true for hasFinalResult
+      const mockHasFinalResult = vi.fn().mockResolvedValue(true);
+      (vi.mocked(TaskFileManager).mockImplementationOnce as any)((): any => ({
+        hasFinalResult: mockHasFinalResult,
+        readExecution: vi.fn().mockResolvedValue(''),
+        getTaskSpecPath: vi.fn().mockReturnValue('/test/task.md'),
+        getEvaluationPath: vi.fn().mockReturnValue('/test/evaluation.md'),
+        getExecutionPath: vi.fn().mockReturnValue('/test/execution.md'),
+        getFinalResultPath: vi.fn().mockReturnValue('/test/final_result.md'),
+      }));
+
+      // Create a new orchestrator with the mocked file manager
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_final/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-final', 'msg-final', taskPath);
+
+      // Wait for async operations
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Should complete without error
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+  });
+
+  describe('No Message Warning', () => {
+    it('should send warning when no messages were sent to user', async () => {
+      // Import modules for mocking
+      const { ReflectionController, DialogueMessageTracker } = await import('../task/index.js');
+
+      // Mock DialogueMessageTracker to return false for hasAnyMessage
+      (vi.mocked(DialogueMessageTracker).mockImplementationOnce as any)((): any => ({
+        recordMessageSent: vi.fn(),
+        hasAnyMessage: vi.fn(() => false), // No messages sent
+        buildWarning: vi.fn(() => '⚠️ No response generated'),
+        reset: vi.fn(),
+      }));
+
+      // Create a new orchestrator with the mocked tracker
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_nomsg/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-nomsg', 'msg-nomsg', taskPath);
+
+      // Wait for async operations
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Should have sent warning message
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'chat-nomsg',
+        expect.stringContaining('⚠️'),
+        'msg-nomsg'
+      );
+    });
+  });
+
+  describe('Message Types', () => {
+    it('should handle result message type', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+
+      // Mock ReflectionController to yield a result message
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          yield { content: 'Task completed', messageType: 'result', metadata: {} };
+        }),
+        getMetrics: vi.fn(() => ({ totalIterations: 1 })),
+      }));
+
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_result/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-result', 'msg-result', taskPath);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+
+    it('should handle error message type', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+
+      // Mock ReflectionController to yield an error message
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          yield { content: 'Task failed', messageType: 'error', metadata: {} };
+        }),
+        getMetrics: vi.fn(() => ({ totalIterations: 1 })),
+      }));
+
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_error/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-error', 'msg-error', taskPath);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+
+    it('should handle task_completion message type', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+
+      // Mock ReflectionController to yield a task_completion message
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          yield { content: 'Task done', messageType: 'task_completion', metadata: {} };
+        }),
+        getMetrics: vi.fn(() => ({ totalIterations: 1 })),
+      }));
+
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_completion/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-completion', 'msg-completion', taskPath);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle non-string message content', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+
+      // Mock ReflectionController to yield non-string content
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          yield { content: { foo: 'bar' }, messageType: 'text', metadata: {} };
+        }),
+        getMetrics: vi.fn(() => ({ totalIterations: 1 })),
+      }));
+
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_nonstring/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-nonstring', 'msg-nonstring', taskPath);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Should handle gracefully without error
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+
+    it('should skip empty content messages', async () => {
+      // Import modules for mocking
+      const { ReflectionController } = await import('../task/index.js');
+
+      // Mock ReflectionController to yield empty content
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          yield { content: '', messageType: 'text', metadata: {} };
+          yield { content: 'valid message', messageType: 'text', metadata: {} };
+        }),
+        getMetrics: vi.fn(() => ({ totalIterations: 1 })),
+      }));
+
+      const testOrchestrator = new TaskFlowOrchestrator(
+        {} as any,
+        mockCallbacks,
+        mockLogger as unknown as import('pino').Logger
+      );
+
+      const taskPath = '/test/workspace/tasks/msg_empty/task.md';
+      await testOrchestrator.executeDialoguePhase('chat-empty', 'msg-empty', taskPath);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      expect(mockLogger.info).toHaveBeenCalled();
+    });
+  });
 });

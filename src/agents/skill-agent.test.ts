@@ -273,4 +273,49 @@ Iteration: {{iteration}}
       expect(messages.length).toBeGreaterThan(0);
     });
   });
+
+  describe('error handling', () => {
+    it('should handle SDK errors in executeWithContext', async () => {
+      // Mock SDK to throw error
+      const { getProvider } = await import('../sdk/index.js');
+      vi.mocked(getProvider).mockReturnValueOnce({
+        queryOnce: vi.fn(async function* () {
+          throw new Error('SDK error');
+        }),
+      } as any);
+
+      const agent = new SkillAgent({
+        apiKey: 'test-key',
+        model: 'test-model',
+        skillPath: 'test/SKILL.md',
+      });
+
+      const messages: any[] = [];
+      for await (const msg of agent.executeWithContext('test input', {})) {
+        messages.push(msg);
+      }
+
+      // Should yield error message instead of throwing
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages[0].content).toContain('SDK error');
+    });
+  });
+
+  describe('array input handling', () => {
+    it('should handle non-string input in executeWithContext', async () => {
+      const agent = new SkillAgent({
+        apiKey: 'test-key',
+        model: 'test-model',
+        skillPath: 'test/SKILL.md',
+      });
+
+      // Pass array input to executeWithContext (non-string)
+      const messages: any[] = [];
+      for await (const msg of agent.executeWithContext(['msg1', 'msg2'] as any, {})) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBeGreaterThan(0);
+    });
+  });
 });
