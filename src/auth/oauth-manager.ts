@@ -288,7 +288,7 @@ export class OAuthManager {
         body: config.body ? JSON.stringify(config.body) : undefined,
       });
 
-      const status = response.status;
+      const {status} = response;
 
       if (!response.ok) {
         const text = await response.text();
@@ -340,7 +340,7 @@ export class OAuthManager {
    * @param provider - Provider name
    * @returns true if token was deleted
    */
-  async revokeToken(chatId: string, provider: string): Promise<boolean> {
+  revokeToken(chatId: string, provider: string): Promise<boolean> {
     return this.tokenStore.deleteToken(chatId, provider);
   }
 
@@ -350,7 +350,7 @@ export class OAuthManager {
    * @param chatId - Chat identifier
    * @returns Array of provider names
    */
-  async listAuthorizations(chatId: string): Promise<string[]> {
+  listAuthorizations(chatId: string): Promise<string[]> {
     return this.tokenStore.listProviders(chatId);
   }
 
@@ -360,9 +360,9 @@ export class OAuthManager {
    * @param port - Port to listen on
    * @returns Server URL
    */
-  async startCallbackServer(port: number = 3000): Promise<string> {
+  startCallbackServer(port: number = 3000): Promise<string> {
     if (this.callbackServer) {
-      return `http://localhost:${port}`;
+      return Promise.resolve(`http://localhost:${port}`);
     }
 
     return new Promise((resolve, reject) => {

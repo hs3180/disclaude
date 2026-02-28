@@ -9,9 +9,8 @@
  * - Storage statistics
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import { FileStorageService } from './file-storage.js';
 
 // Mock fs/promises

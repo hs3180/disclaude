@@ -503,7 +503,7 @@ export class WorkerNode {
   /**
    * Stop the Worker Node.
    */
-  async stop(): Promise<void> {
+  stop(): void {
     if (!this.running) {return;}
 
     this.running = false;

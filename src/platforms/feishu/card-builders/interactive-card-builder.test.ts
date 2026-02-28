@@ -10,7 +10,6 @@ import {
   buildMarkdown,
   buildDivider,
   buildActionGroup,
-  buildNote,
   buildCard,
   buildConfirmCard,
   buildSelectionCard,

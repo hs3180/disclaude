@@ -187,7 +187,7 @@ export class TaskFileWatcher {
    * Wait for a new task file to be created.
    * Uses fs.watch for efficiency.
    */
-  private async waitForNewTask(): Promise<void> {
+  private waitForNewTask(): Promise<void> {
     return new Promise<void>((resolve) => {
       this.waitResolver = resolve;
 

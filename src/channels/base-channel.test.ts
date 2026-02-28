@@ -39,17 +39,20 @@ class TestChannel extends BaseChannel<ChannelConfig> {
   public checkHealthResult = true;
   public lastMessage: OutgoingMessage | null = null;
 
-  protected async doStart(): Promise<void> {
+  protected doStart(): Promise<void> {
     this.doStartCalled = true;
+    return Promise.resolve();
   }
 
-  protected async doStop(): Promise<void> {
+  protected doStop(): Promise<void> {
     this.doStopCalled = true;
+    return Promise.resolve();
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected doSendMessage(message: OutgoingMessage): Promise<void> {
     this.doSendMessageCalled = true;
     this.lastMessage = message;
+    return Promise.resolve();
   }
 
   protected checkHealth(): boolean {
@@ -257,11 +260,11 @@ describe('BaseChannel', () => {
   describe('Error Handling', () => {
     it('should emit error event on start failure', async () => {
       class FailingChannel extends BaseChannel<ChannelConfig> {
-        protected async doStart(): Promise<void> {
-          throw new Error('Start failed');
+        protected doStart(): Promise<void> {
+          return Promise.reject(new Error('Start failed'));
         }
-        protected async doStop(): Promise<void> {}
-        protected async doSendMessage(): Promise<void> {}
+        protected doStop(): Promise<void> { return Promise.resolve(); }
+        protected doSendMessage(): Promise<void> { return Promise.resolve(); }
         protected checkHealth(): boolean { return true; }
       }
 
@@ -276,11 +279,11 @@ describe('BaseChannel', () => {
 
     it('should emit error event on stop failure', async () => {
       class FailingStopChannel extends BaseChannel<ChannelConfig> {
-        protected async doStart(): Promise<void> {}
-        protected async doStop(): Promise<void> {
-          throw new Error('Stop failed');
+        protected doStart(): Promise<void> { return Promise.resolve(); }
+        protected doStop(): Promise<void> {
+          return Promise.reject(new Error('Stop failed'));
         }
-        protected async doSendMessage(): Promise<void> {}
+        protected doSendMessage(): Promise<void> { return Promise.resolve(); }
         protected checkHealth(): boolean { return true; }
       }
 

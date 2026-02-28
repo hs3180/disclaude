@@ -91,7 +91,6 @@ vi.mock('../utils/task-tracker.js', () => ({
 }));
 
 import { FeishuChannel } from './feishu-channel.js';
-import type { IncomingMessage } from './types.js';
 
 describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
   let channel: FeishuChannel;

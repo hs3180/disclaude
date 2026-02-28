@@ -39,13 +39,14 @@ export class RestMessageSender implements IMessageSender {
     this.logger = config.logger;
   }
 
-  async sendText(chatId: string, text: string, threadId?: string): Promise<void> {
+  sendText(chatId: string, text: string, threadId?: string): Promise<void> {
     this.logger.debug({ chatId, text: text.substring(0, 50), threadId }, 'REST: Sending text message');
     // REST channel handles message routing internally
     // This is mainly for logging and future HTTP callback support
+    return Promise.resolve();
   }
 
-  async sendCard(
+  sendCard(
     chatId: string,
     card: Record<string, unknown>,
     description?: string,
@@ -53,16 +54,18 @@ export class RestMessageSender implements IMessageSender {
   ): Promise<void> {
     this.logger.debug({ chatId, description, threadId }, 'REST: Sending card message');
     // REST channel handles message routing internally
+    return Promise.resolve();
   }
 
-  async sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
+  sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
     this.logger.debug({ chatId, filePath, threadId }, 'REST: Sending file');
     // REST channel handles file transfer internally
+    return Promise.resolve();
   }
 
-  async addReaction?(messageId: string, emoji: string): Promise<boolean> {
+  addReaction?(messageId: string, emoji: string): Promise<boolean> {
     this.logger.debug({ messageId, emoji }, 'REST: Adding reaction (not supported)');
-    return false;
+    return Promise.resolve(false);
   }
 }
 

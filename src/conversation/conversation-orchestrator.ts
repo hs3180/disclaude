@@ -188,7 +188,7 @@ export class ConversationOrchestrator {
   /**
    * Cleanup resources on shutdown.
    */
-  async shutdown(): Promise<void> {
+  shutdown(): void {
     this.logger.info('Shutting down ConversationOrchestrator');
 
     // Close all sessions

@@ -224,7 +224,7 @@ Test task description.
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // Modify the file
-      await fs.promises.writeFile(taskFile, taskContent + '\n\nMore content', 'utf-8');
+      await fs.promises.writeFile(taskFile, `${taskContent  }\n\nMore content`, 'utf-8');
 
       // Wait briefly - modified file should not retrigger
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -276,7 +276,7 @@ Test task description.
     it('should continue processing after task failure', async () => {
       const executionOrder: string[] = [];
 
-      const failingCallback = vi.fn(async (_taskPath: string, messageId: string) => {
+      const failingCallback = vi.fn((_taskPath: string, messageId: string) => {
         if (messageId === 'msg_fail') {
           throw new Error('Task failed');
         }

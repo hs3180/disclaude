@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RestChannel, type RestChannelConfig } from './rest-channel.js';
+import { RestChannel } from './rest-channel.js';
 import http from 'node:http';
 
 // Mock logger
@@ -27,7 +27,7 @@ vi.mock('../utils/logger.js', () => ({
 /**
  * Helper to make HTTP requests to the test server.
  */
-async function makeRequest(
+function makeRequest(
   port: number,
   options: {
     method: string;
@@ -264,18 +264,18 @@ describe('RestChannel', () => {
     });
 
     it('should wait for done message in sync mode', async () => {
-      let receivedMessage: { messageId: string; chatId: string } | null = null;
+      let _receivedMessage: { messageId: string; chatId: string } | null = null;
 
-      channel.onMessage(async (msg) => {
-        receivedMessage = msg;
+      channel.onMessage((msg) => {
+        _receivedMessage = msg;
         // Simulate async processing and response
-        setTimeout(async () => {
-          await channel.sendMessage({
+        setTimeout(() => {
+          void channel.sendMessage({
             chatId: msg.chatId,
             type: 'text',
             text: 'Response from agent',
           });
-          await channel.sendMessage({
+          void channel.sendMessage({
             chatId: msg.chatId,
             type: 'done',
           });
@@ -500,7 +500,7 @@ describe('RestChannel', () => {
     });
 
     it('should handle message handler errors', async () => {
-      channel.onMessage(async () => {
+      channel.onMessage(() => {
         throw new Error('Handler failed');
       });
 

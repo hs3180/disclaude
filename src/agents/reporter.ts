@@ -33,7 +33,7 @@
 import type { AgentMessage } from '../types/agent.js';
 import type { ReporterContext } from '../types/reporter.js';
 import type { TaskProgressEvent } from './executor.js';
-import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
+import type { SkillAgent, UserInput } from './types.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 
@@ -70,9 +70,9 @@ export class Reporter extends BaseAgent implements SkillAgent {
    * Initialize the Reporter agent.
    * No skill loading needed - allowedTools are defined directly in code.
    */
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
     if (this.initialized) {
-      return;
+      return Promise.resolve();
     }
 
     this.initialized = true;
@@ -80,6 +80,7 @@ export class Reporter extends BaseAgent implements SkillAgent {
       { toolCount: REPORTER_ALLOWED_TOOLS.length },
       'Reporter initialized'
     );
+    return Promise.resolve();
   }
 
   /**

@@ -58,7 +58,7 @@ export class FileStorageService {
     fileName: string,
     mimeType?: string,
     source: 'user' | 'agent' = 'user',
-    chatId?: string
+    _chatId?: string
   ): Promise<FileRef> {
     const stats = await fs.stat(localPath);
 
@@ -99,7 +99,7 @@ export class FileStorageService {
     fileName: string,
     mimeType?: string,
     source: 'user' | 'agent' = 'agent',
-    chatId?: string
+    _chatId?: string
   ): Promise<FileRef> {
     const buffer = Buffer.from(content, 'base64');
 

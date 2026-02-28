@@ -34,7 +34,7 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, ExecNodeInfo as WsExecNodeInfo } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { FileStorageService, type FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { createFileTransferAPIHandler } from '../file-transfer/node-transfer/file-api.js';
@@ -805,7 +805,7 @@ export class PrimaryNode extends EventEmitter {
       }
 
       case 'switch-node': {
-        const targetNodeId = command.targetNodeId;
+        const {targetNodeId} = command;
         if (!targetNodeId) {
           const nodes = this.getExecNodes();
           const nodesList = nodes.map(n => `- \`${n.nodeId}\` (${n.name}${n.isLocal ? ', local' : ''})`).join('\n');

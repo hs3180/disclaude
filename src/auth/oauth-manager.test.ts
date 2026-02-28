@@ -83,7 +83,7 @@ describe('OAuthManager', () => {
       // Mock fetch for token exchange
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({
+        json: () => ({
           access_token: 'test-access-token',
           token_type: 'Bearer',
           expires_in: 3600,
@@ -110,7 +110,7 @@ describe('OAuthManager', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 400,
-        text: async () => 'Invalid grant',
+        text: () => 'Invalid grant',
       });
 
       const result = await manager.handleCallback('test-code', state);
@@ -205,7 +205,7 @@ describe('OAuthManager', () => {
         ok: true,
         status: 200,
         headers: new Headers({ 'content-type': 'application/json' }),
-        json: async () => ({ login: 'testuser' }),
+        json: () => ({ login: 'testuser' }),
       });
 
       const result = await manager.makeAuthenticatedRequest('chat-1', 'github', {
@@ -242,7 +242,7 @@ describe('OAuthManager', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 404,
-        text: async () => 'Not Found',
+        text: () => 'Not Found',
       });
 
       const result = await manager.makeAuthenticatedRequest('chat-1', 'github', {

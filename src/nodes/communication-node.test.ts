@@ -5,7 +5,7 @@
  * Issue #241: Refactored to use ExecNodeManager and ChannelManager
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
 
 // Mock the dependencies

@@ -58,22 +58,19 @@ let parseGlobalArgs: ParseGlobalArgsFn;
  */
 async function loadDependencies(): Promise<void> {
   const configModule = await import('./config/index.js');
-  Config = configModule.Config;
+  ({ Config } = configModule);
 
   const loggerModule = await import('./utils/logger.js');
-  initLogger = loggerModule.initLogger;
-  flushLogger = loggerModule.flushLogger;
-  getRootLogger = loggerModule.getRootLogger;
+  ({ initLogger, flushLogger, getRootLogger } = loggerModule);
 
   const errorHandlerModule = await import('./utils/error-handler.js');
-  handleError = errorHandlerModule.handleError;
-  ErrorCategory = errorHandlerModule.ErrorCategory;
+  ({ handleError, ErrorCategory } = errorHandlerModule);
 
   const skillsModule = await import('./utils/skills-setup.js');
-  setupSkillsInWorkspace = skillsModule.setupSkillsInWorkspace;
+  ({ setupSkillsInWorkspace } = skillsModule);
 
   const cliArgsModule = await import('./utils/cli-args.js');
-  parseGlobalArgs = cliArgsModule.parseGlobalArgs;
+  ({ parseGlobalArgs } = cliArgsModule);
 }
 
 /**

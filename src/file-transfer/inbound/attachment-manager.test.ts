@@ -9,7 +9,7 @@
  * - Cleaning up old attachments
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { AttachmentManager } from './attachment-manager.js';
 import type { FileAttachment } from '../../channels/adapters/types.js';
 
