@@ -1,0 +1,4 @@
+# Integration test environment files
+test-env.yaml
+workspace/
+*.log

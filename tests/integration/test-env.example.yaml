@@ -1,0 +1,84 @@
+# =============================================================================
+# Integration Test Environment Configuration
+# =============================================================================
+#
+# This is the example configuration for integration tests.
+# Copy this file to test-env.yaml and customize for your needs.
+#
+# Usage:
+#   cp tests/integration/test-env.example.yaml tests/integration/test-env.yaml
+#   # Edit test-env.yaml with your actual API keys
+#
+# SECURITY: test-env.yaml is in .gitignore - safe to store secrets locally
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Test Environment Settings
+# -----------------------------------------------------------------------------
+test:
+  # Test timeout in milliseconds (default: 60000 = 1 minute)
+  timeout: 60000
+
+  # Retry count for flaky tests
+  retries: 2
+
+  # Enable verbose logging
+  verbose: true
+
+# -----------------------------------------------------------------------------
+# REST Channel Test Configuration
+# -----------------------------------------------------------------------------
+rest:
+  # REST API port for testing (use a different port from production)
+  port: 3099
+
+  # Host for test server
+  host: "127.0.0.1"
+
+  # API prefix
+  apiPrefix: "/api"
+
+  # Optional auth token for testing authentication
+  # authToken: "test-secret-token"
+
+  # Enable CORS for testing
+  enableCors: true
+
+# -----------------------------------------------------------------------------
+# Agent Configuration (minimal for testing)
+# -----------------------------------------------------------------------------
+agent:
+  # API provider for tests (use cheaper/faster model for tests)
+  provider: "glm"
+  model: "glm-4-flash"
+
+  # Auto-approve all actions in tests
+  permissionMode: "bypassPermissions"
+
+# -----------------------------------------------------------------------------
+# GLM API Configuration (for tests)
+# -----------------------------------------------------------------------------
+glm:
+  # Your GLM API key for testing
+  apiKey: "your_glm_api_key_here"
+
+  # API base URL
+  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# -----------------------------------------------------------------------------
+# Logging Configuration for Tests
+# -----------------------------------------------------------------------------
+logging:
+  level: "debug"
+  pretty: true
+
+# -----------------------------------------------------------------------------
+# Test Data Configuration
+# -----------------------------------------------------------------------------
+testData:
+  # Workspace directory for test files
+  workspaceDir: "./tests/integration/workspace"
+
+  # Clean up test data after each test
+  cleanupAfterTest: true

@@ -51,3 +51,7 @@ tasks/
 workspace/*
 !workspace/.gitkeep
 ecosystem.config.cjs
+
+# Integration test environment (contains secrets)
+tests/integration/test-env.yaml
+tests/integration/workspace/
