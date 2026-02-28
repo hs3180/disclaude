@@ -3,16 +3,17 @@
  *
  * Provides:
  * - BaseAgent: Abstract base class for all agents
- * - Evaluator: Task completion evaluation specialist
- * - Executor: Task execution specialist
- * - Reporter: Communication and instruction generation specialist
+ * - SkillAgent (NEW): Generic agent that executes skills from markdown files (Issue #413)
+ * - Evaluator: Task completion evaluation specialist (legacy, use SkillAgent with evaluate.md)
+ * - Executor: Task execution specialist (legacy, use SkillAgent with execute.md)
+ * - Reporter: Communication and instruction generation specialist (legacy, use SkillAgent with report.md)
  * - Pilot: Platform-agnostic direct chat with streaming input
  * - SessionManager: Pilot session lifecycle management
  * - ConversationContext: Pilot conversation context tracking
  *
  * Agent Type Classification (Issue #282):
  * - ChatAgent: Continuous conversation agents (Pilot)
- * - SkillAgent: Single-shot task agents (Evaluator, Executor, Reporter)
+ * - SkillAgent: Single-shot task agents (Evaluator, Executor, Reporter, SkillAgent)
  * - Subagent: SkillAgent that can be used as a tool (SiteMiner)
  *
  * Unified Configuration Types (Issue #327):
@@ -20,13 +21,16 @@
  * - ChatAgentConfig: Configuration for ChatAgent (Pilot)
  * - SkillAgentConfig: Configuration for SkillAgent (Evaluator, Executor, Reporter)
  * - SubagentConfig: Configuration for Subagent (SiteMiner)
+ *
+ * Simplified Architecture (Issue #413):
+ * - Use SkillAgent with skill files (skills/evaluate.md, execute.md, report.md)
+ * - Legacy Evaluator/Executor/Reporter classes still available for backward compatibility
  */
 
 // Type definitions
 export {
   type Disposable,
   type ChatAgent,
-  type SkillAgent,
   type Subagent,
   type UserInput,
   type AgentConfig,
@@ -44,6 +48,9 @@ export {
   isDisposable,
 } from './types.js';
 
+// Re-export SkillAgent interface as type alias for backward compatibility
+export type { SkillAgent as SkillAgentInterface } from './types.js';
+
 // Base class
 export {
   BaseAgent,
@@ -52,10 +59,19 @@ export {
   type QueryStreamResult,
 } from './base-agent.js';
 
-// Task agents
+// Task agents (legacy - use SkillAgent with skill files instead)
 export { Evaluator, type EvaluatorConfig } from './evaluator.js';
 export { Executor, type ExecutorConfig, type TaskProgressEvent, type TaskResult } from './executor.js';
 export { Reporter } from './reporter.js';
+
+// Generic SkillAgent (Issue #413)
+export {
+  SkillAgent,
+  SkillAgentFactory,
+  parseSkillFile,
+  type SkillConfig,
+  type SkillAgentExecuteOptions,
+} from './skill-agent.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
