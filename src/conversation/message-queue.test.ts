@@ -71,11 +71,12 @@ describe('MessageQueue', () => {
       const msg: QueuedMessage = { text: 'Delayed', messageId: '1' };
 
       // Start consumer before pushing
-      const consumePromise = (async () => {
+      const consumePromise = (async (): Promise<QueuedMessage | undefined> => {
         for await (const m of queue.consume()) {
           queue.close();
           return m;
         }
+        return undefined; // TypeScript requires explicit return
       })();
 
       // Push after a small delay
