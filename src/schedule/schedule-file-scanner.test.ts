@@ -372,7 +372,7 @@ Prompt`;
       const tasks = await scanner.scanAll();
 
       expect(tasks).toHaveLength(1);
-      const readTask = tasks[0];
+      const [readTask] = tasks;
 
       expect(readTask.id).toBe(originalTask.id);
       expect(readTask.name).toBe(originalTask.name);

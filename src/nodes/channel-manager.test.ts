@@ -201,7 +201,7 @@ describe('ChannelManager', () => {
   });
 
   describe('setupHandlers()', () => {
-    it('should set up message and control handlers', async () => {
+    it('should set up message and control handlers', () => {
       const channel = createMockChannel('feishu');
       manager.register(channel);
 
@@ -224,7 +224,7 @@ describe('ChannelManager', () => {
       manager.setupHandlers(channel, messageHandler, controlHandler);
 
       // Get the handler that was passed to onMessage
-      const registeredHandler = (channel.onMessage as any).mock.calls[0][0];
+      const [[registeredHandler]] = (channel.onMessage as any).mock.calls;
 
       // Call the handler with a message - should not throw
       const message: IncomingMessage = {

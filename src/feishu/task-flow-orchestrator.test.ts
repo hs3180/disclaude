@@ -158,7 +158,7 @@ describe('TaskFlowOrchestrator', () => {
     it('should start dialogue phase with task path', async () => {
       const taskPath = '/test/workspace/tasks/msg_123/task.md';
 
-      orchestrator.executeDialoguePhase('chat-123', 'msg-001', taskPath);
+      void orchestrator.executeDialoguePhase('chat-123', 'msg-001', taskPath);
 
       // Wait a bit for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -169,7 +169,7 @@ describe('TaskFlowOrchestrator', () => {
     it('should handle chat ID correctly', async () => {
       const taskPath = '/test/workspace/tasks/msg_456/task.md';
 
-      orchestrator.executeDialoguePhase('test-chat-id', 'msg-002', taskPath);
+      void orchestrator.executeDialoguePhase('test-chat-id', 'msg-002', taskPath);
 
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -182,7 +182,7 @@ describe('TaskFlowOrchestrator', () => {
     it('should log dialogue phase start', async () => {
       const taskPath = '/test/workspace/tasks/msg_789/task.md';
 
-      orchestrator.executeDialoguePhase('chat-123', 'msg-003', taskPath);
+      void orchestrator.executeDialoguePhase('chat-123', 'msg-003', taskPath);
 
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -231,7 +231,7 @@ describe('TaskFlowOrchestrator', () => {
       );
 
       const taskPath = '/test/workspace/tasks/msg_err/task.md';
-      errorOrchestrator.executeDialoguePhase('chat-err', 'msg-err', taskPath);
+      void errorOrchestrator.executeDialoguePhase('chat-err', 'msg-err', taskPath);
 
       // Wait for async error handling
       await new Promise(resolve => setTimeout(resolve, 200));
