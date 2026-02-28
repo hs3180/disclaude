@@ -90,6 +90,25 @@ Options:
 - `--verbose`: Enable verbose output
 - `--dry-run`: Show test plan without executing
 
+### Use Case 3 - Multi-turn Conversation (`use-case-3-multi-turn.sh`)
+
+Tests multi-turn conversation scenarios with context preservation:
+
+- **Health Check**: Verifies server is running
+- **Number Context**: Set favorite number, recall it, and calculate with it
+- **Name Context**: Introduce name and profession, then recall each
+- **Context Isolation**: Verify different chatId don't share context
+
+```bash
+./tests/integration/use-case-3-multi-turn.sh
+```
+
+Options:
+- `--timeout SECONDS`: Maximum wait time for response (default: 60)
+- `--port PORT`: REST API port (default: 3099)
+- `--verbose`: Enable verbose output
+- `--dry-run`: Show test plan without executing
+
 ## Adding New Tests
 
 To add a new integration test:
