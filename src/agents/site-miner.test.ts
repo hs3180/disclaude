@@ -232,7 +232,7 @@ describe('SiteMiner Subagent Interface', () => {
   });
 
   it('should implement Subagent interface', () => {
-    expect(siteMiner.type).toBe('skill');
+    expect(siteMiner.type).toBe('subagent');
     expect(siteMiner.name).toBe('SiteMiner');
     expect(typeof siteMiner.execute).toBe('function');
     expect(typeof siteMiner.cleanup).toBe('function');
@@ -240,8 +240,9 @@ describe('SiteMiner Subagent Interface', () => {
     expect(typeof siteMiner.getMcpServer).toBe('function');
   });
 
-  it('should pass isSkillAgent type guard', () => {
-    expect(isSkillAgent(siteMiner)).toBe(true);
+  it('should NOT pass isSkillAgent type guard (Subagent is distinct from SkillAgent)', () => {
+    // Subagent has type 'subagent', not 'skill'
+    expect(isSkillAgent(siteMiner)).toBe(false);
   });
 
   it('should pass isSubagent type guard', () => {
