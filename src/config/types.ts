@@ -229,6 +229,35 @@ export interface MessagingConfig {
 }
 
 /**
+ * Background analysis configuration section.
+ *
+ * Controls the automatic pattern detection and schedule recommendation system.
+ * @see Issue #357 - Intelligent Scheduled Task Recommendation System
+ */
+export interface BackgroundAnalysisConfig {
+  /** Enable/disable background analysis */
+  enabled?: boolean;
+  /** Cron expression for analysis interval (default: "0 3 * * *" - daily at 3am) */
+  interval?: string;
+  /** Number of days to look back for pattern detection (default: 30) */
+  lookbackDays?: number;
+  /** Minimum number of occurrences to consider a pattern (default: 3) */
+  minOccurrences?: number;
+  /** Minimum confidence threshold (0-1) for recommendations (default: 0.7) */
+  minConfidence?: number;
+}
+
+/**
+ * Schedule configuration section.
+ *
+ * @see Issue #357 - Intelligent Scheduled Task Recommendation System
+ */
+export interface ScheduleConfig {
+  /** Background analysis configuration */
+  backgroundAnalysis?: BackgroundAnalysisConfig;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -260,6 +289,8 @@ export interface DisclaudeConfig {
   channels?: ChannelsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Schedule configuration */
+  schedule?: ScheduleConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

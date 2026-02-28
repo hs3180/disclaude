@@ -303,4 +303,22 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get background analysis configuration.
+   * Returns configuration for the intelligent schedule recommendation system.
+   *
+   * @returns Background analysis configuration
+   * @see Issue #357 - Intelligent Scheduled Task Recommendation System
+   */
+  static getBackgroundAnalysisConfig(): import('./types.js').BackgroundAnalysisConfig {
+    const scheduleConfig = fileConfigOnly.schedule?.backgroundAnalysis;
+    return {
+      enabled: scheduleConfig?.enabled ?? false,
+      interval: scheduleConfig?.interval ?? '0 3 * * *',
+      lookbackDays: scheduleConfig?.lookbackDays ?? 30,
+      minOccurrences: scheduleConfig?.minOccurrences ?? 3,
+      minConfidence: scheduleConfig?.minConfidence ?? 0.7,
+    };
+  }
 }
