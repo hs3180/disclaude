@@ -33,6 +33,48 @@ const createMockCallbacks = (): PilotCallbacks => ({
   sendFile: vi.fn().mockResolvedValue(undefined),
 });
 
+/**
+ * Helper to create a schedule file directly in the file system.
+ * Note: The task ID is generated as `schedule-${fileName}` by ScheduleFileScanner.
+ */
+async function createScheduleFile(
+  testDir: string,
+  task: {
+    id: string;  // Base name (without .md), ID will be `schedule-${id}`
+    name: string;
+    cron: string;
+    prompt: string;
+    chatId: string;
+    enabled?: boolean;
+  }
+): Promise<void> {
+  const filePath = path.join(testDir, `${task.id}.md`);
+  const content = `---
+name: "${task.name}"
+cron: "${task.cron}"
+enabled: ${task.enabled ?? true}
+chatId: "${task.chatId}"
+createdAt: "${new Date().toISOString()}"
+---
+${task.prompt}`;
+  await fs.writeFile(filePath, content);
+}
+
+/**
+ * Helper to get the expected task ID from base name.
+ */
+function getTaskId(baseName: string): string {
+  return `schedule-${baseName}`;
+}
+
+/**
+ * Helper to delete a schedule file directly.
+ */
+async function deleteScheduleFile(testDir: string, baseName: string): Promise<void> {
+  const filePath = path.join(testDir, `${baseName}.md`);
+  await fs.unlink(filePath).catch(() => {});
+}
+
 describe('Scheduler', () => {
   let scheduler: Scheduler;
   let manager: ScheduleManager;
@@ -235,8 +277,9 @@ describe('Scheduler', () => {
 
   describe('Issue #86: start/stop 不重复加载', () => {
     it('should not duplicate jobs when start is called twice', async () => {
-      // Create task in manager
-      await manager.create({
+      // Create task file directly
+      await createScheduleFile(testDir, {
+        id: 'test-task',
         name: 'Test Task',
         cron: '0 9 * * *',
         prompt: 'Test',
@@ -252,14 +295,16 @@ describe('Scheduler', () => {
     });
 
     it('should clear all jobs on stop', async () => {
-      // Create and start
-      await manager.create({
+      // Create task files directly
+      await createScheduleFile(testDir, {
+        id: 'task-1',
         name: 'Task 1',
         cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'chat-1',
       });
-      await manager.create({
+      await createScheduleFile(testDir, {
+        id: 'task-2',
         name: 'Task 2',
         cron: '0 10 * * *',
         prompt: 'Test',
@@ -276,22 +321,25 @@ describe('Scheduler', () => {
 
   describe('Issue #86: 任务删除后调度器状态', () => {
     it('should have no active job after task is deleted', async () => {
-      // Create and start
-      const task = await manager.create({
+      // Create task file directly
+      await createScheduleFile(testDir, {
+        id: 'task-to-delete',
         name: 'Task to Delete',
         cron: '0 9 * * *',
         prompt: 'Test',
         chatId: 'test-chat',
       });
 
+      const taskId = getTaskId('task-to-delete');
+
       await scheduler.start();
       expect(scheduler.getActiveJobs()).toHaveLength(1);
 
-      // Delete task from manager
-      await manager.delete(task.id);
+      // Delete task file directly
+      await deleteScheduleFile(testDir, 'task-to-delete');
 
       // Remove from scheduler (simulating task deletion flow)
-      scheduler.removeTask(task.id);
+      scheduler.removeTask(taskId);
 
       expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
