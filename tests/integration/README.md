@@ -61,6 +61,40 @@ DISCLAUDE_CONFIG=./test-config.yaml ./tests/integration/rest-channel-test.sh
 
 ## Available Tests
 
+### Use Case Tests
+
+These tests validate core user scenarios end-to-end.
+
+#### Use Case 1: Basic Chat (`use-case-1-basic-chat.sh`)
+
+Tests the most basic conversation scenario:
+- User sends a message via REST Channel
+- Agent receives the message and generates a reply
+- Reply is returned through REST Channel
+
+**Test Scenarios:**
+1. Health check - Verify server is running
+2. Basic greeting (Chinese: 你好) - Agent responds with greeting
+3. English greeting (Hello) - Agent responds with greeting
+4. Simple question (What is 2+2?) - Agent answers correctly
+
+**Usage:**
+```bash
+./tests/integration/use-case-1-basic-chat.sh
+```
+
+**Options:**
+- `--timeout SECONDS` - Maximum wait time for response (default: 120)
+- `--port PORT` - REST API port (default: 3000)
+- `--verbose` - Enable verbose output
+- `--dry-run` - Show test plan without executing
+
+**Prerequisites:**
+- Node.js installed
+- disclaude built (`npm run build`)
+- Valid `disclaude.config.yaml` with AI provider configured
+- Environment variable set (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`)
+
 ### REST Channel Tests (`rest-channel-test.sh`)
 
 Tests the REST Channel functionality:
