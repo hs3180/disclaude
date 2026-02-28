@@ -146,36 +146,69 @@ export class Config {
    * Validate required configuration fields.
    * Ensures all required fields are present before returning config.
    *
+   * Validation priority (config file takes precedence over environment variables):
+   * 1. If agent.provider is explicitly set, validate only that provider's config
+   * 2. If GLM is configured (apiKey in config file), validate GLM config
+   * 3. Otherwise, if Anthropic env var exists, validate Anthropic config
+   *
    * @throws Error if required configuration is missing
    */
   private static validateRequiredConfig(): void {
     const errors: ConfigValidationError[] = [];
 
-    // GLM configuration validation
-    if (this.GLM_API_KEY) {
+    // Get provider preference from config file
+    const provider = fileConfigOnly.agent?.provider;
+
+    // Determine which provider to validate based on config priority
+    if (provider === 'glm') {
+      // User explicitly chose GLM - only validate GLM config
+      if (!this.GLM_API_KEY) {
+        errors.push({
+          field: 'glm.apiKey',
+          message: 'glm.apiKey is required when agent.provider is "glm"',
+        });
+      }
+      if (!this.GLM_MODEL) {
+        errors.push({
+          field: 'glm.model',
+          message: 'glm.model is required when using GLM provider',
+        });
+      }
+    } else if (provider === 'anthropic') {
+      // User explicitly chose Anthropic - only validate Anthropic config
+      if (!this.ANTHROPIC_API_KEY) {
+        errors.push({
+          field: 'ANTHROPIC_API_KEY',
+          message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+        });
+      }
+      if (!this.CLAUDE_MODEL) {
+        errors.push({
+          field: 'agent.model',
+          message: 'agent.model is required when using Anthropic provider',
+        });
+      }
+    } else if (this.GLM_API_KEY) {
+      // No explicit provider, but GLM is configured in config file - validate GLM
       if (!this.GLM_MODEL) {
         errors.push({
           field: 'glm.model',
           message: 'glm.model is required when GLM API key is configured',
         });
       }
-    }
-
-    // Anthropic configuration validation
-    if (this.ANTHROPIC_API_KEY) {
+    } else if (this.ANTHROPIC_API_KEY) {
+      // Fallback to Anthropic (from environment variable)
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model is required when ANTHROPIC_API_KEY is set',
+          message: 'agent.model is required when using Anthropic (ANTHROPIC_API_KEY is set)',
         });
       }
-    }
-
-    // At least one API key must be configured
-    if (!this.GLM_API_KEY && !this.ANTHROPIC_API_KEY) {
+    } else {
+      // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml',
+        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
       });
     }
 
