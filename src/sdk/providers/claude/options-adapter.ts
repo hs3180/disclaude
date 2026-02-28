@@ -50,13 +50,46 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 环境变量
   if (options.env) {
     sdkOptions.env = options.env;
+
+    // CRITICAL: Extract API key and base URL from env and pass as direct options
+    // The SDK requires these as direct options, not just env vars
+    if (options.env.ANTHROPIC_API_KEY) {
+      sdkOptions.apiKey = options.env.ANTHROPIC_API_KEY;
+    }
+    if (options.env.ANTHROPIC_BASE_URL) {
+      sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
+    }
   }
 
   return sdkOptions;
 }
 
 /**
+ * 检查值是否为 SDK 的 inline MCP 服务器包装对象
+ *
+ * SDK 的 createSdkMcpServer 返回 { type: 'sdk', name, instance } 格式，
+ * 而不是原始的 SDK 实例。我们需要检测这种格式并直接传递。
+ *
+ * @param value - 要检查的值
+ * @returns true 如果是 SDK inline MCP 服务器包装对象
+ */
+function isSdkInlineMcpServer(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    (value as Record<string, unknown>).type === 'sdk' &&
+    'instance' in value
+  );
+}
+
+/**
  * 适配 MCP 服务器配置
+ *
+ * 支持三种格式：
+ * 1. SDK inline MCP 服务器包装对象（直接传递）
+ * 2. inline 配置对象（转换为 SDK 实例）
+ * 3. stdio 配置对象（直接传递配置）
  *
  * @param mcpServers - 统一的 MCP 服务器配置
  * @returns Claude SDK MCP 服务器配置
@@ -67,10 +100,15 @@ function adaptMcpServers(
   const result: Record<string, unknown> = {};
 
   for (const [name, config] of Object.entries(mcpServers)) {
-    if (config.type === 'inline') {
+    // 检查是否为 SDK 的 inline MCP 服务器包装对象（已通过 createSdkMcpServer 创建）
+    if (isSdkInlineMcpServer(config)) {
+      // 直接传递 SDK 包装对象
+      result[name] = config;
+    } else if (config.type === 'inline') {
+      // inline 配置：转换为 SDK 实例
       result[name] = adaptInlineMcpServer(config);
     } else {
-      // stdio 模式直接传递
+      // stdio 模式：直接传递配置
       result[name] = {
         command: config.command,
         args: config.args,

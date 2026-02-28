@@ -9,36 +9,26 @@
 # - Node.js installed
 # - disclaude built (npm run build)
 # - Valid disclaude.config.yaml with AI provider configured
-# - Environment variables set (ANTHROPIC_API_KEY or OPENAI_API_KEY)
 #
 # Usage:
 #   ./use-case-1-basic-reply.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Maximum wait time for response (default: 180)
-#   --port PORT         REST API port (default: 3000)
+#   --timeout SECONDS   Maximum wait time for response (default: 30)
+#   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
 #
 
 set -e
 
+# =============================================================================
 # Configuration
-TIMEOUT=180
-REST_PORT=3000
-VERBOSE=false
-DRY_RUN=false
+# =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PID_FILE="/tmp/disclaude-test-$$.pid"
-LOG_FILE="/tmp/disclaude-test-$$.log"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+VERBOSE=false
+DRY_RUN=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -66,244 +56,136 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
+# Source common functions
+source "$SCRIPT_DIR/common.sh"
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
+# Register cleanup handler
+register_cleanup
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# =============================================================================
+# Test Functions
+# =============================================================================
 
-log_debug() {
-    if [ "$VERBOSE" = true ]; then
-        echo -e "${BLUE}[DEBUG]${NC} $1"
-    fi
-}
-
-# Cleanup function
-cleanup() {
-    log_info "Cleaning up..."
-
-    # Kill the server if running
-    if [ -f "$PID_FILE" ]; then
-        local pid=$(cat "$PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            log_debug "Killing server process $pid"
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-        fi
-        rm -f "$PID_FILE"
-    fi
-
-    # Remove log file unless verbose
-    if [ "$VERBOSE" = false ] && [ -f "$LOG_FILE" ]; then
-        rm -f "$LOG_FILE"
-    fi
-}
-
-# Set up cleanup on exit
-trap cleanup EXIT
-
-# Check prerequisites
-check_prerequisites() {
-    log_info "Checking prerequisites..."
-
-    # Check Node.js
-    if ! command -v node &> /dev/null; then
-        log_error "Node.js is not installed"
-        exit 1
-    fi
-    log_debug "Node.js: $(node --version)"
-
-    # Check curl
-    if ! command -v curl &> /dev/null; then
-        log_error "curl is not installed"
-        exit 1
-    fi
-
-    # Check if project is built
-    if [ ! -d "$PROJECT_ROOT/dist" ]; then
-        log_error "Project not built. Run 'npm run build' first."
-        exit 1
-    fi
-
-    # Check configuration
-    if [ ! -f "$PROJECT_ROOT/disclaude.config.yaml" ]; then
-        log_error "Configuration file not found: $PROJECT_ROOT/disclaude.config.yaml"
-        log_error "Please create a configuration file with AI provider settings."
-        exit 1
-    fi
-
-    # Check for API keys
-    if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-        log_warn "No API key environment variable detected (ANTHROPIC_API_KEY or OPENAI_API_KEY)"
-        log_warn "The test may fail if the configuration requires an API key."
-    fi
-
-    log_info "Prerequisites OK"
-}
-
-# Start the server
-start_server() {
-    log_info "Starting disclaude server on port $REST_PORT..."
-
-    cd "$PROJECT_ROOT"
-
-    # Start the server in background
-    node dist/cli-entry.js start --mode primary --rest-port "$REST_PORT" > "$LOG_FILE" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$PID_FILE"
-
-    log_debug "Server PID: $pid"
-
-    # Wait for server to be ready
-    local wait_time=0
-    local max_wait=30
-
-    while [ $wait_time -lt $max_wait ]; do
-        if curl -s "http://localhost:$REST_PORT/api/health" > /dev/null 2>&1; then
-            log_info "Server is ready"
-            return 0
-        fi
-        sleep 1
-        wait_time=$((wait_time + 1))
-        log_debug "Waiting for server... ($wait_time/$max_wait)"
-    done
-
-    log_error "Server failed to start within ${max_wait} seconds"
-    if [ "$VERBOSE" = true ]; then
-        log_error "Server log:"
-        cat "$LOG_FILE"
-    fi
-    exit 1
-}
-
-# Test: Health check
+# Test 1: Health check endpoint
 test_health_check() {
     log_info "Test 1: Health check..."
 
-    local response
-    response=$(curl -s "http://localhost:$REST_PORT/api/health")
+    local result
+    result=$(make_request "GET" "/api/health")
 
-    log_debug "Health response: $response"
+    local status="${result%%|*}"
+    local body="${result#*|}"
 
-    if echo "$response" | grep -q '"status":"ok"'; then
-        log_info "✓ Health check passed"
+    log_debug "Health response: $body"
+
+    if [ "$status" = "200" ] && echo "$body" | grep -q '"status":"ok"'; then
+        log_pass "Health check returns 200 with status: ok"
         return 0
     else
-        log_error "✗ Health check failed: $response"
+        log_fail "Health check returned status $status (expected 200)"
         return 1
     fi
 }
 
-# Test: Basic greeting - Agent responds to "你好"
+# Test 2: Basic greeting - Agent responds to "你好"
 test_basic_greeting() {
     log_info "Test 2: Basic greeting (你好)..."
 
     local test_message="你好"
-    local response
-    local http_code
+    local result
+    local status
+    local body
 
     log_debug "Sending message: $test_message"
 
     # Send synchronous chat request
-    response=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:$REST_PORT/api/chat/sync" \
-        -H "Content-Type: application/json" \
-        -d "{\"message\": \"$test_message\"}" \
-        --max-time "$TIMEOUT")
+    result=$(make_sync_request "$test_message")
+    status="${result%%|*}"
+    body="${result#*|}"
 
-    http_code=$(echo "$response" | tail -1)
-    response=$(echo "$response" | sed '$d')
+    log_debug "HTTP code: $status"
+    log_debug "Response: $body"
 
-    log_debug "HTTP code: $http_code"
-    log_debug "Response: $response"
-
-    if [ "$http_code" != "200" ]; then
-        log_error "✗ Request failed with HTTP $http_code"
-        log_error "Response: $response"
+    if [ "$status" != "200" ]; then
+        log_fail "Request failed with HTTP $status"
+        log_debug "Response: $body"
         return 1
     fi
 
     # Check success status
     local success
-    success=$(echo "$response" | grep -o '"success":[^,}]*' | cut -d':' -f2)
+    success=$(echo "$body" | grep -o '"success":[^,}]*' | cut -d':' -f2)
 
     if [ "$success" != "true" ]; then
-        log_error "✗ Request was not successful"
-        log_error "Response: $response"
+        log_fail "Request was not successful"
+        log_debug "Response: $body"
         return 1
     fi
 
     # Check if we got a response
     local response_text
-    response_text=$(echo "$response" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
 
     if [ -z "$response_text" ]; then
-        log_error "✗ No response text received"
-        log_error "Response: $response"
+        log_fail "No response text received"
+        log_debug "Response: $body"
         return 1
     fi
 
     log_info "Received response: $response_text"
 
     # Validate response is a greeting (contains greeting keywords)
-    # Common greeting patterns in Chinese and English
-    if echo "$response_text" | grep -iqE "你好|hello|hi|help|有什么|我可以| assists|帮助"; then
-        log_info "✓ Basic greeting test passed - agent responded with a greeting"
+    if echo "$response_text" | grep -iqE "你好|hello|hi|help|有什么|我可以|帮助"; then
+        log_pass "Basic greeting test passed - agent responded with a greeting"
         return 0
     else
-        log_warn "Response may not be a standard greeting, but agent replied"
-        log_info "✓ Basic greeting test passed (agent replied successfully)"
+        log_info "Basic greeting test passed (agent replied successfully)"
         return 0
     fi
 }
 
-# Test: Custom chatId preservation
+# Test 3: Custom chatId preservation
 test_custom_chatid() {
     log_info "Test 3: Custom chatId preservation..."
 
     local test_message="你好"
     local custom_chat_id="test-use-case-1-$$"
-    local response
-    local http_code
+    local result
+    local status
+    local body
 
     log_debug "Sending message with chatId: $custom_chat_id"
 
     # Send synchronous chat request with custom chatId
-    response=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:$REST_PORT/api/chat/sync" \
-        -H "Content-Type: application/json" \
-        -d "{\"message\": \"$test_message\", \"chatId\": \"$custom_chat_id\"}" \
-        --max-time "$TIMEOUT")
+    result=$(make_sync_request "$test_message" "$custom_chat_id")
+    status="${result%%|*}"
+    body="${result#*|}"
 
-    http_code=$(echo "$response" | tail -1)
-    response=$(echo "$response" | sed '$d')
+    log_debug "HTTP code: $status"
+    log_debug "Response: $body"
 
-    log_debug "HTTP code: $http_code"
-    log_debug "Response: $response"
-
-    if [ "$http_code" != "200" ]; then
-        log_error "✗ Request failed with HTTP $http_code"
-        log_error "Response: $response"
+    if [ "$status" != "200" ]; then
+        log_fail "Request failed with HTTP $status"
+        log_debug "Response: $body"
         return 1
     fi
 
     # Check if chatId is preserved in response
-    if echo "$response" | grep -q "\"chatId\":\"$custom_chat_id\""; then
-        log_info "✓ Custom chatId test passed - chatId preserved"
+    if echo "$body" | grep -q "\"chatId\":\"$custom_chat_id\""; then
+        log_pass "Custom chatId preserved in response"
         return 0
     else
-        log_error "✗ Custom chatId not preserved in response"
-        log_error "Expected: $custom_chat_id"
-        log_error "Response: $response"
+        log_fail "Custom chatId not preserved in response"
+        log_debug "Expected: $custom_chat_id"
+        log_debug "Response: $body"
         return 1
     fi
 }
 
-# Show test plan
+# =============================================================================
+# Test Plan (Dry Run)
+# =============================================================================
+
 show_test_plan() {
     echo ""
     echo "=========================================="
@@ -331,11 +213,14 @@ show_test_plan() {
     echo "  - Node.js installed"
     echo "  - disclaude built (npm run build)"
     echo "  - Valid disclaude.config.yaml"
-    echo "  - API key set (ANTHROPIC_API_KEY or OPENAI_API_KEY)"
+    echo "  - API key configured in config file"
     echo ""
 }
 
-# Main test runner
+# =============================================================================
+# Main Test Runner
+# =============================================================================
+
 main() {
     echo ""
     echo "=========================================="
@@ -349,34 +234,25 @@ main() {
         exit 0
     fi
 
-    check_prerequisites
-    start_server
+    # Check prerequisites
+    check_prerequisites || exit 1
 
-    local failed=0
+    # Start server
+    start_server || exit 1
 
     echo ""
     echo "Running tests..."
     echo ""
 
     # Run tests
-    test_health_check || failed=$((failed + 1))
+    test_health_check || true
     echo ""
-    test_basic_greeting || failed=$((failed + 1))
+    test_basic_greeting || true
     echo ""
-    test_custom_chatid || failed=$((failed + 1))
+    test_custom_chatid || true
 
-    echo ""
-    echo "=========================================="
-
-    if [ $failed -eq 0 ]; then
-        log_info "All tests passed! (3/3)"
-        echo "=========================================="
-        exit 0
-    else
-        log_error "$failed test(s) failed"
-        echo "=========================================="
-        exit 1
-    fi
+    # Print summary and exit
+    print_summary
 }
 
 main

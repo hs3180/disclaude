@@ -172,6 +172,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         const buffer = messageId ? this.responseBuffers.get(messageId) : undefined;
         const responseText = buffer ? buffer.join('\n') : '';
 
+        logger.info(
+          { chatId: message.chatId, messageId, responseLength: responseText.length },
+          'Task completed, resolving sync response'
+        );
+
         // Clear timeout and resolve
         clearTimeout(pending.timeout);
         pending.resolve(responseText);
@@ -182,8 +187,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
           this.responseBuffers.delete(messageId);
         }
         this.chatToMessage.delete(message.chatId);
-
-        logger.debug({ chatId: message.chatId, messageId }, 'Task completed, sync response resolved');
+      } else {
+        logger.warn(
+          { chatId: message.chatId, messageId },
+          'Received done but no pending response found'
+        );
       }
       return Promise.resolve();
     }
@@ -193,13 +201,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       const buffer = this.responseBuffers.get(messageId);
       if (buffer) {
         buffer.push(message.text || '');
+      } else {
+        logger.warn(
+          { chatId: message.chatId, messageId },
+          'No buffer found for text message'
+        );
       }
     }
-
-    // For streaming mode: this could be extended to use Server-Sent Events
-    // Currently we just log the message
-    logger.debug({ chatId: message.chatId, type: message.type }, 'Message sent through REST channel');
-    return Promise.resolve();
   }
 
   protected checkHealth(): boolean {
@@ -339,6 +347,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         this.sendError(res, 500, 'Failed to process message');
         return;
       }
+    } else {
+      logger.warn({ chatId, messageId }, 'No messageHandler registered');
     }
 
     // Prepare response

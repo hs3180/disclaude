@@ -3,6 +3,7 @@
 
 # Configuration file with secrets
 disclaude.config.yaml
+disclaude.config.test.yaml
 
 # Environment initialization (user-specific)
 .disclauderc
@@ -55,3 +56,4 @@ ecosystem.config.cjs
 # Integration test environment (contains secrets)
 tests/integration/test-env.yaml
 tests/integration/workspace/
+disclaude-test-server.log

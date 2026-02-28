@@ -18,10 +18,6 @@
 #   HOST             - Test server host (default: 127.0.0.1)
 #   TIMEOUT          - Request timeout in seconds (default: 10)
 #
-# Exit codes:
-#   0 - All tests passed
-#   1 - One or more tests failed
-#
 
 set -e
 
@@ -30,141 +26,18 @@ set -e
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Set defaults before sourcing common.sh
 REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
-API_URL="http://${HOST}:${REST_PORT}"
-TIMEOUT=10
+TIMEOUT="${TIMEOUT:-10}"
 CONFIG_PATH="${DISCLAUDE_CONFIG:-}"
-SERVER_PID=""
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Test counters
-TESTS_PASSED=0
-TESTS_FAILED=0
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_pass() {
-    echo -e "${GREEN}[PASS]${NC} $1"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-}
-
-log_fail() {
-    echo -e "${RED}[FAIL]${NC} $1"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-}
-
-log_skip() {
-    echo -e "${YELLOW}[SKIP]${NC} $1"
-}
-
-# Start the test server
-start_server() {
-    log_info "Starting test server..."
-
-    cd "$PROJECT_ROOT"
-
-    # Build config argument if provided
-    local config_arg=""
-    if [ -n "$CONFIG_PATH" ]; then
-        config_arg="--config ${CONFIG_PATH}"
-        log_info "Using config file: ${CONFIG_PATH}"
-    fi
-
-    # Start server in background
-    node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT} --host ${HOST} ${config_arg} > /tmp/disclaude-test-server.log 2>&1 &
-    SERVER_PID=$!
-
-    # Wait for server to be ready
-    log_info "Waiting for server to be ready..."
-    local max_retries=30
-    local retry=0
-    while [ $retry -lt $max_retries ]; do
-        if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
-            log_info "Server is ready (PID: ${SERVER_PID})"
-            return 0
-        fi
-        sleep 1
-        retry=$((retry + 1))
-    done
-
-    log_fail "Server failed to start within ${max_retries} seconds"
-    show_server_logs
-    return 1
-}
-
-# Stop the test server
-stop_server() {
-    if [ -n "$SERVER_PID" ]; then
-        log_info "Stopping test server (PID: ${SERVER_PID})..."
-        kill $SERVER_PID 2>/dev/null || true
-        wait $SERVER_PID 2>/dev/null || true
-        SERVER_PID=""
-    fi
-}
-
-# Show server logs for debugging
-show_server_logs() {
-    if [ -f /tmp/disclaude-test-server.log ]; then
-        echo ""
-        echo "Server logs:"
-        echo "----------------------------------------"
-        tail -50 /tmp/disclaude-test-server.log
-        echo "----------------------------------------"
-    fi
-}
-
-# Cleanup on exit
-cleanup() {
-    stop_server
-}
+# Source common functions
+source "$SCRIPT_DIR/common.sh"
 
 # Register cleanup handler
-trap cleanup EXIT
-
-# Make HTTP request and return status code and body
-make_request() {
-    local method="$1"
-    local path="$2"
-    local body="${3:-}"
-    local headers="${4:-}"
-
-    local response
-    local status
-
-    if [ -n "$body" ]; then
-        response=$(curl -s -w "\n%{http_code}" \
-            -X "$method" \
-            "${API_URL}${path}" \
-            -H "Content-Type: application/json" \
-            ${headers:+-H "$headers"} \
-            -d "$body" \
-            --max-time "$TIMEOUT" 2>&1)
-    else
-        response=$(curl -s -w "\n%{http_code}" \
-            -X "$method" \
-            "${API_URL}${path}" \
-            ${headers:+-H "$headers"} \
-            --max-time "$TIMEOUT" 2>&1)
-    fi
-
-    status=$(echo "$response" | tail -n 1)
-    body=$(echo "$response" | sed '$d')
-
-    echo "$status|$body"
-}
+register_cleanup
 
 # =============================================================================
 # Test Functions
@@ -410,22 +283,8 @@ main() {
     test_control_missing_fields
     test_empty_body
 
-    # Summary
-    echo ""
-    echo "=============================================="
-    echo "  Test Summary"
-    echo "=============================================="
-    echo ""
-    echo -e "  ${GREEN}Passed: ${TESTS_PASSED}${NC}"
-    echo -e "  ${RED}Failed: ${TESTS_FAILED}${NC}"
-    echo ""
-
-    if [ "$TESTS_FAILED" -gt 0 ]; then
-        show_server_logs
-        exit 1
-    fi
-
-    exit 0
+    # Print summary and exit
+    print_summary
 }
 
 main "$@"

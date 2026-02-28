@@ -22,7 +22,10 @@
  * ```
  */
 
+import { createLogger } from '../utils/logger.js';
 import type { StreamingUserMessage } from '../sdk/index.js';
+
+const logger = createLogger('MessageChannel');
 
 export class MessageChannel {
   private queue: StreamingUserMessage[] = [];
@@ -37,6 +40,7 @@ export class MessageChannel {
    */
   push(message: StreamingUserMessage): void {
     if (this.closed) {
+      logger.warn('Push to closed channel ignored');
       return;
     }
     this.queue.push(message);
