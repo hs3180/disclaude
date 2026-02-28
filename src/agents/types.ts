@@ -216,6 +216,7 @@ export interface SkillAgent extends Disposable {
  * - Extends SkillAgent capabilities
  * - Can be exposed as an inline tool for other agents
  * - May have its own isolated MCP server
+ * - Has distinct type identifier 'subagent'
  *
  * Current implementations:
  * - `SiteMiner` - Playwright-based site mining, exposed as tool
@@ -237,7 +238,10 @@ export interface SkillAgent extends Disposable {
  * const mcpConfig = subagent.getMcpServer();
  * ```
  */
-export interface Subagent extends SkillAgent {
+export interface Subagent extends Omit<SkillAgent, 'type'> {
+  /** Agent type identifier - subagent is a distinct type from skill */
+  readonly type: 'subagent';
+
   /**
    * Get the agent's tool definition for use by other agents.
    *
@@ -290,12 +294,22 @@ export function isSkillAgent(agent: unknown): agent is SkillAgent {
 
 /**
  * Type guard to check if an agent is a Subagent.
+ *
+ * Checks for:
+ * 1. type === 'subagent'
+ * 2. Has asTool() method
+ * 3. Has getMcpServer() method
  */
 export function isSubagent(agent: unknown): agent is Subagent {
   return (
-    isSkillAgent(agent) &&
+    typeof agent === 'object' &&
+    agent !== null &&
+    'type' in agent &&
+    (agent as { type: string }).type === 'subagent' &&
     'asTool' in agent &&
-    typeof (agent as { asTool: unknown }).asTool === 'function'
+    typeof (agent as { asTool: unknown }).asTool === 'function' &&
+    'getMcpServer' in agent &&
+    typeof (agent as { getMcpServer: unknown }).getMcpServer === 'function'
   );
 }
 
