@@ -46,7 +46,7 @@ vi.mock('../agents/reporter.js', () => {
     processEvent: vi.fn().mockImplementation(async function* () {
       yield { content: 'Reporter output', role: 'assistant', messageType: 'text' };
     }),
-    cleanup: vi.fn(),
+    dispose: vi.fn(),
   }));
 
   // Add static method as a regular function (not a mock)
@@ -90,7 +90,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
       queryStream: vi.fn().mockReturnValue((async function* () {
         yield { content: 'Mock evaluation response', role: 'assistant', messageType: 'text' };
       })()),
-      cleanup: vi.fn(),
+      dispose: vi.fn(),
       evaluate: vi.fn().mockImplementation(async function* (_taskId: string, _iteration: number) {
         yield { content: 'Evaluating...', role: 'assistant', messageType: 'text' };
         yield { content: 'Evaluation complete', role: 'assistant', messageType: 'text' };
@@ -134,7 +134,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
       expect(mockEvaluatorInstance.evaluate).toHaveBeenCalledTimes(1);
     });
 
-    it('should cleanup Evaluator after iteration', async () => {
+    it('should dispose Evaluator after iteration', async () => {
       bridge = new IterationBridge(config);
 
       try {
@@ -146,7 +146,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
         // Ignore errors for this test
       }
 
-      expect(mockEvaluatorInstance.cleanup).toHaveBeenCalled();
+      expect(mockEvaluatorInstance.dispose).toHaveBeenCalled();
     });
   });
 

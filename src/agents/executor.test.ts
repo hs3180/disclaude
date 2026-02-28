@@ -185,7 +185,7 @@ describe('Executor SkillAgent Interface', () => {
     expect(executor.type).toBe('skill');
     expect(executor.name).toBe('Executor');
     expect(typeof executor.execute).toBe('function');
-    expect(typeof executor.cleanup).toBe('function');
+    expect(typeof executor.dispose).toBe('function');
   });
 
   it('should pass isSkillAgent type guard', () => {

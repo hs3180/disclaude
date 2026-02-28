@@ -666,14 +666,17 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Cleanup resources (ChatAgent interface).
+   * Dispose of resources held by this agent.
    *
+   * Implements Disposable interface (Issue #328).
    * Called when agent is no longer needed. Delegates to shutdown().
    */
-  cleanup(): void {
+  dispose(): void {
     this.shutdown().catch((err) => {
-      this.logger.error({ err }, 'Error during cleanup shutdown');
+      this.logger.error({ err }, 'Error during dispose shutdown');
     });
+    // Call super.dispose() to mark as disposed
+    super.dispose();
   }
 
   /**

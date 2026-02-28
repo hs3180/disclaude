@@ -206,7 +206,7 @@ describe('Evaluator SkillAgent Interface', () => {
     expect(evaluator.type).toBe('skill');
     expect(evaluator.name).toBe('Evaluator');
     expect(typeof evaluator.execute).toBe('function');
-    expect(typeof evaluator.cleanup).toBe('function');
+    expect(typeof evaluator.dispose).toBe('function');
   });
 
   it('should pass isSkillAgent type guard', () => {
