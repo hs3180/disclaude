@@ -5,18 +5,17 @@
  * from Config.getAgentConfig(), simplifying agent instantiation and ensuring
  * consistent configuration across all agents.
  *
+ * Implements AgentFactoryInterface from #282 Phase 3 for unified agent creation.
+ *
  * @example
  * ```typescript
- * // Before
- * const config = Config.getAgentConfig();
- * const agent = new Evaluator({
- *   apiKey: config.apiKey,
- *   model: config.model,
- *   apiBaseUrl: config.apiBaseUrl,
- * });
+ * // Using typed factory methods (AgentFactoryInterface)
+ * const pilot = AgentFactory.createChatAgent('pilot', callbacks);
+ * const evaluator = AgentFactory.createSkillAgent('evaluator');
  *
- * // After
- * const agent = AgentFactory.createEvaluator();
+ * // Using convenience methods (backward compatible)
+ * const evaluator = AgentFactory.createEvaluator();
+ * const executor = AgentFactory.createExecutor();
  * ```
  *
  * @module agents/factory
@@ -28,6 +27,8 @@ import { Evaluator, type EvaluatorConfig } from './evaluator.js';
 import { Executor, type ExecutorConfig } from './executor.js';
 import { Reporter } from './reporter.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
+import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
+import type { ChatAgent, SkillAgent, Subagent } from './types.js';
 
 /**
  * Options for creating agents with custom configuration.
@@ -49,6 +50,12 @@ export interface AgentCreateOptions {
  * This class provides static factory methods for creating all agent types.
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
+ *
+ * The static methods createChatAgent, createSkillAgent, createSubagent
+ * follow the AgentFactoryInterface contract for unified agent creation by type.
+ *
+ * Note: Uses static methods for backward compatibility. The static methods
+ * follow the AgentFactoryInterface signature pattern.
  */
 export class AgentFactory {
   /**
@@ -163,5 +170,104 @@ export class AgentFactory {
     };
 
     return new Pilot(config);
+  }
+
+  // ============================================================================
+  // AgentFactoryInterface Implementation (Issue #282 Phase 3)
+  // ============================================================================
+
+  /**
+   * Create a ChatAgent instance by name.
+   *
+   * Part of AgentFactoryInterface - provides unified agent creation by type.
+   *
+   * @param name - Agent name ('pilot')
+   * @param args - Additional arguments (callbacks for Pilot)
+   * @returns ChatAgent instance
+   *
+   * @example
+   * ```typescript
+   * const pilot = AgentFactory.createChatAgent('pilot', callbacks);
+   * ```
+   */
+  static createChatAgent(name: string, ...args: unknown[]): ChatAgent {
+    if (name === 'pilot') {
+      const callbacks = args[0] as PilotCallbacks;
+      const options = (args[1] as AgentCreateOptions) || {};
+      return this.createPilot(callbacks, options);
+    }
+    throw new Error(`Unknown ChatAgent: ${name}`);
+  }
+
+  /**
+   * Create a SkillAgent instance by name.
+   *
+   * Part of AgentFactoryInterface - provides unified agent creation by type.
+   *
+   * @param name - Agent name ('evaluator', 'executor', 'reporter')
+   * @param args - Additional arguments (options, subdirectory, abortSignal, etc.)
+   * @returns SkillAgent instance
+   *
+   * @example
+   * ```typescript
+   * const evaluator = AgentFactory.createSkillAgent('evaluator');
+   * const executor = AgentFactory.createSkillAgent('executor');
+   * const reporter = AgentFactory.createSkillAgent('reporter');
+   * ```
+   */
+  static createSkillAgent(name: string, ...args: unknown[]): SkillAgent {
+    const options = (args[0] as AgentCreateOptions) || {};
+
+    switch (name) {
+      case 'evaluator':
+        const subdirectory = args[1] as string | undefined;
+        // Evaluator has type='skill' and will implement SkillAgent fully after PR #335
+        return this.createEvaluator(options, subdirectory) as unknown as SkillAgent;
+      case 'executor':
+        const abortSignal = args[1] as AbortSignal | undefined;
+        // Executor has type='skill' and will implement SkillAgent fully after PR #335
+        return this.createExecutor(options, abortSignal) as unknown as SkillAgent;
+      case 'reporter':
+        // Reporter has type='skill' and will implement SkillAgent fully after PR #335
+        return this.createReporter(options) as unknown as SkillAgent;
+      default:
+        throw new Error(`Unknown SkillAgent: ${name}`);
+    }
+  }
+
+  /**
+   * Create a Subagent instance by name.
+   *
+   * Part of AgentFactoryInterface - provides unified agent creation by type.
+   *
+   * @param name - Agent name ('site-miner')
+   * @param args - Additional arguments
+   * @returns Subagent instance
+   *
+   * @example
+   * ```typescript
+   * const siteMiner = AgentFactory.createSubagent('site-miner');
+   * ```
+   */
+  static createSubagent(name: string, ...args: unknown[]): Subagent {
+    if (name === 'site-miner') {
+      // SiteMiner uses global config, createSiteMiner returns the runSiteMiner function
+      // The returned object needs to implement Subagent interface
+      const config = args[0] as Partial<BaseAgentConfig> | undefined;
+
+      // Check if Playwright is available
+      if (!isPlaywrightAvailable()) {
+        throw new Error('SiteMiner requires Playwright MCP to be configured');
+      }
+
+      // Create and return the SiteMiner instance
+      // Note: This assumes SiteMiner has been refactored to implement Subagent
+      // (PR #336). For now, we return the factory function wrapped as Subagent.
+      const siteMinerFactory = createSiteMiner(config);
+
+      // Return as Subagent (will be properly typed after PR #336 merges)
+      return siteMinerFactory as unknown as Subagent;
+    }
+    throw new Error(`Unknown Subagent: ${name}`);
   }
 }
