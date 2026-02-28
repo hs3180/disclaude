@@ -312,11 +312,136 @@ export function isDisposable(obj: unknown): obj is Disposable {
 }
 
 // ============================================================================
+// Agent Configuration Types (Issue #327)
+// ============================================================================
+
+/**
+ * API provider type.
+ */
+export type AgentProvider = 'anthropic' | 'glm';
+
+/**
+ * Base configuration for all agents.
+ *
+ * This is the unified configuration interface that all agents use.
+ * It consolidates previously scattered configuration fields.
+ *
+ * @example
+ * ```typescript
+ * const config: BaseAgentConfig = {
+ *   apiKey: 'sk-...',
+ *   model: 'claude-3-5-sonnet-20241022',
+ *   provider: 'anthropic',
+ * };
+ * ```
+ */
+export interface BaseAgentConfig {
+  /** API key for authentication */
+  apiKey: string;
+  /** Model identifier */
+  model: string;
+  /** API provider (anthropic or glm) */
+  provider?: AgentProvider;
+  /** Optional API base URL (e.g., for GLM) */
+  apiBaseUrl?: string;
+  /** Permission mode for tool execution */
+  permissionMode?: 'default' | 'bypassPermissions';
+}
+
+/**
+ * Configuration for ChatAgent (Pilot).
+ *
+ * Extends BaseAgentConfig with platform-specific callbacks
+ * for streaming conversation support.
+ *
+ * @example
+ * ```typescript
+ * const config: ChatAgentConfig = {
+ *   apiKey: 'sk-...',
+ *   model: 'claude-3-5-sonnet-20241022',
+ *   provider: 'anthropic',
+ *   callbacks: {
+ *     sendMessage: async (chatId, text) => { ... },
+ *     sendCard: async (chatId, card) => { ... },
+ *     sendFile: async (chatId, filePath) => { ... },
+ *   },
+ * };
+ * ```
+ */
+export interface ChatAgentConfig extends BaseAgentConfig {
+  /**
+   * Callback functions for platform-specific operations.
+   */
+  callbacks: {
+    /** Send a text message */
+    sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
+    /** Send an interactive card */
+    sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
+    /** Send a file */
+    sendFile: (chatId: string, filePath: string) => Promise<void>;
+    /** Called when query completes */
+    onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  };
+}
+
+/**
+ * Configuration for SkillAgent (Evaluator, Executor, Reporter).
+ *
+ * Extends BaseAgentConfig with optional agent-specific settings.
+ *
+ * @example
+ * ```typescript
+ * // Evaluator config
+ * const evaluatorConfig: SkillAgentConfig = {
+ *   apiKey: 'sk-...',
+ *   model: 'claude-3-5-sonnet-20241022',
+ *   provider: 'anthropic',
+ *   subdirectory: 'regular',
+ * };
+ *
+ * // Executor config
+ * const executorConfig: SkillAgentConfig = {
+ *   apiKey: 'sk-...',
+ *   model: 'claude-3-5-sonnet-20241022',
+ *   provider: 'anthropic',
+ *   abortSignal: controller.signal,
+ * };
+ * ```
+ */
+export interface SkillAgentConfig extends BaseAgentConfig {
+  /** Optional subdirectory for task files (Evaluator) */
+  subdirectory?: string;
+  /** Optional abort signal for cancellation (Executor) */
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * Configuration for Subagent (SiteMiner).
+ *
+ * Subagents extend SkillAgent capabilities with tool encapsulation.
+ *
+ * @example
+ * ```typescript
+ * const config: SubagentConfig = {
+ *   apiKey: 'sk-...',
+ *   model: 'claude-3-5-sonnet-20241022',
+ *   provider: 'anthropic',
+ *   defaultTimeout: 120000, // 2 minutes
+ * };
+ * ```
+ */
+export interface SubagentConfig extends SkillAgentConfig {
+  /** Default timeout for operations in milliseconds */
+  defaultTimeout?: number;
+}
+
+// ============================================================================
 // Agent Factory Types
 // ============================================================================
 
 /**
  * Configuration for creating agents.
+ * @deprecated Use BaseAgentConfig, ChatAgentConfig, or SkillAgentConfig instead.
  */
 export interface AgentConfig {
   /** API key for authentication */
