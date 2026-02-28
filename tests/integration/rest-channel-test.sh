@@ -17,7 +17,6 @@
 #   REST_PORT        - REST API port (default: 3099)
 #   HOST             - Test server host (default: 127.0.0.1)
 #   TIMEOUT          - Request timeout in seconds (default: 10)
-#   START_SERVER     - Set to 'true' to auto-start server (default: false)
 #
 # Exit codes:
 #   0 - All tests passed
@@ -36,7 +35,6 @@ HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
 TIMEOUT=10
 CONFIG_PATH="${DISCLAUDE_CONFIG:-}"
-START_SERVER="${START_SERVER:-false}"
 SERVER_PID=""
 
 # Colors for output
@@ -385,33 +383,15 @@ main() {
     fi
     echo ""
 
-    # Check if server is running or should be started
+    # Start server if not already running
     log_info "Checking if REST server is running..."
-    if ! curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
-        if [ "$START_SERVER" = "true" ]; then
-            log_info "Server not running, starting automatically..."
-            if ! start_server; then
-                exit 1
-            fi
-        else
-            echo ""
-            echo -e "${RED}Error: REST server is not running at ${API_URL}${NC}"
-            echo ""
-            echo "Please start the server first:"
-            echo "  npm run build"
-            echo "  node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT}"
-            if [ -n "$CONFIG_PATH" ]; then
-                echo "  # Or with custom config:"
-                echo "  node dist/cli-entry.js start --mode primary --rest-port ${REST_PORT} --config ${CONFIG_PATH}"
-            fi
-            echo ""
-            echo "Or set START_SERVER=true to auto-start the server:"
-            echo "  START_SERVER=true ./tests/integration/rest-channel-test.sh"
-            echo ""
+    if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
+        log_info "Server is already running"
+    else
+        log_info "Server not running, starting automatically..."
+        if ! start_server; then
             exit 1
         fi
-    else
-        log_info "Server is already running"
     fi
     echo ""
 
@@ -441,9 +421,7 @@ main() {
     echo ""
 
     if [ "$TESTS_FAILED" -gt 0 ]; then
-        if [ "$START_SERVER" = "true" ]; then
-            show_server_logs
-        fi
+        show_server_logs
         exit 1
     fi
 

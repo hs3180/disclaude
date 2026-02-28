@@ -46,7 +46,6 @@ Integration tests are configured via **environment variables**:
 | `REST_PORT` | 3099 | REST API port for testing |
 | `HOST` | 127.0.0.1 | Test server host |
 | `TIMEOUT` | 10 | Request timeout in seconds |
-| `START_SERVER` | false | Set to 'true' to auto-start server |
 
 Example:
 
@@ -58,12 +57,6 @@ With custom config:
 
 ```bash
 DISCLAUDE_CONFIG=./test-config.yaml ./tests/integration/rest-channel-test.sh
-```
-
-Auto-start server with custom config:
-
-```bash
-START_SERVER=true DISCLAUDE_CONFIG=./test-config.yaml ./tests/integration/rest-channel-test.sh
 ```
 
 ## Available Tests
