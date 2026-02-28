@@ -156,8 +156,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
       expect(response.error).toContain('Missing required fields');
     });
@@ -172,8 +172,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
     });
   });
@@ -197,8 +197,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
       expect(response.error).toContain('not found');
     });
@@ -224,8 +224,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
       expect(response.error).toContain('not found');
     });
@@ -250,8 +250,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
       expect(response.error).toContain('not found');
     });
@@ -268,8 +268,8 @@ describe('createFileTransferAPIHandler', () => {
       const handled = await handler(req, res);
 
       expect(handled).toBe(true);
-      const endCall = (res.end as ReturnType<typeof vi.fn>).mock.calls[0];
-      const response = JSON.parse(endCall[0]);
+      const [endCall] = (res.end as ReturnType<typeof vi.fn>).mock.calls;
+      const response = JSON.parse(endCall);
       expect(response.success).toBe(false);
       expect(response.error).toContain('Storage error');
     });

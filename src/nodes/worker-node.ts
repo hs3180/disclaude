@@ -353,9 +353,10 @@ export class WorkerNode {
 
     logger.info({ url: this.primaryUrl }, 'Connecting to Primary Node...');
 
-    this.ws = new WebSocket(this.primaryUrl);
+    const ws = new WebSocket(this.primaryUrl);
+    this.ws = ws;
 
-    this.ws.on('open', () => {
+    ws.on('open', () => {
       logger.info('Connected to Primary Node');
       console.log('✓ Connected to Primary Node');
 
@@ -365,7 +366,7 @@ export class WorkerNode {
         nodeId: this.nodeId,
         name: this.nodeName,
       };
-      this.ws!.send(JSON.stringify(registerMsg));
+      ws.send(JSON.stringify(registerMsg));
       logger.info({ nodeId: this.nodeId, name: this.nodeName }, 'Sent registration message');
 
       console.log();

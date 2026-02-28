@@ -111,7 +111,7 @@ export class CommunicationNode extends EventEmitter {
       });
 
       // Initialize TaskFlowOrchestrator for Feishu channel
-      feishuChannel.initTaskFlowOrchestrator({
+      void feishuChannel.initTaskFlowOrchestrator({
         sendMessage: this.sendMessage.bind(this),
         sendCard: this.sendCard.bind(this),
         sendFile: this.sendFileToUser.bind(this),

@@ -173,7 +173,7 @@ describe('FeishuFileHandler', () => {
       const mockAdd = mockAttachmentManager.addAttachment as ReturnType<typeof vi.fn>;
       expect(mockAdd).toHaveBeenCalled();
 
-      const [chatId, attachment] = mockAdd.mock.calls[0];
+      const [chatId, attachment] = mockAdd.mock.calls[0] as [string, FileAttachment];
       expect(chatId).toBe('chat-123');
       expect(attachment.fileKey).toBe('img_key');
       expect(attachment.messageId).toBe('msg-456');

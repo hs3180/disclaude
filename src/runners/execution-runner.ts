@@ -310,9 +310,10 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
 
     logger.info({ url: commUrl }, 'Connecting to Communication Node...');
 
-    ws = new WebSocket(commUrl);
+    const socket = new WebSocket(commUrl);
+    ws = socket;
 
-    ws.on('open', () => {
+    socket.on('open', () => {
       logger.info('Connected to Communication Node');
       console.log('✓ Connected to Communication Node');
 
@@ -322,7 +323,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
         nodeId,
         name: nodeDisplayName,
       };
-      ws!.send(JSON.stringify(registerMsg));
+      socket.send(JSON.stringify(registerMsg));
       logger.info({ nodeId, name: nodeDisplayName }, 'Sent registration message');
 
       console.log();

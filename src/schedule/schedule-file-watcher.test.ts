@@ -184,7 +184,7 @@ Prompt`;
       const called = await waitForCondition(() => onFileRemoved.mock.calls.length > 0);
       expect(called).toBe(true);
 
-      const [taskId, removedFilePath] = onFileRemoved.mock.calls[0];
+      const [taskId, removedFilePath] = onFileRemoved.mock.calls[0] as [string, string];
       expect(taskId).toBe('schedule-remove-task');
       expect(removedFilePath).toBe(filePath);
     });

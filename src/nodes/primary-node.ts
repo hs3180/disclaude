@@ -137,7 +137,7 @@ export class PrimaryNode extends EventEmitter {
       });
 
       // Initialize TaskFlowOrchestrator for Feishu channel
-      feishuChannel.initTaskFlowOrchestrator({
+      void feishuChannel.initTaskFlowOrchestrator({
         sendMessage: this.sendMessage.bind(this),
         sendCard: this.sendCard.bind(this),
         sendFile: this.sendFileToUser.bind(this),
@@ -585,7 +585,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Execute a prompt locally using the shared Pilot.
    */
-  private async executeLocally(message: PromptMessage): Promise<void> {
+  private executeLocally(message: PromptMessage): void {
     if (!this.sharedPilot) {
       throw new Error('Local execution not initialized');
     }
