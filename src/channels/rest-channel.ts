@@ -185,7 +185,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
         logger.debug({ chatId: message.chatId, messageId }, 'Task completed, sync response resolved');
       }
-      return;
+      return Promise.resolve();
     }
 
     // For sync mode: buffer text responses

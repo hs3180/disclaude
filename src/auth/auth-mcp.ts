@@ -124,7 +124,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       callbackUrl: z.string().describe('OAuth callback URL (must match the registered redirect URI)'),
       chatId: z.string().describe('Chat ID from the task context'),
     }),
-    handler: async ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
+    handler: ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
       try {
         const provider: OAuthProviderConfig = {
           name: providerName,
@@ -141,13 +141,13 @@ export const authToolDefinitions: InlineToolDefinition[] = [
 
         logger.info({ chatId, provider: providerName }, 'Authorization URL generated');
 
-        return toolSuccess(
+        return Promise.resolve(toolSuccess(
           'Authorization URL generated:\n\n' +
           `**URL:** ${result.url}\n\n` +
           'Send this URL to the user so they can authorize. After authorization, the user should return and continue.'
-        );
+        ));
       } catch (error) {
-        return toolError(`Failed to generate authorization URL: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolError(`Failed to generate authorization URL: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },

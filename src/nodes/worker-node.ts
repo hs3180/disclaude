@@ -56,7 +56,6 @@ interface FeedbackContext {
  * - Reports results back to Primary Node
  */
 export class WorkerNode {
-  private config: WorkerNodeConfig;
   private nodeId: string;
   private nodeName: string;
   private primaryUrl: string;
@@ -79,7 +78,6 @@ export class WorkerNode {
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   constructor(config: WorkerNodeConfig) {
-    this.config = config;
     this.nodeId = config.nodeId || `worker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.nodeName = config.nodeName || `Worker-${this.nodeId.slice(0, 8)}`;
     this.primaryUrl = config.primaryUrl;

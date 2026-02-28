@@ -276,11 +276,12 @@ Test task description.
     it('should continue processing after task failure', async () => {
       const executionOrder: string[] = [];
 
-      const failingCallback = vi.fn((_taskPath: string, messageId: string) => {
+      const failingCallback = vi.fn((_taskPath: string, messageId: string): Promise<void> => {
         if (messageId === 'msg_fail') {
-          throw new Error('Task failed');
+          return Promise.reject(new Error('Task failed'));
         }
         executionOrder.push(messageId);
+        return Promise.resolve();
       });
 
       watcher = new TaskFileWatcher({

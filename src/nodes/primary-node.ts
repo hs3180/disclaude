@@ -80,7 +80,6 @@ interface FeedbackContext {
  * - Supports horizontal scaling with Worker Nodes
  */
 export class PrimaryNode extends EventEmitter {
-  private config: PrimaryNodeConfig;
   private port: number;
   private host: string;
 
@@ -110,7 +109,6 @@ export class PrimaryNode extends EventEmitter {
 
   constructor(config: PrimaryNodeConfig) {
     super();
-    this.config = config;
     this.port = config.port || 3001;
     this.host = config.host || '0.0.0.0';
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

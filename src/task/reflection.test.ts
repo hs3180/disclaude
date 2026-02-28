@@ -13,8 +13,8 @@ import {
   type ReflectionContext,
   type ReflectionEvaluationResult,
   type ReflectionEvent,
-  type AgentMessage,
 } from './reflection.js';
+import type { AgentMessage } from '../types/agent.js';
 
 // ============================================================================
 // Test Helpers
