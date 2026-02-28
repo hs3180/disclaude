@@ -59,10 +59,9 @@ describe('Agents Module Exports', () => {
     it('should export AgentFactory as class', async () => {
       const { AgentFactory } = await import('./index.js');
       expect(typeof AgentFactory).toBe('function');
-      expect(typeof AgentFactory.createEvaluator).toBe('function');
-      expect(typeof AgentFactory.createExecutor).toBe('function');
-      expect(typeof AgentFactory.createReporter).toBe('function');
-      expect(typeof AgentFactory.createPilot).toBe('function');
+      expect(typeof AgentFactory.createChatAgent).toBe('function');
+      expect(typeof AgentFactory.createSkillAgent).toBe('function');
+      expect(typeof AgentFactory.createSubagent).toBe('function');
     });
   });
 });

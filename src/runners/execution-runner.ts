@@ -76,7 +76,7 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
    *
    * Uses AgentFactory for consistent configuration (Issue #129).
    */
-  const sharedPilot = AgentFactory.createPilot({
+  const sharedPilot = AgentFactory.createChatAgent('pilot', {
     sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
       const ctx = activeFeedbackChannels.get(chatId);
       if (ctx) {

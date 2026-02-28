@@ -70,7 +70,7 @@ export class WorkerNode {
   private fileClient: FileClient;
 
   // Shared Pilot instance
-  private sharedPilot?: ReturnType<typeof AgentFactory.createPilot>;
+  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
 
   // Scheduler
@@ -129,7 +129,7 @@ export class WorkerNode {
   private async initPilot(): Promise<void> {
     console.log('Initializing execution capability...');
 
-    this.sharedPilot = AgentFactory.createPilot({
+    this.sharedPilot = AgentFactory.createChatAgent('pilot', {
       sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
         const ctx = this.activeFeedbackChannels.get(chatId);
         if (ctx) {
