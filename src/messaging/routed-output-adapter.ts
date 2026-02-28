@@ -9,8 +9,7 @@
 
 import type { AgentMessageType } from '../types/agent.js';
 import type { OutputAdapter, MessageMetadata } from '../utils/output-adapter.js';
-import type { IMessageRouter, RoutedMessageMetadata } from './types.js';
-import { MessageLevel, mapAgentMessageTypeToLevel } from './types.js';
+import { mapAgentMessageTypeToLevel, type IMessageRouter, type RoutedMessageMetadata } from './types.js';
 
 /**
  * Options for RoutedOutputAdapter.

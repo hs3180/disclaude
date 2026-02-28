@@ -39,7 +39,7 @@ import type { StreamingUserMessage } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { ChatAgent, UserInput, ChatAgentConfig } from './types.js';
+import type { ChatAgent, UserInput } from './types.js';
 import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
@@ -162,8 +162,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
    *
    * @returns Promise that resolves when started
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
     this.logger.debug('Pilot start() called - sessions are created on-demand');
+    return Promise.resolve();
   }
 
   /**

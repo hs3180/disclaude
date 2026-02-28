@@ -117,7 +117,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     logger.info({ id: this.id, port: this.port }, 'RestChannel created');
   }
 
-  protected async doStart(): Promise<void> {
+  protected doStart(): Promise<void> {
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((error) => {
         logger.error({ err: error }, 'Failed to handle request');
@@ -138,7 +138,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected async doStop(): Promise<void> {
+  protected doStop(): Promise<void> {
     // Clear all pending responses
     for (const [_chatId, pending] of this.pendingResponses) {
       clearTimeout(pending.timeout);
@@ -161,7 +161,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected doSendMessage(message: OutgoingMessage): Promise<void> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal for sync mode
@@ -199,6 +199,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     // For streaming mode: this could be extended to use Server-Sent Events
     // Currently we just log the message
     logger.debug({ chatId: message.chatId, type: message.type }, 'Message sent through REST channel');
+    return Promise.resolve();
   }
 
   protected checkHealth(): boolean {

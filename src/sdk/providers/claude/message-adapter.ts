@@ -55,7 +55,7 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
 
       // 处理工具使用
       if (toolBlocks.length > 0) {
-        const block = toolBlocks[0]; // 取第一个工具使用
+        const [block] = toolBlocks; // 取第一个工具使用
         if ('name' in block && 'input' in block) {
           metadata.toolName = block.name as string;
           metadata.toolInput = block.input;
@@ -262,7 +262,7 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
     }
     case 'Grep': {
       const pattern = input.pattern as string | undefined;
-      return pattern ? `🔧 Searching for "${pattern}"` : `🔧 Searching`;
+      return pattern ? `🔧 Searching for "${pattern}"` : '🔧 Searching';
     }
     case 'Glob': {
       const globPattern = input.pattern as string | undefined;

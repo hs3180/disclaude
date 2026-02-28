@@ -27,13 +27,12 @@
  */
 
 import { Config } from '../config/index.js';
-import type { BaseAgentConfig, AgentProvider } from './types.js';
 import { Evaluator, type EvaluatorConfig } from './evaluator.js';
 import { Executor, type ExecutorConfig } from './executor.js';
 import { Reporter } from './reporter.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
-import type { ChatAgent, SkillAgent, Subagent } from './types.js';
+import type { ChatAgent, SkillAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
 
 /**
  * Options for creating agents with custom configuration.

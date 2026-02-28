@@ -267,14 +267,14 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * @param command - Control command to emit
    * @returns Response from the control handler
    */
-  protected async emitControl(
+  protected emitControl(
     command: Parameters<ControlHandler>[0]
   ): Promise<ReturnType<ControlHandler>> {
     if (this.controlHandler) {
       return this.controlHandler(command);
     }
     logger.warn({ id: this.id, type: command.type }, 'No control handler registered');
-    return { success: false, error: 'No control handler registered' };
+    return Promise.resolve({ success: false, error: 'No control handler registered' });
   }
 
   // Abstract methods for subclasses to implement
