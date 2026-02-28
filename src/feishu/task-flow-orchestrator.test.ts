@@ -299,7 +299,6 @@ describe('TaskFlowOrchestrator', () => {
   describe('Final Result Handling', () => {
     it('should detect final result and set completion reason', async () => {
       // Import modules for mocking
-      const { ReflectionController } = await import('../task/index.js');
       const { TaskFileManager } = await import('../task/task-files.js');
 
       // Mock TaskFileManager to return true for hasFinalResult
@@ -334,7 +333,7 @@ describe('TaskFlowOrchestrator', () => {
   describe('No Message Warning', () => {
     it('should send warning when no messages were sent to user', async () => {
       // Import modules for mocking
-      const { ReflectionController, DialogueMessageTracker } = await import('../task/index.js');
+      const { DialogueMessageTracker } = await import('../task/index.js');
 
       // Mock DialogueMessageTracker to return false for hasAnyMessage
       (vi.mocked(DialogueMessageTracker).mockImplementationOnce as any)((): any => ({
