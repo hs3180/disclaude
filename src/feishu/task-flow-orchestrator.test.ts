@@ -6,6 +6,8 @@
  * - executeDialoguePhase execution
  * - Message callbacks
  * - Error handling
+ *
+ * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -22,19 +24,76 @@ vi.mock('../task/task-file-watcher.js', () => ({
   })),
 }));
 
-// Mock DialogueOrchestrator
+// Mock ReflectionController and related modules
 vi.mock('../task/index.js', () => ({
-  DialogueOrchestrator: vi.fn().mockImplementation(() => ({
-    runDialogue: vi.fn().mockImplementation(async function* () {
+  ReflectionController: vi.fn().mockImplementation(() => ({
+    run: vi.fn().mockImplementation(async function* () {
       yield { content: 'Test message', messageType: 'text', metadata: {} };
     }),
-    getMessageTracker: vi.fn(() => ({
-      recordMessageSent: vi.fn(),
-      hasAnyMessage: vi.fn(() => true),
-      buildWarning: vi.fn(() => 'Warning message'),
+    getMetrics: vi.fn(() => ({
+      totalIterations: 1,
+      successfulIterations: 1,
+      failedIterations: 0,
     })),
   })),
+  TerminationConditions: {
+    isComplete: vi.fn(() => () => false),
+    maxIterations: vi.fn(() => () => false),
+    evaluationComplete: vi.fn(() => () => false),
+    all: vi.fn(() => () => false),
+    any: vi.fn(() => () => false),
+  },
+  DialogueMessageTracker: vi.fn().mockImplementation(() => ({
+    recordMessageSent: vi.fn(),
+    hasAnyMessage: vi.fn(() => true),
+    buildWarning: vi.fn(() => 'Warning message'),
+    reset: vi.fn(),
+  })),
   extractText: vi.fn((msg) => msg.content || ''),
+}));
+
+// Mock Evaluator
+vi.mock('../agents/evaluator.js', () => ({
+  Evaluator: vi.fn().mockImplementation(() => ({
+    evaluate: vi.fn().mockImplementation(async function* () {
+      yield { content: 'Evaluation message', messageType: 'text' };
+    }),
+    dispose: vi.fn(),
+  })),
+}));
+
+// Mock Executor
+vi.mock('../agents/executor.js', () => ({
+  Executor: vi.fn().mockImplementation(() => ({
+    executeTask: vi.fn().mockImplementation(async function* () {
+      yield { type: 'message', content: 'Execution message' };
+    }),
+  })),
+}));
+
+// Mock Reporter
+vi.mock('../agents/reporter.js', () => ({
+  Reporter: vi.fn().mockImplementation(() => ({
+    processEvent: vi.fn().mockImplementation(async function* () {
+      yield { content: 'Reporter message', messageType: 'text' };
+    }),
+    dispose: vi.fn(),
+  })),
+}));
+
+// Mock TaskFileManager
+vi.mock('../task/task-files.js', () => ({
+  TaskFileManager: vi.fn().mockImplementation(() => ({
+    hasFinalResult: vi.fn().mockResolvedValue(false),
+    readExecution: vi.fn().mockResolvedValue(''),
+  })),
+}));
+
+// Mock DIALOGUE constants
+vi.mock('../config/constants.js', () => ({
+  DIALOGUE: {
+    MAX_ITERATIONS: 10,
+  },
 }));
 
 // Mock Config
@@ -209,19 +268,15 @@ describe('TaskFlowOrchestrator', () => {
 
   describe('Error Handling', () => {
     it('should handle errors in dialogue gracefully', async () => {
-      // Import DialogueOrchestrator mock
-      const { DialogueOrchestrator } = await import('../task/index.js');
+      // Import ReflectionController mock
+      const { ReflectionController } = await import('../task/index.js');
 
-      // Reset the mock for DialogueOrchestrator to throw
-      (vi.mocked(DialogueOrchestrator).mockImplementationOnce as any)((): any => ({
-        runDialogue: vi.fn().mockImplementation(async function* () {
-          throw new Error('Dialogue failed');
+      // Reset the mock for ReflectionController to throw
+      (vi.mocked(ReflectionController).mockImplementationOnce as any)((): any => ({
+        run: vi.fn().mockImplementation(async function* () {
+          throw new Error('Reflection failed');
         }),
-        getMessageTracker: vi.fn(() => ({
-          recordMessageSent: vi.fn(),
-          hasAnyMessage: vi.fn(() => false),
-          buildWarning: vi.fn(() => 'Warning'),
-        })),
+        getMetrics: vi.fn(() => ({ totalIterations: 0 })),
       }));
 
       const errorOrchestrator = new TaskFlowOrchestrator(

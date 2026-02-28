@@ -3,10 +3,12 @@
  *
  * Tests the following functionality:
  * - All core agents are exported correctly
- * - All bridges are exported correctly
+ * - ReflectionController and related types are exported correctly
  * - Supporting modules are exported correctly
  * - Feishu context MCP tools are exported correctly
  * - Utility functions are exported correctly
+ *
+ * Refactored (Issue #283): Tests ReflectionController instead of DialogueOrchestrator.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -18,22 +20,22 @@ describe('Task Module Exports', () => {
       expect(TaskModule.Evaluator).toBeDefined();
       expect(typeof TaskModule.Evaluator).toBe('function');
     });
-
-    it('should export Evaluator', () => {
-      expect(TaskModule.Evaluator).toBeDefined();
-      expect(typeof TaskModule.Evaluator).toBe('function');
-    });
   });
 
-  describe('Bridges', () => {
-    it('should export DialogueOrchestrator', () => {
-      expect(TaskModule.DialogueOrchestrator).toBeDefined();
-      expect(typeof TaskModule.DialogueOrchestrator).toBe('function');
+  describe('Reflection Pattern (Issue #283)', () => {
+    it('should export ReflectionController', () => {
+      expect(TaskModule.ReflectionController).toBeDefined();
+      expect(typeof TaskModule.ReflectionController).toBe('function');
     });
 
-    it('should export IterationBridge', () => {
-      expect(TaskModule.IterationBridge).toBeDefined();
-      expect(typeof TaskModule.IterationBridge).toBe('function');
+    it('should export TerminationConditions', () => {
+      expect(TaskModule.TerminationConditions).toBeDefined();
+      expect(typeof TaskModule.TerminationConditions).toBe('object');
+    });
+
+    it('should export DEFAULT_REFLECTION_CONFIG', () => {
+      expect(TaskModule.DEFAULT_REFLECTION_CONFIG).toBeDefined();
+      expect(typeof TaskModule.DEFAULT_REFLECTION_CONFIG).toBe('object');
     });
   });
 
@@ -84,20 +86,20 @@ describe('Task Module Exports', () => {
   });
 
   describe('Exported Types', () => {
-    it('should export ExecutorConfig type', () => {
+    it('should export ReflectionConfig type', () => {
       // Type exports don't exist at runtime, but we can verify the module structure
       expect(TaskModule).toBeDefined();
     });
 
-    it('should export DialogueOrchestratorConfig type', () => {
+    it('should export ReflectionContext type', () => {
       expect(TaskModule).toBeDefined();
     });
 
-    it('should export TaskPlanData type', () => {
+    it('should export ReflectionMetrics type', () => {
       expect(TaskModule).toBeDefined();
     });
 
-    it('should export IterationBridgeConfig type', () => {
+    it('should export ReflectionEvent type', () => {
       expect(TaskModule).toBeDefined();
     });
   });
@@ -107,12 +109,12 @@ describe('Task Module Exports', () => {
       const exports = Object.keys(TaskModule);
 
       // Core agents
-      // Scout removed - no longer exported
       expect(exports).toContain('Evaluator');
 
-      // Bridges
-      expect(exports).toContain('DialogueOrchestrator');
-      expect(exports).toContain('IterationBridge');
+      // Reflection Pattern (Issue #283)
+      expect(exports).toContain('ReflectionController');
+      expect(exports).toContain('TerminationConditions');
+      expect(exports).toContain('DEFAULT_REFLECTION_CONFIG');
 
       // Supporting modules
       expect(exports).toContain('DialogueMessageTracker');
