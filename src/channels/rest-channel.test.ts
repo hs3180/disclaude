@@ -25,6 +25,35 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 /**
+ * API response body type for test requests.
+ */
+interface ApiResponseBody {
+  success?: boolean;
+  messageId?: string;
+  chatId?: string;
+  error?: string;
+  message?: string;
+  response?: string;
+  channel?: string;
+  id?: string;
+}
+
+/**
+ * API response type for test requests.
+ */
+interface ApiResponse {
+  status: number;
+  body: ApiResponseBody;
+}
+
+/**
+ * Type guard to check if body is an ApiResponseBody
+ */
+function isApiResponseBody(body: unknown): body is ApiResponseBody {
+  return typeof body === 'object' && body !== null;
+}
+
+/**
  * Helper to make HTTP requests to the test server.
  */
 function makeRequest(
@@ -35,7 +64,7 @@ function makeRequest(
     body?: unknown;
     headers?: Record<string, string>;
   }
-): Promise<{ status: number; body: unknown }> {
+): Promise<ApiResponse> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -56,7 +85,8 @@ function makeRequest(
             const body = data ? JSON.parse(data) : {};
             resolve({ status: res.statusCode || 0, body });
           } catch {
-            resolve({ status: res.statusCode || 0, body: data });
+            // If JSON parse fails, treat the raw data as an error message
+            resolve({ status: res.statusCode || 0, body: { error: data } });
           }
         });
       }
@@ -264,10 +294,7 @@ describe('RestChannel', () => {
     });
 
     it('should wait for done message in sync mode', async () => {
-      let _receivedMessage: { messageId: string; chatId: string } | null = null;
-
-      channel.onMessage((msg) => {
-        _receivedMessage = msg;
+      channel.onMessage(async (msg) => {
         // Simulate async processing and response
         setTimeout(() => {
           void channel.sendMessage({

@@ -135,7 +135,8 @@ export interface ToolResultBlock {
 // ============================================================================
 
 /** 内联工具定义 */
-export interface InlineToolDefinition<TParams = unknown, TResult = unknown> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface InlineToolDefinition<TParams = any, TResult = any> {
   /** 工具名称 */
   name: string;
   /** 工具描述 */
