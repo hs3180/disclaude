@@ -27,7 +27,22 @@ import type {
 import type {
   ChannelConfig,
   OutgoingMessage,
+  ControlCommandType,
 } from './types.js';
+
+/**
+ * Control commands that should always be handled by the control handler,
+ * regardless of whether the bot is mentioned.
+ * These commands affect the session/execution layer and should not be
+ * passed to the agent.
+ */
+const CONTROL_COMMANDS: Set<string> = new Set([
+  'reset',
+  'restart',
+  'status',
+  'list-nodes',
+  'switch-node',
+]);
 
 const logger = createLogger('FeishuChannel');
 
@@ -427,68 +442,70 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     );
 
     // Check for control commands
-    // When bot is mentioned (@bot), pass commands through to agent instead of handling locally
+    // Control commands should ALWAYS be handled by the control handler, regardless of mentions.
+    // Non-control commands when bot is mentioned will be passed to the agent.
     const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
-    if (trimmedText.startsWith('/') && !botMentioned) {
+    if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
+      const isControlCommand = CONTROL_COMMANDS.has(cmd);
 
-      if (this.controlHandler) {
-        const response = await this.emitControl({
-          type: cmd as any,
-          chatId: chat_id,
-          data: { args, rawText: trimmedText },
-        });
+      // Control commands should always be handled by the control handler
+      // This ensures /reset, /status, etc. work even when bot is mentioned
+      if (isControlCommand) {
+        if (this.controlHandler) {
+          const response = await this.emitControl({
+            type: cmd as ControlCommandType,
+            chatId: chat_id,
+            data: { args, rawText: trimmedText },
+          });
 
-        // Only return if command was successfully handled
-        // Unknown commands (success: false) will fall through to normal message processing
-        if (response.success) {
-          if (response.message) {
+          if (response.success) {
+            if (response.message) {
+              await this.sendMessage({
+                chatId: chat_id,
+                type: 'text',
+                text: response.message,
+              });
+            }
+            return;
+          }
+          // If control handler failed, fall through to emitMessage
+          logger.warn(
+            { messageId: message_id, chatId: chat_id, cmd },
+            'Control command failed, passing to agent'
+          );
+        } else {
+          // Default command handling if no control handler registered
+          if (cmd === 'reset') {
             await this.sendMessage({
               chatId: chat_id,
               type: 'text',
-              text: response.message,
+              text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
             });
+            return;
           }
-          return;
+
+          if (cmd === 'status') {
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
+            });
+            return;
+          }
         }
-        // Unknown command: fall through to emitMessage for Agent to handle
       }
 
-      // Default command handling if no control handler registered
-      if (cmd === 'reset') {
-        await this.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
-        });
-        return;
+      // Non-control commands when bot is mentioned: pass to agent
+      if (botMentioned) {
+        logger.debug(
+          { messageId: message_id, chatId: chat_id, command: trimmedText },
+          'Bot mentioned with non-control command, passing to agent'
+        );
       }
-
-      if (cmd === 'status') {
-        await this.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
-        });
-        return;
-      }
-
-      if (cmd === 'help') {
-        await this.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
-        });
-        return;
-      }
-    }
-
-    // Log if bot is mentioned with a command (for debugging)
-    if (botMentioned && trimmedText.startsWith('/')) {
-      logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with command, passing to agent');
     }
 
     // Emit as incoming message

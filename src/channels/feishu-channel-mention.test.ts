@@ -1,10 +1,11 @@
 /**
- * Tests for FeishuChannel command pass-through behavior when bot is mentioned.
+ * Tests for FeishuChannel control command handling when bot is mentioned.
  *
- * Issue #280: @bot 无法正确透传 /reset 指令给 agent
+ * Issue #387: /reset 命令在 @提及 时不生效
  *
- * When bot is mentioned (@bot), commands should be passed through to the agent
- * instead of being handled locally by the channel.
+ * Control commands (reset, restart, status, list-nodes, switch-node) should
+ * ALWAYS be handled by the control handler, regardless of whether the bot is mentioned.
+ * Non-control commands when bot is mentioned will be passed to the agent.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -92,7 +93,7 @@ vi.mock('../utils/task-tracker.js', () => ({
 
 import { FeishuChannel } from './feishu-channel.js';
 
-describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
+describe('FeishuChannel - Control Commands (Issue #387)', () => {
   let channel: FeishuChannel;
   let messageHandler: ReturnType<typeof vi.fn>;
   let controlHandler: ReturnType<typeof vi.fn>;
@@ -123,59 +124,50 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
     }
   });
 
-  describe('isBotMentioned helper (indirectly tested via command behavior)', () => {
-    /**
-     * Helper to simulate receiving a message.
-     * We access the private method via type casting for testing.
-     */
-    async function simulateMessageReceive(options: {
-      text: string;
-      mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
-    }): Promise<void> {
-      // Create a mock event that matches FeishuEventData structure
-      const mockEvent = {
-        message: {
-          message_id: 'test-msg-id',
-          chat_id: 'test-chat-id',
-          content: JSON.stringify({ text: options.text }),
-          message_type: 'text',
-          create_time: Date.now(),
-          mentions: options.mentions,
-        },
-        sender: {
-          sender_type: 'user',
-          sender_id: { open_id: 'user-open-id' },
-        },
-      };
+  /**
+   * Helper to simulate receiving a message.
+   */
+  async function simulateMessageReceive(options: {
+    text: string;
+    mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
+  }): Promise<void> {
+    const mockEvent = {
+      message: {
+        message_id: 'test-msg-id',
+        chat_id: 'test-chat-id',
+        content: JSON.stringify({ text: options.text }),
+        message_type: 'text',
+        create_time: Date.now(),
+        mentions: options.mentions,
+      },
+      sender: {
+        sender_type: 'user',
+        sender_id: { open_id: 'user-open-id' },
+      },
+    };
 
-      // Access private method for testing
-      const handler = (channel as unknown as { handleMessageReceive: (data: unknown) => Promise<void> }).handleMessageReceive.bind(channel);
+    const handler = (channel as unknown as { handleMessageReceive: (data: unknown) => Promise<void> }).handleMessageReceive.bind(channel);
+    await channel.start();
+    await handler({ event: mockEvent });
+  }
 
-      // Start the channel first to set isRunning = true
-      await channel.start();
-
-      await handler({ event: mockEvent });
-    }
-
-    it('should handle command locally when bot is NOT mentioned', async () => {
+  describe('Control commands should ALWAYS be handled by control handler', () => {
+    it('should handle /reset when bot is NOT mentioned', async () => {
       await simulateMessageReceive({
         text: '/reset',
-        mentions: undefined, // No mentions
+        mentions: undefined,
       });
 
-      // Control handler should be called (local handling)
       expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'reset',
           chatId: 'test-chat-id',
         })
       );
-
-      // Message should NOT be passed to agent
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should pass command to agent when bot IS mentioned', async () => {
+    it('should handle /reset when bot IS mentioned (Issue #387)', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: [
@@ -187,19 +179,185 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // Control handler should NOT be called (command passed to agent)
-      expect(controlHandler).not.toHaveBeenCalled();
+      // Control handler SHOULD be called even when bot is mentioned
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'reset',
+          chatId: 'test-chat-id',
+        })
+      );
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
 
+    it('should handle /status when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/status',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'status',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /restart when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/restart',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'restart',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /list-nodes when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/list-nodes',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'list-nodes',
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /switch-node when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/switch-node node-123',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'switch-node',
+          data: expect.objectContaining({
+            args: ['node-123'],
+          }),
+        })
+      );
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Non-control commands should be passed to agent when bot is mentioned', () => {
+    it('should pass unknown commands to agent when bot IS mentioned', async () => {
+      await simulateMessageReceive({
+        text: '/custom-command',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler should NOT be called for unknown commands
+      expect(controlHandler).not.toHaveBeenCalled();
       // Message should be passed to agent
       expect(messageHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           chatId: 'test-chat-id',
-          content: '/reset',
+          content: '/custom-command',
         })
       );
     });
 
-    it('should pass command to agent when there are multiple mentions', async () => {
+    it('should pass /help to agent when bot IS mentioned (help is not a control command)', async () => {
+      await simulateMessageReceive({
+        text: '/help',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // /help is not a control command, should be passed to agent
+      expect(controlHandler).not.toHaveBeenCalled();
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '/help',
+        })
+      );
+    });
+  });
+
+  describe('Regular messages should be passed to agent', () => {
+    it('should pass regular messages to agent when bot is mentioned', async () => {
+      await simulateMessageReceive({
+        text: 'Hello bot!',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).not.toHaveBeenCalled();
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'Hello bot!',
+        })
+      );
+    });
+
+    it('should pass regular messages to agent without mentions', async () => {
+      await simulateMessageReceive({
+        text: 'Hello!',
+        mentions: undefined,
+      });
+
+      expect(controlHandler).not.toHaveBeenCalled();
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'Hello!',
+        })
+      );
+    });
+  });
+
+  describe('Multiple mentions behavior', () => {
+    it('should still handle control commands with multiple mentions', async () => {
       await simulateMessageReceive({
         text: '/reset',
         mentions: [
@@ -216,18 +374,25 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // Command should be passed to agent
-      expect(controlHandler).not.toHaveBeenCalled();
-      expect(messageHandler).toHaveBeenCalledWith(
+      // Control command should still be handled
+      expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: '/reset',
+          type: 'reset',
         })
       );
+      expect(messageHandler).not.toHaveBeenCalled();
     });
+  });
 
-    it('should handle regular messages normally (without / prefix)', async () => {
+  describe('Fallback behavior when control handler fails', () => {
+    it('should pass command to agent if control handler returns failure', async () => {
+      controlHandler.mockResolvedValue({
+        success: false,
+        error: 'Unknown command',
+      });
+
       await simulateMessageReceive({
-        text: 'Hello bot!',
+        text: '/reset',
         mentions: [
           {
             key: '@_bot',
@@ -237,27 +402,12 @@ describe('FeishuChannel - Command Pass-through (Issue #280)', () => {
         ],
       });
 
-      // No control handler call
-      expect(controlHandler).not.toHaveBeenCalled();
-
-      // Message passed to agent
+      // Control handler was called
+      expect(controlHandler).toHaveBeenCalled();
+      // But since it failed, message should be passed to agent
       expect(messageHandler).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: 'Hello bot!',
-        })
-      );
-    });
-
-    it('should handle command without mentions normally', async () => {
-      await simulateMessageReceive({
-        text: '/status',
-        mentions: undefined,
-      });
-
-      // Control handler should be called
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'status',
+          content: '/reset',
         })
       );
     });
