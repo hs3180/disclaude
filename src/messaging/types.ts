@@ -119,6 +119,12 @@ export interface IMessageRouter {
    * @returns Array of chat IDs to send to
    */
   getTargets(level: MessageLevel): string[];
+
+  /**
+   * Get the user chat ID.
+   * @returns The user chat ID
+   */
+  getUserChatId(): string;
 }
 
 /**

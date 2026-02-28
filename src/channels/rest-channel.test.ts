@@ -46,7 +46,6 @@ interface ApiResponse {
   body: ApiResponseBody;
 }
 
-
 /**
  * Helper to make HTTP requests to the test server.
  */
@@ -277,7 +276,7 @@ describe('RestChannel', () => {
       );
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('Invalid JSON');
+      expect((response.body as { error?: string }).error).toBe('Invalid JSON');
     });
   });
 
@@ -301,6 +300,7 @@ describe('RestChannel', () => {
             type: 'done',
           });
         }, 100);
+        return Promise.resolve();
       });
 
       const response = await makeRequest(port, {

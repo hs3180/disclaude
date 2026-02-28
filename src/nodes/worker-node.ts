@@ -56,7 +56,6 @@ interface FeedbackContext {
  * - Reports results back to Primary Node
  */
 export class WorkerNode {
-  private config: WorkerNodeConfig;
   private nodeId: string;
   private nodeName: string;
   private primaryUrl: string;
@@ -79,7 +78,6 @@ export class WorkerNode {
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   constructor(config: WorkerNodeConfig) {
-    this.config = config;
     this.nodeId = config.nodeId || `worker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.nodeName = config.nodeName || `Worker-${this.nodeId.slice(0, 8)}`;
     this.primaryUrl = config.primaryUrl;
@@ -263,22 +261,22 @@ export class WorkerNode {
             }
           }
         },
-        setFeedbackChannel: (chatId: string, context) => {
-          const actualContext = {
-            sendFeedback: (feedback: FeedbackMessage) => {
-              if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify(feedback));
-              }
-            },
-            threadId: context.threadId,
-          };
-          this.activeFeedbackChannels.set(chatId, actualContext);
-          logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-        },
-        clearFeedbackChannel: (chatId: string) => {
-          this.activeFeedbackChannels.delete(chatId);
-          logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
-        },
+      },
+      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
+        const actualContext = {
+          sendFeedback: (feedback: FeedbackMessage) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify(feedback));
+            }
+          },
+          threadId: context.threadId,
+        };
+        this.activeFeedbackChannels.set(chatId, actualContext);
+        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+      },
+      clearFeedbackChannel: (chatId: string) => {
+        this.activeFeedbackChannels.delete(chatId);
+        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 
@@ -403,7 +401,7 @@ export class WorkerNode {
             for (const att of attachments) {
               try {
                 const localPath = await this.fileClient.downloadToFile(att);
-                att.storageKey = localPath;
+                att.localPath = localPath;
                 logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
               } catch (error) {
                 logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');
