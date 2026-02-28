@@ -32,7 +32,7 @@ export interface ExecutorConfig extends BaseAgentConfig {
 
 /**
  * Progress event type for task execution.
- * These events are yielded during execution and passed to the Reporter.
+ * These events are yielded during execution and processed by the message level system.
  */
 export type TaskProgressEvent =
   | {
@@ -70,7 +70,7 @@ export interface TaskResult {
  * Executor for running tasks directly.
  *
  * Yields progress events during execution without handling user communication.
- * All reporting is delegated to the Reporter via the IterationBridge layer.
+ * Events are processed by the message level system for routing decisions.
  *
  * Output files:
  * - execution.md: Created in each iteration directory
