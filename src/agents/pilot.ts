@@ -39,6 +39,8 @@ import type { StreamingUserMessage } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import type { ChatAgent, UserInput } from './types.js';
+import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
@@ -118,7 +120,7 @@ interface MessageData {
  * - SessionManager for Query/Channel lifecycle
  * - ConversationOrchestrator for conversation management (from #237)
  */
-export class Pilot extends BaseAgent {
+export class Pilot extends BaseAgent implements ChatAgent {
   /** Agent type identifier (Issue #282) */
   readonly type = 'chat' as const;
 
@@ -150,6 +152,76 @@ export class Pilot extends BaseAgent {
 
   protected getAgentName(): string {
     return 'Pilot';
+  }
+
+  /**
+   * Start the agent session (ChatAgent interface).
+   *
+   * Called once before processing any messages. For Pilot, this is a no-op
+   * since sessions are created on-demand via processMessage().
+   *
+   * @returns Promise that resolves when started
+   */
+  async start(): Promise<void> {
+    this.logger.debug('Pilot start() called - sessions are created on-demand');
+  }
+
+  /**
+   * Handle streaming user input and yield responses (ChatAgent interface).
+   *
+   * This method provides a unified interface for processing user messages
+   * from an async generator and yielding AgentMessage responses.
+   *
+   * The UserInput.metadata.chatId is used to route messages to the correct session.
+   *
+   * @param input - AsyncGenerator yielding UserInput messages
+   * @yields AgentMessage responses
+   */
+  async *handleInput(input: AsyncGenerator<UserInput>): AsyncGenerator<AgentMessage> {
+    for await (const userInput of input) {
+      const chatId = userInput.metadata?.chatId ?? 'default';
+      const messageId = userInput.metadata?.parentMessageId ?? `msg-${Date.now()}`;
+      const senderOpenId = userInput.metadata?.fileRefs?.[0]?.name; // Not applicable in this context
+
+      // Track thread root
+      this.conversationOrchestrator.setThreadRoot(chatId, messageId);
+
+      // Get or create session
+      if (!this.sessionManager.has(chatId)) {
+        this.startAgentLoop(chatId);
+      }
+
+      // Build the user message
+      const enhancedContent = this.buildEnhancedContent(chatId, {
+        text: userInput.content,
+        messageId,
+        senderOpenId,
+      });
+
+      const streamingMessage: StreamingUserMessage = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: enhancedContent,
+        },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
+
+      // Push message to channel
+      const channel = this.sessionManager.getChannel(chatId);
+      if (channel) {
+        channel.push(streamingMessage);
+      }
+
+      // For now, yield a simple acknowledgment
+      // The actual response will come through the iterator callback
+      yield {
+        content: `Message received for session ${chatId}`,
+        role: 'assistant',
+        messageType: 'text',
+      };
+    }
   }
 
   /**
@@ -542,6 +614,25 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
+   * Reset all agent sessions (ChatAgent interface).
+   *
+   * Clears all conversation history and state across all sessions.
+   * For resetting a specific session, use resetSession(chatId).
+   */
+  reset(): void {
+    this.logger.info('Resetting all Pilot sessions');
+
+    // Close all sessions
+    this.sessionManager.closeAll();
+
+    // Clear all conversation context
+    this.conversationOrchestrator.clearAll();
+
+    // Clear all restart states
+    this.restartManager.clearAll();
+  }
+
+  /**
    * Reset state for a specific chatId (close session and remove from map).
    *
    * This is useful for /reset commands that clear conversation context for a specific chat.
@@ -551,7 +642,7 @@ You can read these files using the Read tool with the local paths above.`;
    *
    * @param chatId - Platform-specific chat identifier
    */
-  reset(chatId: string): void {
+  resetSession(chatId: string): void {
     // Delete session (this closes channel and query)
     const deleted = this.sessionManager.delete(chatId);
 
@@ -572,6 +663,17 @@ You can read these files using the Read tool with the local paths above.`;
    */
   getActiveSessionCount(): number {
     return this.sessionManager.size();
+  }
+
+  /**
+   * Cleanup resources (ChatAgent interface).
+   *
+   * Called when agent is no longer needed. Delegates to shutdown().
+   */
+  cleanup(): void {
+    this.shutdown().catch((err) => {
+      this.logger.error({ err }, 'Error during cleanup shutdown');
+    });
   }
 
   /**
