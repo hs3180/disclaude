@@ -510,4 +510,161 @@ export class IterationBridge {
       return '';
     }
   }
+
+  // ============================================================================
+  // Separated Phase Methods (for ReflectionController integration - Issue #283)
+  // ============================================================================
+
+  /**
+   * Run only the Evaluator phase.
+   *
+   * This method is designed to be used with ReflectionController's
+   * evaluateFirst mode, where the Evaluator runs first to check
+   * task completion status.
+   *
+   * @yields AgentMessage from the Evaluator
+   */
+  async *runEvaluatorOnly(): AsyncIterable<AgentMessage> {
+    logger.info({
+      iteration: this.iteration,
+      taskId: this.taskId,
+    }, 'Running Evaluator phase only (for ReflectionController)');
+
+    this.initMetrics();
+    this.emitEvent('phase_start', { phase: 'evaluate' });
+    const evaluateStart = Date.now();
+    let evaluateMessageCount = 0;
+
+    const evaluator = new Evaluator(this.evaluatorConfig);
+
+    try {
+      // Evaluator writes evaluation.md
+      for await (const msg of evaluator.evaluate(this.taskId, this.iteration)) {
+        evaluateMessageCount++;
+        if (this.metrics) {
+          this.metrics.phases.evaluate.messageCount++;
+          this.metrics.totalMessages++;
+        }
+        yield msg;
+      }
+
+      const evaluateDuration = Date.now() - evaluateStart;
+      if (this.metrics) {
+        this.metrics.phases.evaluate.endTime = new Date();
+        this.metrics.phases.evaluate.durationMs = evaluateDuration;
+      }
+
+      this.emitEvent('phase_end', {
+        phase: 'evaluate',
+        durationMs: evaluateDuration,
+        messageCount: evaluateMessageCount,
+      });
+
+      logger.info({
+        iteration: this.iteration,
+        taskId: this.taskId,
+        durationMs: evaluateDuration,
+        messageCount: evaluateMessageCount,
+      }, 'Evaluator phase complete');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (this.metrics) {
+        this.metrics.phases.evaluate.failed = true;
+        this.metrics.phases.evaluate.error = errorMsg;
+        this.metrics.phases.evaluate.endTime = new Date();
+        this.metrics.phases.evaluate.durationMs = Date.now() - evaluateStart;
+      }
+
+      this.emitEvent('error', { phase: 'evaluate', error: errorMsg });
+      logger.error({
+        err: error,
+        iteration: this.iteration,
+        taskId: this.taskId,
+      }, 'Evaluator phase failed');
+      throw error;
+    } finally {
+      evaluator.dispose();
+    }
+  }
+
+  /**
+   * Run only the Executor phase.
+   *
+   * This method is designed to be used with ReflectionController's
+   * evaluateFirst mode, where the Executor runs after the Evaluator
+   * determines that more work is needed.
+   *
+   * @yields AgentMessage from the Executor
+   */
+  async *runExecutorOnly(): AsyncIterable<AgentMessage> {
+    logger.info({
+      iteration: this.iteration,
+      taskId: this.taskId,
+    }, 'Running Executor phase only (for ReflectionController)');
+
+    // Initialize execute phase metrics if not already done
+    if (!this.metrics) {
+      this.initMetrics();
+    }
+
+    this.emitEvent('phase_start', { phase: 'execute' });
+    const executeStart = Date.now();
+
+    // Initialize execute phase metrics
+    if (this.metrics) {
+      this.metrics.phases.execute = {
+        phase: 'execute',
+        startTime: new Date(),
+        messageCount: 0,
+        failed: false,
+      };
+    }
+
+    let executeMessageCount = 0;
+    try {
+      for await (const msg of this.executeTask()) {
+        executeMessageCount++;
+        if (this.metrics && this.metrics.phases.execute) {
+          this.metrics.phases.execute.messageCount++;
+          this.metrics.totalMessages++;
+        }
+        yield msg;
+      }
+
+      const executeDuration = Date.now() - executeStart;
+      if (this.metrics && this.metrics.phases.execute) {
+        this.metrics.phases.execute.endTime = new Date();
+        this.metrics.phases.execute.durationMs = executeDuration;
+      }
+
+      this.emitEvent('phase_end', {
+        phase: 'execute',
+        durationMs: executeDuration,
+        messageCount: executeMessageCount,
+      });
+
+      logger.info({
+        iteration: this.iteration,
+        taskId: this.taskId,
+        durationMs: executeDuration,
+        messageCount: executeMessageCount,
+      }, 'Executor phase complete');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (this.metrics && this.metrics.phases.execute) {
+        this.metrics.phases.execute.failed = true;
+        this.metrics.phases.execute.error = errorMsg;
+        this.metrics.phases.execute.endTime = new Date();
+        this.metrics.phases.execute.durationMs = Date.now() - executeStart;
+      }
+
+      this.emitEvent('error', { phase: 'execute', error: errorMsg });
+      logger.error({
+        err: error,
+        taskId: this.taskId,
+        iteration: this.iteration,
+      }, 'Executor phase failed');
+      throw error;
+    }
+  }
 }
