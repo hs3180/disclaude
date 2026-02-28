@@ -189,7 +189,7 @@ export class SkillAgent extends BaseAgent implements ISkillAgent {
    * Get the raw skill content.
    * Useful for debugging or inspection.
    */
-  async getSkillContent(): Promise<string> {
+  getSkillContent(): Promise<string> {
     return this.loadSkill();
   }
 }
