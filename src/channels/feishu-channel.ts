@@ -139,7 +139,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     logger.info('FeishuChannel started');
   }
 
-  protected async doStop(): Promise<void> {
+  protected doStop(): Promise<void> {
     this.wsClient = undefined;
     this.client = undefined;
     this.messageSender = undefined;
@@ -151,6 +151,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     attachmentManager.cleanupOldAttachments();
 
     logger.info('FeishuChannel stopped');
+    return Promise.resolve();
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
@@ -277,7 +278,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // In Feishu, when bot is mentioned, it appears in the mentions array
     // The bot's id type is typically 'app' or has a specific pattern
     // We check if any mention has an id that looks like a bot/app
-    return mentions.some((mention) => {
+    return mentions.some((_mention) => {
       // Bot mentions typically have open_id starting with 'ou_' or 'on_'
       // but we should check all mentions since user might @bot
       // The safest approach: if there's any mention, treat it as bot mention

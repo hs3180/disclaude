@@ -313,16 +313,6 @@ export function buildColumnSet(columns: ColumnConfig[]): CardElement {
  * });
  */
 export function buildCard(config: CardConfig): Record<string, unknown> {
-  const card: Record<string, unknown> = {
-    type: 'template',
-    data: {
-      template_id: 'AAqkz9****', // Default template, can be customized
-      template_variable: {
-        elements: config.elements,
-      },
-    },
-  };
-
   // Build custom card structure without template
   const customCard: Record<string, unknown> = {
     config: {

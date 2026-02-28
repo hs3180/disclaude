@@ -183,7 +183,7 @@ export class IterationBridge {
    * Initialize metrics tracking for this iteration.
    */
   private initMetrics(): void {
-    if (!this.enableMetrics) return;
+    if (!this.enableMetrics) {return;}
 
     this.metrics = {
       taskId: this.taskId,

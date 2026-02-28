@@ -24,7 +24,7 @@ import { Config } from '../config/index.js';
 import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { SkillAgent, UserInput, SkillAgentConfig } from './types.js';
+import type { SkillAgent, UserInput } from './types.js';
 
 /**
  * Evaluator-specific allowed tools.
@@ -76,9 +76,9 @@ export class Evaluator extends BaseAgent implements SkillAgent {
    * Initialize the Evaluator agent.
    * No skill loading needed - allowedTools are defined directly in code.
    */
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
     if (this.initialized) {
-      return;
+      return Promise.resolve();
     }
 
     this.initialized = true;
@@ -86,6 +86,7 @@ export class Evaluator extends BaseAgent implements SkillAgent {
       { toolCount: EVALUATOR_ALLOWED_TOOLS.length },
       'Evaluator initialized'
     );
+    return Promise.resolve();
   }
 
   /**

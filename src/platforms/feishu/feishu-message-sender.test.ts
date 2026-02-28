@@ -244,8 +244,6 @@ describe('FeishuMessageSender', () => {
       const mockUpload = uploadAndSendFile as ReturnType<typeof vi.fn>;
       mockUpload.mockResolvedValue(5120);
 
-      const { messageLogger } = await import('../../feishu/message-logger.js');
-
       await sender.sendFile('chat_456', '/path/to/document.pdf');
 
       expect(mockLogger.info).toHaveBeenCalledWith(

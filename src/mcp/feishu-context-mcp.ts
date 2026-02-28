@@ -620,7 +620,7 @@ export async function update_card(params: {
       logger.info({ messageId, chatId }, 'CLI mode: Card update simulated');
       return {
         success: true,
-        message: `✅ Card updated (CLI mode)`,
+        message: '✅ Card updated (CLI mode)',
       };
     }
 
@@ -656,7 +656,7 @@ export async function update_card(params: {
 
     return {
       success: true,
-      message: `✅ Card updated successfully`,
+      message: '✅ Card updated successfully',
     };
 
   } catch (error) {
@@ -721,7 +721,7 @@ export async function wait_for_interaction(params: {
       logger.info({ messageId, chatId }, 'CLI mode: Simulating interaction response');
       return {
         success: true,
-        message: `✅ Interaction received (CLI mode - simulated)`,
+        message: '✅ Interaction received (CLI mode - simulated)',
         actionValue: 'simulated',
         actionType: 'button',
         userId: 'cli-user',

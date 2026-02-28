@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AgentFactory } from './factory.js';
 import { Pilot } from './pilot.js';
-import { Config } from '../config/index.js';
 
 // Mock Config module
 vi.mock('../config/index.js', () => ({

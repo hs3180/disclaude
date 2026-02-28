@@ -8,8 +8,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import {
   extractFileExtension,
   downloadFile,

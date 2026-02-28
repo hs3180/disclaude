@@ -250,7 +250,7 @@ The tool returns structured results with extracted information and confidence sc
         timeout: z.number().optional().default(60000).describe('Timeout in milliseconds'),
         takeScreenshot: z.boolean().optional().default(false).describe('Whether to take a screenshot for evidence'),
       }),
-      handler: async (params: SiteMinerOptions): Promise<SiteMinerResult> => {
+      handler: (params: SiteMinerOptions): Promise<SiteMinerResult> => {
         return this.runMining(params);
       },
     };
@@ -603,7 +603,7 @@ Begin mining now.`;
  * // [{ name: 'repo/name', stars: '1234', description: '...' }, ...]
  * ```
  */
-export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMinerResult> {
+export function runSiteMiner(options: SiteMinerOptions): Promise<SiteMinerResult> {
   const agentConfig = Config.getAgentConfig();
   const siteMiner = new SiteMiner({
     apiKey: agentConfig.apiKey,
@@ -619,7 +619,7 @@ export async function runSiteMiner(options: SiteMinerOptions): Promise<SiteMiner
  * Export a factory function for convenience.
  * @deprecated Use `new SiteMiner(config)` instead
  */
-export function createSiteMiner(config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
+export function createSiteMiner(_config?: Partial<BaseAgentConfig>): typeof runSiteMiner {
   // SiteMiner uses global config, but this allows for future customization
   return runSiteMiner;
 }

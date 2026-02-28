@@ -24,7 +24,7 @@ const waitForCondition = async (
   const { timeout = 5000, interval = 100 } = options;
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    if (condition()) return true;
+    if (condition()) {return true;}
     await waitFor(interval);
   }
   return false;
@@ -264,8 +264,8 @@ chatId: "oc_test"
 Prompt`;
 
       await fs.writeFile(filePath, content);
-      await fs.writeFile(filePath, content + '\n1');
-      await fs.writeFile(filePath, content + '\n2');
+      await fs.writeFile(filePath, `${content  }\n1`);
+      await fs.writeFile(filePath, `${content  }\n2`);
 
       const called = await waitForCondition(() => onFileAdded.mock.calls.length > 0);
       expect(called).toBe(true);
