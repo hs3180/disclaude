@@ -442,7 +442,7 @@ export class ScheduleFileWatcher {
     // Debounce the event
     const timer = setTimeout(() => {
       this.debounceTimers.delete(filePath);
-      this.processFileEvent(eventType, filePath, filename);
+      void this.processFileEvent(eventType, filePath, filename);
     }, this.debounceMs);
 
     this.debounceTimers.set(filePath, timer);
