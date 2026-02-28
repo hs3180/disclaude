@@ -72,6 +72,30 @@ Tests the REST Channel functionality:
 - **Custom ChatId**: Tests custom chat ID preservation
 - **Unknown Routes**: Tests 404 responses
 
+### Use Case 3: Multi-turn Conversation (`use-case-3-multi-turn.sh`)
+
+Tests multi-turn conversation with context preservation:
+- User sends multiple messages in sequence
+- Agent maintains context across turns
+- Agent can reference previous messages
+- Different chat IDs maintain separate contexts
+
+**Test Scenarios:**
+1. **Number Context Test**: Set a favorite number, ask about it, then ask for a calculation
+2. **Name Context Test**: Introduce with name and interest, ask about each
+3. **Separate Chat Test**: Verify different chat IDs don't share context
+
+**Usage:**
+```bash
+./tests/integration/use-case-3-multi-turn.sh
+```
+
+**Options:**
+- `--timeout SECONDS` - Maximum wait time for response (default: 180)
+- `--port PORT` - REST API port (default: 3000)
+- `--verbose` - Enable verbose output
+- `--dry-run` - Show test plan without executing
+
 ## Adding New Tests
 
 To add a new integration test:
