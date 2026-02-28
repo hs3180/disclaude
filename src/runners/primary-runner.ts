@@ -74,16 +74,25 @@ export async function runPrimaryNode(config?: PrimaryNodeConfig): Promise<void> 
   console.log('✓ Primary Node ready');
   console.log();
 
-  // Handle shutdown
-  const shutdown = async () => {
-    logger.info('Shutting down Primary Node...');
-    console.log('\nShutting down Primary Node...');
+  // Handle shutdown with detailed logging
+  const shutdown = async (signal: string) => {
+    // Capture stack trace to help identify signal source
+    const stack = new Error('Signal source trace').stack;
+
+    logger.info({
+      signal,
+      stack: stack?.split('\n').slice(1).join('\n')
+    }, 'Received shutdown signal, shutting down Primary Node...');
+
+    console.log(`\nReceived ${signal}, shutting down Primary Node...`);
     await primaryNode.stop();
+
+    logger.info('Primary Node stopped, exiting');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 // Re-export type for external use

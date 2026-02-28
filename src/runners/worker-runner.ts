@@ -61,16 +61,25 @@ export async function runWorkerNode(config?: WorkerNodeConfig): Promise<void> {
 
   logger.info('Worker Node started successfully');
 
-  // Handle shutdown
-  const shutdown = async () => {
-    logger.info('Shutting down Worker Node...');
-    console.log('\nShutting down Worker Node...');
+  // Handle shutdown with detailed logging
+  const shutdown = async (signal: string) => {
+    // Capture stack trace to help identify signal source
+    const stack = new Error('Signal source trace').stack;
+
+    logger.info({
+      signal,
+      stack: stack?.split('\n').slice(1).join('\n')
+    }, 'Received shutdown signal, shutting down Worker Node...');
+
+    console.log(`\nReceived ${signal}, shutting down Worker Node...`);
     await workerNode.stop();
+
+    logger.info('Worker Node stopped, exiting');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 // Re-export type for external use

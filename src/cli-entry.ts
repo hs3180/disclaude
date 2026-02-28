@@ -210,18 +210,9 @@ async function main(): Promise<void> {
   }
 }
 
-// Handle shutdown gracefully
-process.on('SIGINT', async () => {
-  const logger = await initLogger();
-  logger.info('Received SIGINT, shutting down gracefully');
-
-  console.log('\nGoodbye!');
-
-  // Flush any pending logs
-  await flushLogger();
-
-  process.exit(0);
-});
+// Note: SIGINT/SIGTERM handling is delegated to individual runners.
+// This avoids duplicate handlers and ensures proper cleanup of runner resources.
+// Each runner (primary-runner, worker-runner, etc.) registers its own signal handlers.
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {

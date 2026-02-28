@@ -67,16 +67,25 @@ export async function runCommunicationNode(config?: CommNodeConfig): Promise<voi
   console.log('Waiting for Execution Node to connect...');
   console.log();
 
-  // Handle shutdown
-  const shutdown = async () => {
-    logger.info('Shutting down Communication Node...');
-    console.log('\nShutting down Communication Node...');
+  // Handle shutdown with detailed logging
+  const shutdown = async (signal: string) => {
+    // Capture stack trace to help identify signal source
+    const stack = new Error('Signal source trace').stack;
+
+    logger.info({
+      signal,
+      stack: stack?.split('\n').slice(1).join('\n')
+    }, 'Received shutdown signal, shutting down Communication Node...');
+
+    console.log(`\nReceived ${signal}, shutting down Communication Node...`);
     await commNode.stop();
+
+    logger.info('Communication Node stopped, exiting');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 // Re-export type for external use

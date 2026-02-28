@@ -439,10 +439,17 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
   // Start connection
   connectToCommNode();
 
-  // Handle shutdown
-  const shutdown = () => {
-    logger.info('Shutting down Execution Node...');
-    console.log('\nShutting down Execution Node...');
+  // Handle shutdown with detailed logging
+  const shutdown = (signal: string) => {
+    // Capture stack trace to help identify signal source
+    const stack = new Error('Signal source trace').stack;
+
+    logger.info({
+      signal,
+      stack: stack?.split('\n').slice(1).join('\n')
+    }, 'Received shutdown signal, shutting down Execution Node...');
+
+    console.log(`\nReceived ${signal}, shutting down Execution Node...`);
 
     running = false;
 
@@ -466,11 +473,12 @@ export async function runExecutionNode(config?: ExecNodeConfig): Promise<void> {
     // Clear active feedback channels
     activeFeedbackChannels.clear();
 
+    logger.info('Execution Node stopped, exiting');
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 // Re-export type for external use
