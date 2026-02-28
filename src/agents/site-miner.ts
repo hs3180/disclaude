@@ -93,8 +93,8 @@ export function isPlaywrightAvailable(): boolean {
  * ```
  */
 export class SiteMiner extends BaseAgent implements Subagent {
-  /** Agent type identifier (Issue #282) */
-  readonly type = 'skill' as const;
+  /** Agent type identifier - subagent is a distinct type (Issue #325) */
+  readonly type = 'subagent' as const;
 
   /** Agent name for logging */
   readonly name = 'SiteMiner';
