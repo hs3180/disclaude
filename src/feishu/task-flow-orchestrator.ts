@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - TaskFileWatcher for detecting new Task.md files
- * - DialogueOrchestrator execution (Evaluator → Executor → Reporter)
+ * - TaskController execution (Evaluator → Executor → Reporter)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
@@ -18,7 +18,7 @@
  */
 
 import * as path from 'path';
-import { DialogueOrchestrator, extractText } from '../task/index.js';
+import { TaskController, extractText } from '../task/index.js';
 import { TaskFileWatcher } from '../task/task-file-watcher.js';
 import { Config } from '../config/index.js';
 import { FeishuOutputAdapter } from '../utils/output-adapter.js';
@@ -120,8 +120,8 @@ export class TaskFlowOrchestrator {
     // Import MCP tools to set message tracking callback
     const { setMessageSentCallback } = await import('../mcp/feishu-context-mcp.js');
 
-    // Create bridge with agent configs
-    const bridge = new DialogueOrchestrator({
+    // Create TaskController with agent configs (Issue #283)
+    const controller = new TaskController({
       evaluatorConfig: {
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
@@ -131,7 +131,7 @@ export class TaskFlowOrchestrator {
     });
 
     // Set the message sent callback to track when MCP tools send messages
-    const messageTracker = bridge.getMessageTracker();
+    const messageTracker = controller.getMessageTracker();
     setMessageSentCallback((_chatId: string) => {
       messageTracker.recordMessageSent();
     });
@@ -151,10 +151,10 @@ export class TaskFlowOrchestrator {
     let completionReason = 'unknown';
 
     try {
-      this.logger.debug({ chatId, taskId: path.basename(taskPath, '.md') }, 'Starting dialogue');
+      this.logger.debug({ chatId, taskId: path.basename(path.dirname(taskPath)) }, 'Starting dialogue');
 
-      // Run dialogue loop (text is extracted from Task.md by DialogueOrchestrator)
-      for await (const message of bridge.runDialogue(taskPath, '', chatId, messageId)) {
+      // Run task execution loop (Issue #283 - TaskController)
+      for await (const message of controller.run(taskPath, chatId)) {
         const content = typeof message.content === 'string'
           ? message.content
           : extractText(message);
@@ -166,7 +166,6 @@ export class TaskFlowOrchestrator {
         // Send to user
         await adapter.write(content, message.messageType ?? 'text', {
           toolName: message.metadata?.toolName as string | undefined,
-          toolInputRaw: message.metadata?.toolInputRaw as Record<string, unknown> | undefined,
         });
 
         // Update completion reason based on message type
@@ -174,6 +173,8 @@ export class TaskFlowOrchestrator {
           completionReason = 'task_done';
         } else if (message.messageType === 'error') {
           completionReason = 'error';
+        } else if (message.messageType === 'task_completion') {
+          completionReason = 'task_done';
         }
       }
     } catch (error) {
@@ -198,7 +199,7 @@ export class TaskFlowOrchestrator {
 
       // Check if no user message was sent and send warning
       if (!messageTracker.hasAnyMessage()) {
-        const taskId = path.basename(taskPath, '.md');
+        const taskId = path.basename(path.dirname(taskPath));
         const warning = messageTracker.buildWarning(completionReason, taskId);
         this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
         await this.messageCallbacks.sendMessage(chatId, warning, messageId);
