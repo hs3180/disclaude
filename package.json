@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.62",
-    "@anthropic-ai/sdk": "^0.32.0",
+    "@anthropic-ai/sdk": "^0.78.0",
     "@larksuiteoapi/node-sdk": "^1.34.0",
     "@playwright/mcp": "^0.0.61",
     "commander": "^12.1.0",
@@ -60,7 +60,7 @@
     "@types/pino-pretty": "^4.7.5",
     "@types/uuid": "10.0.0",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^3.0.0",
     "eslint": "^9.17.0",
     "pm2": "^6.0.14",
     "prettier": "^3.4.2",
@@ -68,7 +68,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.19.1",
-    "vitest": "^2.1.8",
+    "vitest": "^3.0.0",
     "vitest-tsconfig-paths": "^3.4.1"
   },
   "engines": {
