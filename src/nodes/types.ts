@@ -4,6 +4,9 @@
  * This module defines the types used by Primary Node and Worker Node.
  */
 
+import type { IChannel } from '../channels/index.js';
+import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
+
 /**
  * Node type identifier.
  * - primary: Main node with both communication and execution capabilities
@@ -46,9 +49,17 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
   /** Feishu App Secret */
   appSecret?: string;
 
+  // Custom channels
+  /** Custom channels to register */
+  channels?: IChannel[];
+
   // Execution capabilities
   /** Enable local execution (default: true) */
   enableLocalExec?: boolean;
+
+  // File storage
+  /** File storage configuration */
+  fileStorage?: FileStorageConfig;
 }
 
 /**

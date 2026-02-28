@@ -287,7 +287,7 @@ describe('RestChannel', () => {
     });
 
     it('should wait for done message in sync mode', async () => {
-      channel.onMessage((msg) => {
+      channel.onMessage(async (msg) => {
         // Simulate async processing and response
         setTimeout(() => {
           void channel.sendMessage({

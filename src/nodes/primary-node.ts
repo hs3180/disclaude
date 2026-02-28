@@ -29,7 +29,7 @@ import http from 'node:http';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, Pilot } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, OutgoingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
@@ -101,7 +101,7 @@ export class PrimaryNode extends EventEmitter {
 
   // Local execution
   private localExecEnabled: boolean;
-  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
+  private sharedPilot?: Pilot;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
@@ -480,7 +480,7 @@ export class PrimaryNode extends EventEmitter {
         }
         return Promise.resolve();
       },
-    });
+    }) as Pilot;
 
     // Initialize Schedule Manager and Scheduler
     const workspaceDir = Config.getWorkspaceDir();
@@ -516,21 +516,21 @@ export class PrimaryNode extends EventEmitter {
             }
           }
         },
-        setFeedbackChannel: (chatId: string, context) => {
-          const actualContext = {
-            sendFeedback: (feedback: FeedbackMessage) => {
-              // For local execution, handle feedback directly
-              void this.handleFeedback(feedback);
-            },
-            threadId: context.threadId,
-          };
-          this.activeFeedbackChannels.set(chatId, actualContext);
-          logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-        },
-        clearFeedbackChannel: (chatId: string) => {
-          this.activeFeedbackChannels.delete(chatId);
-          logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
-        },
+      },
+      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
+        const actualContext = {
+          sendFeedback: (feedback: FeedbackMessage) => {
+            // For local execution, handle feedback directly
+            void this.handleFeedback(feedback);
+          },
+          threadId: context.threadId,
+        };
+        this.activeFeedbackChannels.set(chatId, actualContext);
+        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+      },
+      clearFeedbackChannel: (chatId: string) => {
+        this.activeFeedbackChannels.delete(chatId);
+        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 
@@ -872,7 +872,7 @@ export class PrimaryNode extends EventEmitter {
 
       try {
         if (command === 'reset' || command === 'restart') {
-          this.sharedPilot.reset(chatId);
+          this.sharedPilot.resetSession(chatId);
           logger.info({ chatId }, `Pilot ${command} executed for chatId`);
         }
       } catch (error) {

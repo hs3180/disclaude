@@ -272,7 +272,7 @@ export function buildNote(text: string): CardElement {
         tag: 'plain_text',
         content: text,
       },
-    ] as CardElement[],
+    ] as unknown as CardElement[],
   };
 }
 
@@ -286,12 +286,12 @@ export function buildColumnSet(columns: ColumnConfig[]): CardElement {
   return {
     tag: 'column_set',
     columns: columns.map((col) => ({
-      width: col.width || 'weighted',
+      width: col.width ?? 'weighted',
       weight: col.width,
       vertical_align: col.verticalAlign || 'center',
       elements: col.elements,
     })),
-  };
+  } as unknown as CardElement;
 }
 
 /**
@@ -322,7 +322,7 @@ export function buildCard(config: CardConfig): Record<string, unknown> {
   };
 
   if (config.header) {
-    customCard.header = {
+    const header: Record<string, unknown> = {
       title: {
         tag: 'plain_text',
         content: config.header.title,
@@ -331,11 +331,13 @@ export function buildCard(config: CardConfig): Record<string, unknown> {
     };
 
     if (config.header.subtitle) {
-      customCard.header.subtitle = {
+      header.subtitle = {
         tag: 'plain_text',
         content: config.header.subtitle,
       };
     }
+
+    customCard.header = header;
   }
 
   return customCard;

@@ -20,6 +20,7 @@ import type {
   OutgoingMessage,
   MessageHandler,
   ControlHandler,
+  ControlResponse,
 } from './types.js';
 
 const logger = createLogger('BaseChannel');
@@ -269,7 +270,7 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    */
   protected emitControl(
     command: Parameters<ControlHandler>[0]
-  ): Promise<ReturnType<ControlHandler>> {
+  ): Promise<ControlResponse> {
     if (this.controlHandler) {
       return this.controlHandler(command);
     }

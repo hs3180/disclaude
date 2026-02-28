@@ -326,7 +326,7 @@ describe('IterationBridge (File-Driven Architecture)', () => {
           readEvaluation: vi.fn().mockResolvedValue('# Evaluation\n\n## Status\nCOMPLETE'),
           getExecutionPath: vi.fn().mockReturnValue('tasks/test/iterations/iter-1/execution.md'),
           writeExecution: vi.fn().mockResolvedValue(undefined),
-        }));
+        } as unknown as TaskFileManager));
 
         bridge = new IterationBridge({
           ...config,

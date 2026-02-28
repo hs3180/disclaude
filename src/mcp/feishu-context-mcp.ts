@@ -644,9 +644,6 @@ export async function update_card(params: {
       path: {
         message_id: messageId,
       },
-      params: {
-        receive_id_type: 'chat_id',
-      },
       data: {
         content: JSON.stringify(card),
       },

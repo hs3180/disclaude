@@ -106,8 +106,12 @@ export class SiteMiner extends BaseAgent implements Subagent {
    * Create a SiteMiner instance.
    * Uses SubagentConfig for unified configuration structure (Issue #327).
    */
-  constructor(config: SubagentConfig = {}) {
-    super(config);
+  constructor(config: Partial<SubagentConfig> = {}) {
+    super({
+      apiKey: config.apiKey ?? '',
+      model: config.model ?? '',
+      ...config,
+    });
     this.defaultTimeout = config.defaultTimeout ?? 60000;
   }
 

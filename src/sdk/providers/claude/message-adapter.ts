@@ -224,11 +224,16 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
  * @returns Claude SDK SDKUserMessage
  */
 export function adaptUserInput(input: UserInput): SDKUserMessage {
+  // Convert content to string format for SDK
+  const content = typeof input.content === 'string'
+    ? input.content
+    : JSON.stringify(input.content);
+
   return {
     type: 'user',
     message: {
       role: 'user',
-      content: input.content,
+      content,
     },
     parent_tool_use_id: null,
     session_id: '',

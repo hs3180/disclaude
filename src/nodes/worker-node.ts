@@ -24,7 +24,7 @@
 import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, Pilot } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import {
   ScheduleManager,
@@ -69,7 +69,7 @@ export class WorkerNode {
   private fileClient: FileClient;
 
   // Shared Pilot instance
-  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
+  private sharedPilot?: Pilot;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
 
   // Scheduler
@@ -187,7 +187,7 @@ export class WorkerNode {
         }
         return Promise.resolve();
       },
-    });
+    }) as Pilot;
 
     // Initialize Schedule Manager and Scheduler
     const workspaceDir = Config.getWorkspaceDir();
@@ -261,22 +261,22 @@ export class WorkerNode {
             }
           }
         },
-        setFeedbackChannel: (chatId: string, context) => {
-          const actualContext = {
-            sendFeedback: (feedback: FeedbackMessage) => {
-              if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify(feedback));
-              }
-            },
-            threadId: context.threadId,
-          };
-          this.activeFeedbackChannels.set(chatId, actualContext);
-          logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-        },
-        clearFeedbackChannel: (chatId: string) => {
-          this.activeFeedbackChannels.delete(chatId);
-          logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
-        },
+      },
+      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
+        const actualContext = {
+          sendFeedback: (feedback: FeedbackMessage) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify(feedback));
+            }
+          },
+          threadId: context.threadId,
+        };
+        this.activeFeedbackChannels.set(chatId, actualContext);
+        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+      },
+      clearFeedbackChannel: (chatId: string) => {
+        this.activeFeedbackChannels.delete(chatId);
+        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 
@@ -380,7 +380,7 @@ export class WorkerNode {
 
           try {
             if (command === 'reset' || command === 'restart') {
-              this.sharedPilot?.reset(chatId);
+              this.sharedPilot?.resetSession(chatId);
               logger.info({ chatId }, `Pilot ${command} executed for chatId`);
             }
           } catch (error) {
@@ -400,8 +400,8 @@ export class WorkerNode {
             logger.info({ chatId, attachmentCount: attachments.length }, 'Downloading attachments');
             for (const att of attachments) {
               try {
-                const localPath = await this.fileClient.downloadToFile(att);
-                att.storageKey = localPath;
+              const localPath = await this.fileClient.downloadToFile(att);
+                att.localPath = localPath;
                 logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
               } catch (error) {
                 logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');
