@@ -72,6 +72,24 @@ Tests the REST Channel functionality:
 - **Custom ChatId**: Tests custom chat ID preservation
 - **Unknown Routes**: Tests 404 responses
 
+### Use Case 1 - Basic Reply (`use-case-1-basic-reply.sh`)
+
+Tests the most basic conversation scenario:
+
+- **Health Check**: Verifies server is running
+- **Basic Greeting**: Agent responds to "你好"
+- **Custom ChatId**: Verifies chatId preservation
+
+```bash
+./tests/integration/use-case-1-basic-reply.sh
+```
+
+Options:
+- `--timeout SECONDS`: Maximum wait time for response (default: 180)
+- `--port PORT`: REST API port (default: 3000)
+- `--verbose`: Enable verbose output
+- `--dry-run`: Show test plan without executing
+
 ## Adding New Tests
 
 To add a new integration test:
