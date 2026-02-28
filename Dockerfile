@@ -135,4 +135,4 @@ USER disclaude
 # Logs will be available at:
 #   - /app/logs/disclaude-combined.log (pino application logs)
 #   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
-CMD ["pm2-runtime", "start", "ecosystem.config.docker.cjs"]
+CMD ["pm2-runtime", "start", "ecosystem.comm.config.json"]
