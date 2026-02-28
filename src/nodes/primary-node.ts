@@ -516,21 +516,21 @@ export class PrimaryNode extends EventEmitter {
             }
           }
         },
-        setFeedbackChannel: (chatId: string, context) => {
-          const actualContext = {
-            sendFeedback: (feedback: FeedbackMessage) => {
-              // For local execution, handle feedback directly
-              void this.handleFeedback(feedback);
-            },
-            threadId: context.threadId,
-          };
-          this.activeFeedbackChannels.set(chatId, actualContext);
-          logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-        },
-        clearFeedbackChannel: (chatId: string) => {
-          this.activeFeedbackChannels.delete(chatId);
-          logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
-        },
+      },
+      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
+        const actualContext = {
+          sendFeedback: (feedback: FeedbackMessage) => {
+            // For local execution, handle feedback directly
+            void this.handleFeedback(feedback);
+          },
+          threadId: context.threadId,
+        };
+        this.activeFeedbackChannels.set(chatId, actualContext);
+        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+      },
+      clearFeedbackChannel: (chatId: string) => {
+        this.activeFeedbackChannels.delete(chatId);
+        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 

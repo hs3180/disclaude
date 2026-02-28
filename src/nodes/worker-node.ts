@@ -261,22 +261,22 @@ export class WorkerNode {
             }
           }
         },
-        setFeedbackChannel: (chatId: string, context) => {
-          const actualContext = {
-            sendFeedback: (feedback: FeedbackMessage) => {
-              if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify(feedback));
-              }
-            },
-            threadId: context.threadId,
-          };
-          this.activeFeedbackChannels.set(chatId, actualContext);
-          logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-        },
-        clearFeedbackChannel: (chatId: string) => {
-          this.activeFeedbackChannels.delete(chatId);
-          logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
-        },
+      },
+      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
+        const actualContext = {
+          sendFeedback: (feedback: FeedbackMessage) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify(feedback));
+            }
+          },
+          threadId: context.threadId,
+        };
+        this.activeFeedbackChannels.set(chatId, actualContext);
+        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
+      },
+      clearFeedbackChannel: (chatId: string) => {
+        this.activeFeedbackChannels.delete(chatId);
+        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 
@@ -401,7 +401,7 @@ export class WorkerNode {
             for (const att of attachments) {
               try {
                 const localPath = await this.fileClient.downloadToFile(att);
-                att.storageKey = localPath;
+                att.localPath = localPath;
                 logger.info({ fileId: att.id, fileName: att.fileName, localPath }, 'Attachment downloaded');
               } catch (error) {
                 logger.error({ err: error, fileId: att.id, fileName: att.fileName }, 'Failed to download attachment');

@@ -180,8 +180,9 @@ describe('Interactive Card Builder', () => {
         elements: [],
       });
 
+      expect(card.header).toBeDefined();
       expect(card.header).toHaveProperty('subtitle');
-      expect(card.header.subtitle).toEqual({
+      expect(card.header!.subtitle).toEqual({
         tag: 'plain_text',
         content: 'Subtitle',
       });
@@ -197,7 +198,7 @@ describe('Interactive Card Builder', () => {
         'no'
       );
 
-      expect(card.header.title.content).toBe('Confirm Action');
+      expect(card.header!.title.content).toBe('Confirm Action');
       expect(card.elements).toHaveLength(2);
       expect(card.elements[0].tag).toBe('div');
       expect(card.elements[1].tag).toBe('action');
@@ -206,7 +207,7 @@ describe('Interactive Card Builder', () => {
     it('should use default values', () => {
       const card = buildConfirmCard('Confirm', 'Are you sure?');
 
-      const actionGroup = card.elements[1] as { actions: { value: { action: string } }[] };
+      const actionGroup = card.elements[1] as unknown as { actions: { value: { action: string } }[] };
       expect(actionGroup.actions[0].value.action).toBe('confirm');
       expect(actionGroup.actions[1].value.action).toBe('cancel');
     });
@@ -225,10 +226,10 @@ describe('Interactive Card Builder', () => {
         ]
       );
 
-      expect(card.header.title.content).toBe('Choose Option');
+      expect(card.header!.title.content).toBe('Choose Option');
       expect(card.elements).toHaveLength(2);
 
-      const actionGroup = card.elements[1] as { actions: { tag: string }[] };
+      const actionGroup = card.elements[1] as unknown as { actions: { tag: string }[] };
       expect(actionGroup.actions[0].tag).toBe('select_static');
     });
   });
