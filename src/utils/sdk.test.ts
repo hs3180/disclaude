@@ -343,6 +343,25 @@ describe('buildSdkEnv', () => {
       process.env.DEBUG_CLAUDE_AGENT_SDK = originalValue;
     }
   });
+
+  it('should completely remove CLAUDECODE from env (not just set to undefined)', () => {
+    // Set CLAUDECODE in process.env to simulate running inside Claude Code
+    const originalValue = process.env.CLAUDECODE;
+    process.env.CLAUDECODE = '1';
+
+    const result = buildSdkEnv('test-key');
+
+    // Key should not exist in the result object (not just undefined)
+    expect('CLAUDECODE' in result).toBe(false);
+    expect(result.CLAUDECODE).toBeUndefined();
+
+    // Restore original value
+    if (originalValue === undefined) {
+      delete process.env.CLAUDECODE;
+    } else {
+      process.env.CLAUDECODE = originalValue;
+    }
+  });
 });
 
 describe('extractText', () => {
