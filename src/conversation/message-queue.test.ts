@@ -245,7 +245,9 @@ describe('MessageQueue', () => {
         for await (const msg of queue.consume()) {
           consumed.push(msg);
           count++;
-          if (count >= 3) break;
+          if (count >= 3) {
+            break;
+          }
         }
       })();
 

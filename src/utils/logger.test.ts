@@ -332,7 +332,7 @@ describe('Logger Module', () => {
     });
 
     it('should export LoggerConfig interface', async () => {
-      const { initLogger } = await import('./logger.js');
+      await import('./logger.js');
 
       // Type check - this is compile-time only
       const config = {

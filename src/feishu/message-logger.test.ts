@@ -70,8 +70,8 @@ describe('MessageLogger', () => {
 
     // Re-import to get fresh instance
     vi.resetModules();
-    const module = await import('./message-logger.js');
-    MessageLogger = module.MessageLogger;
+    const { MessageLogger: MessageLoggerClass } = await import('./message-logger.js');
+    MessageLogger = MessageLoggerClass;
     messageLogger = new MessageLogger();
   });
 
