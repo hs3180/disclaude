@@ -125,22 +125,22 @@ describe('DialogueOrchestrator', () => {
     });
   });
 
-  describe('cleanup', () => {
+  describe('dispose', () => {
     it('should reset all state variables', () => {
       // Set some state via message tracker
       const tracker = orchestrator.getMessageTracker();
       tracker.recordMessageSent();
 
-      // Cleanup
-      orchestrator.cleanup();
+      // Dispose
+      orchestrator.dispose();
 
       // Should reset to initial state
       expect(tracker.hasAnyMessage()).toBe(false);
     });
 
-    it('should not throw on multiple cleanups', () => {
-      orchestrator.cleanup();
-      expect(() => orchestrator.cleanup()).not.toThrow();
+    it('should not throw on multiple disposes', () => {
+      orchestrator.dispose();
+      expect(() => orchestrator.dispose()).not.toThrow();
     });
   });
 
@@ -153,8 +153,8 @@ describe('DialogueOrchestrator', () => {
       expect(typeof tracker.hasAnyMessage).toBe('function');
     });
 
-    it('should have cleanup method for state reset', () => {
-      expect(typeof orchestrator.cleanup).toBe('function');
+    it('should have dispose method for state reset', () => {
+      expect(typeof orchestrator.dispose).toBe('function');
     });
 
     it('should have runDialogue method for execution', () => {
@@ -163,11 +163,11 @@ describe('DialogueOrchestrator', () => {
   });
 
   describe('error handling', () => {
-    it('should handle errors gracefully during cleanup', () => {
+    it('should handle errors gracefully during dispose', () => {
       // Should not throw even if called multiple times or in weird states
-      orchestrator.cleanup();
-      orchestrator.cleanup();
-      expect(() => orchestrator.cleanup()).not.toThrow();
+      orchestrator.dispose();
+      orchestrator.dispose();
+      expect(() => orchestrator.dispose()).not.toThrow();
     });
   });
 });

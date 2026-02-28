@@ -291,14 +291,14 @@ describe('Pilot (Streaming Input)', () => {
       await expect(pilot.start()).resolves.toBeUndefined();
     });
 
-    it('should implement cleanup() method', async () => {
+    it('should implement dispose() method', async () => {
       pilot.processMessage('chat-123', 'Hello', 'msg-001');
       expect(pilot['sessionManager'].size()).toBe(1);
 
-      // cleanup() should clear all sessions
-      pilot.cleanup();
+      // dispose() should clear all sessions
+      pilot.dispose();
 
-      // Wait for async cleanup to complete
+      // Wait for async dispose to complete
       await vi.waitFor(() => {
         expect(pilot['sessionManager'].size()).toBe(0);
       });

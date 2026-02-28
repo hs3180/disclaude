@@ -158,12 +158,6 @@ export interface ChatAgent extends Disposable {
    * Clears conversation history and state.
    */
   reset(): void;
-
-  /**
-   * Cleanup resources.
-   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
-   */
-  cleanup(): void;
 }
 
 // ============================================================================
@@ -209,12 +203,6 @@ export interface SkillAgent extends Disposable {
    * @yields AgentMessage responses
    */
   execute(input: string | UserInput[]): AsyncGenerator<AgentMessage>;
-
-  /**
-   * Cleanup resources.
-   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
-   */
-  cleanup(): void;
 }
 
 // ============================================================================

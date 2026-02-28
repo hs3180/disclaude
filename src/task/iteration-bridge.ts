@@ -286,7 +286,7 @@ export class IterationBridge {
       }, 'Phase 1 failed: Evaluator error');
       throw error;
     } finally {
-      evaluator.cleanup();
+      evaluator.dispose();
     }
 
     // Check if task is already complete (final_result.md exists)
@@ -492,7 +492,7 @@ export class IterationBridge {
         messageType: 'error',
       };
     } finally {
-      reporter.cleanup();
+      reporter.dispose();
       logger.debug({
         taskId: this.taskId,
         iteration: this.iteration,

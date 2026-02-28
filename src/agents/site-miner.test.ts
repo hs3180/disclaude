@@ -235,7 +235,7 @@ describe('SiteMiner Subagent Interface', () => {
     expect(siteMiner.type).toBe('skill');
     expect(siteMiner.name).toBe('SiteMiner');
     expect(typeof siteMiner.execute).toBe('function');
-    expect(typeof siteMiner.cleanup).toBe('function');
+    expect(typeof siteMiner.dispose).toBe('function');
     expect(typeof siteMiner.asTool).toBe('function');
     expect(typeof siteMiner.getMcpServer).toBe('function');
   });
@@ -411,7 +411,7 @@ describe('SiteMiner Subagent Interface', () => {
 
   describe('cleanup', () => {
     it('should not throw when called', () => {
-      expect(() => siteMiner.cleanup()).not.toThrow();
+      expect(() => siteMiner.dispose()).not.toThrow();
     });
   });
 });

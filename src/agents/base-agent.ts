@@ -381,14 +381,4 @@ export abstract class BaseAgent implements Disposable {
     this.logger.debug(`${this.getAgentName()} disposed`);
     this.initialized = false;
   }
-
-  /**
-   * Cleanup resources.
-   *
-   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
-   * Subclasses should override dispose() instead.
-   */
-  cleanup(): void {
-    this.dispose();
-  }
 }

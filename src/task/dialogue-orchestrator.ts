@@ -90,14 +90,14 @@ export class DialogueOrchestrator {
   }
 
   /**
-   * Cleanup resources held by the dialogue orchestrator.
+   * Dispose resources held by the dialogue orchestrator.
    *
    * **IMPORTANT**: Call this method when the dialogue is complete to prevent memory leaks.
    *
    * Reset all state variables to their initial values.
    */
-  cleanup(): void {
-    logger.debug({ taskId: this.taskId }, 'Cleaning up dialogue orchestrator');
+  dispose(): void {
+    logger.debug({ taskId: this.taskId }, 'Disposing dialogue orchestrator');
     this.taskId = '';
     this.currentChatId = undefined;
     this.messageTracker.reset();

@@ -680,15 +680,6 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Cleanup resources (ChatAgent interface).
-   *
-   * @deprecated Use dispose() instead. This method is kept for backward compatibility.
-   */
-  cleanup(): void {
-    this.dispose();
-  }
-
-  /**
    * Cleanup resources on shutdown.
    */
   async shutdown(): Promise<void> {

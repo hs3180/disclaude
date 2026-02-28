@@ -207,15 +207,6 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('cleanup', () => {
-    it('should reset initialized flag', () => {
-      agent['initialized'] = true;
-      agent.cleanup();
-
-      expect(agent['initialized']).toBe(false);
-    });
-  });
-
   describe('dispose', () => {
     it('should reset initialized flag', () => {
       agent['initialized'] = true;
@@ -242,12 +233,6 @@ describe('BaseAgent', () => {
 
     it('should have dispose method', () => {
       expect(typeof agent.dispose).toBe('function');
-    });
-
-    it('cleanup should call dispose', () => {
-      const disposeSpy = vi.spyOn(agent, 'dispose');
-      agent.cleanup();
-      expect(disposeSpy).toHaveBeenCalled();
     });
   });
 
