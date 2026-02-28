@@ -9,7 +9,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
-import { loadConfigFile, getConfigFromFile, validateConfig } from './loader.js';
+import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
 import type { DisclaudeConfig, ConfigValidationError } from './types.js';
 
 // Export constants and types
@@ -20,8 +20,8 @@ export * from './loader.js';
 
 const logger = createLogger('Config');
 
-// Load configuration file
-const fileConfig = loadConfigFile();
+// Load configuration file (use preloaded config if available from CLI --config)
+const fileConfig = getPreloadedConfig() || loadConfigFile();
 const fileConfigOnly = validateConfig(fileConfig) ? getConfigFromFile(fileConfig) : {};
 const configLoaded = fileConfig._fromFile;
 
