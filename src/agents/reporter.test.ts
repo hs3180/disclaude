@@ -323,7 +323,7 @@ describe('Reporter SkillAgent Interface', () => {
     expect(reporter.type).toBe('skill');
     expect(reporter.name).toBe('Reporter');
     expect(typeof reporter.execute).toBe('function');
-    expect(typeof reporter.cleanup).toBe('function');
+    expect(typeof reporter.dispose).toBe('function');
   });
 
   it('should pass isSkillAgent type guard', () => {

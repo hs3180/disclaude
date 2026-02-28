@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseAgent, type BaseAgentConfig, type SdkOptionsExtra, type IteratorYieldResult } from './base-agent.js';
+import { isDisposable } from './types.js';
 
 // Mock SDK provider
 vi.mock('../sdk/index.js', () => ({
@@ -206,12 +207,32 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('cleanup', () => {
+  describe('dispose', () => {
     it('should reset initialized flag', () => {
       agent['initialized'] = true;
-      agent.cleanup();
+      agent.dispose();
 
       expect(agent['initialized']).toBe(false);
+    });
+
+    it('should be idempotent', () => {
+      agent['initialized'] = true;
+      agent.dispose();
+      expect(agent['initialized']).toBe(false);
+
+      // Call again should not throw
+      expect(() => agent.dispose()).not.toThrow();
+      expect(agent['initialized']).toBe(false);
+    });
+  });
+
+  describe('Disposable interface', () => {
+    it('should implement Disposable interface', () => {
+      expect(isDisposable(agent)).toBe(true);
+    });
+
+    it('should have dispose method', () => {
+      expect(typeof agent.dispose).toBe('function');
     });
   });
 
