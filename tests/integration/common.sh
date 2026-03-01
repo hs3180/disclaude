@@ -97,10 +97,78 @@ log_debug() {
 # Server Management Functions
 # =============================================================================
 
+# Check if a port is in use
+# Returns: 0 if port is in use, 1 if port is free
+is_port_in_use() {
+    local port="$1"
+    if command -v lsof &> /dev/null; then
+        lsof -i:"$port" -sTCP:LISTEN > /dev/null 2>&1
+    elif command -v ss &> /dev/null; then
+        ss -tln | grep -q ":${port} "
+    elif command -v netstat &> /dev/null; then
+        netstat -tln | grep -q ":${port} "
+    else
+        # Fallback: try to connect
+        curl -s "http://${HOST}:${port}/api/health" > /dev/null 2>&1
+    fi
+}
+
+# Check if server is already running on the target port
+# Returns: 0 if server is running and healthy, 1 otherwise
+is_server_running() {
+    curl -s "${API_URL}/api/health" > /dev/null 2>&1
+}
+
+# Wait for port to be released
+# Returns: 0 if port is released, 1 if timeout
+wait_for_port_release() {
+    local port="$1"
+    local max_retries="${2:-10}"
+    local retry=0
+
+    while [ $retry -lt $max_retries ]; do
+        if ! is_port_in_use "$port"; then
+            log_debug "Port $port is now free"
+            return 0
+        fi
+        sleep 1
+        retry=$((retry + 1))
+        log_debug "Waiting for port $port to be released... ($retry/$max_retries)"
+    done
+
+    log_warn "Port $port still in use after ${max_retries} seconds"
+    return 1
+}
+
 # Start the test server
 # Returns: 0 on success, 1 on failure
 start_server() {
     log_info "Starting test server on port ${REST_PORT}..."
+
+    # Check if server is already running and healthy
+    if is_server_running; then
+        log_info "Server already running on port ${REST_PORT}, reusing existing server"
+        SERVER_PID=""
+        return 0
+    fi
+
+    # Wait for port to be released if it's in use but server is not healthy
+    if is_port_in_use "$REST_PORT"; then
+        log_warn "Port ${REST_PORT} is in use but server is not healthy, waiting for release..."
+        if ! wait_for_port_release "$REST_PORT" 15; then
+            log_error "Port ${REST_PORT} is still in use, cannot start server"
+            # Try to kill any process using the port
+            if command -v lsof &> /dev/null; then
+                local pid_using_port
+                pid_using_port=$(lsof -t -i:"$REST_PORT" 2>/dev/null | head -1)
+                if [ -n "$pid_using_port" ]; then
+                    log_warn "Killing process $pid_using_port using port ${REST_PORT}"
+                    kill -9 "$pid_using_port" 2>/dev/null || true
+                    sleep 2
+                fi
+            fi
+        fi
+    fi
 
     cd "$PROJECT_ROOT"
 
@@ -142,6 +210,9 @@ stop_server() {
         kill $SERVER_PID 2>/dev/null || true
         wait $SERVER_PID 2>/dev/null || true
         SERVER_PID=""
+
+        # Wait for port to be released
+        wait_for_port_release "$REST_PORT" 10 || true
     fi
 }
 

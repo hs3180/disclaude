@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - TaskFileWatcher for detecting new Task.md files
- * - ReflectionController execution (Evaluator → Executor → Reporter)
+ * - ReflectionController execution (Evaluator → Executor)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
@@ -124,6 +124,7 @@ export class TaskFlowOrchestrator {
    * Run the dialogue phase using ReflectionController (Evaluator → Executor → Reporter).
    *
    * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+   * Refactored (Issue #413): Uses generic SkillAgent instead of specialized classes.
    */
   private async runDialogue(
     chatId: string,

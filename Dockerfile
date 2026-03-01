@@ -9,8 +9,17 @@
 # Build:
 #   docker build -t disclaude:latest .
 #
-# Run:
-#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
+# Run Modes:
+#   This image supports two deployment modes:
+#
+#   1. Communication Node (default) - Handles Feishu WebSocket connections
+#      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
+#
+#   2. Execution Node - Handles Pilot/Agent task execution
+#      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
+#        disclaude:latest pm2-runtime start ecosystem.exec.config.json
+#
+# For production deployment with both nodes, use docker-compose.yml.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -131,8 +140,24 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Switch to non-root user
 USER disclaude
 
-# Default command: run with PM2 for process management and logging
+# Default command: run Communication Node (comm mode) with PM2
+#
+# This image supports two modes:
+#   - comm: Communication Node (Feishu WebSocket handler) - DEFAULT
+#   - exec: Execution Node (Pilot/Agent handler)
+#
+# Usage examples:
+#
+#   # Run with default comm mode (recommended for most users)
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
+#
+#   # Run exec mode (for distributed deployment)
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
+#     disclaude:latest pm2-runtime start ecosystem.exec.config.json
+#
+# For full two-node deployment, use docker-compose.yml which configures both modes.
+#
 # Logs will be available at:
 #   - /app/logs/disclaude-combined.log (pino application logs)
 #   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
-CMD ["pm2-runtime", "start", "ecosystem.config.docker.cjs"]
+CMD ["pm2-runtime", "start", "ecosystem.comm.config.json"]

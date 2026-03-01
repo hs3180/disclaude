@@ -8,6 +8,7 @@
  * - Error handling
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+ * Refactored (Issue #413): Uses generic SkillAgent instead of specialized classes.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -52,30 +53,11 @@ vi.mock('../task/index.js', () => ({
   extractText: vi.fn((msg) => msg.content || ''),
 }));
 
-// Mock Evaluator
-vi.mock('../agents/evaluator.js', () => ({
-  Evaluator: vi.fn().mockImplementation(() => ({
-    evaluate: vi.fn().mockImplementation(async function* () {
-      yield { content: 'Evaluation message', messageType: 'text' };
-    }),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Mock Executor
-vi.mock('../agents/executor.js', () => ({
-  Executor: vi.fn().mockImplementation(() => ({
-    executeTask: vi.fn().mockImplementation(async function* () {
-      yield { type: 'message', content: 'Execution message' };
-    }),
-  })),
-}));
-
-// Mock Reporter
-vi.mock('../agents/reporter.js', () => ({
-  Reporter: vi.fn().mockImplementation(() => ({
-    processEvent: vi.fn().mockImplementation(async function* () {
-      yield { content: 'Reporter message', messageType: 'text' };
+// Mock SkillAgentImpl (Issue #413)
+vi.mock('../agents/skill-agent.js', () => ({
+  SkillAgent: vi.fn().mockImplementation(() => ({
+    executeWithContext: vi.fn().mockImplementation(async function* () {
+      yield { content: 'Skill execution message', messageType: 'text' };
     }),
     dispose: vi.fn(),
   })),
