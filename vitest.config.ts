@@ -54,14 +54,15 @@ export default defineConfig({
         '**/workspace/**',
         // Entry point files - hard to test in unit tests
         'src/runners/**',
+        // Integration-test only modules (require complex setup)
+        'src/mcp/feishu-mcp-server.ts',
+        'src/nodes/**',
       ],
       thresholds: {
-        // TODO: Restore to 70 after Issue #413 refactoring is complete
-        // Temporarily lowered due to removal of Evaluator/Executor classes
-        lines: 69,
+        lines: 70,
         functions: 70,
         branches: 70,
-        statements: 69,
+        statements: 70,
       },
       include: ['src/**/*.ts'],
     },
