@@ -24,7 +24,7 @@ describe('SkillLoader', () => {
   describe('loadSkill', () => {
     it('should load a skill from an absolute path', async () => {
       const skillPath = path.join(tempDir, 'test-skill.md');
-      await fs.writeFile(skillPath, `# Test Skill\n\nThis is a test skill.`);
+      await fs.writeFile(skillPath, '# Test Skill\n\nThis is a test skill.');
 
       const skill = await loader.loadSkill(skillPath);
 
@@ -36,7 +36,7 @@ describe('SkillLoader', () => {
 
     it('should extract skill name from first heading', async () => {
       const skillPath = path.join(tempDir, 'skill.md');
-      await fs.writeFile(skillPath, `# My Awesome Skill\n\nDescription here.`);
+      await fs.writeFile(skillPath, '# My Awesome Skill\n\nDescription here.');
 
       const skill = await loader.loadSkill(skillPath);
 
@@ -45,7 +45,7 @@ describe('SkillLoader', () => {
 
     it('should handle "Skill:" prefix in heading', async () => {
       const skillPath = path.join(tempDir, 'skill.md');
-      await fs.writeFile(skillPath, `# Skill: Evaluator\n\nDescription.`);
+      await fs.writeFile(skillPath, '# Skill: Evaluator\n\nDescription.');
 
       const skill = await loader.loadSkill(skillPath);
 
@@ -54,7 +54,7 @@ describe('SkillLoader', () => {
 
     it('should extract description from first paragraph', async () => {
       const skillPath = path.join(tempDir, 'skill.md');
-      await fs.writeFile(skillPath, `# Skill\n\nThis is the description.\n\n## Next Section\nMore content.`);
+      await fs.writeFile(skillPath, '# Skill\n\nThis is the description.\n\n## Next Section\nMore content.');
 
       const skill = await loader.loadSkill(skillPath);
 
@@ -115,7 +115,7 @@ Description.
 
     it('should handle skill without heading', async () => {
       const skillPath = path.join(tempDir, 'no-heading-skill.md');
-      await fs.writeFile(skillPath, `Just some content without a heading.`);
+      await fs.writeFile(skillPath, 'Just some content without a heading.');
 
       const skill = await loader.loadSkill(skillPath);
 
@@ -135,11 +135,11 @@ Description.
 
       await fs.writeFile(
         path.join(tempDir, 'skill1', 'SKILL.md'),
-        `# Skill One\n\nFirst skill.`
+        '# Skill One\n\nFirst skill.'
       );
       await fs.writeFile(
         path.join(tempDir, 'skill2', 'SKILL.md'),
-        `# Skill Two\n\nSecond skill.`
+        '# Skill Two\n\nSecond skill.'
       );
 
       const skills = await loader.loadSkillsFromDirectory(tempDir);
@@ -155,7 +155,7 @@ Description.
 
       await fs.writeFile(
         path.join(tempDir, 'with-skill', 'SKILL.md'),
-        `# Has Skill\n\nContent.`
+        '# Has Skill\n\nContent.'
       );
       // Don't create SKILL.md in without-skill
 
@@ -173,11 +173,11 @@ Description.
 
     it('should skip non-directory entries', async () => {
       await fs.mkdir(path.join(tempDir, 'real-skill'));
-      await fs.writeFile(path.join(tempDir, 'file.md'), `# Not a directory`);
+      await fs.writeFile(path.join(tempDir, 'file.md'), '# Not a directory');
 
       await fs.writeFile(
         path.join(tempDir, 'real-skill', 'SKILL.md'),
-        `# Real Skill\n\nContent.`
+        '# Real Skill\n\nContent.'
       );
 
       const skills = await loader.loadSkillsFromDirectory(tempDir);
@@ -197,11 +197,11 @@ Description.
 
       await fs.writeFile(
         path.join(dir1, 'skill1', 'SKILL.md'),
-        `# Skill One\n\nFrom dir1.`
+        '# Skill One\n\nFrom dir1.'
       );
       await fs.writeFile(
         path.join(dir2, 'skill2', 'SKILL.md'),
-        `# Skill Two\n\nFrom dir2.`
+        '# Skill Two\n\nFrom dir2.'
       );
 
       const skills = await loader.searchSkills([dir1, dir2]);
@@ -220,11 +220,11 @@ Description.
 
       await fs.writeFile(
         path.join(dir1, 'common-skill', 'SKILL.md'),
-        `# Common Skill\n\nFrom dir1.`
+        '# Common Skill\n\nFrom dir1.'
       );
       await fs.writeFile(
         path.join(dir2, 'common-skill', 'SKILL.md'),
-        `# Common Skill\n\nFrom dir2 (override).`
+        '# Common Skill\n\nFrom dir2 (override).'
       );
 
       const skills = await loader.searchSkills([dir1, dir2]);
@@ -241,7 +241,7 @@ Description.
       await fs.mkdir(path.join(dir1, 'skill1'), { recursive: true });
       await fs.writeFile(
         path.join(dir1, 'skill1', 'SKILL.md'),
-        `# Skill One\n\nContent.`
+        '# Skill One\n\nContent.'
       );
 
       const skills = await loader.searchSkills([dir1, dir2]);
@@ -256,7 +256,7 @@ Description.
       await fs.mkdir(path.join(tempDir, 'target-skill'), { recursive: true });
       await fs.writeFile(
         path.join(tempDir, 'target-skill', 'SKILL.md'),
-        `# Target Skill\n\nFound it.`
+        '# Target Skill\n\nFound it.'
       );
 
       const skill = await loader.findSkill('target-skill', [tempDir]);
@@ -280,11 +280,11 @@ Description.
 
       await fs.writeFile(
         path.join(dir1, 'my-skill', 'SKILL.md'),
-        `# My Skill\n\nFrom dir1.`
+        '# My Skill\n\nFrom dir1.'
       );
       await fs.writeFile(
         path.join(dir2, 'my-skill', 'SKILL.md'),
-        `# My Skill\n\nFrom dir2.`
+        '# My Skill\n\nFrom dir2.'
       );
 
       const skill = await loader.findSkill('my-skill', [dir1, dir2]);
@@ -325,7 +325,7 @@ Description.
       await fs.mkdir(path.join(tempDir, 'my-skill'), { recursive: true });
       await fs.writeFile(
         path.join(tempDir, 'my-skill', 'PROMPT.md'),
-        `# Custom Skill\n\nUses PROMPT.md`
+        '# Custom Skill\n\nUses PROMPT.md'
       );
 
       const skills = await customLoader.loadSkillsFromDirectory(tempDir);

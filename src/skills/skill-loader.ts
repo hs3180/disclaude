@@ -184,7 +184,7 @@ export class SkillLoader {
           // Override name with directory name for consistency
           skill.name = entry.name;
           skills.push(skill);
-        } catch (error) {
+        } catch (_error) {
           // Skip directories without skill files
           logger.debug({
             dirName: entry.name,
@@ -329,7 +329,7 @@ export class SkillLoader {
 
     // Limit description length
     if (description.length > 200) {
-      return description.substring(0, 197) + '...';
+      return `${description.substring(0, 197)  }...`;
     }
 
     return description || 'No description available';
@@ -346,7 +346,7 @@ export class SkillLoader {
     // Check frontmatter
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
     if (frontmatterMatch) {
-      const frontmatter = frontmatterMatch[1];
+      const [, frontmatter] = frontmatterMatch;
       const toolsMatch = frontmatter.match(/allowed-tools:\s*\n((?:\s+-\s+.+\n?)+)/i);
 
       if (toolsMatch) {
@@ -362,7 +362,7 @@ export class SkillLoader {
     // Check for "## Tools Available" section
     const toolsSectionMatch = content.match(/##\s+Tools\s+Available\s*\n([\s\S]*?)(?=\n##|$)/i);
     if (toolsSectionMatch) {
-      const section = toolsSectionMatch[1];
+      const [, section] = toolsSectionMatch;
       const tools: string[] = [];
 
       // Look for list items or code blocks

@@ -185,7 +185,7 @@ export class AgentFactory {
     throw new Error(
       `Unknown SkillAgent: ${name}. ` +
       `Searched in: ${searchPaths.join(', ')}. ` +
-      `Use createSkillAgentFromPath() for custom skill paths.`
+      'Use createSkillAgentFromPath() for custom skill paths.'
     );
   }
 
