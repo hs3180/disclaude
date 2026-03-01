@@ -323,6 +323,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
+    // Skip messages from admin (log) chat - bot should only send, not respond
+    // @see Issue #347
+    const adminChatId = Config.getAdminChatId();
+    if (adminChatId && chat_id === adminChatId) {
+      logger.debug({ messageId: message_id, chatId: chat_id }, 'Skipped message from admin (log) chat');
+      return;
+    }
+
     // Check message age
     if (create_time) {
       const messageAge = Date.now() - create_time;

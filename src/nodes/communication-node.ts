@@ -482,6 +482,8 @@ export class CommunicationNode extends EventEmitter {
   /**
    * Send a text message to all channels (broadcast mode).
    * Each channel will handle the message if it recognizes the chatId.
+   * Also sends to admin (log) chat if configured.
+   * @see Issue #347
    */
   async sendMessage(chatId: string, text: string, threadMessageId?: string): Promise<void> {
     await this.channelManager.broadcast({
@@ -490,11 +492,24 @@ export class CommunicationNode extends EventEmitter {
       text,
       threadId: threadMessageId,
     });
+
+    // Also send to admin (log) chat if configured and different from user chat
+    const adminChatId = Config.getAdminChatId();
+    if (adminChatId && adminChatId !== chatId) {
+      await this.channelManager.broadcast({
+        chatId: adminChatId,
+        type: 'text',
+        text,
+        threadId: undefined, // Don't use thread in log chat
+      });
+    }
   }
 
   /**
    * Send an interactive card to all channels (broadcast mode).
    * Each channel will handle the message if it recognizes the chatId.
+   * Also sends to admin (log) chat if configured.
+   * @see Issue #347
    */
   async sendCard(
     chatId: string,
@@ -509,11 +524,25 @@ export class CommunicationNode extends EventEmitter {
       description,
       threadId: threadMessageId,
     });
+
+    // Also send to admin (log) chat if configured and different from user chat
+    const adminChatId = Config.getAdminChatId();
+    if (adminChatId && adminChatId !== chatId) {
+      await this.channelManager.broadcast({
+        chatId: adminChatId,
+        type: 'card',
+        card,
+        description,
+        threadId: undefined, // Don't use thread in log chat
+      });
+    }
   }
 
   /**
    * Send a file to all channels (broadcast mode).
    * Each channel will handle the message if it recognizes the chatId.
+   * Also sends to admin (log) chat if configured.
+   * @see Issue #347
    */
   async sendFileToUser(chatId: string, filePath: string, _threadId?: string): Promise<void> {
     // TODO: Pass threadId when Issue #68 is implemented
@@ -522,6 +551,16 @@ export class CommunicationNode extends EventEmitter {
       type: 'file',
       filePath,
     });
+
+    // Also send to admin (log) chat if configured and different from user chat
+    const adminChatId = Config.getAdminChatId();
+    if (adminChatId && adminChatId !== chatId) {
+      await this.channelManager.broadcast({
+        chatId: adminChatId,
+        type: 'file',
+        filePath,
+      });
+    }
   }
 
   /**

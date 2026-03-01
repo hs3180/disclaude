@@ -307,4 +307,33 @@ describe('Config', () => {
       expect(Config.LOG_ROTATE).toBe(false);
     });
   });
+
+  describe('getMessagingConfig()', () => {
+    it('should return an object', () => {
+      const messagingConfig = Config.getMessagingConfig();
+      expect(typeof messagingConfig).toBe('object');
+      expect(messagingConfig).not.toBeNull();
+    });
+
+    it('should have optional admin configuration', () => {
+      const messagingConfig = Config.getMessagingConfig();
+      expect(messagingConfig.admin === undefined || typeof messagingConfig.admin === 'object').toBe(true);
+    });
+  });
+
+  describe('getAdminChatId()', () => {
+    it('should return undefined or a string', () => {
+      const adminChatId = Config.getAdminChatId();
+      expect(adminChatId === undefined || typeof adminChatId === 'string').toBe(true);
+    });
+
+    it('should return undefined when admin.enabled is false', () => {
+      // This test depends on the actual config file
+      // If messaging.admin.enabled is explicitly false, should return undefined
+      const messagingConfig = Config.getMessagingConfig();
+      if (messagingConfig.admin?.enabled === false) {
+        expect(Config.getAdminChatId()).toBeUndefined();
+      }
+    });
+  });
 });

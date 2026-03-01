@@ -336,4 +336,28 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get messaging configuration from config file.
+   * Includes admin chat settings for log routing.
+   *
+   * @returns Messaging configuration object
+   */
+  static getMessagingConfig(): import('./types.js').MessagingConfig {
+    return fileConfigOnly.messaging || {};
+  }
+
+  /**
+   * Get the admin (log) chat ID from configuration.
+   * This is the chat where all messages are sent for monitoring.
+   *
+   * @returns Admin chat ID or undefined if not configured
+   */
+  static getAdminChatId(): string | undefined {
+    const messaging = this.getMessagingConfig();
+    if (messaging.admin?.enabled === false) {
+      return undefined;
+    }
+    return messaging.admin?.chatId;
+  }
 }
