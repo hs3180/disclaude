@@ -44,7 +44,7 @@ describe('AdminModeService', () => {
     await store.init();
 
     service = new AdminModeService({
-      client: mockClient as unknown as ReturnType<typeof import('@larksuiteoapi/node-sdk').Client>,
+      client: mockClient as unknown as InstanceType<typeof import('@larksuiteoapi/node-sdk').Client>,
       userStateStore: store,
       autoCreateLogChat: false,
     });
@@ -129,7 +129,7 @@ describe('AdminModeService', () => {
       });
 
       const serviceWithAutoCreate = new AdminModeService({
-        client: mockClient as unknown as ReturnType<typeof import('@larksuiteoapi/node-sdk').Client>,
+        client: mockClient as unknown as InstanceType<typeof import('@larksuiteoapi/node-sdk').Client>,
         userStateStore: store,
         autoCreateLogChat: true,
       });
@@ -146,7 +146,7 @@ describe('AdminModeService', () => {
       mockClient.im.chat.create.mockRejectedValueOnce(new Error('API error'));
 
       const serviceWithAutoCreate = new AdminModeService({
-        client: mockClient as unknown as ReturnType<typeof import('@larksuiteoapi/node-sdk').Client>,
+        client: mockClient as unknown as InstanceType<typeof import('@larksuiteoapi/node-sdk').Client>,
         userStateStore: store,
         autoCreateLogChat: true,
       });
