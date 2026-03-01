@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - TaskFileWatcher for detecting new Task.md files
- * - ReflectionController execution (Evaluator → Executor → Reporter)
+ * - ReflectionController execution (Evaluator → Executor)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
@@ -17,6 +17,7 @@
  * - Debugging difficulties with interleaved logs
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+ * Refactored (Issue #417): Removed Reporter, using message level system instead.
  */
 
 import * as path from 'path';
@@ -34,10 +35,72 @@ import type { Logger } from 'pino';
 import type { AgentMessage } from '../types/agent.js';
 import type { ReflectionContext } from '../task/reflection.js';
 import { Evaluator } from '../agents/evaluator.js';
-import { Executor } from '../agents/executor.js';
-import { Reporter } from '../agents/reporter.js';
+import { Executor, type TaskProgressEvent } from '../agents/executor.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
+import { MessageLevel, mapAgentMessageTypeToLevel } from '../messaging/types.js';
+
+/**
+ * Process executor events and yield agent messages.
+ *
+ * Replaces the Reporter class with a simpler message level-based approach (Issue #417).
+ * Maps executor events to appropriate message levels for routing.
+ *
+ * @param event - Executor progress event
+ * @param taskId - Task identifier
+ * @param iteration - Current iteration number
+ * @yields AgentMessage - Processed messages
+ */
+function* processExecutorEvent(
+  event: TaskProgressEvent,
+  taskId: string,
+  iteration: number
+): Generator<AgentMessage> {
+  switch (event.type) {
+    case 'start':
+      yield {
+        content: `⚡ 开始: ${event.title}`,
+        role: 'assistant',
+        messageType: 'status',
+        metadata: { level: MessageLevel.INFO, taskId, iteration },
+      };
+      break;
+
+    case 'output':
+      // Map the message type to a level for routing decisions
+      const level = mapAgentMessageTypeToLevel(event.messageType as any, event.content);
+      yield {
+        content: event.content,
+        role: 'assistant',
+        messageType: event.messageType as AgentMessage['messageType'],
+        metadata: { level, taskId, iteration, ...event.metadata },
+      };
+      break;
+
+    case 'complete':
+      yield {
+        content: `✅ 完成: ${event.summaryFile}`,
+        role: 'assistant',
+        messageType: 'task_completion',
+        metadata: {
+          level: MessageLevel.RESULT,
+          taskId,
+          iteration,
+          files: event.files,
+        },
+      };
+      break;
+
+    case 'error':
+      yield {
+        content: `❌ 错误: ${event.error}`,
+        role: 'assistant',
+        messageType: 'error',
+        metadata: { level: MessageLevel.ERROR, taskId, iteration },
+      };
+      break;
+  }
+}
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -217,25 +280,12 @@ export class TaskFlowOrchestrator {
         messageType: 'status',
       };
 
-      const reporter = new Reporter({
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        permissionMode: 'bypassPermissions',
-      });
-
       const executor = new Executor({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
       });
-
-      const reporterContext = {
-        taskId: context.taskId,
-        iteration: context.iteration,
-        chatId,
-      };
 
       try {
         const executorStream = executor.executeTask(
@@ -244,8 +294,9 @@ export class TaskFlowOrchestrator {
           Config.getWorkspaceDir()
         );
 
+        // Process executor events directly using message level system (Issue #417)
         for await (const event of executorStream) {
-          yield* reporter.processEvent(event, reporterContext);
+          yield* processExecutorEvent(event, context.taskId, context.iteration);
         }
       } catch (error) {
         yield {
@@ -253,8 +304,6 @@ export class TaskFlowOrchestrator {
           role: 'assistant',
           messageType: 'error',
         };
-      } finally {
-        reporter.dispose();
       }
     };
 

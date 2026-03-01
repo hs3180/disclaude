@@ -66,18 +66,8 @@ vi.mock('../agents/evaluator.js', () => ({
 vi.mock('../agents/executor.js', () => ({
   Executor: vi.fn().mockImplementation(() => ({
     executeTask: vi.fn().mockImplementation(async function* () {
-      yield { type: 'message', content: 'Execution message' };
+      yield { type: 'output', content: 'Execution message', messageType: 'text' };
     }),
-  })),
-}));
-
-// Mock Reporter
-vi.mock('../agents/reporter.js', () => ({
-  Reporter: vi.fn().mockImplementation(() => ({
-    processEvent: vi.fn().mockImplementation(async function* () {
-      yield { content: 'Reporter message', messageType: 'text' };
-    }),
-    dispose: vi.fn(),
   })),
 }));
 

@@ -71,13 +71,6 @@ describe('AgentFactory', () => {
       expect(executor.type).toBe('skill');
     });
 
-    it('should create Reporter when name is "reporter"', () => {
-      const reporter = AgentFactory.createSkillAgent('reporter');
-
-      expect(reporter).toBeDefined();
-      expect(reporter.type).toBe('skill');
-    });
-
     it('should pass subdirectory to Evaluator', () => {
       const evaluator = AgentFactory.createSkillAgent('evaluator', {}, 'regular');
 

@@ -1,4 +1,5 @@
 import type { StreamingUserMessage } from '../sdk/index.js';
+import type { MessageLevel } from '../messaging/types.js';
 
 // Re-export for backward compatibility
 export type { StreamingUserMessage };
@@ -37,6 +38,10 @@ export interface AgentMessageMetadata {
   cost?: number;
   tokens?: number;
   status?: string;
+  level?: MessageLevel;  // Message level for routing (Issue #417)
+  taskId?: string;  // Task identifier for tracking
+  iteration?: number;  // Iteration number for tracking
+  files?: string[];  // Files associated with the message
 }
 
 // Parsed SDK message result

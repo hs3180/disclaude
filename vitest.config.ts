@@ -52,6 +52,8 @@ export default defineConfig({
         'tsconfig.json',
         'ecosystem.config.cjs',
         '**/workspace/**',
+        // Entry point files - hard to test in unit tests
+        'src/runners/**',
       ],
       thresholds: {
         lines: 70,

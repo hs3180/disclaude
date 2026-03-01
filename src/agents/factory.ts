@@ -29,7 +29,6 @@
 import { Config } from '../config/index.js';
 import { Evaluator, type EvaluatorConfig } from './evaluator.js';
 import { Executor, type ExecutorConfig } from './executor.js';
-import { Reporter } from './reporter.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 import type { ChatAgent, SkillAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
@@ -169,10 +168,6 @@ export class AgentFactory {
           abortSignal,
         };
         return new Executor(config) as unknown as SkillAgent;
-      }
-      case 'reporter': {
-        const config: BaseAgentConfig = this.getBaseConfig(options);
-        return new Reporter(config) as unknown as SkillAgent;
       }
       default:
         throw new Error(`Unknown SkillAgent: ${name}`);

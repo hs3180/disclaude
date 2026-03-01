@@ -55,7 +55,6 @@ export {
 // Task agents
 export { Evaluator, type EvaluatorConfig } from './evaluator.js';
 export { Executor, type ExecutorConfig, type TaskProgressEvent, type TaskResult } from './executor.js';
-export { Reporter } from './reporter.js';
 
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
