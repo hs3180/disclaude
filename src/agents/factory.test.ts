@@ -16,10 +16,22 @@ vi.mock('../config/index.js', () => ({
       provider: 'glm',
     })),
     getWorkspaceDir: vi.fn(() => '/tmp/test-workspace'),
+    getSkillsDir: vi.fn(() => '/tmp/test-workspace/skills'),
     getGlobalEnv: vi.fn(() => ({})),
     getMcpServersConfig: vi.fn(() => ({})), // No Playwright by default
     getLoggingConfig: vi.fn(() => ({ sdkDebug: false })),
   },
+}));
+
+// Mock fs module for skill file existence checks
+vi.mock('fs', () => ({
+  existsSync: vi.fn((filePath: string) => {
+    // Return true for known skills
+    if (filePath.includes('evaluator/SKILL.md') || filePath.includes('executor/SKILL.md')) {
+      return true;
+    }
+    return false;
+  }),
 }));
 
 describe('AgentFactory', () => {
