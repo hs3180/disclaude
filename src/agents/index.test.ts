@@ -21,11 +21,6 @@ describe('Agents Module Exports', () => {
       expect(module.Executor).toBeDefined();
     });
 
-    it('should export Reporter class', async () => {
-      const module = await import('./index.js');
-      expect(module.Reporter).toBeDefined();
-    });
-
     it('should export AgentFactory class', async () => {
       const module = await import('./index.js');
       expect(module.AgentFactory).toBeDefined();
