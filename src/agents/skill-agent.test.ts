@@ -2,7 +2,7 @@
  * Tests for SkillAgent - Minimal agent that executes skills from markdown files.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -352,7 +352,7 @@ This looks like frontmatter but isn't parsed
 
     it('should handle large skill files', async () => {
       const largePath = path.join(tempDir, 'large.md');
-      const largeContent = '# Large Skill\n\n' + 'Line content\n'.repeat(1000);
+      const largeContent = `# Large Skill\n\n${'Line content\n'.repeat(1000)}`;
       await fs.writeFile(largePath, largeContent);
 
       const agent = new SkillAgent(mockConfig, largePath);
