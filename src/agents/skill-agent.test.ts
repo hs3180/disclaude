@@ -2,12 +2,66 @@
  * Tests for SkillAgent - Minimal agent that executes skills from markdown files.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { SkillAgent } from './skill-agent.js';
 import type { BaseAgentConfig } from './types.js';
+
+// Mock SDK provider
+vi.mock('../sdk/index.js', () => ({
+  getProvider: vi.fn(() => ({
+    queryOnce: vi.fn(async function* () {
+      yield { type: 'text', content: 'SDK response', role: 'assistant' };
+    }),
+    queryStream: vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { type: 'text', content: 'SDK response', role: 'assistant' };
+      })(),
+    })),
+  })),
+}));
+
+// Mock config
+vi.mock('../config/index.js', () => ({
+  Config: {
+    getWorkspaceDir: vi.fn(() => '/test/workspace'),
+    getAgentConfig: vi.fn(() => ({
+      apiKey: 'test-key',
+      model: 'test-model',
+      provider: 'anthropic',
+    })),
+    getGlobalEnv: vi.fn(() => ({})),
+    getLoggingConfig: vi.fn(() => ({
+      level: 'info',
+      pretty: true,
+      rotate: false,
+      sdkDebug: true,
+    })),
+  },
+}));
+
+// Mock utils
+vi.mock('../utils/sdk.js', () => ({
+  parseSDKMessage: vi.fn((msg) => ({
+    type: msg.type || 'text',
+    content: msg.content || '',
+    metadata: {},
+  })),
+  buildSdkEnv: vi.fn(() => ({})),
+}));
+
+// Mock logger
+vi.mock('../utils/logger.js', () => ({
+  createLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
 
 // Test skill file content
 const TEST_SKILL_CONTENT = `# Test Skill
@@ -73,7 +127,7 @@ describe('SkillAgent', () => {
   });
 
   describe('template variable substitution', () => {
-    it('should substitute template variables in skill content', () => {
+    it('should substitute template variables in skill content', async () => {
       const agent = new SkillAgent(mockConfig, skillPath);
       agent.initialize();
 
@@ -88,11 +142,32 @@ describe('SkillAgent', () => {
 
       // Just verify it returns an async generator
       expect(generator[Symbol.asyncIterator]).toBeDefined();
+
+      // Consume the generator to cover more code paths
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('should execute without template variables', async () => {
+      const agent = new SkillAgent(mockConfig, skillPath);
+      agent.initialize();
+
+      const generator = agent.executeWithContext();
+
+      // Consume the generator
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
     });
   });
 
   describe('execute method', () => {
-    it('should accept string input', () => {
+    it('should accept string input and execute', async () => {
       const agent = new SkillAgent(mockConfig, skillPath);
       agent.initialize();
 
@@ -100,9 +175,16 @@ describe('SkillAgent', () => {
 
       // Verify it returns an async generator
       expect(generator[Symbol.asyncIterator]).toBeDefined();
+
+      // Consume the generator to cover more code paths
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
     });
 
-    it('should accept UserInput array', () => {
+    it('should accept UserInput array and execute', async () => {
       const agent = new SkillAgent(mockConfig, skillPath);
       agent.initialize();
 
@@ -113,6 +195,45 @@ describe('SkillAgent', () => {
 
       // Verify it returns an async generator
       expect(generator[Symbol.asyncIterator]).toBeDefined();
+
+      // Consume the generator to cover more code paths
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('should auto-initialize when not initialized', async () => {
+      const agent = new SkillAgent(mockConfig, skillPath);
+      // Don't call initialize() - should auto-initialize
+
+      const generator = agent.execute('test input');
+
+      // Consume the generator
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('executeWithContext', () => {
+    it('should auto-initialize when not initialized', async () => {
+      const agent = new SkillAgent(mockConfig, skillPath);
+      // Don't call initialize() - should auto-initialize
+
+      const generator = agent.executeWithContext({
+        templateVars: { taskId: 'test' },
+      });
+
+      // Consume the generator
+      const results = [];
+      for await (const msg of generator) {
+        results.push(msg);
+      }
+      expect(results.length).toBeGreaterThan(0);
     });
   });
 });
