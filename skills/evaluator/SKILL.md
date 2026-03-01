@@ -1,11 +1,13 @@
----
-name: evaluator
-description: Task completion evaluation specialist. Evaluates if a task is complete against Task.md Expected Results.
-disable-model-invocation: false
-allowed-tools: [Read, Grep, Glob, Write]
----
-
 # Skill: Evaluator
+
+## Context
+
+- Task ID: {taskId}
+- Iteration: {iteration}
+- Task Spec: {taskMdPath}
+- Evaluation Output: {evaluationPath}
+- Final Result Output: {finalResultPath}
+- Previous Execution: {previousExecutionPath}
 
 ## Role
 
