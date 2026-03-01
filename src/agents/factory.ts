@@ -9,15 +9,19 @@
  *
  * Uses unified configuration types from Issue #327.
  * Simplified with SkillAgent (Issue #413).
+ * Dynamic skill discovery (Issue #430).
  *
  * @example
  * ```typescript
  * // Create a Pilot (ChatAgent)
  * const pilot = AgentFactory.createChatAgent('pilot', callbacks);
  *
- * // Create skill agents
+ * // Create skill agents (built-in)
  * const evaluator = AgentFactory.createSkillAgent('evaluator');
  * const executor = AgentFactory.createSkillAgent('executor');
+ *
+ * // Create skill agents (custom skills)
+ * const customAgent = AgentFactory.createSkillAgent('my-custom-skill');
  *
  * // Create a subagent
  * const siteMiner = AgentFactory.createSubagent('site-miner');
@@ -27,6 +31,7 @@
  */
 
 import { Config } from '../config/index.js';
+import { findSkill } from '../skills/index.js';
 import { SkillAgent } from './skill-agent.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
@@ -123,10 +128,15 @@ export class AgentFactory {
    * Uses the simplified SkillAgent architecture (Issue #413).
    * Skill agents are created with their corresponding skill files.
    *
-   * @param name - Agent name ('evaluator', 'executor')
+   * Dynamic skill discovery (Issue #430):
+   * - Searches for skills across project, workspace, and package domains
+   * - Supports both built-in skills (evaluator, executor) and custom skills
+   *
+   * @param name - Agent name (e.g., 'evaluator', 'executor', or custom skill name)
    * @param args - Additional arguments:
    *   - args[0]: AgentCreateOptions - Optional configuration overrides
    * @returns SkillAgent instance
+   * @throws Error if skill not found
    *
    * @example
    * ```typescript
@@ -135,21 +145,23 @@ export class AgentFactory {
    *
    * // Executor with custom config
    * const executor = AgentFactory.createSkillAgent('executor', { model: 'claude-3-opus' });
+   *
+   * // Custom skill
+   * const custom = AgentFactory.createSkillAgent('my-custom-skill');
    * ```
    */
-  static createSkillAgent(name: string, ...args: unknown[]): SkillAgentInterface {
+  static async createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgentInterface> {
     const options = (args[0] as AgentCreateOptions) || {};
     const baseConfig = this.getBaseConfig(options);
 
-    // Map agent names to skill files
-    const skillFileMap: Record<string, string> = {
-      evaluator: 'skills/evaluator/SKILL.md',
-      executor: 'skills/executor/SKILL.md',
-    };
+    // Use dynamic skill discovery (Issue #430)
+    const skillPath = await findSkill(name);
 
-    const skillPath = skillFileMap[name];
     if (!skillPath) {
-      throw new Error(`Unknown SkillAgent: ${name}`);
+      throw new Error(
+        `Skill not found: ${name}. ` +
+          'Searched in: .claude/skills/, workspace/.claude/skills/, and package skills/'
+      );
     }
 
     return new SkillAgent(baseConfig, skillPath);
