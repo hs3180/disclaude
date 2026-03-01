@@ -127,7 +127,7 @@ export class SkillAgent extends BaseAgent implements SkillAgentInterface {
    * Initialize the SkillAgent.
    * Minimal implementation - just mark as initialized.
    */
-  async initialize(): Promise<void> {
+  initialize(): void {
     if (this.initialized) {
       return;
     }
@@ -147,7 +147,7 @@ export class SkillAgent extends BaseAgent implements SkillAgentInterface {
     options: SkillAgentExecuteOptions = {}
   ): AsyncGenerator<AgentMessage> {
     if (!this.initialized) {
-      await this.initialize();
+      this.initialize();
     }
 
     // Read skill file
@@ -188,7 +188,7 @@ export class SkillAgent extends BaseAgent implements SkillAgentInterface {
    */
   async *execute(input: string | UserInput[]): AsyncGenerator<AgentMessage> {
     if (!this.initialized) {
-      await this.initialize();
+      this.initialize();
     }
 
     // Read skill file

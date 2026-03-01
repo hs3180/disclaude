@@ -48,17 +48,17 @@ describe('SkillAgent', () => {
     expect(agent.name).toBe('test-skill');
   });
 
-  it('should initialize properly', async () => {
+  it('should initialize properly', () => {
     const agent = new SkillAgent(mockConfig, skillPath);
-    await agent.initialize();
+    agent.initialize();
 
     // Should be idempotent
-    await agent.initialize();
+    agent.initialize();
   });
 
-  it('should dispose properly', async () => {
+  it('should dispose properly', () => {
     const agent = new SkillAgent(mockConfig, skillPath);
-    await agent.initialize();
+    agent.initialize();
 
     agent.dispose();
 
@@ -73,9 +73,9 @@ describe('SkillAgent', () => {
   });
 
   describe('template variable substitution', () => {
-    it('should substitute template variables in skill content', async () => {
+    it('should substitute template variables in skill content', () => {
       const agent = new SkillAgent(mockConfig, skillPath);
-      await agent.initialize();
+      agent.initialize();
 
       // The template substitution is internal, but we can verify it doesn't throw
       const generator = agent.executeWithContext({
@@ -92,9 +92,9 @@ describe('SkillAgent', () => {
   });
 
   describe('execute method', () => {
-    it('should accept string input', async () => {
+    it('should accept string input', () => {
       const agent = new SkillAgent(mockConfig, skillPath);
-      await agent.initialize();
+      agent.initialize();
 
       const generator = agent.execute('test input');
 
@@ -102,9 +102,9 @@ describe('SkillAgent', () => {
       expect(generator[Symbol.asyncIterator]).toBeDefined();
     });
 
-    it('should accept UserInput array', async () => {
+    it('should accept UserInput array', () => {
       const agent = new SkillAgent(mockConfig, skillPath);
-      await agent.initialize();
+      agent.initialize();
 
       const generator = agent.execute([
         { role: 'user', content: 'test input 1' },
