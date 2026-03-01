@@ -9,3 +9,15 @@
 // Re-export commonly used components
 export { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 export { messageLogger } from './message-logger.js';
+
+// Admin mode components (Issue #347)
+export { UserStateStore, userStateStore, type UserState } from './user-state-store.js';
+export {
+  recognizeIntent,
+  isAdminModeIntent,
+  isEnableAdminIntent,
+  isDisableAdminIntent,
+  Intent,
+  type IntentResult,
+} from './intent-recognition.js';
+export { AdminModeService, type AdminModeConfig, type AdminModeHandleResult } from './admin-mode-service.js';
