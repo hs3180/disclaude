@@ -18,6 +18,10 @@
  * **Completion Detection**:
  * - Evaluator creates final_result.md when it determines the task is COMPLETE
  * - The system detects completion by checking for final_result.md presence
+ *
+ * **Skill Loading (Issue #430)**:
+ * - Skills are loaded from skill files via ClaudeCodeSkillProvider
+ * - Falls back to default tools if skill file not found
  */
 
 import { Config } from '../config/index.js';
@@ -25,12 +29,13 @@ import type { AgentMessage, AgentInput } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { SkillAgent, UserInput } from './types.js';
+import { ClaudeCodeSkillProvider, type LoadedSkills } from '../skills/index.js';
 
 /**
- * Evaluator-specific allowed tools.
- * Defined directly in code instead of loading from skill files.
+ * Default allowed tools for Evaluator.
+ * Used as fallback when skill file is not available.
  */
-const EVALUATOR_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Write'];
+const DEFAULT_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Write'];
 
 /**
  * Evaluator-specific configuration.
@@ -48,6 +53,7 @@ export interface EvaluatorConfig extends BaseAgentConfig {
  * - No JSON output - writes evaluation.md directly
  * - No structured result parsing
  * - File-driven workflow
+ * - Skill-based configuration (Issue #430)
  *
  * Extends BaseAgent to inherit:
  * - SDK configuration
@@ -62,10 +68,13 @@ export class Evaluator extends BaseAgent implements SkillAgent {
   readonly name = 'Evaluator';
 
   private fileManager: TaskFileManager;
+  private skillProvider: ClaudeCodeSkillProvider;
+  private loadedSkills: LoadedSkills | null = null;
 
   constructor(config: EvaluatorConfig) {
     super(config);
     this.fileManager = new TaskFileManager(Config.getWorkspaceDir(), config.subdirectory);
+    this.skillProvider = new ClaudeCodeSkillProvider();
   }
 
   protected getAgentName(): string {
@@ -74,19 +83,50 @@ export class Evaluator extends BaseAgent implements SkillAgent {
 
   /**
    * Initialize the Evaluator agent.
-   * No skill loading needed - allowedTools are defined directly in code.
+   * Loads skills from skill files (Issue #430).
    */
-  initialize(): Promise<void> {
+  async initialize(): Promise<void> {
     if (this.initialized) {
-      return Promise.resolve();
+      return;
     }
+
+    // Load skills from skill files
+    this.loadedSkills = await this.skillProvider.loadSkillsForAgent('evaluator');
+
+    // Use loaded tools or fall back to defaults
+    const allowedTools = this.getAllowedTools();
 
     this.initialized = true;
     this.logger.debug(
-      { toolCount: EVALUATOR_ALLOWED_TOOLS.length },
+      {
+        toolCount: allowedTools.length,
+        tools: allowedTools,
+        skillLoaded: this.loadedSkills.skills.length > 0,
+      },
       'Evaluator initialized'
     );
-    return Promise.resolve();
+  }
+
+  /**
+   * Get allowed tools for this agent.
+   * Returns loaded tools from skill file, or defaults if not loaded.
+   */
+  private getAllowedTools(): string[] {
+    if (this.loadedSkills && this.loadedSkills.allowedTools.length > 0) {
+      return this.loadedSkills.allowedTools;
+    }
+    return DEFAULT_ALLOWED_TOOLS;
+  }
+
+  /**
+   * Get skill system prompt content.
+   * Returns empty string if no skill loaded.
+   */
+  private getSkillPrompt(): string {
+    if (this.loadedSkills && this.loadedSkills.systemPromptContent) {
+      return this.loadedSkills.systemPromptContent;
+    }
+    return '';
   }
 
   /**
@@ -100,9 +140,11 @@ export class Evaluator extends BaseAgent implements SkillAgent {
       await this.initialize();
     }
 
+    const allowedTools = this.getAllowedTools();
+
     // Note: send_user_feedback, send_file_to_feishu are intentionally NOT included (Reporter's job)
     const sdkOptions = this.createSdkOptions({
-      allowedTools: EVALUATOR_ALLOWED_TOOLS,
+      allowedTools,
       // No MCP servers needed - Evaluator only uses file reading/writing tools
     });
 
@@ -166,7 +208,11 @@ export class Evaluator extends BaseAgent implements SkillAgent {
       previousExecutionPath = this.fileManager.getExecutionPath(taskId, iteration - 1);
     }
 
-    let prompt = `# Evaluator Task
+    // Include skill content if available
+    const skillPrompt = this.getSkillPrompt();
+    const skillSection = skillPrompt ? `\n${skillPrompt}\n` : '';
+
+    let prompt = `${skillSection}# Evaluator Task
 
 ## Context
 - Task ID: ${taskId}

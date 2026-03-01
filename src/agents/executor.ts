@@ -6,6 +6,7 @@
  * - Direct task execution based on Evaluator's evaluation.md
  * - Outputs execution.md only (final_result.md is created by Evaluator)
  * - Yields progress events for real-time reporting
+ * - Skill-based configuration (Issue #430)
  *
  * Extends BaseAgent to inherit:
  * - SDK configuration building
@@ -18,6 +19,13 @@ import type { ParsedSDKMessage, AgentMessage } from '../types/agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { SkillAgent, UserInput } from './types.js';
+import { ClaudeCodeSkillProvider, type LoadedSkills } from '../skills/index.js';
+
+/**
+ * Default allowed tools for Executor.
+ * Used as fallback when skill file is not available.
+ */
+const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'];
 
 /**
  * Executor configuration.
@@ -89,11 +97,14 @@ export class Executor extends BaseAgent implements SkillAgent {
 
   private readonly config: ExecutorConfig;
   private fileManager: TaskFileManager;
+  private skillProvider: ClaudeCodeSkillProvider;
+  private loadedSkills: LoadedSkills | null = null;
 
   constructor(config: ExecutorConfig) {
     super(config);
     this.config = config;
     this.fileManager = new TaskFileManager();
+    this.skillProvider = new ClaudeCodeSkillProvider();
 
     this.logger.debug(
       {
@@ -106,6 +117,54 @@ export class Executor extends BaseAgent implements SkillAgent {
 
   protected getAgentName(): string {
     return 'Executor';
+  }
+
+  /**
+   * Initialize the Executor agent.
+   * Loads skills from skill files (Issue #430).
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    // Load skills from skill files
+    this.loadedSkills = await this.skillProvider.loadSkillsForAgent('executor');
+
+    // Use loaded tools or fall back to defaults
+    const allowedTools = this.getAllowedTools();
+
+    this.initialized = true;
+    this.logger.debug(
+      {
+        toolCount: allowedTools.length,
+        tools: allowedTools,
+        skillLoaded: this.loadedSkills.skills.length > 0,
+      },
+      'Executor skills loaded'
+    );
+  }
+
+  /**
+   * Get allowed tools for this agent.
+   * Returns loaded tools from skill file, or defaults if not loaded.
+   */
+  private getAllowedTools(): string[] {
+    if (this.loadedSkills && this.loadedSkills.allowedTools.length > 0) {
+      return this.loadedSkills.allowedTools;
+    }
+    return DEFAULT_ALLOWED_TOOLS;
+  }
+
+  /**
+   * Get skill system prompt content.
+   * Returns empty string if no skill loaded.
+   */
+  private getSkillPrompt(): string {
+    if (this.loadedSkills && this.loadedSkills.systemPromptContent) {
+      return this.loadedSkills.systemPromptContent;
+    }
+    return '';
   }
 
   /**
@@ -129,6 +188,11 @@ export class Executor extends BaseAgent implements SkillAgent {
     // Check for cancellation
     if (this.config?.abortSignal?.aborted) {
       throw new Error('AbortError');
+    }
+
+    // Initialize if needed (loads skills)
+    if (!this.initialized) {
+      await this.initialize();
     }
 
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -165,6 +229,7 @@ export class Executor extends BaseAgent implements SkillAgent {
     // Prepare SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
       cwd: workspaceDir,
+      allowedTools: this.getAllowedTools(),
     });
 
     let output = '';
@@ -260,6 +325,15 @@ export class Executor extends BaseAgent implements SkillAgent {
     const executionPath = this.fileManager.getExecutionPath(taskId, iteration);
 
     const parts: string[] = [];
+
+    // Include skill content if available (Issue #430)
+    const skillPrompt = this.getSkillPrompt();
+    if (skillPrompt) {
+      parts.push(skillPrompt);
+      parts.push('');
+      parts.push('---');
+      parts.push('');
+    }
 
     parts.push('# Task Execution');
     parts.push('');
@@ -366,12 +440,19 @@ ${error ? `## Error\n\n${error}\n` : ''}
    * @yields AgentMessage responses
    */
   async *execute(input: string | UserInput[]): AsyncGenerator<AgentMessage> {
+    // Initialize if needed (loads skills)
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
     // Convert UserInput[] to string if needed
     const prompt: string = typeof input === 'string'
       ? input
       : input.map(u => u.content).join('\n');
 
-    const sdkOptions = this.createSdkOptions({});
+    const sdkOptions = this.createSdkOptions({
+      allowedTools: this.getAllowedTools(),
+    });
 
     try {
       for await (const { parsed } of this.queryOnce(prompt, sdkOptions)) {

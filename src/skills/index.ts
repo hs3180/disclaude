@@ -6,6 +6,7 @@
  * - Load skill markdown files from the file system
  * - Parse YAML frontmatter for metadata
  * - Search for skills across multiple paths
+ * - Inject skills into Agent system prompts
  *
  * Design Principles:
  * - Simple and minimal - no complex parsing
@@ -14,29 +15,34 @@
  *
  * @example
  * ```typescript
- * import { FileSystemSkillLoader } from './skills/index.js';
+ * import { FileSystemSkillLoader, ClaudeCodeSkillProvider } from './skills/index.js';
  *
+ * // Using the loader directly
  * const loader = new FileSystemSkillLoader();
- *
- * // Load a single skill
  * const skill = await loader.loadSkill('skills/evaluator/SKILL.md');
  * console.log(skill.name); // 'evaluator'
  * console.log(skill.allowedTools); // ['Read', 'Grep', 'Glob', 'Write']
  *
- * // Search across multiple paths
- * const skills = await loader.searchSkills([
- *   { path: '.claude/skills', domain: 'project', priority: 3 },
- *   { path: 'skills', domain: 'package', priority: 1 },
- * ]);
+ * // Using the provider for Agent integration
+ * const provider = new ClaudeCodeSkillProvider();
+ * const result = await provider.loadSkillsForAgent('evaluator');
+ * console.log(result.allowedTools); // ['Read', 'Grep', 'Glob', 'Write']
+ * console.log(result.systemPromptContent); // Skill content for system prompt
  * ```
  *
  * @module skills
  */
 
 export { FileSystemSkillLoader } from './loader.js';
+export { ClaudeCodeSkillProvider } from './provider.js';
 export type {
   Skill,
   SkillLoader,
   SkillSearchPath,
   SkillFrontmatter,
 } from './types.js';
+export type {
+  SkillLoadContext,
+  SkillProviderOptions,
+  LoadedSkills,
+} from './provider.js';
