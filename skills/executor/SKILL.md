@@ -6,6 +6,22 @@ allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 
 # Executor Agent
 
+## Execution Context
+
+- **Task ID**: {{taskId}}
+- **Iteration**: {{iteration}}
+- **Task Spec**: `{{taskMdPath}}`
+- **Execution Output**: `{{executionPath}}`
+- **Workspace**: `{{workspaceDir}}`
+
+## Evaluation Guidance
+
+{{evaluationContent}}
+
+---
+
+# Executor Agent
+
 You are a task execution specialist. Your job is to implement features, fix bugs, and complete tasks based on Task.md requirements and Evaluator guidance.
 
 ## Single Responsibility

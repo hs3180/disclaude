@@ -4,20 +4,23 @@
  * Implements AgentFactoryInterface from #282 Phase 3 for unified agent creation.
  * All agent creation goes through the type-specific methods:
  * - createChatAgent: Create chat agents (pilot)
- * - createSkillAgent: Create skill agents (evaluator, executor, reporter)
+ * - createSkillAgent: Create skill agents (deprecated, use GenericSkillAgent directly)
  * - createSubagent: Create subagents (site-miner)
  *
  * Uses unified configuration types from Issue #327.
+ *
+ * Refactored (Issue #413): Evaluator and Executor replaced by GenericSkillAgent.
  *
  * @example
  * ```typescript
  * // Create a Pilot (ChatAgent)
  * const pilot = AgentFactory.createChatAgent('pilot', callbacks);
  *
- * // Create skill agents
- * const evaluator = AgentFactory.createSkillAgent('evaluator');
- * const executor = AgentFactory.createSkillAgent('executor', {}, abortSignal);
- * const reporter = AgentFactory.createSkillAgent('reporter');
+ * // Create skill agents (use GenericSkillAgent directly instead)
+ * const skillAgent = new GenericSkillAgent(config);
+ * for await (const msg of skillAgent.executeSkill('skills/evaluator/SKILL.md', context)) {
+ *   console.log(msg.content);
+ * }
  *
  * // Create a subagent
  * const siteMiner = AgentFactory.createSubagent('site-miner');
@@ -27,11 +30,9 @@
  */
 
 import { Config } from '../config/index.js';
-import { Evaluator, type EvaluatorConfig } from './evaluator.js';
-import { Executor, type ExecutorConfig } from './executor.js';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
-import type { ChatAgent, SkillAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
+import type { ChatAgent, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
 
 /**
  * Options for creating agents with custom configuration.
@@ -121,57 +122,20 @@ export class AgentFactory {
   /**
    * Create a SkillAgent instance by name.
    *
-   * @param name - Agent name ('evaluator', 'executor', 'reporter')
-   * @param args - Additional arguments:
-   *   - For 'evaluator':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
-   *     - args[1]: string - Optional subdirectory for task files
-   *   - For 'executor':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
-   *     - args[1]: AbortSignal - Optional abort signal for cancellation
-   *   - For 'reporter':
-   *     - args[0]: AgentCreateOptions - Optional configuration overrides
-   * @returns SkillAgent instance
+   * @deprecated Use GenericSkillAgent directly instead. Issue #413.
    *
-   * @example
-   * ```typescript
-   * // Evaluator with default config
-   * const evaluator = AgentFactory.createSkillAgent('evaluator');
-   *
-   * // Evaluator with subdirectory
-   * const evaluator = AgentFactory.createSkillAgent('evaluator', {}, 'regular');
-   *
-   * // Executor with abort signal
-   * const controller = new AbortController();
-   * const executor = AgentFactory.createSkillAgent('executor', {}, controller.signal);
-   *
-   * // Reporter
-   * const reporter = AgentFactory.createSkillAgent('reporter');
-   * ```
+   * @param name - Agent name
+   * @throws Error for 'evaluator' and 'executor' - use GenericSkillAgent directly
+   * @returns SkillAgent instance (only for backwards compatibility)
    */
-  static createSkillAgent(name: string, ...args: unknown[]): SkillAgent {
-    const options = (args[0] as AgentCreateOptions) || {};
-
-    switch (name) {
-      case 'evaluator': {
-        const subdirectory = args[1] as string | undefined;
-        const config: EvaluatorConfig = {
-          ...this.getBaseConfig(options),
-          subdirectory,
-        };
-        return new Evaluator(config) as unknown as SkillAgent;
-      }
-      case 'executor': {
-        const abortSignal = args[1] as AbortSignal | undefined;
-        const config: ExecutorConfig = {
-          ...this.getBaseConfig(options),
-          abortSignal,
-        };
-        return new Executor(config) as unknown as SkillAgent;
-      }
-      default:
-        throw new Error(`Unknown SkillAgent: ${name}`);
+  static createSkillAgent(name: string, ..._args: unknown[]): never {
+    if (name === 'evaluator' || name === 'executor') {
+      throw new Error(
+        `'${name}' is deprecated. Use GenericSkillAgent directly instead. ` +
+        `Example: new GenericSkillAgent(config).executeSkill('skills/${name}/SKILL.md', context)`
+      );
     }
+    throw new Error(`Unknown SkillAgent: ${name}. Use GenericSkillAgent directly.`);
   }
 
   /**

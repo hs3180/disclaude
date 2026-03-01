@@ -7,6 +7,15 @@ allowed-tools: [Read, Grep, Glob, Write]
 
 # Skill: Evaluator
 
+## Execution Context
+
+- **Task ID**: {{taskId}}
+- **Iteration**: {{iteration}}
+- **Task Spec**: `{{taskMdPath}}`
+- **Evaluation Output**: `{{evaluationPath}}`
+- **Final Result Output**: `{{finalResultPath}}`
+- **Previous Execution**: `{{previousExecutionPath}}`
+
 ## Role
 
 Task completion evaluation specialist.

@@ -57,37 +57,22 @@ describe('AgentFactory', () => {
   });
 
   describe('createSkillAgent', () => {
-    it('should create Evaluator when name is "evaluator"', () => {
-      const evaluator = AgentFactory.createSkillAgent('evaluator');
-
-      expect(evaluator).toBeDefined();
-      expect(evaluator.type).toBe('skill');
+    it('should throw deprecation error for "evaluator"', () => {
+      expect(() => {
+        AgentFactory.createSkillAgent('evaluator');
+      }).toThrow("'evaluator' is deprecated. Use GenericSkillAgent directly instead");
     });
 
-    it('should create Executor when name is "executor"', () => {
-      const executor = AgentFactory.createSkillAgent('executor');
-
-      expect(executor).toBeDefined();
-      expect(executor.type).toBe('skill');
-    });
-
-    it('should pass subdirectory to Evaluator', () => {
-      const evaluator = AgentFactory.createSkillAgent('evaluator', {}, 'regular');
-
-      expect(evaluator).toBeDefined();
-    });
-
-    it('should pass abortSignal to Executor', () => {
-      const controller = new AbortController();
-      const executor = AgentFactory.createSkillAgent('executor', {}, controller.signal);
-
-      expect(executor).toBeDefined();
+    it('should throw deprecation error for "executor"', () => {
+      expect(() => {
+        AgentFactory.createSkillAgent('executor');
+      }).toThrow("'executor' is deprecated. Use GenericSkillAgent directly instead");
     });
 
     it('should throw error for unknown SkillAgent name', () => {
       expect(() => {
         AgentFactory.createSkillAgent('unknown');
-      }).toThrow('Unknown SkillAgent: unknown');
+      }).toThrow('Unknown SkillAgent: unknown. Use GenericSkillAgent directly.');
     });
   });
 

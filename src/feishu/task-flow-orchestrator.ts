@@ -18,6 +18,7 @@
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  * Refactored (Issue #417): Removed Reporter, using message level system instead.
+ * Refactored (Issue #413): Uses SkillAgent instead of Evaluator/Executor classes.
  */
 
 import * as path from 'path';
@@ -34,71 +35,121 @@ import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
 import type { AgentMessage } from '../types/agent.js';
 import type { ReflectionContext } from '../task/reflection.js';
-import { Evaluator } from '../agents/evaluator.js';
-import { Executor, type TaskProgressEvent } from '../agents/executor.js';
+import { GenericSkillAgent, type SkillContext } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
 import { MessageLevel, mapAgentMessageTypeToLevel } from '../messaging/types.js';
+import type { BaseAgentConfig } from '../agents/types.js';
 
 /**
- * Process executor events and yield agent messages.
+ * Run evaluation phase using SkillAgent.
  *
- * Replaces the Reporter class with a simpler message level-based approach (Issue #417).
- * Maps executor events to appropriate message levels for routing.
- *
- * @param event - Executor progress event
- * @param taskId - Task identifier
- * @param iteration - Current iteration number
- * @yields AgentMessage - Processed messages
+ * @param context - Reflection context with taskId and iteration
+ * @param agentConfig - Agent configuration
+ * @yields AgentMessage responses
  */
-function* processExecutorEvent(
-  event: TaskProgressEvent,
-  taskId: string,
-  iteration: number
-): Generator<AgentMessage> {
-  switch (event.type) {
-    case 'start':
-      yield {
-        content: `⚡ 开始: ${event.title}`,
-        role: 'assistant',
-        messageType: 'status',
-        metadata: { level: MessageLevel.INFO, taskId, iteration },
-      };
-      break;
+async function* runEvaluationPhase(
+  context: ReflectionContext,
+  agentConfig: BaseAgentConfig
+): AsyncGenerator<AgentMessage> {
+  const fileManager = new TaskFileManager();
+  const agent = new GenericSkillAgent(agentConfig);
 
-    case 'output':
-      // Map the message type to a level for routing decisions
-      const level = mapAgentMessageTypeToLevel(event.messageType as any, event.content);
-      yield {
-        content: event.content,
-        role: 'assistant',
-        messageType: event.messageType as AgentMessage['messageType'],
-        metadata: { level, taskId, iteration, ...event.metadata },
-      };
-      break;
+  // Ensure iteration directory exists
+  await fileManager.createIteration(context.taskId, context.iteration);
 
-    case 'complete':
-      yield {
-        content: `✅ 完成: ${event.summaryFile}`,
-        role: 'assistant',
-        messageType: 'task_completion',
-        metadata: {
-          level: MessageLevel.RESULT,
-          taskId,
-          iteration,
-          files: event.files,
-        },
-      };
-      break;
+  // Build context for template variables
+  const skillContext: SkillContext = {
+    taskId: context.taskId,
+    iteration: context.iteration,
+    workspaceDir: Config.getWorkspaceDir(),
+    taskMdPath: fileManager.getTaskSpecPath(context.taskId),
+    evaluationPath: fileManager.getEvaluationPath(context.taskId, context.iteration),
+    finalResultPath: fileManager.getFinalResultPath(context.taskId),
+    previousExecutionPath: context.iteration > 1
+      ? fileManager.getExecutionPath(context.taskId, context.iteration - 1)
+      : null,
+  };
 
-    case 'error':
+  try {
+    yield* agent.executeSkill('skills/evaluator/SKILL.md', skillContext);
+  } finally {
+    agent.dispose();
+  }
+}
+
+/**
+ * Run execution phase using SkillAgent.
+ *
+ * @param context - Reflection context with taskId and iteration
+ * @param agentConfig - Agent configuration
+ * @yields AgentMessage responses with progress events
+ */
+async function* runExecutionPhase(
+  context: ReflectionContext,
+  agentConfig: BaseAgentConfig
+): AsyncGenerator<AgentMessage> {
+  const fileManager = new TaskFileManager();
+  const workspaceDir = Config.getWorkspaceDir();
+
+  // Yield start event
+  yield {
+    content: '⚡ **Executing Task**',
+    role: 'assistant',
+    messageType: 'status',
+    metadata: { level: MessageLevel.INFO, taskId: context.taskId, iteration: context.iteration },
+  };
+
+  // Read evaluation content for guidance
+  let evaluationContent = '';
+  try {
+    evaluationContent = await fileManager.readEvaluation(context.taskId, context.iteration);
+  } catch {
+    // No evaluation found, proceed without guidance
+  }
+
+  const agent = new GenericSkillAgent(agentConfig);
+
+  // Build context for template variables
+  const skillContext: SkillContext = {
+    taskId: context.taskId,
+    iteration: context.iteration,
+    workspaceDir,
+    taskMdPath: fileManager.getTaskSpecPath(context.taskId),
+    executionPath: fileManager.getExecutionPath(context.taskId, context.iteration),
+    evaluationContent: evaluationContent || '(No evaluation guidance available)',
+  };
+
+  try {
+    for await (const msg of agent.executeSkill('skills/executor/SKILL.md', skillContext)) {
+      // Map message type to level for routing
+      const level = mapAgentMessageTypeToLevel(msg.messageType as any, typeof msg.content === 'string' ? msg.content : '');
       yield {
-        content: `❌ 错误: ${event.error}`,
-        role: 'assistant',
-        messageType: 'error',
-        metadata: { level: MessageLevel.ERROR, taskId, iteration },
+        ...msg,
+        metadata: { level, taskId: context.taskId, iteration: context.iteration, ...msg.metadata },
       };
-      break;
+    }
+
+    // Yield completion event
+    yield {
+      content: `✅ 完成: ${fileManager.getExecutionPath(context.taskId, context.iteration)}`,
+      role: 'assistant',
+      messageType: 'task_completion',
+      metadata: {
+        level: MessageLevel.RESULT,
+        taskId: context.taskId,
+        iteration: context.iteration,
+      },
+    };
+  } catch (error) {
+    yield {
+      content: `❌ 错误: ${error instanceof Error ? error.message : String(error)}`,
+      role: 'assistant',
+      messageType: 'error',
+      metadata: { level: MessageLevel.ERROR, taskId: context.taskId, iteration: context.iteration },
+    };
+  } finally {
+    agent.dispose();
   }
 }
 
@@ -185,9 +236,10 @@ export class TaskFlowOrchestrator {
   }
 
   /**
-   * Run the dialogue phase using ReflectionController (Evaluator → Executor → Reporter).
+   * Run the dialogue phase using ReflectionController (Evaluator → Executor).
    *
    * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+   * Refactored (Issue #413): Uses SkillAgent instead of Evaluator/Executor classes.
    */
   private async runDialogue(
     chatId: string,
@@ -244,23 +296,20 @@ export class TaskFlowOrchestrator {
       ]
     );
 
-    // Create execute phase: runs Evaluator
-    const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
-      const evaluator = new Evaluator({
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        permissionMode: 'bypassPermissions',
-      });
-
-      try {
-        yield* evaluator.evaluate(context.taskId, context.iteration);
-      } finally {
-        evaluator.dispose();
-      }
+    // Skill agent configuration
+    const skillAgentConfig: BaseAgentConfig = {
+      apiKey: agentConfig.apiKey,
+      model: agentConfig.model,
+      apiBaseUrl: agentConfig.apiBaseUrl,
+      permissionMode: 'bypassPermissions',
     };
 
-    // Create evaluate phase: runs Executor (after Evaluator)
+    // Create execute phase: runs evaluation using SkillAgent
+    const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      yield* runEvaluationPhase(context, skillAgentConfig);
+    };
+
+    // Create evaluate phase: runs execution using SkillAgent
     const evaluatePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
       // Check if task is already complete
       const hasFinalResult = await fileManager.hasFinalResult(context.taskId);
@@ -274,37 +323,7 @@ export class TaskFlowOrchestrator {
         return;
       }
 
-      yield {
-        content: '⚡ **Executing Task**',
-        role: 'assistant',
-        messageType: 'status',
-      };
-
-      const executor = new Executor({
-        apiKey: agentConfig.apiKey,
-        model: agentConfig.model,
-        apiBaseUrl: agentConfig.apiBaseUrl,
-        permissionMode: 'bypassPermissions',
-      });
-
-      try {
-        const executorStream = executor.executeTask(
-          context.taskId,
-          context.iteration,
-          Config.getWorkspaceDir()
-        );
-
-        // Process executor events directly using message level system (Issue #417)
-        for await (const event of executorStream) {
-          yield* processExecutorEvent(event, context.taskId, context.iteration);
-        }
-      } catch (error) {
-        yield {
-          content: `❌ **Task execution failed**: ${error instanceof Error ? error.message : String(error)}`,
-          role: 'assistant',
-          messageType: 'error',
-        };
-      }
+      yield* runExecutionPhase(context, skillAgentConfig);
     };
 
     try {
