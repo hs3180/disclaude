@@ -11,14 +11,9 @@ describe('Agents Module Exports', () => {
       expect(module.Pilot).toBeDefined();
     });
 
-    it('should export Evaluator class', async () => {
+    it('should export SkillAgent class', async () => {
       const module = await import('./index.js');
-      expect(module.Evaluator).toBeDefined();
-    });
-
-    it('should export Executor class', async () => {
-      const module = await import('./index.js');
-      expect(module.Executor).toBeDefined();
+      expect(module.SkillAgent).toBeDefined();
     });
 
     it('should export AgentFactory class', async () => {
@@ -39,9 +34,10 @@ describe('Agents Module Exports', () => {
     });
 
     it('should allow imports from agents/index', async () => {
-      const { Pilot, AgentFactory } = await import('./index.js');
+      const { Pilot, AgentFactory, SkillAgent } = await import('./index.js');
       expect(Pilot).toBeDefined();
       expect(AgentFactory).toBeDefined();
+      expect(SkillAgent).toBeDefined();
     });
   });
 
@@ -49,6 +45,11 @@ describe('Agents Module Exports', () => {
     it('should export Pilot as class', async () => {
       const { Pilot } = await import('./index.js');
       expect(typeof Pilot).toBe('function');
+    });
+
+    it('should export SkillAgent as class', async () => {
+      const { SkillAgent } = await import('./index.js');
+      expect(typeof SkillAgent).toBe('function');
     });
 
     it('should export AgentFactory as class', async () => {
