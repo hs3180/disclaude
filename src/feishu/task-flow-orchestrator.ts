@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - TaskFileWatcher for detecting new Task.md files
- * - ReflectionController execution (Evaluator → Executor)
+ * - ReflectionController execution (SkillAgent with skill files)
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
@@ -18,6 +18,7 @@
  *
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  * Refactored (Issue #417): Removed Reporter, using message level system instead.
+ * Simplified (Issue #413): Uses SkillAgent instead of Evaluator/Executor classes.
  */
 
 import * as path from 'path';
@@ -34,73 +35,9 @@ import { handleError, ErrorCategory } from '../utils/error-handler.js';
 import type { Logger } from 'pino';
 import type { AgentMessage } from '../types/agent.js';
 import type { ReflectionContext } from '../task/reflection.js';
-import { Evaluator } from '../agents/evaluator.js';
-import { Executor, type TaskProgressEvent } from '../agents/executor.js';
+import { SkillAgent } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
-import { MessageLevel, mapAgentMessageTypeToLevel } from '../messaging/types.js';
-
-/**
- * Process executor events and yield agent messages.
- *
- * Replaces the Reporter class with a simpler message level-based approach (Issue #417).
- * Maps executor events to appropriate message levels for routing.
- *
- * @param event - Executor progress event
- * @param taskId - Task identifier
- * @param iteration - Current iteration number
- * @yields AgentMessage - Processed messages
- */
-function* processExecutorEvent(
-  event: TaskProgressEvent,
-  taskId: string,
-  iteration: number
-): Generator<AgentMessage> {
-  switch (event.type) {
-    case 'start':
-      yield {
-        content: `⚡ 开始: ${event.title}`,
-        role: 'assistant',
-        messageType: 'status',
-        metadata: { level: MessageLevel.INFO, taskId, iteration },
-      };
-      break;
-
-    case 'output':
-      // Map the message type to a level for routing decisions
-      const level = mapAgentMessageTypeToLevel(event.messageType as any, event.content);
-      yield {
-        content: event.content,
-        role: 'assistant',
-        messageType: event.messageType as AgentMessage['messageType'],
-        metadata: { level, taskId, iteration, ...event.metadata },
-      };
-      break;
-
-    case 'complete':
-      yield {
-        content: `✅ 完成: ${event.summaryFile}`,
-        role: 'assistant',
-        messageType: 'task_completion',
-        metadata: {
-          level: MessageLevel.RESULT,
-          taskId,
-          iteration,
-          files: event.files,
-        },
-      };
-      break;
-
-    case 'error':
-      yield {
-        content: `❌ 错误: ${event.error}`,
-        role: 'assistant',
-        messageType: 'error',
-        metadata: { level: MessageLevel.ERROR, taskId, iteration },
-      };
-      break;
-  }
-}
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -244,23 +181,38 @@ export class TaskFlowOrchestrator {
       ]
     );
 
-    // Create execute phase: runs Evaluator
+    // Create execute phase: runs Evaluator via SkillAgent
     const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
-      const evaluator = new Evaluator({
+      // Ensure iteration directory exists
+      await fileManager.createIteration(context.taskId, context.iteration);
+
+      // Build template variables
+      const templateVars = {
+        taskId: context.taskId,
+        iteration: String(context.iteration),
+        taskMdPath: fileManager.getTaskSpecPath(context.taskId),
+        evaluationPath: fileManager.getEvaluationPath(context.taskId, context.iteration),
+        finalResultPath: fileManager.getFinalResultPath(context.taskId),
+        previousExecutionPath: context.iteration > 1
+          ? fileManager.getExecutionPath(context.taskId, context.iteration - 1)
+          : '(No previous execution - this is the first iteration)',
+      };
+
+      const evaluator = new SkillAgent({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
-      });
+      }, 'skills/evaluator/SKILL.md');
 
       try {
-        yield* evaluator.evaluate(context.taskId, context.iteration);
+        yield* evaluator.executeWithContext({ templateVars });
       } finally {
         evaluator.dispose();
       }
     };
 
-    // Create evaluate phase: runs Executor (after Evaluator)
+    // Create evaluate phase: runs Executor via SkillAgent (after Evaluator)
     const evaluatePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
       // Check if task is already complete
       const hasFinalResult = await fileManager.hasFinalResult(context.taskId);
@@ -280,30 +232,40 @@ export class TaskFlowOrchestrator {
         messageType: 'status',
       };
 
-      const executor = new Executor({
+      // Read evaluation.md for guidance
+      let evaluationContent = '(No evaluation guidance available)';
+      try {
+        evaluationContent = await fileManager.readEvaluation(context.taskId, context.iteration);
+      } catch {
+        // No evaluation yet, that's fine
+      }
+
+      // Build template variables
+      const templateVars = {
+        taskId: context.taskId,
+        iteration: String(context.iteration),
+        taskMdPath: fileManager.getTaskSpecPath(context.taskId),
+        executionPath: fileManager.getExecutionPath(context.taskId, context.iteration),
+        evaluationPath: evaluationContent,
+      };
+
+      const executor = new SkillAgent({
         apiKey: agentConfig.apiKey,
         model: agentConfig.model,
         apiBaseUrl: agentConfig.apiBaseUrl,
         permissionMode: 'bypassPermissions',
-      });
+      }, 'skills/executor/SKILL.md');
 
       try {
-        const executorStream = executor.executeTask(
-          context.taskId,
-          context.iteration,
-          Config.getWorkspaceDir()
-        );
-
-        // Process executor events directly using message level system (Issue #417)
-        for await (const event of executorStream) {
-          yield* processExecutorEvent(event, context.taskId, context.iteration);
-        }
+        yield* executor.executeWithContext({ templateVars });
       } catch (error) {
         yield {
           content: `❌ **Task execution failed**: ${error instanceof Error ? error.message : String(error)}`,
           role: 'assistant',
           messageType: 'error',
         };
+      } finally {
+        executor.dispose();
       }
     };
 
