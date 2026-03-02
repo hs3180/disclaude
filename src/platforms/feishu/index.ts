@@ -22,3 +22,17 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
+
+// Broadcast Chat Service
+export {
+  BroadcastChatService,
+  broadcastChatService,
+  type BroadcastChat,
+  type BroadcastChatServiceConfig,
+} from './broadcast-chat-service.js';
+
+// Log Chat Service
+export {
+  LogChatService,
+  type LogChatServiceConfig,
+} from './log-chat-service.js';

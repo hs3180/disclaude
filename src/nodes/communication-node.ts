@@ -22,6 +22,7 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
+import { broadcastChatService, LogChatService } from '../platforms/feishu/index.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import { FileStorageService, type FileStorageConfig, createFileTransferAPIHandler } from '../file-transfer/node-transfer/index.js';
@@ -398,6 +399,79 @@ export class CommunicationNode extends EventEmitter {
         } else {
           return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
         }
+      }
+
+      // ===== Group Management Commands =====
+
+      case 'add-broadcast': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 2) {
+          return {
+            success: false,
+            error: '用法: /add-broadcast <chatId> <name> [description]',
+          };
+        }
+        const [chatId, name, ...descParts] = args;
+        const description = descParts.length > 0 ? descParts.join(' ') : undefined;
+
+        const added = broadcastChatService.addBroadcastChat(chatId, name, description);
+        if (added) {
+          return { success: true, message: `✅ **广播群已添加**\n\n- **Chat ID**: \`${chatId}\`\n- **名称**: ${name}${description ? `\n- **描述**: ${description}` : ''}` };
+        } else {
+          return { success: false, error: `该群已在广播群列表中: \`${chatId}\`` };
+        }
+      }
+
+      case 'remove-broadcast': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 1) {
+          return {
+            success: false,
+            error: '用法: /remove-broadcast <chatId>',
+          };
+        }
+        const [chatId] = args;
+
+        const removed = broadcastChatService.removeBroadcastChat(chatId);
+        if (removed) {
+          return { success: true, message: `✅ **广播群已移除**\n\n- **Chat ID**: \`${chatId}\`` };
+        } else {
+          return { success: false, error: `未找到该广播群: \`${chatId}\`` };
+        }
+      }
+
+      case 'list-broadcast': {
+        const chats = broadcastChatService.loadBroadcastChats();
+        if (chats.length === 0) {
+          return { success: true, message: '📋 **广播群列表**\n\n暂无广播群' };
+        }
+        const list = chats.map(chat => {
+          const desc = chat.description ? ` - ${chat.description}` : '';
+          return `- **${chat.name}**: \`${chat.chatId}\`${desc}`;
+        }).join('\n');
+        return { success: true, message: `📋 **广播群列表**\n\n${list}` };
+      }
+
+      case 'set-log-chat': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 1) {
+          return {
+            success: false,
+            error: '用法: /set-log-chat <chatId> [topic]',
+          };
+        }
+        const [chatId, ...topicParts] = args;
+        const topic = topicParts.length > 0 ? topicParts.join(' ') : undefined;
+
+        const logChatService = new LogChatService();
+        await logChatService.setLogChatId(chatId, topic);
+        return { success: true, message: `✅ **日志群已设置**\n\n- **Chat ID**: \`${chatId}\`${topic ? `\n- **主题**: ${topic}` : ''}` };
+      }
+
+      case 'clear-log-chat': {
+        const logChatService = new LogChatService();
+        await logChatService.clearLogChat();
+        return { success: true, message: '✅ **日志群已清除**' };
       }
 
       default:

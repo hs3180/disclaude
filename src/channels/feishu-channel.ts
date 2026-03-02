@@ -434,7 +434,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Control commands that should always be handled locally through the control channel
     // These commands affect session/agent lifecycle and should not be passed to the agent
-    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node'];
+    const CONTROL_COMMANDS = [
+      'reset',
+      'status',
+      'help',
+      'restart',
+      'list-nodes',
+      'switch-node',
+      // Group management commands
+      'add-broadcast',
+      'remove-broadcast',
+      'list-broadcast',
+      'set-log-chat',
+      'clear-log-chat',
+    ];
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
@@ -491,7 +504,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.sendMessage({
             chatId: chat_id,
             type: 'text',
-            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
+            text: `📖 **帮助**
+
+**基本命令:**
+- /reset - 重置对话
+- /status - 查看状态
+- /help - 显示帮助
+
+**群管理命令:**
+- /add-broadcast <chatId> <name> [description] - 添加广播群
+- /remove-broadcast <chatId> - 移除广播群
+- /list-broadcast - 列出所有广播群
+- /set-log-chat <chatId> - 设置日志群
+- /clear-log-chat - 清除日志群`,
           });
           return;
         }
