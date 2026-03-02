@@ -516,12 +516,12 @@ export class PrimaryNode extends EventEmitter {
         if (!args || args.length === 0) {
           return {
             success: false,
-            error: `请指定 Chat ID。\n\n用法: \`/set-log-chat <chatId> [topic]\``,
+            error: '请指定 Chat ID。\n\n用法: `/set-log-chat <chatId> [topic]`',
           };
         }
 
-        const chatId = args[0];
-        const topic = args.slice(1).join(' ') || undefined;
+        const [chatId, ...topicParts] = args;
+        const topic = topicParts.join(' ') || undefined;
         const logChatService = getLogChatService();
 
         try {
