@@ -13,3 +13,12 @@ export { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-h
 
 // Card Builders
 export { buildTextContent } from './card-builders/index.js';
+
+// Chat Operations (for FeedbackController integration)
+export {
+  createDiscussionChat,
+  dissolveChat,
+  addMembers,
+  type CreateDiscussionOptions,
+  type ChatOpsConfig,
+} from './chat-ops.js';
