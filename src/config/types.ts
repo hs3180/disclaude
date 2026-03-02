@@ -194,15 +194,16 @@ export interface ChannelsConfig {
 /**
  * Messaging routing configuration section.
  *
- * Controls how messages are routed between admin and user chats.
+ * Controls how messages are routed between debug and user chats.
  * @see Issue #266
+ * @see Issue #454
  */
 export interface MessagingConfig {
-  /** Admin chat configuration */
-  admin?: {
-    /** Admin chat ID (receives all messages including progress/debug) */
+  /** Debug chat configuration */
+  debug?: {
+    /** Debug chat ID (receives all messages including progress/debug) */
     chatId?: string;
-    /** Enable/disable admin chat routing */
+    /** Enable/disable debug chat routing */
     enabled?: boolean;
   };
   /** Message routing configuration */
@@ -222,8 +223,8 @@ export interface MessagingConfig {
     errors?: {
       /** Show stack traces to users */
       showStack?: boolean;
-      /** Who can see detailed errors: 'admin' | 'all' */
-      showDetails?: 'admin' | 'all';
+      /** Who can see detailed errors: 'debug' | 'all' */
+      showDetails?: 'debug' | 'all';
     };
   };
 }

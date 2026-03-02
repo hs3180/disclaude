@@ -100,50 +100,50 @@ describe('MessageRouter', () => {
     };
   });
 
-  describe('with admin chat configured', () => {
+  describe('with debug chat configured', () => {
     beforeEach(() => {
       const config: MessageRouteConfig = {
-        adminChatId: 'admin-chat-id',
+        debugChatId: 'debug-chat-id',
         userChatId: 'user-chat-id',
         userMessageLevels: DEFAULT_USER_LEVELS,
       };
       router = new MessageRouter({ config, sender: mockSender });
     });
 
-    it('should route DEBUG to admin only', async () => {
+    it('should route DEBUG to debug chat only', async () => {
       await router.route({ content: 'Debug message', level: MessageLevel.DEBUG });
       expect(mockSender.sendText).toHaveBeenCalledTimes(1);
-      expect(mockSender.sendText).toHaveBeenCalledWith('admin-chat-id', 'Debug message');
+      expect(mockSender.sendText).toHaveBeenCalledWith('debug-chat-id', 'Debug message');
     });
 
-    it('should route PROGRESS to admin only', async () => {
+    it('should route PROGRESS to debug chat only', async () => {
       await router.route({ content: 'Progress message', level: MessageLevel.PROGRESS });
       expect(mockSender.sendText).toHaveBeenCalledTimes(1);
-      expect(mockSender.sendText).toHaveBeenCalledWith('admin-chat-id', 'Progress message');
+      expect(mockSender.sendText).toHaveBeenCalledWith('debug-chat-id', 'Progress message');
     });
 
-    it('should route ERROR to both admin and user', async () => {
+    it('should route ERROR to both debug and user', async () => {
       await router.route({ content: 'Error message', level: MessageLevel.ERROR });
       expect(mockSender.sendText).toHaveBeenCalledTimes(2);
-      expect(mockSender.sendText).toHaveBeenCalledWith('admin-chat-id', 'Error message');
+      expect(mockSender.sendText).toHaveBeenCalledWith('debug-chat-id', 'Error message');
       expect(mockSender.sendText).toHaveBeenCalledWith('user-chat-id', 'Error message');
     });
 
-    it('should route RESULT to both admin and user', async () => {
+    it('should route RESULT to both debug and user', async () => {
       await router.route({ content: 'Result message', level: MessageLevel.RESULT });
       expect(mockSender.sendText).toHaveBeenCalledTimes(2);
     });
 
-    it('should route NOTICE to both admin and user', async () => {
+    it('should route NOTICE to both debug and user', async () => {
       await router.route({ content: 'Notice message', level: MessageLevel.NOTICE });
       expect(mockSender.sendText).toHaveBeenCalledTimes(2);
     });
 
     it('should get correct targets for each level', () => {
-      expect(router.getTargets(MessageLevel.DEBUG)).toEqual(['admin-chat-id']);
-      expect(router.getTargets(MessageLevel.PROGRESS)).toEqual(['admin-chat-id']);
-      expect(router.getTargets(MessageLevel.ERROR)).toEqual(['admin-chat-id', 'user-chat-id']);
-      expect(router.getTargets(MessageLevel.RESULT)).toEqual(['admin-chat-id', 'user-chat-id']);
+      expect(router.getTargets(MessageLevel.DEBUG)).toEqual(['debug-chat-id']);
+      expect(router.getTargets(MessageLevel.PROGRESS)).toEqual(['debug-chat-id']);
+      expect(router.getTargets(MessageLevel.ERROR)).toEqual(['debug-chat-id', 'user-chat-id']);
+      expect(router.getTargets(MessageLevel.RESULT)).toEqual(['debug-chat-id', 'user-chat-id']);
     });
 
     it('should check user visibility correctly', () => {
@@ -153,9 +153,9 @@ describe('MessageRouter', () => {
       expect(router.isUserVisible(MessageLevel.RESULT)).toBe(true);
     });
 
-    it('should have admin chat configured', () => {
-      expect(router.hasAdminChat()).toBe(true);
-      expect(router.getAdminChatId()).toBe('admin-chat-id');
+    it('should have debug chat configured', () => {
+      expect(router.hasDebugChat()).toBe(true);
+      expect(router.getDebugChatId()).toBe('debug-chat-id');
     });
 
     it('should return user chat ID', () => {
@@ -163,7 +163,7 @@ describe('MessageRouter', () => {
     });
   });
 
-  describe('without admin chat', () => {
+  describe('without debug chat', () => {
     beforeEach(() => {
       const config: MessageRouteConfig = {
         userChatId: 'user-chat-id',
@@ -177,21 +177,21 @@ describe('MessageRouter', () => {
       expect(mockSender.sendText).toHaveBeenCalledWith('user-chat-id', 'Result');
     });
 
-    it('should not route debug messages when no admin', async () => {
+    it('should not route debug messages when no debug chat', async () => {
       await router.route({ content: 'Debug', level: MessageLevel.DEBUG });
       expect(mockSender.sendText).not.toHaveBeenCalled();
     });
 
-    it('should not have admin chat', () => {
-      expect(router.hasAdminChat()).toBe(false);
-      expect(router.getAdminChatId()).toBeUndefined();
+    it('should not have debug chat', () => {
+      expect(router.hasDebugChat()).toBe(false);
+      expect(router.getDebugChatId()).toBeUndefined();
     });
   });
 
-  describe('with same admin and user chat', () => {
+  describe('with same debug and user chat', () => {
     beforeEach(() => {
       const config: MessageRouteConfig = {
-        adminChatId: 'same-chat-id',
+        debugChatId: 'same-chat-id',
         userChatId: 'same-chat-id',
         userMessageLevels: DEFAULT_USER_LEVELS,
       };
@@ -208,7 +208,7 @@ describe('MessageRouter', () => {
   describe('with custom user levels', () => {
     beforeEach(() => {
       const config: MessageRouteConfig = {
-        adminChatId: 'admin-chat-id',
+        debugChatId: 'debug-chat-id',
         userChatId: 'user-chat-id',
         userMessageLevels: [MessageLevel.ERROR, MessageLevel.RESULT], // Only errors and results
       };
@@ -218,7 +218,7 @@ describe('MessageRouter', () => {
     it('should not route NOTICE to user', async () => {
       await router.route({ content: 'Notice', level: MessageLevel.NOTICE });
       expect(mockSender.sendText).toHaveBeenCalledTimes(1);
-      expect(mockSender.sendText).toHaveBeenCalledWith('admin-chat-id', 'Notice');
+      expect(mockSender.sendText).toHaveBeenCalledWith('debug-chat-id', 'Notice');
     });
 
     it('should route ERROR to both', async () => {
@@ -239,18 +239,18 @@ describe('MessageRouter', () => {
       expect(router.isUserVisible(MessageLevel.RESULT)).toBe(false);
     });
 
-    it('should update admin chat ID', () => {
-      expect(router.hasAdminChat()).toBe(false);
-      router.setAdminChatId('new-admin-id');
-      expect(router.hasAdminChat()).toBe(true);
-      expect(router.getAdminChatId()).toBe('new-admin-id');
+    it('should update debug chat ID', () => {
+      expect(router.hasDebugChat()).toBe(false);
+      router.setDebugChatId('new-debug-id');
+      expect(router.hasDebugChat()).toBe(true);
+      expect(router.getDebugChatId()).toBe('new-debug-id');
     });
   });
 
   describe('error handling', () => {
     beforeEach(() => {
       const config: MessageRouteConfig = {
-        adminChatId: 'admin-chat-id',
+        debugChatId: 'debug-chat-id',
         userChatId: 'user-chat-id',
       };
       router = new MessageRouter({ config, sender: mockSender });
@@ -258,7 +258,7 @@ describe('MessageRouter', () => {
 
     it('should continue sending to other targets on error', async () => {
       mockSender.sendText = vi.fn()
-        .mockRejectedValueOnce(new Error('Failed to admin'))
+        .mockRejectedValueOnce(new Error('Failed to debug chat'))
         .mockResolvedValueOnce(undefined);
 
       await router.route({ content: 'Error', level: MessageLevel.ERROR });
@@ -290,7 +290,7 @@ describe('createDefaultRouteConfig', () => {
   it('should include default error settings', () => {
     const config = createDefaultRouteConfig('my-chat-id');
     expect(config.errors?.showStack).toBe(false);
-    expect(config.errors?.showDetails).toBe('admin');
+    expect(config.errors?.showDetails).toBe('debug');
   });
 });
 
@@ -330,7 +330,7 @@ describe('RoutedOutputAdapter', () => {
   });
 
   it('should not track if user not in targets', async () => {
-    mockRouter.getTargets.mockReturnValue(['admin-chat-id']);
+    mockRouter.getTargets.mockReturnValue(['debug-chat-id']);
     mockRouter.getUserChatId.mockReturnValue('user-chat-id');
 
     await adapter.write('Debug', 'tool_progress');

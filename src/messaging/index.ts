@@ -4,7 +4,7 @@
  * This module implements Issue #266: Message Level Routing System
  *
  * Features:
- * - Routes execution progress to admin chats
+ * - Routes execution progress to debug chats
  * - Routes only key interactions to user chats
  * - Configurable message levels
  * - Throttling for progress messages
@@ -20,7 +20,7 @@
  *
  * // Create router
  * const config = createDefaultRouteConfig('user_chat_id');
- * config.adminChatId = 'admin_chat_id';
+ * config.debugChatId = 'debug_chat_id';
  *
  * const router = new MessageRouter({
  *   config,
@@ -35,6 +35,7 @@
  * ```
  *
  * @see Issue #266
+ * @see Issue #454
  */
 
 // Types

@@ -1,11 +1,14 @@
 /**
  * Message router implementation for level-based message routing.
  *
- * Routes messages to appropriate chats based on their level:
- * - Admin chat receives all messages (progress, debug, etc.)
- * - User chat receives only key messages (results, errors, confirmations)
+ * Message routing rules:
+ * - Level >= user visibility threshold: Send to user (current chat)
+ * - Level < user visibility threshold: Send to debug chat (shared by all)
+ *
+ * The debug chat is created and managed by PrimaryNode, shared by all users.
  *
  * @see Issue #266
+ * @see Issue #454
  */
 
 /**
@@ -42,7 +45,7 @@ export interface MessageRouterOptions {
 /**
  * Message router implementation.
  *
- * Routes messages to admin and/or user chats based on message level.
+ * Routes messages to debug and/or user chats based on message level.
  */
 export class MessageRouter implements IMessageRouter {
   private readonly config: MessageRouteConfig;
@@ -103,15 +106,15 @@ export class MessageRouter implements IMessageRouter {
   getTargets(level: MessageLevel): string[] {
     const targets: string[] = [];
 
-    // Admin chat receives all messages (if configured)
-    if (this.config.adminChatId) {
-      targets.push(this.config.adminChatId);
+    // Debug chat receives all messages (if configured)
+    if (this.config.debugChatId) {
+      targets.push(this.config.debugChatId);
     }
 
     // User chat receives messages based on level
     if (this.config.userChatId && this.userLevels.has(level)) {
-      // Avoid duplicate if admin and user chat are the same
-      if (this.config.adminChatId !== this.config.userChatId) {
+      // Avoid duplicate if debug and user chat are the same
+      if (this.config.debugChatId !== this.config.userChatId) {
         targets.push(this.config.userChatId);
       }
     }
@@ -127,17 +130,17 @@ export class MessageRouter implements IMessageRouter {
   }
 
   /**
-   * Check if admin chat is configured.
+   * Check if debug chat is configured.
    */
-  hasAdminChat(): boolean {
-    return !!this.config.adminChatId;
+  hasDebugChat(): boolean {
+    return !!this.config.debugChatId;
   }
 
   /**
-   * Get the admin chat ID.
+   * Get the debug chat ID.
    */
-  getAdminChatId(): string | undefined {
-    return this.config.adminChatId;
+  getDebugChatId(): string | undefined {
+    return this.config.debugChatId;
   }
 
   /**
@@ -157,11 +160,11 @@ export class MessageRouter implements IMessageRouter {
   }
 
   /**
-   * Update the admin chat ID.
+   * Update the debug chat ID.
    */
-  setAdminChatId(chatId: string | undefined): void {
-    (this.config as { adminChatId?: string }).adminChatId = chatId;
-    this.logger?.info('MessageRouter: Updated admin chat ID', { chatId });
+  setDebugChatId(chatId: string | undefined): void {
+    (this.config as { debugChatId?: string }).debugChatId = chatId;
+    this.logger?.info('MessageRouter: Updated debug chat ID', { chatId });
   }
 }
 
@@ -179,7 +182,7 @@ export function createDefaultRouteConfig(userChatId: string): MessageRouteConfig
     },
     errors: {
       showStack: false,
-      showDetails: 'admin',
+      showDetails: 'debug',
     },
   };
 }

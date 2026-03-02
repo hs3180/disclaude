@@ -1,11 +1,14 @@
 /**
  * Message routing types for implementing message level-based routing.
  *
- * This module defines the types for the message routing system that:
- * - Routes execution progress to admin chats
- * - Routes only key interactions to user chats
+ * Message routing rules:
+ * - Level >= user visibility threshold: Send to user (current chat)
+ * - Level < user visibility threshold: Send to debug chat (shared by all chats/users)
+ *
+ * The debug chat is created and managed by PrimaryNode, shared by all users.
  *
  * @see Issue #266
+ * @see Issue #454
  */
 
 import type { AgentMessageType } from '../types/agent.js';
@@ -13,13 +16,13 @@ import type { AgentMessageType } from '../types/agent.js';
 /**
  * Message level enum for routing decisions.
  *
- * - DEBUG: Debug information → Admin only
- * - PROGRESS: Execution progress → Admin only
- * - INFO: General information → Admin only
- * - NOTICE: Notification → User + Admin
- * - IMPORTANT: Important information → User + Admin (strong alert)
- * - ERROR: Error information → User + Admin
- * - RESULT: Final result → User + Admin
+ * - DEBUG: Debug information → Debug chat only
+ * - PROGRESS: Execution progress → Debug chat only
+ * - INFO: General information → Debug chat only
+ * - NOTICE: Notification → User + Debug chat
+ * - IMPORTANT: Important information → User + Debug chat (strong alert)
+ * - ERROR: Error information → User + Debug chat
+ * - RESULT: Final result → User + Debug chat
  */
 export enum MessageLevel {
   DEBUG = 'debug',
@@ -42,7 +45,7 @@ export const DEFAULT_USER_LEVELS: MessageLevel[] = [
 ];
 
 /**
- * All message levels (admin receives all).
+ * All message levels (debug chat receives all).
  */
 export const ALL_LEVELS: MessageLevel[] = [
   MessageLevel.DEBUG,
@@ -82,8 +85,8 @@ export interface RoutedMessageMetadata {
  * Configuration for message routing.
  */
 export interface MessageRouteConfig {
-  /** Admin chat ID (receives all messages) */
-  adminChatId?: string;
+  /** Debug chat ID (receives all messages including debug/progress) */
+  debugChatId?: string;
   /** User chat ID (receives filtered messages) */
   userChatId: string;
   /** Message levels visible to users */
@@ -98,8 +101,8 @@ export interface MessageRouteConfig {
   errors?: {
     /** Whether to show stack traces to users */
     showStack?: boolean;
-    /** Who can see detailed errors: 'admin' | 'all' */
-    showDetails?: 'admin' | 'all';
+    /** Who can see detailed errors: 'debug' | 'all' */
+    showDetails?: 'debug' | 'all';
   };
 }
 

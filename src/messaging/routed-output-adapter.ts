@@ -17,7 +17,7 @@ import { mapAgentMessageTypeToLevel, type IMessageRouter, type RoutedMessageMeta
 export interface RoutedOutputAdapterOptions {
   /** Message router instance */
   router: IMessageRouter;
-  /** Default chat ID for messages (used when router has no admin configured) */
+  /** Default chat ID for messages (used when router has no debug chat configured) */
   defaultChatId?: string;
   /** Enable debug logging */
   debug?: boolean;
@@ -28,13 +28,13 @@ export interface RoutedOutputAdapterOptions {
  *
  * Features:
  * - Maps AgentMessageType to MessageLevel
- * - Routes to admin/user chats via MessageRouter
+ * - Routes to debug/user chats via MessageRouter
  * - Throttles progress messages
  * - Tracks if user-visible messages were sent
  */
 export class RoutedOutputAdapter implements OutputAdapter {
   private readonly router: IMessageRouter;
-  // Reserved for future use when router has no admin configured
+  // Reserved for future use when router has no debug chat configured
   private readonly defaultChatId?: string;
   // Reserved for debug logging
   private readonly debug: boolean;
@@ -154,7 +154,7 @@ export class RoutedOutputAdapter implements OutputAdapter {
 
 /**
  * Create a simple output adapter that only sends to user chat.
- * This is for backward compatibility when no admin chat is configured.
+ * This is for backward compatibility when no debug chat is configured.
  */
 export class SimpleUserOutputAdapter implements OutputAdapter {
   private readonly sendText: (chatId: string, text: string) => Promise<void>;
