@@ -10,7 +10,7 @@
   "files": [
     "dist",
     "skills",
-    "package.json"
+    "README.md"
   ],
   "scripts": {
     "dev": "tsx watch src/cli-entry.ts",
@@ -78,5 +78,16 @@
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hs3180/disclaude.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hs3180/disclaude/issues"
+  },
+  "homepage": "https://github.com/hs3180/disclaude#readme"
 }
