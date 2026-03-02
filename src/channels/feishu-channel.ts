@@ -108,7 +108,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle message receive');
         }
       },
-      'im.message.action_v1': async (data: unknown) => {
+      'card.action.trigger': async (data: unknown) => {
         try {
           await this.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
