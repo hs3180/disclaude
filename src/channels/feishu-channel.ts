@@ -640,7 +640,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    const event = data.event;
+    const { event } = data;
     if (!event?.chat_id) {
       return;
     }
@@ -661,7 +661,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    const event = data.event;
+    const { event } = data;
     if (!event?.chat_id || !event?.users) {
       return;
     }
