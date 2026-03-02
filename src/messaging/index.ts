@@ -63,3 +63,11 @@ export {
   SimpleUserOutputAdapter,
   type RoutedOutputAdapterOptions,
 } from './routed-output-adapter.js';
+
+// Channel Message Service
+export {
+  ChannelMessageService,
+  type ChannelMessageServiceConfig,
+  type SendResult,
+  type MessageFormat,
+} from './channel-message-service.js';
