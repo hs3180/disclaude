@@ -510,8 +510,94 @@ export class PrimaryNode extends EventEmitter {
         }
       }
 
+      case 'schedule': {
+        return this.handleScheduleCommand(command);
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
+    }
+  }
+
+  /**
+   * Handle schedule control command.
+   * Supports subcommands: list, enable, disable, run, status
+   */
+  private async handleScheduleCommand(command: ControlCommand): Promise<ControlResponse> {
+    const args = (command.data?.args as string[]) || [];
+    const subCommand = args[0]?.toLowerCase();
+
+    // Show help if no subcommand
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `📋 **定时任务控制指令**
+
+用法: \`/schedule <子命令> [参数]\`
+
+可用子命令:
+- \`list\` - 列出所有定时任务
+- \`enable <任务ID>\` - 启用定时任务
+- \`disable <任务ID>\` - 禁用定时任务
+- \`run <任务ID>\` - 手动触发定时任务
+- \`status <任务ID>\` - 查看任务状态`,
+      };
+    }
+
+    // Check if scheduler service is available
+    if (!this.schedulerService) {
+      return { success: false, error: '定时任务服务未启动' };
+    }
+
+    switch (subCommand) {
+      case 'list': {
+        const tasks = await this.schedulerService.listSchedules();
+        if (tasks.length === 0) {
+          return { success: true, message: '📋 **定时任务列表**\n\n暂无定时任务' };
+        }
+
+        const tasksList = tasks.map(t => {
+          const statusEmoji = t.enabled ? '✅' : '⏸️';
+          return `- ${statusEmoji} \`${t.id}\` - ${t.name} (\`${t.cron}\`)`;
+        }).join('\n');
+
+        return { success: true, message: `📋 **定时任务列表**\n\n${tasksList}` };
+      }
+
+      case 'enable': {
+        const taskId = args[1];
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule enable <任务ID>`' };
+        }
+        return this.schedulerService.enableSchedule(taskId);
+      }
+
+      case 'disable': {
+        const taskId = args[1];
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule disable <任务ID>`' };
+        }
+        return this.schedulerService.disableSchedule(taskId);
+      }
+
+      case 'run': {
+        const taskId = args[1];
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule run <任务ID>`' };
+        }
+        return this.schedulerService.runSchedule(taskId);
+      }
+
+      case 'status': {
+        const taskId = args[1];
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule status <任务ID>`' };
+        }
+        return this.schedulerService.getScheduleStatus(taskId);
+      }
+
+      default:
+        return { success: false, error: `未知的子命令: \`${subCommand}\`\n\n可用子命令: list, enable, disable, run, status` };
     }
   }
 

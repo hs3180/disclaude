@@ -400,6 +400,10 @@ export class CommunicationNode extends EventEmitter {
         }
       }
 
+      case 'schedule': {
+        return this.handleScheduleCommand(command);
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
     }
@@ -607,5 +611,70 @@ export class CommunicationNode extends EventEmitter {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Handle schedule control command.
+   * CommunicationNode only supports list command (read-only).
+   * Other commands require execution capability and should be run on PrimaryNode.
+   */
+  private async handleScheduleCommand(command: ControlCommand): Promise<ControlResponse> {
+    const args = (command.data?.args as string[]) || [];
+    const subCommand = args[0]?.toLowerCase();
+
+    // Show help if no subcommand
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `📋 **定时任务控制指令**
+
+用法: \`/schedule <子命令> [参数]\`
+
+可用子命令:
+- \`list\` - 列出所有定时任务
+- \`enable <任务ID>\` - 启用定时任务
+- \`disable <任务ID>\` - 禁用定时任务
+- \`run <任务ID>\` - 手动触发定时任务
+- \`status <任务ID>\` - 查看任务状态
+
+⚠️ **注意**: enable/disable/run 命令需要在有执行能力的节点上运行`,
+      };
+    }
+
+    // CommunicationNode doesn't have SchedulerService
+    // Only list command is supported (it's read-only)
+    if (subCommand === 'list') {
+      // Try to get schedules from ScheduleManager directly
+      try {
+        const { ScheduleManager } = await import('../schedule/schedule-manager.js');
+        const { Config } = await import('../config/index.js');
+        const path = await import('path');
+
+        const workspaceDir = Config.getWorkspaceDir();
+        const schedulesDir = path.join(workspaceDir, 'schedules');
+        const manager = new ScheduleManager({ schedulesDir });
+        const tasks = await manager.listAll();
+
+        if (tasks.length === 0) {
+          return { success: true, message: '📋 **定时任务列表**\n\n暂无定时任务' };
+        }
+
+        const tasksList = tasks.map(t => {
+          const statusEmoji = t.enabled ? '✅' : '⏸️';
+          return `- ${statusEmoji} \`${t.id}\` - ${t.name} (\`${t.cron}\`)`;
+        }).join('\n');
+
+        return { success: true, message: `📋 **定时任务列表**\n\n${tasksList}` };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return { success: false, error: `获取定时任务列表失败: ${errorMessage}` };
+      }
+    }
+
+    // Other commands require execution capability
+    return {
+      success: false,
+      error: `⚠️ \`${subCommand}\` 命令需要在有执行能力的节点上运行\n\n请连接到 PrimaryNode 或本地执行节点使用此命令`,
+    };
   }
 }

@@ -434,7 +434,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Control commands that should always be handled locally through the control channel
     // These commands affect session/agent lifecycle and should not be passed to the agent
-    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node'];
+    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node', 'schedule'];
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
