@@ -322,10 +322,10 @@ export class PrimaryNode extends EventEmitter {
         }
         return Promise.resolve();
       },
-      onSuggest: async (chatId: string, lastUserMessage: string, taskResult: string | undefined, threadMessageId?: string): Promise<void> => {
+      onSuggest: (chatId: string, lastUserMessage: string, taskResult: string | undefined, threadMessageId?: string): Promise<void> => {
         // Generate and send suggestions after task completion (Issue #470)
         if (!this.taskSuggestionService.isEnabled()) {
-          return;
+          return Promise.resolve();
         }
 
         const suggestionMessage = this.taskSuggestionService.generateSuggestionsMessage(lastUserMessage, taskResult);
@@ -336,6 +336,7 @@ export class PrimaryNode extends EventEmitter {
             logger.info({ chatId }, 'Task suggestions sent');
           }
         }
+        return Promise.resolve();
       },
     });
 
