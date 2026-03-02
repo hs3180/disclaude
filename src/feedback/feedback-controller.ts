@@ -4,7 +4,8 @@
  * Simplifies the pattern of "create channel → send message → collect feedback → make decision".
  * Used by v0.4 features: #357 (smart recommendations), #347 (dynamic admin), #393 (PR scanner).
  *
- * @see Issue #411
+ * @see Issue #411 - FeedbackController design
+ * @see Issue #402 - ChatOps integration for group channel creation
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
@@ -12,6 +13,7 @@ import type { Logger } from 'pino';
 import { createLogger } from '../utils/logger.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
 import {
   buildCard,
   buildDiv,
@@ -218,7 +220,7 @@ export class FeedbackController {
    *   chatId: 'oc_xxx'
    * });
    *
-   * // Create new group (requires ChatManager - PR #404)
+   * // Create new group (uses ChatOps)
    * const chatId = await controller.createChannel({
    *   type: 'group',
    *   name: 'PR #123 Discussion',
@@ -226,10 +228,6 @@ export class FeedbackController {
    * });
    */
   async createChannel(options: CreateChannelOptions): Promise<string> {
-    // Note: This method is async for API consistency, even though current implementations
-    // are synchronous. Future implementations (group/private) will require async operations.
-    await Promise.resolve(); // Satisfy require-await lint rule
-
     switch (options.type) {
       case 'existing':
         if (!options.chatId) {
@@ -239,11 +237,18 @@ export class FeedbackController {
         return options.chatId;
 
       case 'group':
-        // TODO: Integrate with ChatManager (PR #404) when merged
-        throw new Error(
-          'Group channel creation requires ChatManager (PR #404). ' +
-            'Use type: "existing" with a pre-created group chat ID for now.'
-        );
+        if (!options.name) {
+          throw new Error('name is required for group channel type');
+        }
+        if (!options.members || options.members.length === 0) {
+          throw new Error('members is required for group channel type');
+        }
+        const chatId = await createDiscussionChat(this.client, {
+          topic: options.name,
+          members: options.members,
+        });
+        this.logger.info({ chatId, name: options.name, memberCount: options.members.length }, 'Group channel created');
+        return chatId;
 
       case 'private':
         // TODO: Implement private channel creation

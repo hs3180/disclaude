@@ -1,7 +1,8 @@
 /**
  * Tests for FeedbackController.
  *
- * @see Issue #411
+ * @see Issue #411 - FeedbackController design
+ * @see Issue #402 - ChatOps integration for group channel creation
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -14,6 +15,9 @@ const mockClient = {
     message: {
       create: vi.fn(),
     },
+    chat: {
+      create: vi.fn(),
+    },
   },
 } as unknown as lark.Client;
 
@@ -24,6 +28,9 @@ describe('FeedbackController', () => {
     vi.clearAllMocks();
     mockClient.im.message.create = vi.fn().mockResolvedValue({
       data: { message_id: 'test-message-id' },
+    });
+    mockClient.im.chat.create = vi.fn().mockResolvedValue({
+      data: { chat_id: 'oc_new_group_123' },
     });
     controller = new FeedbackController({
       client: mockClient,
@@ -51,10 +58,43 @@ describe('FeedbackController', () => {
       ).rejects.toThrow('chatId is required for existing channel type');
     });
 
-    it('should throw error for group type (not yet implemented)', async () => {
+    it('should create group chat using ChatOps', async () => {
+      const chatId = await controller.createChannel({
+        type: 'group',
+        name: 'Test Discussion',
+        members: ['ou_user1', 'ou_user2'],
+      });
+
+      expect(chatId).toBe('oc_new_group_123');
+      expect(mockClient.im.chat.create).toHaveBeenCalledWith({
+        data: {
+          name: 'Test Discussion',
+          chat_mode: 'group',
+          chat_type: 'group',
+          user_id_list: ['ou_user1', 'ou_user2'],
+        },
+        params: {
+          user_id_type: 'open_id',
+        },
+      });
+    });
+
+    it('should throw error when name is missing for group type', async () => {
+      await expect(
+        controller.createChannel({ type: 'group', members: ['ou_user1'] })
+      ).rejects.toThrow('name is required for group channel type');
+    });
+
+    it('should throw error when members is missing for group type', async () => {
       await expect(
         controller.createChannel({ type: 'group', name: 'Test Group' })
-      ).rejects.toThrow('Group channel creation requires ChatManager');
+      ).rejects.toThrow('members is required for group channel type');
+    });
+
+    it('should throw error when members array is empty for group type', async () => {
+      await expect(
+        controller.createChannel({ type: 'group', name: 'Test Group', members: [] })
+      ).rejects.toThrow('members is required for group channel type');
     });
 
     it('should throw error for private type (not yet implemented)', async () => {
