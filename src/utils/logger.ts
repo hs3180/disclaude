@@ -244,9 +244,13 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
   }
 
   // Setup file logging for production or if explicitly requested
+  // Also enable for integration tests when INTEGRATION_TEST is set
   let logStream: NodeJS.WritableStream = process.stdout;
 
-  if ((config.fileLogging ?? !isDev) && process.env.NODE_ENV !== 'test') {
+  const isIntegrationTest = process.env.INTEGRATION_TEST === 'true';
+  const shouldUseFileLogging = config.fileLogging ?? (!isDev || isIntegrationTest);
+
+  if (shouldUseFileLogging && (process.env.NODE_ENV !== 'test' || isIntegrationTest)) {
     try {
       logStream = await setupFileLogging(logDir);
     } catch (error) {

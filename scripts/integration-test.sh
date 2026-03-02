@@ -15,6 +15,14 @@
 
 set -e
 
+# Integration Test Logging Configuration (Issue #464)
+export INTEGRATION_TEST="${INTEGRATION_TEST:-true}"
+export LOG_DIR="${LOG_DIR:-./logs/integration-tests}"
+export LOG_LEVEL="${LOG_LEVEL:-debug}"
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
 # Configuration
 REST_PORT=3099
 WS_PORT=3100
@@ -102,11 +110,12 @@ echo ""
 
 # Start Primary Node
 echo -e "${YELLOW}Starting Primary Node...${NC}"
-env PATH="$PATH" node dist/cli-entry.js start --mode primary \
+env PATH="$PATH" INTEGRATION_TEST="$INTEGRATION_TEST" LOG_DIR="$LOG_DIR" LOG_LEVEL="$LOG_LEVEL" \
+    node dist/cli-entry.js start --mode primary \
     --port "$WS_PORT" \
     --rest-port "$REST_PORT" \
     --host "$HOST" \
-    > /tmp/primary-node.log 2>&1 &
+    > "${LOG_DIR}/primary-node.log" 2>&1 &
 PRIMARY_PID=$!
 
 # Wait for Primary Node to be ready
@@ -118,7 +127,7 @@ for i in $(seq 1 30); do
     fi
     if [ $i -eq 30 ]; then
         echo -e "${RED}Primary Node failed to start${NC}"
-        cat /tmp/primary-node.log
+        cat "${LOG_DIR}/primary-node.log"
         exit 1
     fi
     sleep 0.5
@@ -127,9 +136,10 @@ done
 # Start Worker Node
 # Unset CLAUDECODE to allow SDK to run (prevents nested session detection)
 echo -e "${YELLOW}Starting Worker Node...${NC}"
-env -u CLAUDECODE PATH="$PATH" DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode worker \
+env -u CLAUDECODE PATH="$PATH" INTEGRATION_TEST="$INTEGRATION_TEST" LOG_DIR="$LOG_DIR" LOG_LEVEL="$LOG_LEVEL" \
+    DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode worker \
     --comm-url "$COMM_URL" \
-    > /tmp/worker-node.log 2>&1 &
+    > "${LOG_DIR}/worker-node.log" 2>&1 &
 WORKER_PID=$!
 
 # Wait for Worker Node to connect
@@ -139,13 +149,13 @@ sleep 2
 # Check if processes are still running
 if ! kill -0 "$PRIMARY_PID" 2>/dev/null; then
     echo -e "${RED}Primary Node crashed${NC}"
-    cat /tmp/primary-node.log
+    cat "${LOG_DIR}/primary-node.log"
     exit 1
 fi
 
 if ! kill -0 "$WORKER_PID" 2>/dev/null; then
     echo -e "${RED}Worker Node crashed${NC}"
-    cat /tmp/worker-node.log
+    cat "${LOG_DIR}/worker-node.log"
     exit 1
 fi
 
@@ -168,10 +178,10 @@ if [ $CURL_EXIT -ne 0 ]; then
     echo -e "${RED}Request failed (curl exit code: $CURL_EXIT)${NC}"
     echo ""
     echo "=== Primary Node Log ==="
-    tail -50 /tmp/primary-node.log
+    tail -50 "${LOG_DIR}/primary-node.log"
     echo ""
     echo "=== Worker Node Log ==="
-    tail -50 /tmp/worker-node.log
+    tail -50 "${LOG_DIR}/worker-node.log"
     exit 1
 fi
 

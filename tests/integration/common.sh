@@ -39,8 +39,18 @@ TIMEOUT="${TIMEOUT:-30}"
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""
 
-# Log file in current working directory
-SERVER_LOG="disclaude-test-server.log"
+# =============================================================================
+# Integration Test Logging Configuration (Issue #464)
+# =============================================================================
+# Enable file logging for integration tests
+export INTEGRATION_TEST="${INTEGRATION_TEST:-true}"
+# Log directory for integration tests
+export LOG_DIR="${LOG_DIR:-${PROJECT_ROOT}/logs/integration-tests}"
+# Log level for integration tests (debug for detailed logs)
+export LOG_LEVEL="${LOG_LEVEL:-debug}"
+
+# Log file for test server (use LOG_DIR if set)
+SERVER_LOG="${LOG_DIR:-.}/disclaude-test-server.log"
 
 # =============================================================================
 # Colors for Output
@@ -144,6 +154,9 @@ wait_for_port_release() {
 # Returns: 0 on success, 1 on failure
 start_server() {
     log_info "Starting test server on port ${REST_PORT}..."
+
+    # Ensure log directory exists
+    mkdir -p "$(dirname "${SERVER_LOG}")" 2>/dev/null || true
 
     # Check if server is already running and healthy
     if is_server_running; then

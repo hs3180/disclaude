@@ -289,6 +289,25 @@ describe('Logger Module', () => {
 
       expect(logger).toBeDefined();
     });
+
+    it('should enable file logging when INTEGRATION_TEST is set', async () => {
+      process.env.NODE_ENV = 'test';
+      process.env.INTEGRATION_TEST = 'true';
+
+      const { resetLogger, initLogger } = await import('./logger.js');
+      resetLogger();
+
+      // This should not throw even with fileLogging enabled in test env
+      const logger = await initLogger({
+        logDir: '/tmp/test-integration-logs',
+        fileLogging: true,
+      });
+
+      expect(logger).toBeDefined();
+
+      // Cleanup
+      delete process.env.INTEGRATION_TEST;
+    });
   });
 
   describe('Logger Interface', () => {
