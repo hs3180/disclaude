@@ -2,16 +2,21 @@
  * Feishu Context MCP Tools - In-process tool implementation.
  *
  * This module provides tool definitions that allow agents to send feedback
- * and files to Feishu chats directly using Feishu API.
+ * and files to chats through a unified message service.
  *
  * Tools provided:
- * - send_user_feedback: Send a message to a Feishu chat (text or card format, REQUIRED)
+ * - send_user_feedback: Send a message to a chat (text or card format, REQUIRED)
  * - send_file_to_feishu: Send a file to a Feishu chat
+ *
+ * **Channel Support**: Messages are automatically routed to the correct channel
+ * based on chatId format (Feishu, REST, CLI). See ChannelMessageService for details.
  *
  * **Note**: task_done is now an inline tool provided by the Evaluator agent,
  * not part of the Feishu MCP server.
  *
  * **No global state**: Credentials are read from Config, chatId is passed as parameter.
+ *
+ * @see Issue #445 - Multi-channel MCP support
  */
 
 import * as fs from 'fs/promises';
@@ -19,6 +24,10 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
+import {
+  getChannelMessageService,
+  detectChannelType,
+} from '../messaging/channel-message-service.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -42,57 +51,6 @@ let messageSentCallback: MessageSentCallback | null = null;
  */
 export function setMessageSentCallback(callback: MessageSentCallback | null): void {
   messageSentCallback = callback;
-}
-
-/**
- * Internal helper: Send a message to Feishu chat.
- *
- * Handles the common logic for sending messages to Feishu API.
- * Supports thread replies via parent_id parameter.
- *
- * @param client - Lark client instance
- * @param chatId - Feishu chat ID
- * @param msgType - Message type ('text' or 'interactive')
- * @param content - Message content (JSON stringified)
- * @param parentId - Optional parent message ID for thread replies
- * @throws Error if sending fails
- */
-async function sendMessageToFeishu(
-  client: lark.Client,
-  chatId: string,
-  msgType: 'text' | 'interactive',
-  content: string,
-  parentId?: string
-): Promise<void> {
-  const messageData: {
-    receive_id_type?: string;
-    msg_type: string;
-    content: string;
-  } = {
-    msg_type: msgType,
-    content,
-  };
-
-  // When replying to a message, use reply method to properly quote the user's message
-  if (parentId) {
-    await client.im.message.reply({
-      path: {
-        message_id: parentId,
-      },
-      data: messageData,
-    });
-  } else {
-    // New message: use create method with receive_id
-    await client.im.message.create({
-      params: {
-        receive_id_type: 'chat_id',
-      },
-      data: {
-        receive_id: chatId,
-        ...messageData,
-      },
-    });
-  }
 }
 
 /**
@@ -164,15 +122,21 @@ function getCardValidationError(content: unknown): string {
 /**
  * Tool: Send user feedback (text or card message)
  *
- * This tool allows agents to send messages directly to Feishu chats.
+ * This tool allows agents to send messages to any chat through the unified
+ * ChannelMessageService, which automatically routes to the correct channel
+ * based on chatId format.
+ *
+ * Channel Detection:
+ * - `cli-*`: CLI channel (logs to console)
+ * - UUID format: REST channel
+ * - `oc_*` / `ou_*`: Feishu channel
+ * - Other: Feishu channel (backward compatibility)
+ *
  * Requires explicit format specification: 'text' or 'card'.
  * Credentials are read from Config, chatId is required parameter.
  *
  * Thread Support: When parentMessageId is provided, the message is sent
- * as a reply to that message, creating a thread in Feishu.
- *
- * CLI Mode: When chatId starts with "cli-", the message is logged
- * instead of being sent to Feishu API.
+ * as a reply to that message, creating a thread (for Feishu).
  *
  * @param params - Tool parameters
  * @returns Result object with success status
@@ -189,10 +153,14 @@ export async function send_user_feedback(params: {
 }> {
   const { content, format, chatId, parentMessageId } = params;
 
+  // Detect channel type for routing
+  const channelType = detectChannelType(chatId);
+
   // DIAGNOSTIC: Log all send_user_feedback calls
   logger.info({
     chatId,
     format,
+    channelType,
     contentType: typeof content,
     contentPreview: typeof content === 'string' ? content.substring(0, 100) : JSON.stringify(content).substring(0, 100),
   }, 'send_user_feedback called');
@@ -208,73 +176,41 @@ export async function send_user_feedback(params: {
       throw new Error('chatId is required');
     }
 
-    // CLI mode: Log the message instead of sending to Feishu
-    if (chatId.startsWith('cli-')) {
-      const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      logger.info({ chatId, format, contentPreview: displayContent.substring(0, 100) }, 'CLI mode: User feedback');
-      // Use console.log for direct visibility in CLI mode
-      console.log(`\n${displayContent}\n`);
-
-      // Notify callback that a message was sent (for dialogue bridge tracking)
-      if (messageSentCallback) {
-        try {
-          messageSentCallback(chatId);
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to invoke message sent callback');
-        }
-      }
-
-      return {
-        success: true,
-        message: `✅ Feedback displayed (CLI mode, format: ${format})`,
-      };
-    }
-
-    // Read credentials from Config
-    const appId = Config.FEISHU_APP_ID;
-    const appSecret = Config.FEISHU_APP_SECRET;
-
-    if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured in Config');
-    }
-
-    // Create Lark client and send message
-    const client = new lark.Client({
-      appId,
-      appSecret,
-      domain: lark.Domain.Feishu,
-    });
+    // Get the unified message service
+    const messageService = getChannelMessageService();
 
     if (format === 'text') {
-      // Send as text message
+      // Send as text message through unified service
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
-      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      await messageService.sendText(chatId, textContent, parentMessageId);
 
       logger.debug({
         chatId,
+        channelType,
         messageLength: textContent.length,
-        message: textContent,
         parentMessageId,
       }, 'User feedback sent (text)');
     } else {
-      // Card format: strict validation, no fallback
+      // Card format: validate for Feishu, send through unified service
+      let cardContent: Record<string, unknown>;
+
       if (typeof content === 'object' && isValidFeishuCard(content)) {
         // Valid card object - send as-is
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, hasValidStructure: true, parentMessageId }, 'User card sent (interactive)');
+        cardContent = content;
+        logger.debug({ chatId, channelType, hasValidStructure: true, parentMessageId }, 'User card validated');
       } else if (typeof content === 'string') {
         // String content - must be valid JSON card
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
-            // Valid JSON card string - send directly
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
-            logger.debug({ chatId, wasJsonString: true, parentMessageId }, 'User card sent (from JSON string)');
+            cardContent = parsed;
+            logger.debug({ chatId, channelType, wasJsonString: true, parentMessageId }, 'User card validated (from JSON string)');
           } else {
             // Valid JSON but not a valid card - return error for LLM to fix
             const validationError = getCardValidationError(parsed);
             logger.error({
               chatId,
+              channelType,
               contentType: 'string',
               parsedType: Array.isArray(parsed) ? 'array' : typeof parsed,
               parsedKeys: typeof parsed === 'object' && parsed !== null ? Object.keys(parsed) : [],
@@ -292,6 +228,7 @@ export async function send_user_feedback(params: {
           // Invalid JSON - return error for LLM to fix
           logger.error({
             chatId,
+            channelType,
             contentType: 'string',
             parseError: parseError instanceof Error ? parseError.message : String(parseError),
             contentPreview: content.substring(0, 500),
@@ -308,6 +245,7 @@ export async function send_user_feedback(params: {
         const actualType = content === null ? 'null' : typeof content;
         logger.error({
           chatId,
+          channelType,
           contentType: actualType,
           contentPreview: JSON.stringify(content).substring(0, 500),
         }, 'Card validation failed: invalid content type');
@@ -318,6 +256,10 @@ export async function send_user_feedback(params: {
           message: '❌ Invalid content type. Expected Feishu card object or JSON string.',
         };
       }
+
+      // Send card through unified service
+      await messageService.sendCard(chatId, cardContent, undefined, parentMessageId);
+      logger.debug({ chatId, channelType, parentMessageId }, 'User card sent');
     }
 
     // Notify callback that a message was sent (for dialogue bridge tracking)
@@ -329,9 +271,14 @@ export async function send_user_feedback(params: {
       }
     }
 
+    // Build success message based on channel type
+    const channelName = channelType === 'cli' ? 'CLI' :
+                       channelType === 'rest' ? 'REST' :
+                       channelType === 'feishu' ? 'Feishu' : 'Feishu';
+
     return {
       success: true,
-      message: `✅ Feedback sent (format: ${format})`,
+      message: `✅ Feedback sent to ${channelName} (format: ${format})`,
     };
 
   } catch (error) {
@@ -339,6 +286,7 @@ export async function send_user_feedback(params: {
     logger.error({
       err: error,
       chatId,
+      channelType,
       errorMessage: error instanceof Error ? error.message : String(error),
       errorStack: error instanceof Error ? error.stack : undefined,
     }, 'send_user_feedback FAILED');

@@ -154,7 +154,7 @@ describe('Feishu Context MCP Tools', () => {
         });
 
         expect(result.success).toBe(true);
-        expect(result.message).toContain('CLI mode');
+        expect(result.message).toContain('CLI');
       });
 
       it('should display content in CLI mode', async () => {

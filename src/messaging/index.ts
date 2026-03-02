@@ -63,3 +63,15 @@ export {
   SimpleUserOutputAdapter,
   type RoutedOutputAdapterOptions,
 } from './routed-output-adapter.js';
+
+// Channel Message Service (Issue #445)
+export {
+  ChannelMessageService,
+  getChannelMessageService,
+  setChannelMessageService,
+  resetChannelMessageService,
+  detectChannelType,
+  type DetectedChannelType,
+  type MessageSentCallback,
+  type ChannelMessageServiceOptions,
+} from './channel-message-service.js';
