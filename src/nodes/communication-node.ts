@@ -27,6 +27,7 @@ import type { FileRef } from '../file-transfer/types.js';
 import { FileStorageService, type FileStorageConfig, createFileTransferAPIHandler } from '../file-transfer/node-transfer/index.js';
 import { ExecNodeManager } from './exec-node-manager.js';
 import { ChannelManager } from './channel-manager.js';
+import { getUpgradeService } from '../services/upgrade-service.js';
 
 const logger = createLogger('CommunicationNode');
 
@@ -400,8 +401,56 @@ export class CommunicationNode extends EventEmitter {
         }
       }
 
+      case 'upgrade': {
+        // Run upgrade asynchronously and send progress updates
+        this.runUpgrade(command.chatId);
+        return { success: true, message: '🔄 **正在升级 disclaude...**\n\n请稍候，升级过程可能需要几分钟。' };
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
+    }
+  }
+
+  /**
+   * Run the upgrade process asynchronously.
+   * Sends progress updates to the user via the channel.
+   */
+  private async runUpgrade(chatId: string): Promise<void> {
+    const upgradeService = getUpgradeService();
+
+    try {
+      // Send initial status
+      await this.sendMessage(chatId, '⬇️ **正在拉取最新代码...**');
+
+      const result = await upgradeService.upgrade();
+
+      if (result.success) {
+        // Build success message with step details
+        const stepDetails = result.steps.map((step, index) => {
+          const icon = step.success ? '✅' : '❌';
+          return `${index + 1}. ${icon} ${step.message}`;
+        }).join('\n');
+
+        const versionChanged = result.previousVersion !== result.newVersion;
+        const versionInfo = versionChanged
+          ? `\n\n🎉 版本更新: v${result.previousVersion} → v${result.newVersion}`
+          : `\n\n📌 版本: v${result.newVersion}`;
+
+        await this.sendMessage(chatId, `✅ **升级完成！**${versionInfo}\n\n**执行步骤:**\n${stepDetails}`);
+      } else {
+        // Build error message
+        const stepDetails = result.steps.map((step, index) => {
+          const icon = step.success ? '✅' : '❌';
+          return `${index + 1}. ${icon} ${step.message}`;
+        }).join('\n');
+
+        await this.sendMessage(chatId, `❌ **升级失败**\n\n**错误:** ${result.error}\n\n**执行步骤:**\n${stepDetails}`);
+      }
+    } catch (error) {
+      const err = error as Error;
+      logger.error({ err, chatId }, 'Upgrade process error');
+      await this.sendMessage(chatId, `❌ **升级过程发生错误**\n\n${err.message}`);
     }
   }
 

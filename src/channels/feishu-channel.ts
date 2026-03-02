@@ -434,7 +434,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Control commands that should always be handled locally through the control channel
     // These commands affect session/agent lifecycle and should not be passed to the agent
-    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node'];
+    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node', 'upgrade'];
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
@@ -491,7 +491,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.sendMessage({
             chatId: chat_id,
             type: 'text',
-            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
+            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /upgrade - 升级到最新版本\n- /help - 显示帮助',
           });
           return;
         }
