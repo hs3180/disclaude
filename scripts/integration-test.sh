@@ -101,12 +101,12 @@ echo -e "${GREEN}Build complete${NC}"
 echo ""
 
 # Start Primary Node
+# Note: Output goes to stdout for CI visibility (Issue #464)
 echo -e "${YELLOW}Starting Primary Node...${NC}"
-env PATH="$PATH" node dist/cli-entry.js start --mode primary \
+env PATH="$PATH" NODE_ENV=test node dist/cli-entry.js start --mode primary \
     --port "$WS_PORT" \
     --rest-port "$REST_PORT" \
-    --host "$HOST" \
-    > /tmp/primary-node.log 2>&1 &
+    --host "$HOST" &
 PRIMARY_PID=$!
 
 # Wait for Primary Node to be ready
@@ -118,7 +118,7 @@ for i in $(seq 1 30); do
     fi
     if [ $i -eq 30 ]; then
         echo -e "${RED}Primary Node failed to start${NC}"
-        cat /tmp/primary-node.log
+        echo "Check stdout above for logs"
         exit 1
     fi
     sleep 0.5
@@ -126,10 +126,10 @@ done
 
 # Start Worker Node
 # Unset CLAUDECODE to allow SDK to run (prevents nested session detection)
+# Note: Output goes to stdout for CI visibility (Issue #464)
 echo -e "${YELLOW}Starting Worker Node...${NC}"
-env -u CLAUDECODE PATH="$PATH" DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode worker \
-    --comm-url "$COMM_URL" \
-    > /tmp/worker-node.log 2>&1 &
+env -u CLAUDECODE PATH="$PATH" NODE_ENV=test DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode worker \
+    --comm-url "$COMM_URL" &
 WORKER_PID=$!
 
 # Wait for Worker Node to connect
@@ -139,13 +139,13 @@ sleep 2
 # Check if processes are still running
 if ! kill -0 "$PRIMARY_PID" 2>/dev/null; then
     echo -e "${RED}Primary Node crashed${NC}"
-    cat /tmp/primary-node.log
+    echo "Check stdout above for logs"
     exit 1
 fi
 
 if ! kill -0 "$WORKER_PID" 2>/dev/null; then
     echo -e "${RED}Worker Node crashed${NC}"
-    cat /tmp/worker-node.log
+    echo "Check stdout above for logs"
     exit 1
 fi
 
@@ -167,11 +167,7 @@ CURL_EXIT=$?
 if [ $CURL_EXIT -ne 0 ]; then
     echo -e "${RED}Request failed (curl exit code: $CURL_EXIT)${NC}"
     echo ""
-    echo "=== Primary Node Log ==="
-    tail -50 /tmp/primary-node.log
-    echo ""
-    echo "=== Worker Node Log ==="
-    tail -50 /tmp/worker-node.log
+    echo "Check stdout above for node logs"
     exit 1
 fi
 
