@@ -221,7 +221,7 @@ export class ChannelMessageService {
    * @param card - New card content
    * @returns Send result
    */
-  async updateCard(
+  updateCard(
     chatId: string,
     messageId: string,
     card: Record<string, unknown>
@@ -230,22 +230,22 @@ export class ChannelMessageService {
 
     try {
       if (!messageId) {
-        return { success: false, message: 'messageId is required', error: 'messageid_required' };
+        return Promise.resolve({ success: false, message: 'messageId is required', error: 'messageid_required' });
       }
       if (!card) {
-        return { success: false, message: 'card is required', error: 'card_required' };
+        return Promise.resolve({ success: false, message: 'card is required', error: 'card_required' });
       }
       if (!chatId) {
-        return { success: false, message: 'chatId is required', error: 'chatid_required' };
+        return Promise.resolve({ success: false, message: 'chatId is required', error: 'chatid_required' });
       }
 
       // Handle CLI mode
       if (this.isCliChatId(chatId)) {
         logger.info({ chatId, messageId }, 'CLI mode: Card update simulated');
-        return {
+        return Promise.resolve({
           success: true,
           message: '✅ Card updated (CLI mode)',
-        };
+        });
       }
 
       // For card updates, we need platform-specific handling
@@ -264,19 +264,19 @@ export class ChannelMessageService {
         logger.info({ chatId, messageId }, 'Card update requested - delegating to channel');
       }
 
-      return {
+      return Promise.resolve({
         success: true,
         message: '✅ Card update requested',
-      };
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error({ err: error, chatId, messageId }, 'Failed to update card');
 
-      return {
+      return Promise.resolve({
         success: false,
         message: `❌ Failed to update card: ${errorMessage}`,
         error: errorMessage,
-      };
+      });
     }
   }
 
