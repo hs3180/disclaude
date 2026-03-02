@@ -40,3 +40,11 @@ export {
   type DiscoveredSkill,
   type SkillSearchPath,
 } from './finder.js';
+
+export {
+  createSkillFromChat,
+  listUserSkills,
+  deleteUserSkill,
+  type CreateSkillOptions,
+  type CreateSkillResult,
+} from './creator.js';

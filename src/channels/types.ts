@@ -109,7 +109,7 @@ export interface OutgoingMessage {
 /**
  * Control command types.
  */
-export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node';
+export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node' | 'save-skill' | 'list-skills' | 'delete-skill';
 
 /**
  * Control command from user to agent.

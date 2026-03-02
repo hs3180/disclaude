@@ -400,6 +400,75 @@ export class CommunicationNode extends EventEmitter {
         }
       }
 
+      case 'save-skill': {
+        // Dynamic import to avoid circular dependencies
+        const { createSkillFromChat } = await import('../skills/creator.js');
+        const args = (command.data?.args as string[] | undefined);
+        const skillName = args?.[0];
+
+        if (!skillName) {
+          return {
+            success: false,
+            error: '请指定技能名称。\n\n用法: `/save-skill <skill-name>`\n\n示例: `/save-skill my-code-style`',
+          };
+        }
+
+        const result = await createSkillFromChat({
+          name: skillName,
+          chatId: command.chatId,
+        });
+
+        if (result.success) {
+          return {
+            success: true,
+            message: `✅ **技能已创建**\n\n技能名称: \`${skillName}\`\n存储路径: \`${result.skillPath}\`\n\n你现在可以使用 \`/${skillName}\` 命令来调用这个技能。`,
+          };
+        } else {
+          return { success: false, error: `创建技能失败: ${result.error}` };
+        }
+      }
+
+      case 'list-skills': {
+        // Dynamic import to avoid circular dependencies
+        const { listUserSkills } = await import('../skills/creator.js');
+        const skills = await listUserSkills();
+
+        if (skills.length === 0) {
+          return {
+            success: true,
+            message: '📋 **用户技能列表**\n\n暂无用户创建的技能。\n\n使用 `/save-skill <name>` 从当前对话创建技能。',
+          };
+        }
+
+        const skillsList = skills.map(s => `- \`/${s}\``).join('\n');
+        return {
+          success: true,
+          message: `📋 **用户技能列表**\n\n${skillsList}\n\n使用 \`/save-skill <name>\` 创建新技能。`,
+        };
+      }
+
+      case 'delete-skill': {
+        // Dynamic import to avoid circular dependencies
+        const { deleteUserSkill } = await import('../skills/creator.js');
+        const args = (command.data?.args as string[] | undefined);
+        const skillName = args?.[0];
+
+        if (!skillName) {
+          return {
+            success: false,
+            error: '请指定要删除的技能名称。\n\n用法: `/delete-skill <skill-name>`',
+          };
+        }
+
+        const result = await deleteUserSkill(skillName);
+
+        if (result.success) {
+          return { success: true, message: `✅ **技能已删除**\n\n技能: \`${skillName}\`` };
+        } else {
+          return { success: false, error: `删除技能失败: ${result.error}` };
+        }
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
     }
