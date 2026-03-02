@@ -622,7 +622,7 @@ export class PrimaryNode extends EventEmitter {
         // /task without arguments - Show help
         return {
           success: true,
-          message: `📋 **任务控制指令**\n\n可用命令:\n- \`/task <提示>\` - 启动新任务\n- \`/task status\` - 查看当前任务状态\n- \`/task list\` - 列出任务历史\n- \`/task cancel\` - 取消当前任务\n- \`/task pause\` - 暂停当前任务\n- \`/task resume\` - 恢复暂停的任务`,
+          message: '📋 **任务控制指令**\n\n可用命令:\n- `/task <提示>` - 启动新任务\n- `/task status` - 查看当前任务状态\n- `/task list` - 列出任务历史\n- `/task cancel` - 取消当前任务\n- `/task pause` - 暂停当前任务\n- `/task resume` - 恢复暂停的任务',
         };
       }
 

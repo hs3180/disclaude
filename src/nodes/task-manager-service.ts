@@ -107,7 +107,9 @@ export class TaskManagerService {
    * Load tasks from disk.
    */
   private async load(): Promise<void> {
-    if (this.loaded) return;
+    if (this.loaded) {
+      return;
+    }
 
     try {
       // Ensure directory exists
