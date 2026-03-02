@@ -529,7 +529,7 @@ export interface AgentFactoryInterface {
   /**
    * Create a SkillAgent instance.
    */
-  createSkillAgent(name: string, ...args: unknown[]): SkillAgent;
+  createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgent>;
 
   /**
    * Create a Subagent instance.

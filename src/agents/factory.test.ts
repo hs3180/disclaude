@@ -19,7 +19,23 @@ vi.mock('../config/index.js', () => ({
     getGlobalEnv: vi.fn(() => ({})),
     getMcpServersConfig: vi.fn(() => ({})), // No Playwright by default
     getLoggingConfig: vi.fn(() => ({ sdkDebug: false })),
+    getSkillsDir: vi.fn(() => '/tmp/test-skills'),
   },
+}));
+
+// Mock skills finder module
+vi.mock('../skills/index.js', () => ({
+  findSkill: vi.fn((name: string) => {
+    // Simulate finding evaluator and executor skills
+    if (name === 'evaluator') {
+      return Promise.resolve('/tmp/test-skills/evaluator/SKILL.md');
+    }
+    if (name === 'executor') {
+      return Promise.resolve('/tmp/test-skills/executor/SKILL.md');
+    }
+    // Unknown skill not found
+    return Promise.resolve(null);
+  }),
 }));
 
 describe('AgentFactory', () => {
@@ -57,37 +73,28 @@ describe('AgentFactory', () => {
   });
 
   describe('createSkillAgent', () => {
-    it('should create Evaluator when name is "evaluator"', () => {
-      const evaluator = AgentFactory.createSkillAgent('evaluator');
+    it('should create Evaluator when name is "evaluator"', async () => {
+      const evaluator = await AgentFactory.createSkillAgent('evaluator');
 
       expect(evaluator).toBeDefined();
       expect(evaluator.type).toBe('skill');
     });
 
-    it('should create Executor when name is "executor"', () => {
-      const executor = AgentFactory.createSkillAgent('executor');
+    it('should create Executor when name is "executor"', async () => {
+      const executor = await AgentFactory.createSkillAgent('executor');
 
       expect(executor).toBeDefined();
       expect(executor.type).toBe('skill');
     });
 
-    it('should pass subdirectory to Evaluator', () => {
-      const evaluator = AgentFactory.createSkillAgent('evaluator', {}, 'regular');
+    it('should pass options to agent', async () => {
+      const evaluator = await AgentFactory.createSkillAgent('evaluator', { model: 'custom-model' });
 
       expect(evaluator).toBeDefined();
     });
 
-    it('should pass abortSignal to Executor', () => {
-      const controller = new AbortController();
-      const executor = AgentFactory.createSkillAgent('executor', {}, controller.signal);
-
-      expect(executor).toBeDefined();
-    });
-
-    it('should throw error for unknown SkillAgent name', () => {
-      expect(() => {
-        AgentFactory.createSkillAgent('unknown');
-      }).toThrow('Unknown SkillAgent: unknown');
+    it('should throw error for unknown SkillAgent name', async () => {
+      await expect(AgentFactory.createSkillAgent('unknown')).rejects.toThrow('Skill not found: unknown');
     });
   });
 
