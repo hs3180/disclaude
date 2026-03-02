@@ -192,6 +192,20 @@ export interface ChannelsConfig {
 }
 
 /**
+ * Broadcast chat configuration.
+ * Broadcast chats receive messages but bot does not respond to user messages.
+ * @see Issue #453
+ */
+export interface BroadcastChatConfig {
+  /** Chat ID (Feishu open_chat_id) */
+  chatId: string;
+  /** Human-readable name for the chat */
+  name?: string;
+  /** Description of the chat's purpose */
+  description?: string;
+}
+
+/**
  * Messaging routing configuration section.
  *
  * Controls how messages are routed between admin and user chats.
@@ -226,6 +240,12 @@ export interface MessagingConfig {
       showDetails?: 'admin' | 'all';
     };
   };
+  /**
+   * Broadcast chat list - only send messages, do not process user messages.
+   * Useful for debug logs, notifications, etc.
+   * @see Issue #453
+   */
+  broadcastChats?: BroadcastChatConfig[];
 }
 
 /**

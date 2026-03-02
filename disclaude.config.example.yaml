@@ -135,6 +135,22 @@ channels:
     enabled: true
 
 # -----------------------------------------------------------------------------
+# Messaging Configuration
+# -----------------------------------------------------------------------------
+# Controls how messages are routed and handled.
+messaging:
+  # Broadcast chat configuration - only send messages, do not process user messages
+  # Useful for debug logs, notifications, announcement groups, etc.
+  # @see Issue #453
+  # broadcastChats:
+  #   - chatId: "oc_xxx"
+  #     name: "调试日志群"
+  #     description: "接收所有调试消息"
+  #   - chatId: "oc_yyy"
+  #     name: "PR 通知群"
+  #     description: "接收 PR 相关通知"
+
+# -----------------------------------------------------------------------------
 # Transport Configuration
 # -----------------------------------------------------------------------------
 transport:

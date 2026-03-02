@@ -336,4 +336,27 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get broadcast chats configuration.
+   * Broadcast chats receive messages but bot does not respond to user messages.
+   *
+   * @returns Array of broadcast chat configurations
+   * @see Issue #453
+   */
+  static getBroadcastChats(): import('./types.js').BroadcastChatConfig[] {
+    return fileConfigOnly.messaging?.broadcastChats || [];
+  }
+
+  /**
+   * Check if a chat ID is a broadcast chat.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the chat is a broadcast chat
+   * @see Issue #453
+   */
+  static isBroadcastChat(chatId: string): boolean {
+    const broadcastChats = this.getBroadcastChats();
+    return broadcastChats.some(chat => chat.chatId === chatId);
+  }
 }

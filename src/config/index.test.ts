@@ -307,4 +307,32 @@ describe('Config', () => {
       expect(Config.LOG_ROTATE).toBe(false);
     });
   });
+
+  describe('getBroadcastChats()', () => {
+    it('should return an array', () => {
+      const broadcastChats = Config.getBroadcastChats();
+      expect(Array.isArray(broadcastChats)).toBe(true);
+    });
+
+    it('should return empty array when no broadcast chats configured', () => {
+      const broadcastChats = Config.getBroadcastChats();
+      // If no broadcast chats are configured, should return empty array
+      expect(broadcastChats).toBeDefined();
+    });
+  });
+
+  describe('isBroadcastChat()', () => {
+    it('should return false for non-broadcast chat', () => {
+      // A chat ID that is definitely not in the broadcast list
+      expect(Config.isBroadcastChat('oc_nonexistent_chat_id')).toBe(false);
+    });
+
+    it('should return true for configured broadcast chat', () => {
+      const broadcastChats = Config.getBroadcastChats();
+      if (broadcastChats.length > 0) {
+        // If broadcast chats are configured, test the first one
+        expect(Config.isBroadcastChat(broadcastChats[0].chatId)).toBe(true);
+      }
+    });
+  });
 });

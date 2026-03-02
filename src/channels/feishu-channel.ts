@@ -323,6 +323,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
+    // Check if this is a broadcast chat - skip processing user messages
+    // @see Issue #453
+    if (Config.isBroadcastChat(chat_id)) {
+      logger.debug({ chatId: chat_id }, 'Skipped message from broadcast chat');
+      return;
+    }
+
     // Check message age
     if (create_time) {
       const messageAge = Date.now() - create_time;
