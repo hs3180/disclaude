@@ -19,10 +19,8 @@ vi.mock('./skill-agent.js', () => ({
   SkillAgent: class MockSkillAgent {
     readonly type = 'skill' as const;
     readonly name: string;
-    private skillPath: string;
 
     constructor(_config: unknown, skillPath: string) {
-      this.skillPath = skillPath;
       this.name = path.basename(skillPath, '.md');
     }
 
