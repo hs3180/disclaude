@@ -82,6 +82,16 @@ export interface PilotCallbacks {
    * @param parentMessageId - Optional parent message ID for thread replies
    */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+
+  /**
+   * Called to generate and send next-step suggestions after task completion.
+   * Issue #470: Task completion suggestions
+   * @param chatId - Platform-specific chat identifier
+   * @param lastUserMessage - The last message from the user
+   * @param taskResult - The result of the task (optional)
+   * @param parentMessageId - Optional parent message ID for thread replies
+   */
+  onSuggest?: (chatId: string, lastUserMessage: string, taskResult: string | undefined, parentMessageId?: string) => Promise<void>;
 }
 
 /**
@@ -133,6 +143,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private readonly sessionManager: SessionManager;
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
+
+  // Track last user message per chatId for suggestions (Issue #470)
+  private readonly lastUserMessages = new Map<string, string>();
 
   constructor(config: PilotConfig) {
     super(config);
@@ -333,6 +346,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Track thread root using ConversationContext
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
+    // Track last user message for suggestions (Issue #470)
+    this.lastUserMessages.set(chatId, text);
+
     // Get or create session using SessionManager
     if (!this.sessionManager.has(chatId)) {
       this.logger.info({ chatId }, 'No existing session, starting agent loop');
@@ -457,8 +473,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
 
+          // Get thread root for callbacks
+          const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+
+          // Send suggestions before onDone (Issue #470)
+          if (this.callbacks.onSuggest) {
+            const lastUserMessage = this.lastUserMessages.get(chatId);
+            await this.callbacks.onSuggest(chatId, lastUserMessage || '', parsed.content, threadRoot);
+          }
+
           if (this.callbacks.onDone) {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
           }
         }

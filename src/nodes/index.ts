@@ -45,3 +45,4 @@ export {
 
 // Internal components (for PrimaryNode internal use)
 export { ChannelManager } from './channel-manager.js';
+export { TaskSuggestionService } from './task-suggestion-service.js';

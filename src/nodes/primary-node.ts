@@ -46,6 +46,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { FeedbackRouter } from './feedback-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
+import { TaskSuggestionService } from './task-suggestion-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 
 const logger = createLogger('PrimaryNode');
@@ -88,6 +89,7 @@ export class PrimaryNode extends EventEmitter {
   private feedbackRouter: FeedbackRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
+  private taskSuggestionService: TaskSuggestionService;
 
   // Local execution
   private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
@@ -107,6 +109,9 @@ export class PrimaryNode extends EventEmitter {
       localNodeId: this.localNodeId,
       localExecEnabled: this.localExecEnabled,
     });
+
+    // Initialize TaskSuggestionService (Issue #470)
+    this.taskSuggestionService = new TaskSuggestionService();
 
     // Forward registry events
     this.execNodeRegistry.on('node:registered', (nodeId) => this.emit('worker:connected', nodeId));
@@ -316,6 +321,21 @@ export class PrimaryNode extends EventEmitter {
           logger.warn({ chatId }, 'No active feedback channel for onDone');
         }
         return Promise.resolve();
+      },
+      onSuggest: async (chatId: string, lastUserMessage: string, taskResult: string | undefined, threadMessageId?: string): Promise<void> => {
+        // Generate and send suggestions after task completion (Issue #470)
+        if (!this.taskSuggestionService.isEnabled()) {
+          return;
+        }
+
+        const suggestionMessage = this.taskSuggestionService.generateSuggestionsMessage(lastUserMessage, taskResult);
+        if (suggestionMessage) {
+          const ctx = this.activeFeedbackChannels.get(chatId);
+          if (ctx) {
+            ctx.sendFeedback({ type: 'text', chatId, text: suggestionMessage, threadId: threadMessageId || ctx.threadId });
+            logger.info({ chatId }, 'Task suggestions sent');
+          }
+        }
       },
     });
 
