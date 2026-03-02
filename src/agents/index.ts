@@ -62,6 +62,15 @@ export {
   type SkillAgentExecuteOptions,
 } from './skill-agent.js';
 
+// Skill Agent Manager (Issue #455)
+export {
+  SkillAgentManager,
+  getSkillAgentManager,
+  type SkillAgentInfo,
+  type SkillAgentStatus,
+  type StartSkillAgentOptions,
+} from './skill-agent-manager.js';
+
 // Conversational agent
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
 

@@ -98,11 +98,11 @@ function showHelp(): void {
   console.log(`  Version: ${  packageJson.version}`);
   console.log('═══════════════════════════════════════════════════');
   console.log('');
-  console.log('Usage:');
-  console.log('  disclaude start --mode primary       Primary Node (Comm + Exec, recommended)');
-  console.log('  disclaude start --mode worker        Worker Node (Exec only, connects to Primary)');
+  console.log('Commands:');
+  console.log('  start                               Start a node (primary or worker)');
+  console.log('  skill                               Manage skill agents (Issue #455)');
   console.log('');
-  console.log('Options:');
+  console.log('Start Options:');
   console.log('  --mode <primary|worker>              Select run mode (required for start)');
   console.log('  --config <path>                      Path to configuration file (default: auto-detect)');
   console.log('  --port <port>                        WebSocket port for primary mode (default: 3001)');
@@ -111,6 +111,11 @@ function showHelp(): void {
   console.log('  --comm-url <url>                     Primary Node URL for worker mode (default: ws://localhost:3001)');
   console.log('  --node-id <id>                       Node ID for worker mode (auto-generated if not provided)');
   console.log('  --node-name <name>                   Display name for worker mode');
+  console.log('');
+  console.log('Skill Commands:');
+  console.log('  skill run <name> [options]           Run a skill agent');
+  console.log('  skill list                           List all skill agents');
+  console.log('  skill stop <agent-id>                Stop a running agent');
   console.log('');
   console.log('Node Types:');
   console.log('  primary  - Self-contained node with both communication and execution');
@@ -129,10 +134,11 @@ function showHelp(): void {
   console.log('  # With custom config file:');
   console.log('  disclaude start --mode primary --config /path/to/config.yaml');
   console.log('');
-  console.log('  # Horizontal scaling (multiple workers):');
-  console.log('  disclaude start --mode primary --port 3001');
-  console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-1');
-  console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-2');
+  console.log('  # Run a skill agent:');
+  console.log('  disclaude skill run evaluator --var taskId=task-123');
+  console.log('');
+  console.log('  # List running agents:');
+  console.log('  disclaude skill list');
   console.log('');
   console.log('REST API Endpoints (when REST channel is enabled):');
   console.log('  POST /api/chat          Send message (streaming response)');
@@ -194,11 +200,28 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
+    // Handle skill command
+    if (process.argv[2] === 'skill') {
+      const skillArgs = process.argv.slice(3);
+      if (skillArgs.length === 0 || skillArgs[0] === '--help' || skillArgs[0] === '-h') {
+        const { showSkillHelp } = await import('./cli/skill-cli.js');
+        showSkillHelp();
+        process.exit(0);
+      }
+
+      // Get agent config for skill agent
+      const agentConfig = Config.getAgentConfig();
+
+      const { handleSkillCommand } = await import('./cli/skill-cli.js');
+      await handleSkillCommand(skillArgs, agentConfig);
+      process.exit(0);
+    }
+
     // Validate command
     if (process.argv[2] !== 'start') {
       handleError(new Error(`Unknown command "${process.argv[2]}"`), {
         category: ErrorCategory.VALIDATION,
-        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <primary|worker>"`
+        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <primary|worker>" or "disclaude skill <command>"`
       }, {
         log: true,
         throwOnError: true
