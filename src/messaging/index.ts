@@ -63,3 +63,72 @@ export {
   SimpleUserOutputAdapter,
   type RoutedOutputAdapterOptions,
 } from './routed-output-adapter.js';
+
+// ============================================================================
+// Universal Message Format (UMF) - Issue #480
+// ============================================================================
+
+// Universal Message Types
+export {
+  // Types
+  type TextContent,
+  type MarkdownContent,
+  type CardAction,
+  type CardSection,
+  type CardColumn,
+  type CardContent,
+  type FileContent,
+  type DoneContent,
+  type MessageContent,
+  type UniversalMessage,
+  type UniversalMessageMetadata,
+  type ChannelCapabilities,
+
+  // Capabilities
+  DEFAULT_CAPABILITIES,
+  FEISHU_CAPABILITIES,
+  CLI_CAPABILITIES,
+  REST_CAPABILITIES,
+
+  // Type guards
+  isTextContent,
+  isMarkdownContent,
+  isCardContent,
+  isFileContent,
+  isDoneContent,
+
+  // Helpers
+  createTextMessage,
+  createMarkdownMessage,
+  createCardMessage,
+} from './universal-message.js';
+
+// Channel Adapter Interface
+export {
+  type SendResult,
+  type IChannelAdapter,
+  BaseChannelAdapter,
+  type ChannelAdapterFactory,
+} from './channel-adapter.js';
+
+// Message Service
+export {
+  MessageService,
+  type MessageServiceConfig,
+  type MessageServiceResult,
+  getMessageService,
+  setMessageService,
+  createMessageService,
+} from './message-service.js';
+
+// Adapters
+export {
+  CLIAdapter,
+  createCLIAdapter,
+  FeishuAdapter,
+  createFeishuAdapter,
+  RESTAdapter,
+  createRESTAdapter,
+  getRESTAdapter,
+  setRESTAdapter,
+} from './adapters/index.js';
