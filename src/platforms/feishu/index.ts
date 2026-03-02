@@ -22,3 +22,11 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
+
+// Log Chat Service
+export {
+  LogChatService,
+  getLogChatService,
+  resetLogChatService,
+  type LogChatConfig,
+} from './log-chat-service.js';

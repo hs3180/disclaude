@@ -46,6 +46,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { FeedbackRouter } from './feedback-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
+import { getLogChatService } from '../platforms/feishu/log-chat-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 
 const logger = createLogger('PrimaryNode');
@@ -507,6 +508,52 @@ export class PrimaryNode extends EventEmitter {
           return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
         } else {
           return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
+        }
+      }
+
+      case 'set-log-chat': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length === 0) {
+          return {
+            success: false,
+            error: `请指定 Chat ID。\n\n用法: \`/set-log-chat <chatId> [topic]\``,
+          };
+        }
+
+        const chatId = args[0];
+        const topic = args.slice(1).join(' ') || undefined;
+        const logChatService = getLogChatService();
+
+        try {
+          const message = await logChatService.setLogChat(chatId, topic);
+          return { success: true, message };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to set log chat');
+          return { success: false, error: `设置失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'clear-log-chat': {
+        const logChatService = getLogChatService();
+
+        try {
+          const message = await logChatService.clearLogChat();
+          return { success: true, message };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to clear log chat');
+          return { success: false, error: `清除失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'show-log-chat': {
+        const logChatService = getLogChatService();
+
+        try {
+          const message = await logChatService.showLogChat();
+          return { success: true, message };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to show log chat');
+          return { success: false, error: `获取配置失败: ${(error as Error).message}` };
         }
       }
 
