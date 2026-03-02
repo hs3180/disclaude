@@ -109,7 +109,7 @@ export interface OutgoingMessage {
 /**
  * Control command types.
  */
-export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node';
+export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node' | 'skill';
 
 /**
  * Control command from user to agent.
@@ -126,6 +126,18 @@ export interface ControlCommand {
 
   /** Target node ID for switch-node command */
   targetNodeId?: string;
+
+  /** Skill subcommand for skill command (run, list, stop) */
+  skillSubcommand?: 'run' | 'list' | 'stop';
+
+  /** Skill name for skill run command */
+  skillName?: string;
+
+  /** Template variables for skill run command */
+  skillVars?: Record<string, string>;
+
+  /** Agent ID for skill stop command */
+  agentId?: string;
 }
 
 /**

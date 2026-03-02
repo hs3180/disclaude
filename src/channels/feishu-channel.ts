@@ -434,7 +434,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Control commands that should always be handled locally through the control channel
     // These commands affect session/agent lifecycle and should not be passed to the agent
-    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node'];
+    const CONTROL_COMMANDS = ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node', 'skill'];
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
@@ -447,10 +447,41 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
       if (isControlCommand || !botMentioned) {
         if (this.controlHandler) {
+          // Parse skill subcommands
+          let skillSubcommand: 'run' | 'list' | 'stop' | undefined;
+          let skillName: string | undefined;
+          let skillVars: Record<string, string> | undefined;
+          let agentId: string | undefined;
+
+          if (cmd === 'skill' && args.length > 0) {
+            skillSubcommand = args[0] as 'run' | 'list' | 'stop';
+            if (skillSubcommand === 'run' && args.length > 1) {
+              skillName = args[1];
+              // Parse template variables (format: key=value)
+              skillVars = {};
+              for (let i = 2; i < args.length; i++) {
+                const [key, ...valueParts] = args[i].split('=');
+                if (key && valueParts.length > 0) {
+                  skillVars[key] = valueParts.join('=');
+                }
+              }
+              // Remove empty object
+              if (Object.keys(skillVars).length === 0) {
+                skillVars = undefined;
+              }
+            } else if (skillSubcommand === 'stop' && args.length > 1) {
+              agentId = args[1];
+            }
+          }
+
           const response = await this.emitControl({
             type: cmd as any,
             chatId: chat_id,
             data: { args, rawText: trimmedText },
+            skillSubcommand,
+            skillName,
+            skillVars,
+            agentId,
           });
 
           // Only return if command was successfully handled

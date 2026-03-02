@@ -32,7 +32,7 @@
 
 import { EventEmitter } from 'events';
 import { Config } from '../config/index.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, SkillAgentManager } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
@@ -93,6 +93,9 @@ export class PrimaryNode extends EventEmitter {
   private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
+
+  // Skill Agent Manager (Issue #455)
+  private skillAgentManager?: SkillAgentManager;
 
   constructor(config: PrimaryNodeConfig) {
     super();
@@ -340,6 +343,16 @@ export class PrimaryNode extends EventEmitter {
 
     await this.schedulerService.start();
 
+    // Initialize SkillAgentManager (Issue #455)
+    const agentConfig = Config.getAgentConfig();
+    this.skillAgentManager = new SkillAgentManager({
+      apiKey: agentConfig.apiKey,
+      model: agentConfig.model,
+      provider: agentConfig.provider,
+    });
+    await this.skillAgentManager.loadState();
+    logger.info('SkillAgentManager initialized');
+
     // Initialize TaskFlowOrchestrator
     const taskTracker = new TaskTracker();
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
@@ -510,9 +523,152 @@ export class PrimaryNode extends EventEmitter {
         }
       }
 
+      case 'skill': {
+        // Handle skill commands (Issue #455)
+        if (!this.skillAgentManager) {
+          return { success: false, error: 'Skill Agent Manager 未初始化' };
+        }
+
+        const subcommand = command.skillSubcommand || (command.data?.args as string[])?.[0];
+
+        switch (subcommand) {
+          case 'run': {
+            const skillName = command.skillName || (command.data?.args as string[])?.[1];
+            if (!skillName) {
+              return { success: false, error: '请指定 skill 名称。\n\n用法: /skill run <skill-name> [key=value ...]' };
+            }
+
+            try {
+              // Resolve skill path
+              const skillPath = await this.resolveSkillPath(skillName);
+
+              // Start skill agent
+              const agentId = await this.skillAgentManager.start({
+                skillPath,
+                chatId: command.chatId,
+                templateVars: command.skillVars,
+                onComplete: (result) => {
+                  // Send result notification to chat
+                  void this.sendMessage(command.chatId, `✅ **Skill Agent 完成**\n\n${result.slice(0, 500)}${result.length > 500 ? '...' : ''}`);
+                },
+                onError: (error) => {
+                  void this.sendMessage(command.chatId, `❌ **Skill Agent 失败**\n\n错误: ${error}`);
+                },
+              });
+
+              return { success: true, message: `🚀 **Skill Agent 已启动**\n\nID: ${agentId.slice(0, 8)}...\nSkill: ${skillName}\n\n使用 \`/skill list\` 查看状态\n使用 \`/skill stop ${agentId.slice(0, 8)}\` 停止` };
+            } catch (error) {
+              return { success: false, error: `启动失败: ${(error as Error).message}` };
+            }
+          }
+
+          case 'list': {
+            const agents = this.skillAgentManager.list();
+            if (agents.length === 0) {
+              return { success: true, message: '📋 **Skill Agents**\n\n暂无 agent' };
+            }
+
+            const statusEmoji = (status: string) => {
+              switch (status) {
+                case 'running': return '🔄';
+                case 'completed': return '✅';
+                case 'failed': return '❌';
+                case 'stopped': return '⏹️';
+                default: return '❓';
+              }
+            };
+
+            const lines = agents.map(info => {
+              const emoji = statusEmoji(info.status);
+              const vars = info.templateVars ? ` [${Object.entries(info.templateVars).map(([k, v]) => `${k}=${v}`).join(', ')}]` : '';
+              return `${emoji} \`${info.id.slice(0, 8)}\` | ${info.name} | ${info.status}${vars}`;
+            });
+
+            const running = agents.filter(a => a.status === 'running').length;
+            const completed = agents.filter(a => a.status === 'completed').length;
+            const failed = agents.filter(a => a.status === 'failed').length;
+
+            return {
+              success: true,
+              message: `📋 **Skill Agents** (${agents.length})\n\n${lines.join('\n')}\n\n统计: ${running} 运行中, ${completed} 已完成, ${failed} 失败`,
+            };
+          }
+
+          case 'stop': {
+            const agentId = command.agentId || (command.data?.args as string[])?.[1];
+            if (!agentId) {
+              return { success: false, error: '请指定 agent ID。\n\n用法: /skill stop <agent-id>' };
+            }
+
+            // Try partial ID match
+            let targetId = agentId;
+            const info = this.skillAgentManager.get(agentId);
+            if (!info) {
+              const agents = this.skillAgentManager.list().filter(a => a.id.startsWith(agentId));
+              if (agents.length === 1) {
+                targetId = agents[0].id;
+              } else if (agents.length > 1) {
+                return { success: false, error: `ID 不明确，匹配到多个 agent:\n${agents.map(a => `- ${a.id} | ${a.name}`).join('\n')}` };
+              } else {
+                return { success: false, error: `Agent 不存在: ${agentId}` };
+              }
+            }
+
+            try {
+              await this.skillAgentManager.stop(targetId);
+              return { success: true, message: `⏹️ **Agent 已停止**\n\nID: ${targetId.slice(0, 8)}...` };
+            } catch (error) {
+              return { success: false, error: `停止失败: ${(error as Error).message}` };
+            }
+          }
+
+          default:
+            return {
+              success: false,
+              error: `未知的 skill 子命令: ${subcommand}\n\n用法:\n- /skill run <skill-name> [key=value ...]\n- /skill list\n- /skill stop <agent-id>`,
+            };
+        }
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
     }
+  }
+
+  /**
+   * Resolve skill path from skill name.
+   * Searches in workspace/.claude/skills/ and workspace/skills/ directories.
+   *
+   * @param skillName - Skill name or path
+   * @returns Resolved skill path
+   */
+  private async resolveSkillPath(skillName: string): Promise<string> {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    // If it's already an absolute path or looks like a file path
+    if (path.isAbsolute(skillName) || skillName.includes('/')) {
+      return skillName;
+    }
+
+    // Try to find skill in workspace directories
+    const workspaceDir = Config.getWorkspaceDir();
+    const skillDirs = [
+      path.join(workspaceDir, '.claude/skills', skillName, 'SKILL.md'),
+      path.join(workspaceDir, 'skills', skillName, 'SKILL.md'),
+    ];
+
+    for (const skillPath of skillDirs) {
+      try {
+        await fs.access(skillPath);
+        return skillPath;
+      } catch {
+        // Continue to next path
+      }
+    }
+
+    // Return default path if not found (will fail later with clear error)
+    return path.join(workspaceDir, '.claude/skills', skillName, 'SKILL.md');
   }
 
   /**
@@ -677,6 +833,9 @@ export class PrimaryNode extends EventEmitter {
     console.log('Control commands available:');
     console.log('  /list-nodes  - List all execution nodes');
     console.log('  /switch-node <nodeId> - Switch to a specific execution node');
+    console.log('  /skill run <name> [vars...] - Start a skill agent');
+    console.log('  /skill list - List all skill agents');
+    console.log('  /skill stop <agent-id> - Stop a skill agent');
   }
 
   /**
@@ -686,6 +845,9 @@ export class PrimaryNode extends EventEmitter {
     if (!this.running) {return;}
 
     this.running = false;
+
+    // Stop SkillAgentManager (Issue #455)
+    this.skillAgentManager?.dispose();
 
     // Stop scheduler service
     this.schedulerService?.stop();
