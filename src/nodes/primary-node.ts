@@ -565,7 +565,7 @@ export class PrimaryNode extends EventEmitter {
       }
 
       case 'enable': {
-        const taskId = args[1];
+        const [, taskId] = args;
         if (!taskId) {
           return { success: false, error: '请指定任务ID\n\n用法: `/schedule enable <任务ID>`' };
         }
@@ -573,7 +573,7 @@ export class PrimaryNode extends EventEmitter {
       }
 
       case 'disable': {
-        const taskId = args[1];
+        const [, taskId] = args;
         if (!taskId) {
           return { success: false, error: '请指定任务ID\n\n用法: `/schedule disable <任务ID>`' };
         }
@@ -581,7 +581,7 @@ export class PrimaryNode extends EventEmitter {
       }
 
       case 'run': {
-        const taskId = args[1];
+        const [, taskId] = args;
         if (!taskId) {
           return { success: false, error: '请指定任务ID\n\n用法: `/schedule run <任务ID>`' };
         }
@@ -589,7 +589,7 @@ export class PrimaryNode extends EventEmitter {
       }
 
       case 'status': {
-        const taskId = args[1];
+        const [, taskId] = args;
         if (!taskId) {
           return { success: false, error: '请指定任务ID\n\n用法: `/schedule status <任务ID>`' };
         }

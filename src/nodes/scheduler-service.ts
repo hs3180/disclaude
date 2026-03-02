@@ -334,8 +334,8 @@ export class SchedulerService {
     const statusText = task.enabled ? (isRunning ? '执行中' : '已启用') : '已禁用';
 
     const lines = [
-      `📋 **定时任务状态**`,
-      ``,
+      '📋 **定时任务状态**',
+      '',
       `**名称**: ${task.name}`,
       `**ID**: \`${task.id}\``,
       `**状态**: ${statusEmoji} ${statusText}`,
