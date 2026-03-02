@@ -559,8 +559,8 @@ export class PrimaryNode extends EventEmitter {
           };
         }
 
-        const name = args[0];
-        const membersArg = args.slice(1).join(' ');
+        const [name, ...restArgs] = args;
+        const membersArg = restArgs.join(' ');
         const members = membersArg.split(',').map(m => m.trim()).filter(m => m);
 
         if (members.length === 0) {
@@ -599,8 +599,7 @@ export class PrimaryNode extends EventEmitter {
           };
         }
 
-        const groupId = args[0];
-        const memberId = args[1];
+        const [groupId, memberId] = args;
 
         try {
           const client = this.getFeishuClient();
@@ -621,8 +620,7 @@ export class PrimaryNode extends EventEmitter {
           };
         }
 
-        const groupId = args[0];
-        const memberId = args[1];
+        const [groupId, memberId] = args;
 
         try {
           const client = this.getFeishuClient();
@@ -643,7 +641,7 @@ export class PrimaryNode extends EventEmitter {
           };
         }
 
-        const groupId = args[0];
+        const [groupId] = args;
 
         try {
           const client = this.getFeishuClient();
@@ -691,7 +689,7 @@ export class PrimaryNode extends EventEmitter {
           };
         }
 
-        const groupId = args[0];
+        const [groupId] = args;
 
         try {
           const client = this.getFeishuClient();
