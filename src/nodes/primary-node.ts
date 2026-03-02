@@ -46,6 +46,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { FeedbackRouter } from './feedback-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
+import { TaskManagerService } from './task-manager-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 
 const logger = createLogger('PrimaryNode');
@@ -88,6 +89,7 @@ export class PrimaryNode extends EventEmitter {
   private feedbackRouter: FeedbackRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
+  private taskManager: TaskManagerService;
 
   // Local execution
   private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
@@ -116,6 +118,9 @@ export class PrimaryNode extends EventEmitter {
     this.feedbackRouter = new FeedbackRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
     });
+
+    // Initialize TaskManagerService
+    this.taskManager = new TaskManagerService();
 
     // Register custom channels if provided
     if (config.channels) {
@@ -508,6 +513,117 @@ export class PrimaryNode extends EventEmitter {
         } else {
           return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
         }
+      }
+
+      case 'task': {
+        const args = command.data?.args as string[] | undefined;
+        const subCommand = args?.[0]?.toLowerCase();
+
+        // /task <prompt> - Start a new task
+        if (subCommand && !['status', 'list', 'cancel', 'pause', 'resume'].includes(subCommand)) {
+          const prompt = (args as string[]).join(' ');
+          const task = await this.taskManager.startTask(prompt, command.chatId);
+
+          // Send the prompt to the agent for execution
+          await this.sendPrompt({
+            type: 'prompt',
+            chatId: command.chatId,
+            prompt,
+            messageId: `task-${task.id}`,
+          });
+
+          return {
+            success: true,
+            message: `✅ **任务已启动**\n\n任务 ID: \`${task.id}\`\n提示: ${prompt}`,
+          };
+        }
+
+        // /task status - View current task status
+        if (subCommand === 'status') {
+          const task = await this.taskManager.getStatus();
+          if (!task) {
+            return { success: true, message: '📊 **当前任务状态**\n\n暂无进行中的任务' };
+          }
+
+          const statusEmoji = {
+            running: '🔄',
+            paused: '⏸️',
+            completed: '✅',
+            cancelled: '❌',
+          }[task.status];
+
+          const progress = task.progress > 0 ? `\n进度: ${task.progress}%` : '';
+          const error = task.error ? `\n错误: ${task.error}` : '';
+          const result = task.result ? `\n结果: ${task.result}` : '';
+
+          return {
+            success: true,
+            message: `📊 **当前任务状态**\n\n任务: ${task.prompt}\n状态: ${statusEmoji} ${task.status}\nID: \`${task.id}\`${progress}${error}${result}`,
+          };
+        }
+
+        // /task list - List task history
+        if (subCommand === 'list') {
+          const history = await this.taskManager.listHistory(10);
+          if (history.length === 0) {
+            return { success: true, message: '📋 **任务历史**\n\n暂无任务历史' };
+          }
+
+          const historyList = history.map(t => {
+            const statusEmoji = {
+              running: '🔄',
+              paused: '⏸️',
+              completed: '✅',
+              cancelled: '❌',
+            }[t.status];
+            const date = new Date(t.createdAt).toLocaleString('zh-CN');
+            return `- ${statusEmoji} ${t.prompt.slice(0, 50)}${t.prompt.length > 50 ? '...' : ''} (${date})`;
+          }).join('\n');
+
+          return { success: true, message: `📋 **任务历史**\n\n${historyList}` };
+        }
+
+        // /task cancel - Cancel current task
+        if (subCommand === 'cancel') {
+          const task = await this.taskManager.cancelTask();
+          if (!task) {
+            return { success: false, error: '没有进行中的任务可取消' };
+          }
+          return { success: true, message: `✅ **任务已取消**\n\n任务: ${task.prompt}` };
+        }
+
+        // /task pause - Pause current task
+        if (subCommand === 'pause') {
+          const task = await this.taskManager.pauseTask();
+          if (!task) {
+            return { success: false, error: '没有运行中的任务可暂停' };
+          }
+          return { success: true, message: `⏸️ **任务已暂停**\n\n任务: ${task.prompt}\n使用 \`/task resume\` 恢复任务` };
+        }
+
+        // /task resume - Resume paused task
+        if (subCommand === 'resume') {
+          const task = await this.taskManager.resumeTask();
+          if (!task) {
+            return { success: false, error: '没有已暂停的任务可恢复' };
+          }
+
+          // Resume the task by sending the prompt again
+          await this.sendPrompt({
+            type: 'prompt',
+            chatId: task.chatId,
+            prompt: `继续执行任务: ${task.prompt}`,
+            messageId: `task-resume-${task.id}`,
+          });
+
+          return { success: true, message: `▶️ **任务已恢复**\n\n任务: ${task.prompt}` };
+        }
+
+        // /task without arguments - Show help
+        return {
+          success: true,
+          message: `📋 **任务控制指令**\n\n可用命令:\n- \`/task <提示>\` - 启动新任务\n- \`/task status\` - 查看当前任务状态\n- \`/task list\` - 列出任务历史\n- \`/task cancel\` - 取消当前任务\n- \`/task pause\` - 暂停当前任务\n- \`/task resume\` - 恢复暂停的任务`,
+        };
       }
 
       default:
