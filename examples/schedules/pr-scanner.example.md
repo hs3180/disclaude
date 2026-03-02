@@ -6,15 +6,16 @@ blocking: true
 chatId: "oc_REPLACE_WITH_YOUR_CHAT_ID"
 ---
 
-# PR Scanner - Phase 1
+# PR Scanner - Phase 2 (with Group Chat Creation)
 
-定期扫描仓库的 open PR，发现新 PR 时发送通知到指定群聊。
+定期扫描仓库的 open PR，发现新 PR 时创建专属群聊并发送通知。
 
 ## 配置
 
 - **仓库**: hs3180/disclaude
 - **扫描间隔**: 每 30 分钟
-- **通知目标**: 配置的 chatId
+- **通知目标**: 配置的 chatId（用于错误通知和 fallback）
+- **群聊创建**: 为每个新 PR 创建专属讨论群
 
 ## 执行步骤
 
@@ -47,53 +48,105 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
 
 1. 获取详细信息：
    ```bash
-   gh pr view {number} --repo hs3180/disclaude
+   gh pr view {number} --repo hs3180/disclaude --json number,title,author,state,body,mergeable,statusCheckRollup,url
    ```
 
-2. 使用 `send_user_feedback` 发送通知：
-   - PR 标题和编号
-   - 作者
-   - 状态（可合并/有冲突）
-   - CI 检查状态
-   - 链接
+2. **创建专属群聊**（使用 `create_discussion_chat` 工具）：
+   - 群聊名称: `PR #{number}: {title}` (标题过长时截断)
+   - 成员列表: 暂时为空（用户可手动加入）
 
-3. 更新历史记录
+3. **存储群聊映射**：
+   将 `{prNumber: chatId}` 添加到 `prChats` 字段
+
+4. **发送 PR 信息到新群聊**（使用 `send_user_feedback`）：
+   ```markdown
+   ## PR #{number}: {title}
+
+   **作者**: {author}
+   **状态**: {mergeable ? '✅ 可合并' : '⚠️ 有冲突'}
+   **CI 检查**: {statusCheckRollup}
+
+   ### 描述
+   {body}
+
+   ### 快捷操作
+   - 🔗 [查看 PR]({url})
+
+   ---
+   💡 这是一个自动化创建的 PR 讨论群。您可以在这里讨论 PR 的内容。
+   ```
+
+5. 更新历史记录
 
 ### 5. 更新历史文件
 
-将处理过的 PR 编号添加到 `processedPRs` 数组，更新 `lastScan` 时间戳。
+将处理过的 PR 编号添加到 `processedPRs` 数组，更新 `lastScan` 时间戳，更新 `prChats` 映射。
+
+## 历史文件结构
+
+```json
+{
+  "lastScan": "2026-03-02T10:00:00Z",
+  "processedPRs": [439, 437, 436],
+  "prChats": {
+    "439": "oc_xxxx",
+    "437": "oc_yyyy"
+  }
+}
+```
 
 ## 通知消息模板
 
+### PR 讨论群消息
+
 ```
-🔔 新 PR 检测到
+## PR #{number}: {title}
 
-PR #{number}: {title}
+**作者**: {author}
+**状态**: {mergeable ? '✅ 可合并' : '⚠️ 有冲突'}
+**CI 检查**: {statusCheckRollup}
 
-👤 作者: {author}
-📊 状态: {mergeable ? '✅ 可合并' : '⚠️ 有冲突'}
-🔍 检查: {ciStatus}
+### 描述
+{body}
 
-📋 描述:
-{description}
+---
 
-🔗 链接: https://github.com/hs3180/disclaude/pull/{number}
+🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})
+
+💡 这是一个自动化创建的 PR 讨论群。
+```
+
+### Admin 通知（错误或 fallback）
+
+```
+⚠️ PR Scanner 通知
+
+{消息内容}
 ```
 
 ## 错误处理
 
-- 如果 `gh` 命令失败，记录错误并发送错误通知
+- 如果 `gh` 命令失败，记录错误并发送错误通知到 admin chat
+- 如果群聊创建失败，回退到发送通知到 admin chat
 - 如果历史文件损坏，重置并重新开始
 - 如果发送通知失败，记录错误但继续处理其他 PR
 
 ## 使用说明
 
 1. 复制此文件到 `workspace/schedules/pr-scanner.md`
-2. 替换 `chatId` 为实际的飞书群聊 ID
+2. 替换 `chatId` 为实际的飞书群聊 ID（用于 admin 通知）
 3. 设置 `enabled: true`
 4. 调度器将自动加载并执行
 
-## 未来扩展 (Phase 2 & 3)
+## 未来扩展 (Phase 3)
 
-- **Phase 2**: 为每个 PR 创建独立群聊（需要 PR #423 ChatOps）
-- **Phase 3**: 支持交互式操作按钮（需要 PR #412 FeedbackController）
+- **交互式操作**: 支持通过按钮执行 PR 操作（合并、关闭等）
+- **自动邀请**: 根据 PR 作者和 reviewer 自动邀请成员
+- **状态更新**: PR 状态变化时更新群聊消息
+
+## 依赖
+
+- ✅ Scheduler 基础设施
+- ✅ `send_user_feedback` 工具
+- ✅ `create_discussion_chat` 工具 (Phase 2)
+- ⏳ `wait_for_interaction` 工具 (Phase 3)

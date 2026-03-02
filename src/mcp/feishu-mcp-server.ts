@@ -21,7 +21,7 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import { send_user_feedback, send_file_to_feishu, update_card, wait_for_interaction } from './feishu-context-mcp.js';
+import { send_user_feedback, send_file_to_feishu, update_card, wait_for_interaction, create_discussion_chat } from './feishu-context-mcp.js';
 
 const logger = createLogger('FeishuMCPServer');
 
@@ -130,6 +130,25 @@ async function handleMessage(message: unknown) {
                   required: ['messageId', 'chatId'],
                 },
               },
+              {
+                name: 'create_discussion_chat',
+                description: 'Create a new Feishu group chat for discussions. Returns the chat ID of the newly created group.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    topic: {
+                      type: 'string',
+                      description: 'The name/topic for the new group chat',
+                    },
+                    members: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Optional list of member open_ids to add to the chat',
+                    },
+                  },
+                  required: ['topic'],
+                },
+              },
             ],
           },
         };
@@ -205,6 +224,24 @@ async function handleMessage(message: unknown) {
                 type: 'text',
                 text: result.success
                   ? `${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'create_discussion_chat') {
+          const args = toolArgs as { topic: string; members?: string[] };
+          const result = await create_discussion_chat(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? `${result.message}\nChat ID: ${result.chatId}`
                   : `⚠️ ${result.message}`,
               }],
             },

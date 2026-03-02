@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
+import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -795,6 +796,86 @@ export async function wait_for_interaction(params: {
   }
 }
 
+// ============================================================================
+// Chat Operations Tools (Issue #393 Phase 2)
+// ============================================================================
+
+/**
+ * Tool: Create a discussion group chat.
+ *
+ * Creates a new Feishu group chat with the specified topic and members.
+ * Returns the chat ID of the newly created chat.
+ *
+ * @param params - Tool parameters
+ * @returns Result object with chat ID
+ */
+export async function create_discussion_chat(params: {
+  topic: string;
+  members?: string[];
+}): Promise<{
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}> {
+  const { topic, members = [] } = params;
+
+  logger.info({
+    topic,
+    memberCount: members.length,
+  }, 'create_discussion_chat called');
+
+  try {
+    if (!topic) {
+      throw new Error('topic is required');
+    }
+
+    // Read credentials from Config
+    const appId = Config.FEISHU_APP_ID;
+    const appSecret = Config.FEISHU_APP_SECRET;
+
+    if (!appId || !appSecret) {
+      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured in Config');
+    }
+
+    // Create Lark client
+    const client = new lark.Client({
+      appId,
+      appSecret,
+      domain: lark.Domain.Feishu,
+    });
+
+    // Create the discussion chat
+    const chatId = await createDiscussionChat(client, {
+      topic,
+      members,
+    });
+
+    logger.info({ chatId, topic, memberCount: members.length }, 'Discussion chat created');
+
+    return {
+      success: true,
+      message: `✅ Discussion chat created: ${topic}`,
+      chatId,
+    };
+
+  } catch (error) {
+    logger.error({
+      err: error,
+      topic,
+      members,
+    }, 'create_discussion_chat failed');
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    return {
+      success: false,
+      error: errorMessage,
+      message: `❌ Failed to create discussion chat: ${errorMessage}`,
+    };
+  }
+}
+
 /**
  * Tool definitions for Agent SDK integration.
  *
@@ -895,6 +976,25 @@ export const feishuContextTools = {
       required: ['messageId', 'chatId'],
     },
     handler: wait_for_interaction,
+  },
+  create_discussion_chat: {
+    description: 'Create a new Feishu group chat for discussions. Use this to create dedicated chat groups for specific topics (e.g., PR discussions, issue tracking). Returns the chat ID of the newly created group.',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'The name/topic for the new group chat',
+        },
+        members: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of member open_ids to add to the chat',
+        },
+      },
+      required: ['topic'],
+    },
+    handler: create_discussion_chat,
   },
 };
 
@@ -1009,6 +1109,26 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         }
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'create_discussion_chat',
+    description: 'Create a new Feishu group chat for discussions.\n\n**Use Cases:**\n- Create dedicated chat groups for PR discussions\n- Set up discussion channels for specific issues\n- Create temporary chats for collaborative work\n\n**Returns:**\n- chatId: The ID of the newly created chat\n\n**Note:** The bot will be the owner of the created chat.',
+    parameters: z.object({
+      topic: z.string().describe('The name/topic for the new group chat'),
+      members: z.array(z.string()).optional().describe('Optional list of member open_ids to add to the chat'),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_discussion_chat({ topic, members });
+        if (result.success) {
+          return toolSuccess(`${result.message}\nChat ID: ${result.chatId}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Chat creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
