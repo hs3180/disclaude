@@ -359,7 +359,7 @@ export class SkillAgentManager {
       }
 
       logger.debug({ count: this.agents.size }, 'Loaded agent state');
-    } catch (error) {
+    } catch (_) {
       // File doesn't exist or is invalid - that's OK
       logger.debug('No existing agent state found');
     }

@@ -454,13 +454,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           let agentId: string | undefined;
 
           if (cmd === 'skill' && args.length > 0) {
-            skillSubcommand = args[0] as 'run' | 'list' | 'stop';
-            if (skillSubcommand === 'run' && args.length > 1) {
-              skillName = args[1];
+            const [subCmd, second, ...restArgs] = args;
+            skillSubcommand = subCmd as 'run' | 'list' | 'stop';
+            if (skillSubcommand === 'run' && second) {
+              skillName = second;
               // Parse template variables (format: key=value)
               skillVars = {};
-              for (let i = 2; i < args.length; i++) {
-                const [key, ...valueParts] = args[i].split('=');
+              for (const arg of restArgs) {
+                const [key, ...valueParts] = arg.split('=');
                 if (key && valueParts.length > 0) {
                   skillVars[key] = valueParts.join('=');
                 }
@@ -469,8 +470,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               if (Object.keys(skillVars).length === 0) {
                 skillVars = undefined;
               }
-            } else if (skillSubcommand === 'stop' && args.length > 1) {
-              agentId = args[1];
+            } else if (skillSubcommand === 'stop' && second) {
+              agentId = second;
             }
           }
 
