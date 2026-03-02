@@ -14,6 +14,7 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { broadcastChatService } from '../platforms/feishu/broadcast-chat-service.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
@@ -320,6 +321,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Ignore bot messages
     if (sender?.sender_type === 'app') {
       logger.debug('Skipped bot message');
+      return;
+    }
+
+    // Skip broadcast chats (only send, don't process messages)
+    if (broadcastChatService.isBroadcastChat(chat_id)) {
+      logger.debug({ chatId: chat_id }, 'Skipped broadcast chat message');
       return;
     }
 
