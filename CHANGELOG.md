@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-03-02
+
+### Added
+
+- **ChatOps Utility** - Group chat management via commands (#423)
+- **Skill Discovery** - Simple skill discovery for Agent SDK (#434)
+- **MCP Tools** - `update_card` and `wait_for_interaction` for interactive cards (#350)
+- **Integration Test Framework** - Complete test environment with use cases (#337, #361, #378, #384)
+
+### Changed
+
+- **Agent Architecture** - Unified Agent type interfaces (#301, #334, #335, #336, #339, #345, #349, #353)
+- **Schedule Simplification** - Removed TypeScript Agent class, using generic Skill Agent (#429)
+- **Reporter Removed** - Replaced with message level system (#422)
+- **PrimaryNode Split** - Refactored into focused services (#437)
+- **ReflectionController** - Replaced DialogueOrchestrator (#407)
+- **SDK Options** - Reverted to original format (#308)
+
+### Fixed
+
+- **Config Validation** - Validate based on config file provider, not env vars (#396)
+- **Pilot Tool** - Disabled EnterPlanMode for Pilot agent (#405)
+- **Control Commands** - Always handled locally regardless of @mentions (#400)
+- **Docker** - Cleanup obsolete files, align CMD with docker-compose (#419, #420, #424)
+- **Tests** - Port conflict, TypeScript/ESLint errors, coverage (#371-383, #397, #398, #410, #416)
+- **Schedule** - Keep schedule.md read-only during periodic task execution (#346)
+- **Dependencies** - Security vulnerability fixes (#320)
+
 ## [0.3.1] - 2026-02-28
 
 ### Changed
