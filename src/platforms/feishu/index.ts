@@ -22,3 +22,11 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
+
+// Welcome Service (for greeting and onboarding)
+export {
+  WelcomeService,
+  WELCOME_MESSAGES,
+  GREETING_PATTERNS,
+  type WelcomeServiceConfig,
+} from './welcome-service.js';

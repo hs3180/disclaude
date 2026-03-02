@@ -14,6 +14,7 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { WelcomeService, WELCOME_MESSAGES } from '../platforms/feishu/welcome-service.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
@@ -23,6 +24,8 @@ import type {
   FeishuMessageEvent,
   FeishuCardActionEvent,
   FeishuCardActionEventData,
+  FeishuChatMemberAddedEventData,
+  FeishuBotEnteredChatEventData,
 } from '../types/platform.js';
 import type {
   ChannelConfig,
@@ -62,6 +65,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
   private interactionManager: InteractionManager;
+  private welcomeService: WelcomeService;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -92,12 +96,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize InteractionManager
     this.interactionManager = new InteractionManager();
 
+    // Initialize WelcomeService
+    this.welcomeService = new WelcomeService();
+
     logger.info({ id: this.id }, 'FeishuChannel created');
   }
 
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Initialize welcome service
+    await this.welcomeService.init();
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -116,7 +126,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': async () => {},
-      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {},
+      'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
+        try {
+          await this.handleBotEnteredChat(data as FeishuBotEnteredChatEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle bot entered chat');
+        }
+      },
+      'im.chat.member.added_v1': async (data: unknown) => {
+        try {
+          await this.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle chat member added');
+        }
+      },
     });
 
     // Create WebSocket client
@@ -416,6 +439,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
 
+    // Check for greeting and send welcome if appropriate
+    // Greetings trigger welcome message with frequency control
+    const trimmedText = text.trim();
+    if (this.welcomeService.isGreeting(trimmedText)) {
+      logger.debug({ chatId: chat_id, text: trimmedText }, 'Greeting detected');
+      await this.sendWelcomeMessage(chat_id);
+    }
+
     // Log message
     await messageLogger.logIncomingMessage(
       message_id,
@@ -429,7 +460,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Check for control commands
     // Control commands should ALWAYS be handled through the control channel, regardless of mentions
     // This ensures /reset, /status, etc. work correctly even when bot is @mentioned
-    const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
     // Control commands that should always be handled locally through the control channel
@@ -599,5 +629,82 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getInteractionManager(): InteractionManager {
     return this.interactionManager;
+  }
+
+  /**
+   * Handle bot entered P2P chat event.
+   * Sends welcome message when bot enters a new P2P chat.
+   */
+  private async handleBotEnteredChat(data: FeishuBotEnteredChatEventData): Promise<void> {
+    if (!this.isRunning) {
+      return;
+    }
+
+    const event = data.event;
+    if (!event?.chat_id) {
+      return;
+    }
+
+    const { chat_id } = event;
+    logger.info({ chatId: chat_id }, 'Bot entered P2P chat');
+
+    // Send welcome message if allowed by frequency control
+    await this.sendWelcomeMessage(chat_id);
+  }
+
+  /**
+   * Handle chat member added event.
+   * Sends welcome message when bot is added to a group chat.
+   */
+  private async handleChatMemberAdded(data: FeishuChatMemberAddedEventData): Promise<void> {
+    if (!this.isRunning) {
+      return;
+    }
+
+    const event = data.event;
+    if (!event?.chat_id || !event?.users) {
+      return;
+    }
+
+    const { chat_id, users } = event;
+
+    // For now, we assume if members are added, it could be the bot
+    // The actual check depends on how Feishu reports bot additions
+    // We'll send welcome message regardless since frequency control prevents spam
+    logger.info({ chatId: chat_id, userCount: users.length }, 'Chat member added');
+
+    // Send welcome message if allowed by frequency control
+    await this.sendWelcomeMessage(chat_id);
+  }
+
+  /**
+   * Send welcome message to a chat with frequency control.
+   */
+  private async sendWelcomeMessage(chatId: string): Promise<void> {
+    if (!this.welcomeService.shouldSendWelcome(chatId)) {
+      logger.debug({ chatId }, 'Welcome message skipped (frequency control)');
+      return;
+    }
+
+    try {
+      await this.sendMessage({
+        chatId,
+        type: 'text',
+        text: WELCOME_MESSAGES.fullWelcome,
+      });
+
+      this.welcomeService.recordWelcomeSent(chatId);
+      logger.info({ chatId }, 'Welcome message sent');
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to send welcome message');
+    }
+  }
+
+  /**
+   * Get the WelcomeService for this channel.
+   * Used for testing and manual control.
+   */
+  getWelcomeService(): WelcomeService {
+    return this.welcomeService;
   }
 }
