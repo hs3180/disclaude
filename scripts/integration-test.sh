@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Integration Test Script for REST + Comm + Exec Nodes
+# Integration Test Script for REST + Primary + Worker Nodes
 #
 # Usage: ./scripts/integration-test.sh "your prompt here"
 #
 # This script:
 # 1. Builds the project
-# 2. Starts Communication Node (background)
-# 3. Starts Execution Node (background)
+# 2. Starts Primary Node (background)
+# 3. Starts Worker Node (background)
 # 4. Sends a message via REST API
 # 5. Waits for response
 # 6. Cleans up processes
@@ -30,23 +30,23 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Process IDs
-COMM_PID=""
-EXEC_PID=""
+PRIMARY_PID=""
+WORKER_PID=""
 
 # Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
 
-    if [ -n "$COMM_PID" ] && kill -0 "$COMM_PID" 2>/dev/null; then
-        kill "$COMM_PID" 2>/dev/null || true
-        wait "$COMM_PID" 2>/dev/null || true
-        echo "Communication Node stopped"
+    if [ -n "$PRIMARY_PID" ] && kill -0 "$PRIMARY_PID" 2>/dev/null; then
+        kill "$PRIMARY_PID" 2>/dev/null || true
+        wait "$PRIMARY_PID" 2>/dev/null || true
+        echo "Primary Node stopped"
     fi
 
-    if [ -n "$EXEC_PID" ] && kill -0 "$EXEC_PID" 2>/dev/null; then
-        kill "$EXEC_PID" 2>/dev/null || true
-        wait "$EXEC_PID" 2>/dev/null || true
-        echo "Execution Node stopped"
+    if [ -n "$WORKER_PID" ] && kill -0 "$WORKER_PID" 2>/dev/null; then
+        kill "$WORKER_PID" 2>/dev/null || true
+        wait "$WORKER_PID" 2>/dev/null || true
+        echo "Worker Node stopped"
     fi
 }
 
@@ -100,52 +100,52 @@ npm run build --silent
 echo -e "${GREEN}Build complete${NC}"
 echo ""
 
-# Start Communication Node
-echo -e "${YELLOW}Starting Communication Node...${NC}"
-env PATH="$PATH" node dist/cli-entry.js start --mode comm \
+# Start Primary Node
+echo -e "${YELLOW}Starting Primary Node...${NC}"
+env PATH="$PATH" node dist/cli-entry.js start --mode primary \
     --port "$WS_PORT" \
     --rest-port "$REST_PORT" \
     --host "$HOST" \
-    > /tmp/comm-node.log 2>&1 &
-COMM_PID=$!
+    > /tmp/primary-node.log 2>&1 &
+PRIMARY_PID=$!
 
-# Wait for Communication Node to be ready
-echo "Waiting for Communication Node..."
+# Wait for Primary Node to be ready
+echo "Waiting for Primary Node..."
 for i in $(seq 1 30); do
     if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
-        echo -e "${GREEN}Communication Node ready${NC}"
+        echo -e "${GREEN}Primary Node ready${NC}"
         break
     fi
     if [ $i -eq 30 ]; then
-        echo -e "${RED}Communication Node failed to start${NC}"
-        cat /tmp/comm-node.log
+        echo -e "${RED}Primary Node failed to start${NC}"
+        cat /tmp/primary-node.log
         exit 1
     fi
     sleep 0.5
 done
 
-# Start Execution Node
+# Start Worker Node
 # Unset CLAUDECODE to allow SDK to run (prevents nested session detection)
-echo -e "${YELLOW}Starting Execution Node...${NC}"
-env -u CLAUDECODE PATH="$PATH" DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode exec \
+echo -e "${YELLOW}Starting Worker Node...${NC}"
+env -u CLAUDECODE PATH="$PATH" DEBUG_CLAUDE_AGENT_SDK=1 node dist/cli-entry.js start --mode worker \
     --comm-url "$COMM_URL" \
-    > /tmp/exec-node.log 2>&1 &
-EXEC_PID=$!
+    > /tmp/worker-node.log 2>&1 &
+WORKER_PID=$!
 
-# Wait for Execution Node to connect
-echo "Waiting for Execution Node to connect..."
+# Wait for Worker Node to connect
+echo "Waiting for Worker Node to connect..."
 sleep 2
 
 # Check if processes are still running
-if ! kill -0 "$COMM_PID" 2>/dev/null; then
-    echo -e "${RED}Communication Node crashed${NC}"
-    cat /tmp/comm-node.log
+if ! kill -0 "$PRIMARY_PID" 2>/dev/null; then
+    echo -e "${RED}Primary Node crashed${NC}"
+    cat /tmp/primary-node.log
     exit 1
 fi
 
-if ! kill -0 "$EXEC_PID" 2>/dev/null; then
-    echo -e "${RED}Execution Node crashed${NC}"
-    cat /tmp/exec-node.log
+if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+    echo -e "${RED}Worker Node crashed${NC}"
+    cat /tmp/worker-node.log
     exit 1
 fi
 
@@ -167,11 +167,11 @@ CURL_EXIT=$?
 if [ $CURL_EXIT -ne 0 ]; then
     echo -e "${RED}Request failed (curl exit code: $CURL_EXIT)${NC}"
     echo ""
-    echo "=== Communication Node Log ==="
-    tail -50 /tmp/comm-node.log
+    echo "=== Primary Node Log ==="
+    tail -50 /tmp/primary-node.log
     echo ""
-    echo "=== Execution Node Log ==="
-    tail -50 /tmp/exec-node.log
+    echo "=== Worker Node Log ==="
+    tail -50 /tmp/worker-node.log
     exit 1
 fi
 
