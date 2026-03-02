@@ -63,3 +63,43 @@ export {
   SimpleUserOutputAdapter,
   type RoutedOutputAdapterOptions,
 } from './routed-output-adapter.js';
+
+// Chat Channel Registry (Issue #445)
+export {
+  ChatChannelRegistry,
+  chatChannelRegistry,
+  type ChannelType,
+  type ChatMetadata,
+} from './chat-channel-registry.js';
+
+// Message Adapter Service (Issue #445)
+export {
+  MessageAdapterService,
+  getMessageAdapterService,
+  resetMessageAdapterService,
+  CliChannelAdapter,
+  RestChannelAdapter,
+  FeishuChannelAdapter,
+  type MessageSendResult,
+  type MessageFormat,
+  type IChannelMessageAdapter,
+} from './message-adapter-service.js';
+
+// Message MCP Tools (Issue #445)
+export {
+  send_user_feedback,
+  send_file_to_chat,
+  send_file_to_feishu,
+  update_card,
+  wait_for_interaction,
+  setMessageSentCallback,
+  resolvePendingInteraction,
+  resetAllState,
+  messageToolDefinitions,
+  messageSdkTools,
+  createMessageSdkMcpServer,
+  // Backward compatibility
+  feishuToolDefinitions,
+  createFeishuSdkMcpServer,
+  type MessageSentCallback,
+} from './message-mcp-tools.js';
