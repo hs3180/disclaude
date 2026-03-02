@@ -31,6 +31,7 @@
  */
 
 import { EventEmitter } from 'events';
+import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
@@ -47,6 +48,15 @@ import { SchedulerService } from './scheduler-service.js';
 import { FeedbackRouter } from './feedback-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
+// Group management (Issue #486)
+import {
+  createDiscussionChat,
+  dissolveChat,
+  addMembers,
+  removeMembers,
+  getMembers,
+} from '../platforms/feishu/chat-ops.js';
+import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -94,6 +104,12 @@ export class PrimaryNode extends EventEmitter {
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
+  // Group management (Issue #486)
+  private groupService: GroupService;
+  private feishuClient?: lark.Client;
+  private feishuAppId?: string;
+  private feishuAppSecret?: string;
+
   constructor(config: PrimaryNodeConfig) {
     super();
     this.port = config.port || 3001;
@@ -101,6 +117,13 @@ export class PrimaryNode extends EventEmitter {
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.localExecEnabled = config.enableLocalExec !== false;
     this.fileStorageConfig = config.fileStorage;
+
+    // Initialize GroupService
+    this.groupService = getGroupService();
+
+    // Store Feishu credentials for group management
+    this.feishuAppId = config.appId || Config.FEISHU_APP_ID;
+    this.feishuAppSecret = config.appSecret || Config.FEISHU_APP_SECRET;
 
     // Initialize ExecNodeRegistry
     this.execNodeRegistry = new ExecNodeRegistry({
@@ -179,6 +202,22 @@ export class PrimaryNode extends EventEmitter {
    */
   getNodeId(): string {
     return this.localNodeId;
+  }
+
+  /**
+   * Get or create Feishu client for group management.
+   */
+  private getFeishuClient(): lark.Client {
+    if (!this.feishuClient) {
+      if (!this.feishuAppId || !this.feishuAppSecret) {
+        throw new Error('Feishu credentials not configured');
+      }
+      this.feishuClient = new lark.Client({
+        appId: this.feishuAppId,
+        appSecret: this.feishuAppSecret,
+      });
+    }
+    return this.feishuClient;
   }
 
   // ============================================================================
@@ -507,6 +546,167 @@ export class PrimaryNode extends EventEmitter {
           return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
         } else {
           return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
+        }
+      }
+
+      // Group management commands (Issue #486)
+      case 'create-group': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 2) {
+          return {
+            success: false,
+            error: '用法: `/create-group <群名称> <成员1,成员2,...>`\n\n示例: `/create-group 讨论组 ou_xxx,ou_yyy`',
+          };
+        }
+
+        const name = args[0];
+        const membersArg = args.slice(1).join(' ');
+        const members = membersArg.split(',').map(m => m.trim()).filter(m => m);
+
+        if (members.length === 0) {
+          return { success: false, error: '请至少指定一个成员 (open_id 格式: ou_xxx)' };
+        }
+
+        try {
+          const client = this.getFeishuClient();
+          const chatId = await createDiscussionChat(client, { topic: name, members });
+
+          // Register the group
+          this.groupService.registerGroup({
+            chatId,
+            name,
+            createdAt: Date.now(),
+            createdBy: command.data?.senderOpenId as string | undefined,
+            initialMembers: members,
+          });
+
+          return {
+            success: true,
+            message: `✅ **群创建成功**\n\n群名称: ${name}\n群 ID: \`${chatId}\`\n成员数: ${members.length}`,
+          };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to create group');
+          return { success: false, error: `创建群失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'add-member': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 2) {
+          return {
+            success: false,
+            error: '用法: `/add-member <群ID> <成员ID>`\n\n示例: `/add-member oc_xxx ou_yyy`',
+          };
+        }
+
+        const groupId = args[0];
+        const memberId = args[1];
+
+        try {
+          const client = this.getFeishuClient();
+          await addMembers(client, groupId, [memberId]);
+          return { success: true, message: `✅ **成员添加成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to add member');
+          return { success: false, error: `添加成员失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'remove-member': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 2) {
+          return {
+            success: false,
+            error: '用法: `/remove-member <群ID> <成员ID>`\n\n示例: `/remove-member oc_xxx ou_yyy`',
+          };
+        }
+
+        const groupId = args[0];
+        const memberId = args[1];
+
+        try {
+          const client = this.getFeishuClient();
+          await removeMembers(client, groupId, [memberId]);
+          return { success: true, message: `✅ **成员移除成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to remove member');
+          return { success: false, error: `移除成员失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'list-member': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 1) {
+          return {
+            success: false,
+            error: '用法: `/list-member <群ID>`\n\n示例: `/list-member oc_xxx`',
+          };
+        }
+
+        const groupId = args[0];
+
+        try {
+          const client = this.getFeishuClient();
+          const members = await getMembers(client, groupId);
+
+          if (members.length === 0) {
+            return { success: true, message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: 0` };
+          }
+
+          const memberList = members.map(m => `- \`${m}\``).join('\n');
+          return {
+            success: true,
+            message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: ${members.length}\n\n${memberList}`,
+          };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to list members');
+          return { success: false, error: `获取成员列表失败: ${(error as Error).message}` };
+        }
+      }
+
+      case 'list-group': {
+        const groups = this.groupService.listGroups();
+
+        if (groups.length === 0) {
+          return { success: true, message: '📋 **管理的群列表**\n\n暂无管理的群' };
+        }
+
+        const groupList = groups.map(g => {
+          const createdAt = new Date(g.createdAt).toLocaleString('zh-CN');
+          return `- **${g.name}** \`${g.chatId}\`\n  创建时间: ${createdAt}\n  初始成员: ${g.initialMembers.length}`;
+        }).join('\n\n');
+
+        return {
+          success: true,
+          message: `📋 **管理的群列表**\n\n群数量: ${groups.length}\n\n${groupList}`,
+        };
+      }
+
+      case 'dissolve-group': {
+        const args = command.data?.args as string[] | undefined;
+        if (!args || args.length < 1) {
+          return {
+            success: false,
+            error: '用法: `/dissolve-group <群ID>`\n\n示例: `/dissolve-group oc_xxx`',
+          };
+        }
+
+        const groupId = args[0];
+
+        try {
+          const client = this.getFeishuClient();
+          await dissolveChat(client, groupId);
+
+          // Unregister the group
+          const wasManaged = this.groupService.unregisterGroup(groupId);
+
+          return {
+            success: true,
+            message: `✅ **群解散成功**\n\n群 ID: \`${groupId}\`${wasManaged ? '' : ' (非托管群)'}`,
+          };
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to dissolve group');
+          return { success: false, error: `解散群失败: ${(error as Error).message}` };
         }
       }
 
