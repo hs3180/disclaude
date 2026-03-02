@@ -14,6 +14,7 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { LogChatService } from '../platforms/feishu/log-chat-service.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
@@ -62,6 +63,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
   private interactionManager: InteractionManager;
+  private logChatService?: LogChatService;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -98,6 +100,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Initialize LogChatService for log chat support
+    this.logChatService = new LogChatService();
+    const hasLogChat = await this.logChatService.hasLogChat();
+    if (hasLogChat) {
+      const logChatId = await this.logChatService.getLogChatId();
+      logger.info({ logChatId }, 'Log chat configured');
+    }
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -167,6 +177,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     switch (message.type) {
       case 'text':
         await sender.sendText(message.chatId, message.text || '', message.threadId);
+        // Also send to log chat (if configured and not already sending to log chat)
+        await this.sendToLogChat(message);
         break;
       case 'card':
         await sender.sendCard(
@@ -175,10 +187,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           message.description,
           message.threadId
         );
+        // Also send to log chat (if configured and not already sending to log chat)
+        await this.sendToLogChat(message);
         break;
       case 'file':
         // TODO: Pass threadId when Issue #68 is implemented
         await sender.sendFile(message.chatId, message.filePath || '');
+        // Also send to log chat (if configured and not already sending to log chat)
+        await this.sendToLogChat(message);
         break;
       case 'done':
         // Task completion signal, no actual message to send
@@ -187,6 +203,47 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         break;
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
+    }
+  }
+
+  /**
+   * Send a copy of the message to the log chat (if configured).
+   * This enables administrators to monitor all bot activity.
+   *
+   * @param message - The original message to copy to log chat
+   */
+  private async sendToLogChat(message: OutgoingMessage): Promise<void> {
+    if (!this.logChatService || !this.messageSender) {
+      return;
+    }
+
+    const logChatId = await this.logChatService.getLogChatId();
+    if (!logChatId) {
+      return; // Log chat not configured
+    }
+
+    // Don't send to log chat if this IS the log chat (prevent loops)
+    if (message.chatId === logChatId) {
+      return;
+    }
+
+    try {
+      // Send a copy to log chat (without threadId, as it's a different chat)
+      switch (message.type) {
+        case 'text':
+          await this.messageSender.sendText(logChatId, message.text || '');
+          break;
+        case 'card':
+          await this.messageSender.sendCard(logChatId, message.card || {}, message.description);
+          break;
+        case 'file':
+          await this.messageSender.sendFile(logChatId, message.filePath || '');
+          break;
+      }
+      logger.debug({ logChatId, type: message.type }, 'Message copied to log chat');
+    } catch (error) {
+      // Log error but don't fail the original send
+      logger.error({ err: error, logChatId }, 'Failed to send message to log chat');
     }
   }
 
@@ -321,6 +378,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     if (sender?.sender_type === 'app') {
       logger.debug('Skipped bot message');
       return;
+    }
+
+    // Skip messages from log chat (bot only sends, doesn't respond)
+    if (this.logChatService) {
+      const logChatId = await this.logChatService.getLogChatId();
+      if (logChatId && chat_id === logChatId) {
+        logger.debug({ chatId: chat_id }, 'Skipped message from log chat');
+        return;
+      }
     }
 
     // Check message age
