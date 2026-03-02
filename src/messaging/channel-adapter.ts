@@ -115,11 +115,11 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
   /**
    * Default implementation: Not supported.
    */
-  async update?(_messageId: string, _content: MessageContent): Promise<SendResult> {
-    return {
+  update?(_messageId: string, _content: MessageContent): Promise<SendResult> {
+    return Promise.resolve({
       success: false,
       error: 'Message update not supported by this adapter',
-    };
+    });
   }
 
   /**

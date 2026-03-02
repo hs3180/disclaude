@@ -226,7 +226,7 @@ export class MessageService {
   /**
    * Send a text message (convenience method).
    */
-  async sendText(chatId: string, text: string, threadId?: string): Promise<MessageServiceResult> {
+  sendText(chatId: string, text: string, threadId?: string): Promise<MessageServiceResult> {
     return this.send({
       chatId,
       threadId,
@@ -237,7 +237,7 @@ export class MessageService {
   /**
    * Send a card message (convenience method).
    */
-  async sendCard(
+  sendCard(
     chatId: string,
     card: Omit<CardContent, 'type'>,
     threadId?: string

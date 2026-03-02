@@ -41,7 +41,7 @@ class MockAdapter implements IChannelAdapter {
     this.name = options.name;
     this.capabilities = options.capabilities ?? DEFAULT_CAPABILITIES;
     this.canHandleFn = options.canHandle;
-    this.sendFn = options.send ?? (async () => ({ success: true, messageId: 'msg-123' }));
+    this.sendFn = options.send ?? (() => Promise.resolve({ success: true, messageId: 'msg-123' }));
   }
 
   canHandle(chatId: string): boolean {
@@ -52,7 +52,7 @@ class MockAdapter implements IChannelAdapter {
     return message;
   }
 
-  async send(message: UniversalMessage): Promise<SendResult> {
+  send(message: UniversalMessage): Promise<SendResult> {
     return this.sendFn(message);
   }
 }

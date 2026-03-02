@@ -73,7 +73,7 @@ export class CLIAdapter extends BaseChannelAdapter {
   /**
    * Send to console.
    */
-  async send(message: UniversalMessage): Promise<SendResult> {
+  send(message: UniversalMessage): Promise<SendResult> {
     const converted = this.convert(message);
     const messageId = `cli-${Date.now()}`;
 
@@ -87,11 +87,11 @@ export class CLIAdapter extends BaseChannelAdapter {
         messageLength: converted.text.length,
       }, 'CLI message sent');
 
-      return this.successResult(messageId);
+      return Promise.resolve(this.successResult(messageId));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId: message.chatId }, 'CLI send failed');
-      return this.errorResult(errorMessage);
+      return Promise.resolve(this.errorResult(errorMessage));
     }
   }
 
@@ -120,7 +120,7 @@ export class CLIAdapter extends BaseChannelAdapter {
         lines.push('');
       } else if (section.type === 'actions' && section.actions) {
         const actionLabels = section.actions.map((a, i) => `[${i + 1}] ${a.label}`);
-        lines.push('Actions: ' + actionLabels.join('  '));
+        lines.push(`Actions: ${actionLabels.join('  ')}`);
         lines.push('');
       } else if (section.type === 'columns' && section.columns) {
         // Simple column display

@@ -66,7 +66,7 @@ export class RESTAdapter extends BaseChannelAdapter {
   /**
    * Store message for REST polling.
    */
-  async send(message: UniversalMessage): Promise<SendResult> {
+  send(message: UniversalMessage): Promise<SendResult> {
     const { chatId } = message;
     const messageId = `rest-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -98,11 +98,11 @@ export class RESTAdapter extends BaseChannelAdapter {
         queueSize: messages.length,
       }, 'REST message queued');
 
-      return this.successResult(messageId, { queued: true });
+      return Promise.resolve(this.successResult(messageId, { queued: true }));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId }, 'REST send failed');
-      return this.errorResult(errorMessage);
+      return Promise.resolve(this.errorResult(errorMessage));
     }
   }
 
