@@ -125,7 +125,9 @@ export type ControlCommandType =
   // Debug group commands (Issue #487)
   | 'set-debug'
   | 'show-debug'
-  | 'clear-debug';
+  | 'clear-debug'
+  // Schedule control commands (Issue #469)
+  | 'schedule';
 
 /**
  * Control command from user to agent.
