@@ -266,13 +266,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /**
    * Check if the chat is a group chat.
-   * In Feishu, group chat IDs start with 'oc_'.
+   * Uses chat_type field from message event.
    *
-   * @param chatId - Chat ID to check
+   * @param chatType - Chat type from message event ('p2p', 'group', 'topic')
    * @returns true if it's a group chat
    */
-  private isGroupChat(chatId: string): boolean {
-    return chatId.startsWith('oc_');
+  private isGroupChat(chatType?: string): boolean {
+    return chatType === 'group' || chatType === 'topic';
   }
 
   /**
@@ -311,7 +311,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (!message) {return;}
 
-    const { message_id, chat_id, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -521,9 +521,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #460: Group chat passive mode
     // In group chats, only respond when bot is mentioned (@bot)
     // This allows scheduled tasks to broadcast without triggering unwanted responses
-    if (this.isGroupChat(chat_id) && !botMentioned) {
+    if (this.isGroupChat(chat_type) && !botMentioned) {
       logger.debug(
-        { messageId: message_id, chatId: chat_id },
+        { messageId: message_id, chatId: chat_id, chat_type },
         'Skipped group chat message without @mention (passive mode)'
       );
       return;
