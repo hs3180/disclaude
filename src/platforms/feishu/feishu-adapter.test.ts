@@ -8,14 +8,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FeishuPlatformAdapter } from './feishu-adapter.js';
 import type { IAttachmentManager } from '../../channels/adapters/types.js';
 
-// Mock logger
-const mockLogger = {
+// Mock logger - use vi.hoisted to define before mock
+const mockLogger = vi.hoisted(() => ({
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
   trace: vi.fn(),
-};
+}));
 
 vi.mock('../../utils/logger.js', () => ({
   createLogger: vi.fn(() => mockLogger),

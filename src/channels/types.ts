@@ -128,7 +128,9 @@ export type ControlCommandType =
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive';
+  | 'passive'
+  // Node management commands (Issue #541)
+  | 'node';
 
 /**
  * Control command from user to agent.
