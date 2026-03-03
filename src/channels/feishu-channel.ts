@@ -232,7 +232,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /**
    * Initialize TaskFlowOrchestrator with callbacks.
-   * Called by CommunicationNode after channel is created.
+   * Called by PrimaryNode after channel is created.
    * Starts the file watcher to detect new Task.md files.
    */
   async initTaskFlowOrchestrator(callbacks: {

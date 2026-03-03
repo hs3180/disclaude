@@ -2,7 +2,7 @@
  * Channels module - Communication channel abstractions.
  *
  * This module provides a unified interface for different messaging platforms.
- * Each channel implements the IChannel interface, allowing the CommunicationNode
+ * Each channel implements the IChannel interface, allowing the PrimaryNode
  * to work with any platform.
  *
  * Available Channels:

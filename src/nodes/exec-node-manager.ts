@@ -6,7 +6,7 @@
  * - Chat-to-node routing with automatic assignment
  * - Node statistics with optimized reverse indexing
  *
- * Extracted from CommunicationNode for better separation of concerns.
+ * Part of the PrimaryNode/WorkerNode architecture.
  */
 
 import { WebSocket } from 'ws';
