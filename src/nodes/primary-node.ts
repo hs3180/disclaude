@@ -583,6 +583,149 @@ export class PrimaryNode extends EventEmitter {
         }
       }
 
+      // Issue #541: Node management command
+      case 'node': {
+        const args = command.data?.args as string[] | undefined;
+        const subCommand = args?.[0]?.toLowerCase();
+
+        if (!subCommand) {
+          // Show help
+          return {
+            success: true,
+            message: `🖥️ **节点管理指令**
+
+用法: \`/node <子命令>\`
+
+**可用子命令:**
+- \`list\` - 列出所有节点及其状态
+- \`status [node-id]\` - 查看节点详细状态（不指定则查看当前）
+- \`info\` - 查看当前节点信息
+- \`switch <node-id>\` - 切换到指定节点
+- \`auto\` - 切换到自动选择模式
+
+示例:
+\`\`\`
+/node list
+/node status
+/node switch worker-abc123
+/node auto
+\`\`\``,
+          };
+        }
+
+        switch (subCommand) {
+          case 'list': {
+            const nodes = this.execNodeRegistry.getNodes();
+            if (nodes.length === 0) {
+              return { success: true, message: '📋 **节点列表**\n\n暂无执行节点' };
+            }
+            const currentNodeId = this.execNodeRegistry.getChatNodeAssignment(command.chatId);
+            const nodesList = nodes.map(n => {
+              const isCurrent = n.nodeId === currentNodeId ? ' ✓ (当前)' : '';
+              const localTag = n.isLocal ? ' [本地]' : '';
+              const statusIcon = n.status === 'connected' ? '🟢' : '🔴';
+              return `${statusIcon} **${n.name}**${localTag}${isCurrent}\n   ID: \`${n.nodeId}\`\n   活跃会话: ${n.activeChats}`;
+            }).join('\n\n');
+            return { success: true, message: `🖥️ **节点列表**\n\n共 ${nodes.length} 个节点\n\n${nodesList}` };
+          }
+
+          case 'status': {
+            const targetNodeId = args?.[1];
+            const nodeId = targetNodeId || this.execNodeRegistry.getChatNodeAssignment(command.chatId);
+
+            if (!nodeId) {
+              return {
+                success: true,
+                message: '📊 **节点状态**\n\n当前会话未分配节点\n\n使用 `/node auto` 自动分配',
+              };
+            }
+
+            const node = this.execNodeRegistry.getNode(nodeId);
+            if (!node) {
+              return { success: false, error: `节点 \`${nodeId}\` 不存在` };
+            }
+
+            const nodes = this.execNodeRegistry.getNodes();
+            const nodeInfo = nodes.find(n => n.nodeId === nodeId);
+            const connectedAt = node.connectedAt ? new Date(node.connectedAt).toLocaleString('zh-CN') : 'N/A';
+            const statusIcon = nodeInfo?.status === 'connected' ? '🟢' : '🔴';
+            const localTag = node.isLocal ? '\n类型: 本地执行' : '\n类型: 远程节点';
+
+            return {
+              success: true,
+              message: `📊 **节点状态**\n\n名称: **${node.name}**\nID: \`${node.nodeId}\`\n状态: ${statusIcon} ${nodeInfo?.status || 'unknown'}${localTag}\n活跃会话: ${nodeInfo?.activeChats || 0}\n连接时间: ${connectedAt}`,
+            };
+          }
+
+          case 'info': {
+            const currentNodeId = this.execNodeRegistry.getChatNodeAssignment(command.chatId);
+            if (!currentNodeId) {
+              return {
+                success: true,
+                message: `📊 **当前节点信息**\n\n节点ID: ${this.localNodeId}\n会话分配: 未分配\n\n当前会话未分配执行节点，将使用自动选择模式。`,
+              };
+            }
+
+            const node = this.execNodeRegistry.getNode(currentNodeId);
+            const nodes = this.execNodeRegistry.getNodes();
+            const nodeInfo = nodes.find(n => n.nodeId === currentNodeId);
+            const connectedAt = node?.connectedAt ? new Date(node.connectedAt).toLocaleString('zh-CN') : 'N/A';
+            const statusIcon = nodeInfo?.status === 'connected' ? '🟢' : '🔴';
+
+            return {
+              success: true,
+              message: `📊 **当前节点信息**\n\n节点ID: ${this.localNodeId}\n执行节点: **${node?.name || currentNodeId}**\n执行节点ID: \`${currentNodeId}\`\n状态: ${statusIcon} ${nodeInfo?.status || 'unknown'}\n活跃会话: ${nodeInfo?.activeChats || 0}\n连接时间: ${connectedAt}`,
+            };
+          }
+
+          case 'switch': {
+            const targetNodeId = args?.[1];
+            if (!targetNodeId) {
+              const nodes = this.execNodeRegistry.getNodes();
+              const nodesList = nodes.map(n => `- \`${n.nodeId}\` (${n.name}${n.isLocal ? ', local' : ''})`).join('\n');
+              return {
+                success: false,
+                error: `请指定目标节点ID。\n\n用法: \`/node switch <node-id>\`\n\n可用节点:\n${nodesList}`,
+              };
+            }
+
+            const success = this.execNodeRegistry.switchChatNode(command.chatId, targetNodeId);
+            if (success) {
+              const node = this.execNodeRegistry.getNode(targetNodeId);
+              return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
+            } else {
+              return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不存在或不可用` };
+            }
+          }
+
+          case 'auto': {
+            // Get current assignment and switch to auto-selection
+            const availableNode = this.execNodeRegistry.getFirstAvailableNode();
+
+            if (availableNode) {
+              // Assign to first available node (auto mode)
+              this.execNodeRegistry.switchChatNode(command.chatId, availableNode.nodeId);
+              const localTag = availableNode.isLocal ? ' (本地)' : '';
+              return {
+                success: true,
+                message: `✅ **已切换到自动选择模式**\n\n自动分配到: **${availableNode.name}**${localTag}\n节点ID: \`${availableNode.nodeId}\``,
+              };
+            } else {
+              return {
+                success: false,
+                error: '没有可用的执行节点',
+              };
+            }
+          }
+
+          default:
+            return {
+              success: false,
+              error: `未知的子命令: \`${subCommand}\`\n\n可用子命令: list, status, info, switch, auto`,
+            };
+        }
+      }
+
       // Group management commands (Issue #486)
       case 'create-group': {
         const args = command.data?.args as string[] | undefined;
