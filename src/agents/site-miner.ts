@@ -18,6 +18,7 @@ import { getProvider, type AgentQueryOptions } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { buildSdkEnv } from '../utils/sdk.js';
+import { checkCdpEndpointHealth, parseCdpEndpoint } from '../utils/cdp-health-check.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { Subagent, UserInput, SubagentConfig } from './types.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
@@ -67,6 +68,59 @@ export interface SiteMinerOptions {
 export function isPlaywrightAvailable(): boolean {
   const mcpServers = Config.getMcpServersConfig();
   return !!(mcpServers?.playwright);
+}
+
+/**
+ * Check if Playwright MCP is fully available (configured + CDP endpoint healthy).
+ *
+ * This performs a health check on the CDP endpoint to ensure Chrome remote
+ * debugging is running before attempting to use Playwright.
+ *
+ * @returns Health check result with detailed error information
+ */
+export async function checkPlaywrightHealth(): Promise<{
+  available: boolean;
+  error?: string;
+  suggestion?: string;
+}> {
+  const mcpServers = Config.getMcpServersConfig();
+
+  // Check if Playwright MCP is configured
+  if (!mcpServers?.playwright) {
+    return {
+      available: false,
+      error: 'Playwright MCP not configured',
+      suggestion: `Add playwright MCP server to disclaude.config.yaml:
+
+  tools:
+    mcpServers:
+      playwright:
+        command: npx
+        args: [@playwright/mcp@latest, --cdp-endpoint=http://localhost:9222]`,
+    };
+  }
+
+  // Parse CDP endpoint from args
+  const cdpEndpoint = parseCdpEndpoint(mcpServers.playwright.args);
+
+  if (!cdpEndpoint) {
+    // No CDP endpoint configured - might use browser mode
+    logger.debug('No CDP endpoint configured, assuming browser mode');
+    return { available: true };
+  }
+
+  // Check CDP endpoint health
+  const healthResult = await checkCdpEndpointHealth(cdpEndpoint);
+
+  if (!healthResult.healthy) {
+    return {
+      available: false,
+      error: healthResult.error,
+      suggestion: healthResult.suggestion,
+    };
+  }
+
+  return { available: true };
 }
 
 /**
@@ -137,17 +191,18 @@ export class SiteMiner extends BaseAgent implements Subagent {
 
     this.logger.info({ options }, 'Starting site mining operation');
 
-    // Check if Playwright is available
-    if (!isPlaywrightAvailable()) {
-      this.logger.warn('Playwright MCP not configured');
+    // Check if Playwright is fully available (config + CDP endpoint)
+    const healthCheck = await checkPlaywrightHealth();
+    if (!healthCheck.available) {
+      this.logger.warn({ error: healthCheck.error }, 'Playwright MCP not available');
       yield {
         content: JSON.stringify({
           success: false,
           target_url: options.url,
           information_found: {},
-          summary: 'Playwright MCP not configured',
+          summary: healthCheck.error || 'Playwright MCP not available',
           confidence: 0,
-          notes: 'Add playwright MCP server to disclaude.config.yaml under tools.mcpServers',
+          notes: healthCheck.suggestion,
         }),
         role: 'assistant',
         messageType: 'result',
@@ -299,16 +354,17 @@ The tool returns structured results with extracted information and confidence sc
 
     logger.info({ url, task, timeout }, 'Running site mining operation');
 
-    // Check if Playwright is available
-    if (!isPlaywrightAvailable()) {
-      logger.warn('Playwright MCP not configured');
+    // Check if Playwright is fully available (config + CDP endpoint)
+    const healthCheck = await checkPlaywrightHealth();
+    if (!healthCheck.available) {
+      logger.warn({ error: healthCheck.error }, 'Playwright MCP not available');
       return {
         success: false,
         target_url: url,
         information_found: {},
-        summary: 'Playwright MCP not configured',
+        summary: healthCheck.error || 'Playwright MCP not available',
         confidence: 0,
-        notes: 'Add playwright MCP server to disclaude.config.yaml under tools.mcpServers',
+        notes: healthCheck.suggestion,
       };
     }
 
