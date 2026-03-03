@@ -334,7 +334,7 @@ export class PrimaryNode extends EventEmitter {
           ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
         } else {
           // Fallback for scheduled tasks: route directly through handleFeedback
-          this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
+          void this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
         }
         return Promise.resolve();
       },
@@ -344,7 +344,7 @@ export class PrimaryNode extends EventEmitter {
           ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
         } else {
           // Fallback for scheduled tasks: route directly through handleFeedback
-          this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
+          void this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
         }
         return Promise.resolve();
       },
