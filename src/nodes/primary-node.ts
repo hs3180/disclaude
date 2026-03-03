@@ -514,290 +514,53 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
-   * Handle control command.
+   * Handle control command using CommandRegistry (Issue #537).
    */
   private async handleControlCommand(command: ControlCommand): Promise<ControlResponse> {
-    switch (command.type) {
-      case 'reset':
-        await this.sendCommand({ type: 'command', command: 'reset', chatId: command.chatId });
-        return { success: true, message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。' };
+    const commandRegistry = getCommandRegistry();
 
-      case 'restart':
-        await this.sendCommand({ type: 'command', command: 'restart', chatId: command.chatId });
-        return { success: true, message: '🔄 **正在重启服务...**' };
+    // Build command context with services
+    const debugGroupService = getDebugGroupService();
+    const context = {
+      chatId: command.chatId,
+      userId: command.data?.senderOpenId as string | undefined,
+      args: (command.data?.args as string[]) || (command.type === 'switch-node' && command.targetNodeId ? [command.targetNodeId] : []),
+      rawText: command.data?.rawText as string || '',
+      data: command.data,
+      services: {
+        isRunning: () => this.running,
+        getLocalNodeId: () => this.localNodeId,
+        getExecNodes: () => this.execNodeRegistry.getNodes(),
+        getChatNodeAssignment: (chatId: string) => this.execNodeRegistry.getChatNodeAssignment(chatId),
+        switchChatNode: (chatId: string, targetNodeId: string) => this.execNodeRegistry.switchChatNode(chatId, targetNodeId),
+        getNode: (nodeId: string) => this.execNodeRegistry.getNode(nodeId),
+        sendCommand: async (cmd: 'reset' | 'restart', chatId: string) => {
+          await this.sendCommand({ type: 'command', command: cmd, chatId });
+        },
+        getFeishuClient: () => this.getFeishuClient(),
+        createDiscussionChat,
+        addMembers,
+        removeMembers,
+        getMembers,
+        dissolveChat,
+        registerGroup: (group: Parameters<typeof this.groupService.registerGroup>[0]) => this.groupService.registerGroup(group),
+        unregisterGroup: (chatId: string) => this.groupService.unregisterGroup(chatId),
+        listGroups: () => this.groupService.listGroups(),
+        setDebugGroup: (chatId: string, name?: string) => debugGroupService.setDebugGroup(chatId, name),
+        getDebugGroup: () => debugGroupService.getDebugGroup(),
+        clearDebugGroup: () => debugGroupService.clearDebugGroup(),
+        getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+      },
+    };
 
-      case 'status': {
-        const status = this.running ? 'Running' : 'Stopped';
-        const execNodesList = this.execNodeRegistry.getNodes();
-        const execStatus = execNodesList.length > 0
-          ? execNodesList.map(n => `${n.name} (${n.status}${n.isLocal ? ', local' : ''})`).join(', ')
-          : 'None';
-        const channelStatus = this.feedbackRouter.getChannels()
-          .map(ch => `${ch.name}: ${ch.status}`)
-          .join(', ');
-        const currentNodeId = this.execNodeRegistry.getChatNodeAssignment(command.chatId);
-        const currentNode = execNodesList.find(n => n.nodeId === currentNodeId);
-        return {
-          success: true,
-          message: `📊 **状态**\n\n状态: ${status}\n节点ID: ${this.localNodeId}\n执行节点: ${execStatus}\n当前节点: ${currentNode?.name || '未分配'}\n通道: ${channelStatus}`,
-        };
-      }
+    // Execute command via registry
+    const result = await commandRegistry.execute(command.type, context);
 
-      // Issue #463: Help command using CommandRegistry
-      case 'help': {
-        const registry = getCommandRegistry();
-        return { success: true, message: registry.generateHelpText() };
-      }
-
-      case 'list-nodes': {
-        const nodes = this.execNodeRegistry.getNodes();
-        if (nodes.length === 0) {
-          return { success: true, message: '📋 **执行节点列表**\n\n暂无执行节点' };
-        }
-        const currentNodeId = this.execNodeRegistry.getChatNodeAssignment(command.chatId);
-        const nodesList = nodes.map(n => {
-          const isCurrent = n.nodeId === currentNodeId ? ' ✓ (当前)' : '';
-          const localTag = n.isLocal ? ' [本地]' : '';
-          return `- ${n.name}${localTag} [${n.status}]${isCurrent} (${n.activeChats} 活跃会话)`;
-        }).join('\n');
-        return { success: true, message: `📋 **执行节点列表**\n\n${nodesList}` };
-      }
-
-      case 'switch-node': {
-        const {targetNodeId} = command;
-        if (!targetNodeId) {
-          const nodes = this.execNodeRegistry.getNodes();
-          const nodesList = nodes.map(n => `- \`${n.nodeId}\` (${n.name}${n.isLocal ? ', local' : ''})`).join('\n');
-          return {
-            success: false,
-            error: `请指定目标节点ID。\n\n可用节点:\n${nodesList}`,
-          };
-        }
-
-        const success = this.execNodeRegistry.switchChatNode(command.chatId, targetNodeId);
-        if (success) {
-          const node = this.execNodeRegistry.getNode(targetNodeId);
-          return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
-        } else {
-          return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
-        }
-      }
-
-      // Group management commands (Issue #486)
-      case 'create-group': {
-        const args = command.data?.args as string[] | undefined;
-        if (!args || args.length < 2) {
-          return {
-            success: false,
-            error: '用法: `/create-group <群名称> <成员1,成员2,...>`\n\n示例: `/create-group 讨论组 ou_xxx,ou_yyy`',
-          };
-        }
-
-        const [name, ...restArgs] = args;
-        const membersArg = restArgs.join(' ');
-        const members = membersArg.split(',').map(m => m.trim()).filter(m => m);
-
-        if (members.length === 0) {
-          return { success: false, error: '请至少指定一个成员 (open_id 格式: ou_xxx)' };
-        }
-
-        try {
-          const client = this.getFeishuClient();
-          const chatId = await createDiscussionChat(client, { topic: name, members });
-
-          // Register the group
-          this.groupService.registerGroup({
-            chatId,
-            name,
-            createdAt: Date.now(),
-            createdBy: command.data?.senderOpenId as string | undefined,
-            initialMembers: members,
-          });
-
-          return {
-            success: true,
-            message: `✅ **群创建成功**\n\n群名称: ${name}\n群 ID: \`${chatId}\`\n成员数: ${members.length}`,
-          };
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to create group');
-          return { success: false, error: `创建群失败: ${(error as Error).message}` };
-        }
-      }
-
-      case 'add-member': {
-        const args = command.data?.args as string[] | undefined;
-        if (!args || args.length < 2) {
-          return {
-            success: false,
-            error: '用法: `/add-member <群ID> <成员ID>`\n\n示例: `/add-member oc_xxx ou_yyy`',
-          };
-        }
-
-        const [groupId, memberId] = args;
-
-        try {
-          const client = this.getFeishuClient();
-          await addMembers(client, groupId, [memberId]);
-          return { success: true, message: `✅ **成员添加成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to add member');
-          return { success: false, error: `添加成员失败: ${(error as Error).message}` };
-        }
-      }
-
-      case 'remove-member': {
-        const args = command.data?.args as string[] | undefined;
-        if (!args || args.length < 2) {
-          return {
-            success: false,
-            error: '用法: `/remove-member <群ID> <成员ID>`\n\n示例: `/remove-member oc_xxx ou_yyy`',
-          };
-        }
-
-        const [groupId, memberId] = args;
-
-        try {
-          const client = this.getFeishuClient();
-          await removeMembers(client, groupId, [memberId]);
-          return { success: true, message: `✅ **成员移除成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to remove member');
-          return { success: false, error: `移除成员失败: ${(error as Error).message}` };
-        }
-      }
-
-      case 'list-member': {
-        const args = command.data?.args as string[] | undefined;
-        if (!args || args.length < 1) {
-          return {
-            success: false,
-            error: '用法: `/list-member <群ID>`\n\n示例: `/list-member oc_xxx`',
-          };
-        }
-
-        const [groupId] = args;
-
-        try {
-          const client = this.getFeishuClient();
-          const members = await getMembers(client, groupId);
-
-          if (members.length === 0) {
-            return { success: true, message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: 0` };
-          }
-
-          const memberList = members.map(m => `- \`${m}\``).join('\n');
-          return {
-            success: true,
-            message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: ${members.length}\n\n${memberList}`,
-          };
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to list members');
-          return { success: false, error: `获取成员列表失败: ${(error as Error).message}` };
-        }
-      }
-
-      case 'list-group': {
-        const groups = this.groupService.listGroups();
-
-        if (groups.length === 0) {
-          return { success: true, message: '📋 **管理的群列表**\n\n暂无管理的群' };
-        }
-
-        const groupList = groups.map(g => {
-          const createdAt = new Date(g.createdAt).toLocaleString('zh-CN');
-          return `- **${g.name}** \`${g.chatId}\`\n  创建时间: ${createdAt}\n  初始成员: ${g.initialMembers.length}`;
-        }).join('\n\n');
-
-        return {
-          success: true,
-          message: `📋 **管理的群列表**\n\n群数量: ${groups.length}\n\n${groupList}`,
-        };
-      }
-
-      case 'dissolve-group': {
-        const args = command.data?.args as string[] | undefined;
-        if (!args || args.length < 1) {
-          return {
-            success: false,
-            error: '用法: `/dissolve-group <群ID>`\n\n示例: `/dissolve-group oc_xxx`',
-          };
-        }
-
-        const [groupId] = args;
-
-        try {
-          const client = this.getFeishuClient();
-          await dissolveChat(client, groupId);
-
-          // Unregister the group
-          const wasManaged = this.groupService.unregisterGroup(groupId);
-
-          return {
-            success: true,
-            message: `✅ **群解散成功**\n\n群 ID: \`${groupId}\`${wasManaged ? '' : ' (非托管群)'}`,
-          };
-        } catch (error) {
-          logger.error({ err: error }, 'Failed to dissolve group');
-          return { success: false, error: `解散群失败: ${(error as Error).message}` };
-        }
-      }
-
-      // Debug group commands (Issue #487)
-      case 'set-debug': {
-        const debugGroupService = getDebugGroupService();
-        const previous = debugGroupService.setDebugGroup(command.chatId);
-
-        if (previous) {
-          return {
-            success: true,
-            message: `✅ **调试群已转移**\n\n从 \`${previous.chatId}\` 转移至此群 (\`${command.chatId}\`)`,
-          };
-        }
-
-        return {
-          success: true,
-          message: `✅ **调试群已设置**\n\n此群 (\`${command.chatId}\`) 已设为调试群`,
-        };
-      }
-
-      case 'show-debug': {
-        const debugGroupService = getDebugGroupService();
-        const current = debugGroupService.getDebugGroup();
-
-        if (!current) {
-          return {
-            success: true,
-            message: '📋 **调试群状态**\n\n尚未设置调试群\n\n使用 `/set-debug` 设置当前群为调试群',
-          };
-        }
-
-        const setAt = new Date(current.setAt).toLocaleString('zh-CN');
-        return {
-          success: true,
-          message: `📋 **调试群状态**\n\n群 ID: \`${current.chatId}\`\n设置时间: ${setAt}`,
-        };
-      }
-
-      case 'clear-debug': {
-        const debugGroupService = getDebugGroupService();
-        const previous = debugGroupService.clearDebugGroup();
-
-        if (!previous) {
-          return {
-            success: true,
-            message: '📋 **调试群状态**\n\n没有设置调试群，无需清除',
-          };
-        }
-
-        return {
-          success: true,
-          message: `✅ **调试群已清除**\n\n原调试群: \`${previous.chatId}\``,
-        };
-      }
-
-      default:
-        return { success: false, error: `Unknown command: ${command.type}` };
+    if (result === null) {
+      return { success: false, error: `Unknown command: ${command.type}` };
     }
+
+    return result;
   }
 
   /**

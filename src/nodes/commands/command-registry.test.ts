@@ -2,12 +2,41 @@
  * Tests for CommandRegistry.
  *
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
+ * Issue #537: 完成所有指令的 DI 重构
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CommandRegistry, getCommandRegistry, resetCommandRegistry } from './command-registry.js';
 import { registerDefaultCommands } from './builtin-commands.js';
-import type { Command, CommandContext } from './types.js';
+import type { Command, CommandContext, CommandServices } from './types.js';
+
+/**
+ * Create mock services for testing.
+ */
+function createMockServices(): CommandServices {
+  return {
+    isRunning: () => true,
+    getLocalNodeId: () => 'test-node',
+    getExecNodes: () => [],
+    getChatNodeAssignment: () => undefined,
+    switchChatNode: () => false,
+    getNode: () => undefined,
+    sendCommand: async () => {},
+    getFeishuClient: () => ({}) as never,
+    createDiscussionChat: async () => 'oc_test',
+    addMembers: async () => {},
+    removeMembers: async () => {},
+    getMembers: async () => [],
+    dissolveChat: async () => {},
+    registerGroup: () => {},
+    unregisterGroup: () => false,
+    listGroups: () => [],
+    setDebugGroup: () => null,
+    getDebugGroup: () => null,
+    clearDebugGroup: () => null,
+    getChannelStatus: () => 'feishu: connected',
+  };
+}
 
 describe('CommandRegistry', () => {
   let registry: CommandRegistry;
@@ -182,6 +211,7 @@ describe('CommandRegistry', () => {
         chatId: 'test-chat',
         args: ['arg1', 'arg2'],
         rawText: '/test arg1 arg2',
+        services: createMockServices(),
       });
 
       expect(result).toEqual({
@@ -195,6 +225,7 @@ describe('CommandRegistry', () => {
         chatId: 'test-chat',
         args: [],
         rawText: '/unknown',
+        services: createMockServices(),
       });
 
       expect(result).toBeNull();
@@ -214,6 +245,7 @@ describe('CommandRegistry', () => {
         chatId: 'test-chat',
         args: [],
         rawText: '/disabled',
+        services: createMockServices(),
       });
 
       expect(result?.success).toBe(false);
@@ -235,6 +267,7 @@ describe('CommandRegistry', () => {
         chatId: 'test-chat',
         args: [],
         rawText: '/error-cmd',
+        services: createMockServices(),
       });
 
       expect(result?.success).toBe(false);
