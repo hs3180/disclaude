@@ -7,6 +7,8 @@
  */
 
 import type { Command, CommandContext, CommandResult } from './types.js';
+// Issue #535: Expert registration and skill declaration
+import { ExpertCommand } from './expert-command.js';
 
 /**
  * Reset Command - Reset the conversation session.
@@ -380,4 +382,6 @@ export function registerDefaultCommands(
   registry.register(new PassiveCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
+  // Issue #535: Expert registration command
+  registry.register(new ExpertCommand());
 }

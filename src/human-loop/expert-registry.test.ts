@@ -44,6 +44,7 @@ vi.mock('js-yaml', () => ({
     }
     return {};
   }),
+  dump: vi.fn(() => 'experts:\n  - open_id: "test"'),
 }));
 
 // Mock config
@@ -255,6 +256,251 @@ describe('ExpertRegistry', () => {
       const instance2 = getExpertRegistry();
 
       expect(instance1).toBe(instance2);
+    });
+  });
+
+  // Issue #535: Expert registration tests
+  describe('register', () => {
+    it('should register a new expert', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+      const mockMkdir = vi.mocked(fs.mkdir);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+      mockMkdir.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.register('ou_new_expert', 'New Expert');
+
+      expect(result.success).toBe(true);
+      expect(result.isNew).toBe(true);
+      expect(mockWriteFile).toHaveBeenCalled();
+    });
+
+    it('should update existing expert name', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.register('ou_expert_1', 'Updated Name');
+
+      expect(result.success).toBe(true);
+      expect(result.isNew).toBe(false);
+      expect(mockWriteFile).toHaveBeenCalled();
+    });
+
+    it('should not update if name is same', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.register('ou_expert_1', 'Expert One');
+
+      expect(result.success).toBe(true);
+      expect(result.isNew).toBe(false);
+      // Should not call writeFile since name is same
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('addSkill', () => {
+    it('should add a new skill to expert', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.addSkill('ou_expert_1', {
+        name: 'Vue',
+        level: 3,
+        tags: ['frontend'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.isUpdate).toBe(false);
+      expect(mockWriteFile).toHaveBeenCalled();
+    });
+
+    it('should update existing skill', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.addSkill('ou_expert_1', {
+        name: 'React',
+        level: 5,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.isUpdate).toBe(true);
+    });
+
+    it('should fail if expert not registered', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const result = await registry.addSkill('ou_unknown', {
+        name: 'React',
+        level: 3,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('还未注册');
+    });
+
+    it('should fail if level is invalid', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const result = await registry.addSkill('ou_expert_1', {
+        name: 'React',
+        level: 6,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('1-5');
+    });
+  });
+
+  describe('removeSkill', () => {
+    it('should remove skill from expert', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.removeSkill('ou_expert_1', 'React');
+
+      expect(result.success).toBe(true);
+      expect(mockWriteFile).toHaveBeenCalled();
+    });
+
+    it('should fail if skill not found', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const result = await registry.removeSkill('ou_expert_1', 'NonExistent');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('未找到');
+    });
+
+    it('should fail if expert not registered', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const result = await registry.removeSkill('ou_unknown', 'React');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('还未注册');
+    });
+  });
+
+  describe('setAvailability', () => {
+    it('should set availability for expert', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+      const mockWriteFile = vi.mocked(fs.writeFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+      mockWriteFile.mockResolvedValue(undefined);
+
+      await registry.load();
+      const result = await registry.setAvailability('ou_expert_1', {
+        schedule: 'weekdays 10:00-18:00',
+        timezone: 'Asia/Shanghai',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockWriteFile).toHaveBeenCalled();
+    });
+
+    it('should fail if expert not registered', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const result = await registry.setAvailability('ou_unknown', {
+        schedule: 'weekdays',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('还未注册');
+    });
+  });
+
+  describe('getProfile', () => {
+    it('should return expert profile', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const profile = await registry.getProfile('ou_expert_1');
+
+      expect(profile).toBeDefined();
+      expect(profile?.name).toBe('Expert One');
+    });
+
+    it('should return undefined for unregistered user', async () => {
+      const mockAccess = vi.mocked(fs.access);
+      const mockReadFile = vi.mocked(fs.readFile);
+
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('experts:\n  - open_id: "ou_expert_1"');
+
+      await registry.load();
+      const profile = await registry.getProfile('ou_unknown');
+
+      expect(profile).toBeUndefined();
     });
   });
 });
