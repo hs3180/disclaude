@@ -3,6 +3,7 @@
  *
  * @see Issue #532 - Human-in-the-Loop interaction system
  * @see Issue #535 - Expert registration and skill declaration
+ * @see Issue #536 - Expert query and matching
  */
 
 import * as fs from 'fs/promises';
@@ -412,6 +413,161 @@ experts:
   async getProfile(openId: string): Promise<ExpertConfig | undefined> {
     await this.ensureLoaded();
     return this.experts.find(e => e.open_id === openId);
+  }
+
+  // ============================================================================
+  // Query Operations (Issue #536: Expert Query and Matching)
+  // ============================================================================
+
+  /**
+   * Check if an expert is currently available.
+   *
+   * Availability is determined by:
+   * 1. If no availability is set, expert is considered available
+   * 2. If schedule is set, check if current time falls within the schedule
+   *
+   * @param expert - Expert to check
+   * @returns Whether the expert is available
+   */
+  isAvailable(expert: ExpertConfig): boolean {
+    // If no availability set, consider as available
+    if (!expert.availability?.schedule) {
+      return true;
+    }
+
+    const schedule = expert.availability.schedule.toLowerCase();
+    const timezone = expert.availability.timezone || 'Asia/Shanghai';
+
+    try {
+      const now = new Date();
+
+      // Get current time in the expert's timezone
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        weekday: 'short',
+        hour: 'numeric',
+        hour12: false,
+      });
+
+      const parts = formatter.formatToParts(now);
+      const weekdayPart = parts.find(p => p.type === 'weekday');
+      const hourPart = parts.find(p => p.type === 'hour');
+
+      const currentWeekday = weekdayPart?.value?.toLowerCase() || '';
+      const currentHour = parseInt(hourPart?.value || '0', 10);
+
+      // Parse schedule patterns
+      // Pattern 1: "weekdays 10:00-18:00"
+      if (schedule.includes('weekday')) {
+        const isWeekday = ['mon', 'tue', 'wed', 'thu', 'fri'].some(d => currentWeekday.startsWith(d));
+        if (!isWeekday) return false;
+
+        const timeMatch = schedule.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const startHour = parseInt(timeMatch[1], 10);
+          const endHour = parseInt(timeMatch[3], 10);
+          return currentHour >= startHour && currentHour < endHour;
+        }
+      }
+
+      // Pattern 2: "mon-fri 9:00-17:00" or "mon-wed 10:00-18:00"
+      const dayRangeMatch = schedule.match(/([a-z]{3})\s*-\s*([a-z]{3})/);
+      if (dayRangeMatch) {
+        const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        const startDay = days.indexOf(dayRangeMatch[1]);
+        const endDay = days.indexOf(dayRangeMatch[2]);
+        const currentDay = days.findIndex(d => currentWeekday.startsWith(d));
+
+        if (currentDay === -1 || startDay === -1 || endDay === -1) {
+          return true; // Can't parse, assume available
+        }
+
+        // Handle wrap-around (e.g., fri-mon)
+        let isInRange: boolean;
+        if (startDay <= endDay) {
+          isInRange = currentDay >= startDay && currentDay <= endDay;
+        } else {
+          isInRange = currentDay >= startDay || currentDay <= endDay;
+        }
+
+        if (!isInRange) return false;
+
+        const timeMatch = schedule.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const startHour = parseInt(timeMatch[1], 10);
+          const endHour = parseInt(timeMatch[3], 10);
+          return currentHour >= startHour && currentHour < endHour;
+        }
+      }
+
+      // Pattern 3: Specific days "mon,wed,fri 10:00-18:00"
+      const specificDaysMatch = schedule.match(/^([a-z]{3}(?:,[a-z]{3})*)/);
+      if (specificDaysMatch) {
+        const allowedDays = specificDaysMatch[1].split(',');
+        const isAllowedDay = allowedDays.some(d => currentWeekday.startsWith(d));
+        if (!isAllowedDay) return false;
+
+        const timeMatch = schedule.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const startHour = parseInt(timeMatch[1], 10);
+          const endHour = parseInt(timeMatch[3], 10);
+          return currentHour >= startHour && currentHour < endHour;
+        }
+      }
+
+      // If we can't parse the schedule, assume available
+      return true;
+    } catch {
+      // On error, assume available
+      return true;
+    }
+  }
+
+  /**
+   * Find available experts by skill.
+   *
+   * @param skillName - Skill name to search for
+   * @param minLevel - Minimum skill level required
+   * @returns Array of matching available experts with their skill info
+   */
+  async findAvailableExperts(
+    skillName: string,
+    minLevel?: number
+  ): Promise<Array<ExpertConfig & { matchedSkill: { name: string; level: number }; isAvailable: boolean }>> {
+    await this.ensureLoaded();
+
+    const searchName = skillName.toLowerCase();
+    const results: Array<ExpertConfig & { matchedSkill: { name: string; level: number }; isAvailable: boolean }> = [];
+
+    for (const expert of this.experts) {
+      for (const skill of expert.skills) {
+        const skillMatches = skill.name.toLowerCase().includes(searchName);
+        const levelMatches = minLevel === undefined || skill.level >= minLevel;
+
+        if (skillMatches && levelMatches) {
+          const isAvailable = this.isAvailable(expert);
+          results.push({
+            ...expert,
+            matchedSkill: { name: skill.name, level: skill.level },
+            isAvailable,
+          });
+          break; // Only add expert once
+        }
+      }
+    }
+
+    // Sort by availability first, then by skill level (highest first)
+    results.sort((a, b) => {
+      // Available experts first
+      if (a.isAvailable !== b.isAvailable) {
+        return a.isAvailable ? -1 : 1;
+      }
+      // Then by skill level
+      return b.matchedSkill.level - a.matchedSkill.level;
+    });
+
+    logger.debug({ skillName, minLevel, matchCount: results.length }, 'Found available experts');
+    return results;
   }
 }
 

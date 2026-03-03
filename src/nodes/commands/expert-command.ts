@@ -2,6 +2,7 @@
  * Expert Command - Human expert registration and skill declaration.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import type { Command, CommandContext, CommandResult } from './types.js';
@@ -18,12 +19,13 @@ import type { SkillDefinition } from '../../human-loop/types.js';
  * - skills remove <name>: Remove a skill
  * - availability <schedule>: Set availability
  * - list: List all registered experts
+ * - search <skill>: Search experts by skill
  */
 export class ExpertCommand implements Command {
   readonly name = 'expert';
   readonly category = 'expert' as const;
   readonly description = '专家注册与技能声明';
-  readonly usage = 'expert <register|profile|skills|availability|list>';
+  readonly usage = 'expert <register|profile|skills|availability|list|search>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const subCommand = context.args[0]?.toLowerCase();
@@ -37,7 +39,7 @@ export class ExpertCommand implements Command {
     }
 
     // Validate subcommand
-    const validSubcommands = ['register', 'profile', 'skills', 'availability', 'list'];
+    const validSubcommands = ['register', 'profile', 'skills', 'availability', 'list', 'search'];
     if (!validSubcommands.includes(subCommand)) {
       return {
         success: false,
@@ -49,7 +51,7 @@ export class ExpertCommand implements Command {
 
     // Get userId from context
     const userId = context.userId;
-    if (!userId && subCommand !== 'list') {
+    if (!userId && subCommand !== 'list' && subCommand !== 'search') {
       return {
         success: false,
         error: '无法获取用户 ID，请确保在支持用户身份的渠道中使用此命令',
@@ -74,6 +76,9 @@ export class ExpertCommand implements Command {
       case 'list':
         return this.handleList(registry);
 
+      case 'search':
+        return this.handleSearch(registry, context.args.slice(1));
+
       default:
         return { success: false, error: '未知子命令' };
     }
@@ -95,6 +100,7 @@ export class ExpertCommand implements Command {
 - \`skills remove <技能名>\` - 移除技能
 - \`availability <时间安排>\` - 设置可用时间
 - \`list\` - 列出所有注册的专家
+- \`search <技能名> [最低等级]\` - 按技能搜索专家
 
 **示例:**
 \`\`\`
@@ -105,6 +111,8 @@ export class ExpertCommand implements Command {
 /expert availability weekdays 10:00-18:00
 /expert profile
 /expert list
+/expert search React
+/expert search TypeScript 3
 \`\`\`
 
 **技能等级说明:**
@@ -380,6 +388,106 @@ ${expertsList}
 
 ---
 💡 使用 \`/expert profile\` 查看您的档案`,
+    };
+  }
+
+  /**
+   * Handle search subcommand.
+   * Search for experts by skill name with optional filters.
+   */
+  private async handleSearch(
+    registry: ReturnType<typeof getExpertRegistry>,
+    args: string[]
+  ): Promise<CommandResult> {
+    if (args.length < 1) {
+      return {
+        success: false,
+        error: `用法: \`/expert search <技能名> [最低等级]\`
+
+示例:
+- \`/expert search React\` - 搜索 React 专家
+- \`/expert search TypeScript 4\` - 搜索 TypeScript 等级 4+ 的专家
+- \`/expert search React 3 available\` - 只搜索当前可用的 React 专家`,
+      };
+    }
+
+    const skillName = args[0];
+    const minLevel = args[1] ? parseInt(args[1], 10) : undefined;
+    const availableOnly = args.includes('available');
+
+    // Validate minLevel
+    if (minLevel !== undefined && (isNaN(minLevel) || minLevel < 1 || minLevel > 5)) {
+      return {
+        success: false,
+        error: '最低等级必须是 1-5 之间的数字',
+      };
+    }
+
+    // Search for available experts
+    const results = await registry.findAvailableExperts(skillName, minLevel);
+
+    if (results.length === 0) {
+      const levelText = minLevel ? ` (等级 ${minLevel}+)` : '';
+      return {
+        success: true,
+        message: `🔍 **专家搜索结果**
+
+未找到匹配的专家${levelText}
+
+---
+💡 提示专家使用 \`/expert register\` 注册并添加技能`,
+      };
+    }
+
+    // Format results
+    const formatExpert = (expert: typeof results[0]): string => {
+      const levelBar = '⭐'.repeat(expert.matchedSkill.level) + '☆'.repeat(5 - expert.matchedSkill.level);
+      const availabilityIcon = expert.isAvailable ? '🟢' : '🔴';
+      const skillsText = expert.skills.length > 0
+        ? expert.skills.map(s => `${s.name}(Lv.${s.level})`).join(', ')
+        : '无其他技能';
+
+      return `- **${expert.name}** ${availabilityIcon}
+  匹配技能: **${expert.matchedSkill.name}** ${levelBar} (Level ${expert.matchedSkill.level})
+  所有技能: ${skillsText}
+  ${expert.availability ? `可用时间: ${expert.availability.schedule}` : '未设置可用时间'}`;
+    };
+
+    // Filter by availability if requested
+    const displayResults = availableOnly
+      ? results.filter(r => r.isAvailable)
+      : results;
+
+    if (displayResults.length === 0 && availableOnly && results.length > 0) {
+      return {
+        success: true,
+        message: `🔍 **专家搜索结果**
+
+找到 ${results.length} 位 ${skillName} 专家，但当前都不可用。
+
+**所有匹配的专家:**
+
+${results.map(formatExpert).join('\n\n')}
+
+---
+💡 使用 \`/expert search ${skillName}\` 查看所有专家（包括不可用的）`,
+      };
+    }
+
+    const levelText = minLevel ? ` (等级 ${minLevel}+)` : '';
+    const availableText = availableOnly ? ' (仅显示可用的)' : '';
+
+    return {
+      success: true,
+      message: `🔍 **专家搜索结果**${levelText}${availableText}
+
+找到 ${displayResults.length} 位专家:
+
+${displayResults.map(formatExpert).join('\n\n')}
+
+---
+💡 使用 \`/expert search <技能>\` 搜索其他技能
+💡 使用 \`/expert list\` 查看所有专家`,
     };
   }
 }

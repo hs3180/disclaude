@@ -2,11 +2,12 @@
  * Tests for Expert Command.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExpertCommand } from './expert-command.js';
-import type { CommandContext, CommandResult } from './types.js';
+import type { CommandContext } from './types.js';
 
 // Mock ExpertRegistry
 const mockRegistry = {
@@ -16,6 +17,7 @@ const mockRegistry = {
   setAvailability: vi.fn(),
   getProfile: vi.fn(),
   getAll: vi.fn(),
+  findAvailableExperts: vi.fn(),
 };
 
 vi.mock('../../human-loop/index.js', () => ({
@@ -265,6 +267,88 @@ describe('ExpertCommand', () => {
         const result = await command.execute(context);
 
         expect(result.success).toBe(true);
+      });
+    });
+
+    describe('search', () => {
+      it('should search experts by skill', async () => {
+        mockRegistry.findAvailableExperts.mockResolvedValue([
+          {
+            open_id: 'ou_expert_1',
+            name: 'React Expert',
+            skills: [{ name: 'React', level: 5 }],
+            matchedSkill: { name: 'React', level: 5 },
+            isAvailable: true,
+          },
+        ]);
+
+        const context = createMockContext(['search', 'React']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('专家搜索结果');
+        expect(result.message).toContain('React Expert');
+        expect(mockRegistry.findAvailableExperts).toHaveBeenCalledWith('React', undefined);
+      });
+
+      it('should search with minLevel filter', async () => {
+        mockRegistry.findAvailableExperts.mockResolvedValue([
+          {
+            open_id: 'ou_expert_1',
+            name: 'Senior Developer',
+            skills: [{ name: 'TypeScript', level: 5 }],
+            matchedSkill: { name: 'TypeScript', level: 5 },
+            isAvailable: true,
+          },
+        ]);
+
+        const context = createMockContext(['search', 'TypeScript', '4']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(mockRegistry.findAvailableExperts).toHaveBeenCalledWith('TypeScript', 4);
+      });
+
+      it('should show no results message', async () => {
+        mockRegistry.findAvailableExperts.mockResolvedValue([]);
+
+        const context = createMockContext(['search', 'Rust']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('未找到匹配的专家');
+      });
+
+      it('should fail with missing skill name', async () => {
+        const context = createMockContext(['search']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('用法');
+      });
+
+      it('should fail with invalid minLevel', async () => {
+        const context = createMockContext(['search', 'React', '6']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('1-5');
+      });
+
+      it('should allow search without userId', async () => {
+        mockRegistry.findAvailableExperts.mockResolvedValue([]);
+
+        const context: CommandContext = {
+          chatId: 'oc_test_chat',
+          userId: undefined,
+          args: ['search', 'React'],
+          rawText: 'search React',
+        };
+
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(mockRegistry.findAvailableExperts).toHaveBeenCalled();
       });
     });
   });
