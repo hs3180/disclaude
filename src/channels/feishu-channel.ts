@@ -343,9 +343,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
     }
 
-    // Add typing reaction
-    await this.addTypingReaction(message_id);
-
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
       const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
@@ -528,6 +525,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       );
       return;
     }
+
+    // Issue #514: Add typing reaction only for messages that will be processed
+    // This is placed after passive mode check to avoid reacting to skipped messages
+    await this.addTypingReaction(message_id);
 
     // Emit as incoming message
     await this.emitMessage({

@@ -76,7 +76,7 @@ vi.mock('../platforms/feishu/feishu-message-sender.js', () => ({
     sendText: vi.fn().mockResolvedValue(undefined),
     sendCard: vi.fn().mockResolvedValue(undefined),
     sendFile: vi.fn().mockResolvedValue(undefined),
-    addReaction: vi.fn().mockResolvedValue(undefined),
+    addReaction: vi.fn().mockResolvedValue(true),
   })),
 }));
 
@@ -135,13 +135,28 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
   async function simulateMessageReceive(options: {
     text: string;
     chatId?: string;
+    chatType?: string;
     mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
   }): Promise<void> {
+    // Determine chat_type based on chatId prefix if not explicitly provided
+    let chatType = options.chatType;
+    if (!chatType) {
+      const chatId = options.chatId || 'oc_test_group';
+      if (chatId.startsWith('oc_')) {
+        chatType = 'group';
+      } else if (chatId.startsWith('ou_')) {
+        chatType = 'p2p';
+      } else {
+        chatType = 'p2p'; // Default to p2p for unknown formats
+      }
+    }
+
     // Create a mock event that matches FeishuEventData structure
     const mockEvent = {
       message: {
         message_id: 'test-msg-id',
         chat_id: options.chatId || 'oc_test_group', // Default to group chat
+        chat_type: chatType,
         content: JSON.stringify({ text: options.text }),
         message_type: 'text',
         create_time: Date.now(),
@@ -388,6 +403,59 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
           content: '@user1 @bot help me',
         })
       );
+    });
+  });
+
+  describe('Reaction behavior (Issue #514)', () => {
+    it('should NOT add reaction to group chat message without @mention (passive mode)', async () => {
+      await simulateMessageReceive({
+        text: 'Hello everyone!',
+        chatId: 'oc_test_group', // Group chat ID
+        mentions: undefined, // No mentions
+      });
+
+      // Get the FeishuMessageSender mock instance
+      const { FeishuMessageSender } = await import('../platforms/feishu/feishu-message-sender.js');
+      const senderInstance = (FeishuMessageSender as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+
+      // Reaction should NOT be added for skipped messages
+      expect(senderInstance?.addReaction).not.toHaveBeenCalled();
+    });
+
+    it('should add reaction to group chat message WITH @mention', async () => {
+      await simulateMessageReceive({
+        text: '@bot Hello!',
+        chatId: 'oc_test_group', // Group chat ID
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Get the FeishuMessageSender mock instance
+      const { FeishuMessageSender } = await import('../platforms/feishu/feishu-message-sender.js');
+      const senderInstance = (FeishuMessageSender as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+
+      // Reaction SHOULD be added for messages that are processed
+      expect(senderInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
+    });
+
+    it('should add reaction to private chat message', async () => {
+      await simulateMessageReceive({
+        text: 'Hello!',
+        chatId: 'ou_user_private', // Private chat ID
+        mentions: undefined,
+      });
+
+      // Get the FeishuMessageSender mock instance
+      const { FeishuMessageSender } = await import('../platforms/feishu/feishu-message-sender.js');
+      const senderInstance = (FeishuMessageSender as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+
+      // Reaction SHOULD be added for private chat messages
+      expect(senderInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
     });
   });
 });
