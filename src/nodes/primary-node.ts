@@ -378,7 +378,7 @@ export class PrimaryNode extends EventEmitter {
           logger.info({ chatId }, 'Task completed, sent done signal');
         } else {
           // Fallback for scheduled tasks: route directly through handleFeedback
-          this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
+          void this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
           logger.info({ chatId }, 'Task completed (scheduled task)');
         }
         return Promise.resolve();
