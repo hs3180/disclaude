@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
+import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -239,9 +240,7 @@ export async function send_user_feedback(params: {
     }
 
     // Create Lark client and send message
-    const client = new lark.Client({
-      appId,
-      appSecret,
+    const client = createFeishuClient(appId, appSecret, {
       domain: lark.Domain.Feishu,
     });
 
@@ -410,9 +409,7 @@ export async function send_file_to_feishu(params: {
     const { uploadAndSendFile } = await import('../file-transfer/outbound/feishu-uploader.js');
 
     // Create client with credentials from Config
-    const client = new lark.Client({
-      appId,
-      appSecret,
+    const client = createFeishuClient(appId, appSecret, {
       domain: lark.Domain.Feishu,
     });
 
@@ -633,9 +630,7 @@ export async function update_card(params: {
     }
 
     // Create Lark client
-    const client = new lark.Client({
-      appId,
-      appSecret,
+    const client = createFeishuClient(appId, appSecret, {
       domain: lark.Domain.Feishu,
     });
 

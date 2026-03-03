@@ -57,6 +57,7 @@ import {
   getMembers,
 } from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
+import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
 // Debug group (Issue #487)
 import { getDebugGroupService } from './debug-group-service.js';
 
@@ -207,17 +208,14 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
-   * Get or create Feishu client for group management.
+   * Get or create Feishu client for group management with timeout configuration.
    */
   private getFeishuClient(): lark.Client {
     if (!this.feishuClient) {
       if (!this.feishuAppId || !this.feishuAppSecret) {
         throw new Error('Feishu credentials not configured');
       }
-      this.feishuClient = new lark.Client({
-        appId: this.feishuAppId,
-        appSecret: this.feishuAppSecret,
-      });
+      this.feishuClient = createFeishuClient(this.feishuAppId, this.feishuAppSecret);
     }
     return this.feishuClient;
   }
