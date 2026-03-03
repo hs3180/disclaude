@@ -5,6 +5,7 @@
  * - Scheduler initialization and lifecycle
  * - Schedule file watching for hot reload
  * - Callbacks for schedule execution
+ * - Schedule CRUD operations (list, enable, disable, run)
  *
  * Architecture:
  * ```
@@ -21,9 +22,11 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
+  ScheduleFileScanner,
 } from '../schedule/index.js';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
 import type { ChatAgent } from '../agents/types.js';
+import type { ScheduledTask } from '../schedule/schedule-manager.js';
 
 const logger = createLogger('SchedulerService');
 
@@ -66,6 +69,7 @@ interface FeedbackContext {
  * - Scheduler initialization
  * - Schedule file watching
  * - Feedback channel management
+ * - Schedule CRUD operations
  */
 export class SchedulerService {
   private readonly callbacks: SchedulerCallbacks;
@@ -73,6 +77,7 @@ export class SchedulerService {
   private readonly activeFeedbackChannels = new Map<string, FeedbackContext>();
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
+  private fileScanner: ScheduleFileScanner;
   private schedulesDir: string;
 
   constructor(config: SchedulerServiceConfig) {
@@ -81,6 +86,7 @@ export class SchedulerService {
 
     const workspaceDir = Config.getWorkspaceDir();
     this.schedulesDir = path.join(workspaceDir, 'schedules');
+    this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir });
   }
 
   /**
@@ -189,5 +195,142 @@ export class SchedulerService {
    */
   getScheduler(): Scheduler | undefined {
     return this.scheduler;
+  }
+
+  // ============================================================================
+  // Schedule CRUD Operations (Issue #469)
+  // ============================================================================
+
+  /**
+   * List all scheduled tasks.
+   *
+   * @returns Array of all scheduled tasks
+   */
+  async listSchedules(): Promise<ScheduledTask[]> {
+    const tasks = await this.fileScanner.scanAll();
+    return tasks.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Get a schedule by ID.
+   *
+   * @param taskId - Task ID
+   * @returns The task or undefined if not found
+   */
+  async getSchedule(taskId: string): Promise<ScheduledTask | undefined> {
+    const tasks = await this.fileScanner.scanAll();
+    return tasks.find(t => t.id === taskId);
+  }
+
+  /**
+   * Enable a scheduled task.
+   *
+   * @param taskId - Task ID to enable
+   * @returns The updated task or undefined if not found
+   */
+  async enableSchedule(taskId: string): Promise<ScheduledTask | undefined> {
+    const task = await this.getSchedule(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    if (task.enabled) {
+      return task; // Already enabled
+    }
+
+    // Update the task file
+    const updatedTask: ScheduledTask = { ...task, enabled: true };
+    await this.fileScanner.writeTask(updatedTask);
+
+    logger.info({ taskId, name: task.name }, 'Schedule enabled');
+    return updatedTask;
+  }
+
+  /**
+   * Disable a scheduled task.
+   *
+   * @param taskId - Task ID to disable
+   * @returns The updated task or undefined if not found
+   */
+  async disableSchedule(taskId: string): Promise<ScheduledTask | undefined> {
+    const task = await this.getSchedule(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    if (!task.enabled) {
+      return task; // Already disabled
+    }
+
+    // Update the task file
+    const updatedTask: ScheduledTask = { ...task, enabled: false };
+    await this.fileScanner.writeTask(updatedTask);
+
+    // Remove from scheduler immediately
+    this.scheduler?.removeTask(taskId);
+
+    logger.info({ taskId, name: task.name }, 'Schedule disabled');
+    return updatedTask;
+  }
+
+  /**
+   * Manually trigger a scheduled task.
+   *
+   * @param taskId - Task ID to run
+   * @param chatId - Chat ID to send results to (optional, defaults to task's chatId)
+   * @returns true if task was triggered, false if not found
+   */
+  async runSchedule(taskId: string, chatId?: string): Promise<boolean> {
+    const task = await this.getSchedule(taskId);
+    if (!task) {
+      return false;
+    }
+
+    // Use provided chatId or task's chatId
+    const targetChatId = chatId || task.chatId;
+
+    // Execute the task
+    logger.info({ taskId, name: task.name, chatId: targetChatId }, 'Manually triggering schedule');
+
+    // Run the task asynchronously
+    this.pilot.executeOnce(
+      targetChatId,
+      task.prompt,
+      undefined,
+      undefined
+    ).then(() => {
+      logger.info({ taskId }, 'Manually triggered schedule completed');
+    }).catch(error => {
+      logger.error({ err: error, taskId }, 'Manually triggered schedule failed');
+    });
+
+    return true;
+  }
+
+  /**
+   * Get schedule status.
+   *
+   * @param taskId - Task ID (optional, if not provided returns scheduler status)
+   * @returns Schedule status info
+   */
+  async getScheduleStatus(taskId?: string): Promise<{
+    running: boolean;
+    task?: ScheduledTask;
+    isCurrentlyRunning?: boolean;
+    activeJobsCount?: number;
+  }> {
+    if (taskId) {
+      const task = await this.getSchedule(taskId);
+      return {
+        running: this.scheduler?.isRunning() ?? false,
+        task,
+        isCurrentlyRunning: this.scheduler?.isTaskRunning(taskId) ?? false,
+      };
+    }
+
+    return {
+      running: this.scheduler?.isRunning() ?? false,
+      activeJobsCount: this.scheduler?.getActiveJobs().length ?? 0,
+    };
   }
 }

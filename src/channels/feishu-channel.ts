@@ -449,6 +449,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       'reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
       // Group management commands (Issue #486)
       'create-group', 'add-member', 'remove-member', 'list-member', 'list-group', 'dissolve-group',
+      // Debug group commands (Issue #487)
+      'set-debug', 'show-debug', 'clear-debug',
+      // Schedule control commands (Issue #469)
+      'schedule',
     ];
 
     if (trimmedText.startsWith('/')) {
