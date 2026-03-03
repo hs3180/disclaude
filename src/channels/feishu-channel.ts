@@ -265,6 +265,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Check if the chat is a group chat.
+   * In Feishu, group chat IDs start with 'oc_'.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if it's a group chat
+   */
+  private isGroupChat(chatId: string): boolean {
+    return chatId.startsWith('oc_');
+  }
+
+  /**
    * Check if the bot is mentioned in the message.
    * When bot is mentioned, commands should be passed through to the agent.
    *
@@ -501,6 +512,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Log if bot is mentioned with a non-control command (for debugging)
     if (botMentioned && trimmedText.startsWith('/')) {
       logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
+    }
+
+    // Issue #460: Group chat passive mode
+    // In group chats, only respond when bot is mentioned (@bot)
+    // This allows scheduled tasks to broadcast without triggering unwanted responses
+    if (this.isGroupChat(chat_id) && !botMentioned) {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id },
+        'Skipped group chat message without @mention (passive mode)'
+      );
+      return;
     }
 
     // Emit as incoming message
