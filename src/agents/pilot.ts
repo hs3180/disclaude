@@ -108,6 +108,8 @@ interface MessageData {
   messageId?: string;
   senderOpenId?: string;
   attachments?: FileRef[];
+  /** Chat history context for passive mode (Issue #517) */
+  chatHistoryContext?: string;
 }
 
 /**
@@ -324,16 +326,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
+   * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
    */
   processMessage(
     chatId: string,
     text: string,
     messageId: string,
     senderOpenId?: string,
-    attachments?: FileRef[]
+    attachments?: FileRef[],
+    chatHistoryContext?: string
   ): void {
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
       'processMessage called'
     );
 
@@ -347,7 +351,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build the user message
-    const enhancedContent = this.buildEnhancedContent(chatId, { text, messageId, senderOpenId, attachments });
+    const enhancedContent = this.buildEnhancedContent(chatId, { text, messageId, senderOpenId, attachments, chatHistoryContext });
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
@@ -562,6 +566,22 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Check if this is a skill command (starts with /)
     const isSkillCommand = msg.text.trimStart().startsWith('/');
 
+    // Build chat history section if available (Issue #517)
+    const chatHistorySection = msg.chatHistoryContext
+      ? `
+
+---
+
+## Recent Chat History
+
+You were @mentioned in a group chat. Here's the recent conversation context:
+
+${msg.chatHistoryContext}
+
+---
+`
+      : '';
+
     if (isSkillCommand) {
       // For skill commands: command first, then minimal context for skill to use
       const contextInfo = msg.senderOpenId
@@ -587,7 +607,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
-
+${chatHistorySection}
 ---
 
 ## @ Mention the User
@@ -617,7 +637,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
-
+${chatHistorySection}
 When using send_file_to_feishu or send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId}\` (for thread replies)

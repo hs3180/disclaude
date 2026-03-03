@@ -7,7 +7,7 @@
 
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
-import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
+import { DEDUPLICATION, REACTIONS, CHAT_HISTORY } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
 import { attachmentManager, downloadFile } from '../file-transfer/inbound/index.js';
 import { messageLogger } from '../feishu/message-logger.js';
@@ -585,6 +585,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // This is placed after passive mode check to avoid reacting to skipped messages
     await this.addTypingReaction(message_id);
 
+    // Issue #517: Get chat history for passive mode context
+    // When bot is mentioned in a group chat, include recent chat history as context
+    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    let chatHistoryContext: string | undefined;
+
+    if (isPassiveModeTrigger) {
+      chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext?.length },
+        'Including chat history context for passive mode trigger'
+      );
+    }
+
     // Emit as incoming message
     await this.emitMessage({
       messageId: message_id,
@@ -594,7 +607,44 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       messageType: message_type as any,
       timestamp: create_time,
       threadId,
+      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
     });
+  }
+
+  /**
+   * Get formatted chat history context for passive mode.
+   * Issue #517: Include recent chat history when bot is mentioned in group chats.
+   *
+   * @param chatId - Chat ID to get history for
+   * @returns Formatted chat history string, or undefined if no history
+   */
+  private async getChatHistoryContext(chatId: string): Promise<string | undefined> {
+    try {
+      const rawHistory = await messageLogger.getChatHistory(chatId);
+
+      if (!rawHistory || rawHistory.length === 0) {
+        return undefined;
+      }
+
+      // Truncate if too long (keep the most recent content)
+      let history = rawHistory;
+      if (history.length > CHAT_HISTORY.MAX_CONTEXT_LENGTH) {
+        // Try to truncate at a reasonable point (e.g., at a message boundary)
+        const truncatePoint = history.lastIndexOf('## [', history.length - CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+        if (truncatePoint > 0) {
+          history = '...(earlier messages truncated)...\n\n' + history.slice(truncatePoint);
+        } else {
+          // Fallback: just truncate from the end
+          history = history.slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+          history = '...(earlier messages truncated)...\n\n' + history.slice(history.indexOf('## ['));
+        }
+      }
+
+      return history;
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to get chat history context');
+      return undefined;
+    }
   }
 
   /**
