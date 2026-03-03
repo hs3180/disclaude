@@ -15,6 +15,9 @@ import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('TaskFileWatcher');
 
+/** Track whether fs.watch recursive warning has been logged (global, across all instances) */
+let watchWarningLogged = false;
+
 /**
  * Callback when a task file is created and ready for processing.
  * Returns a Promise for serial execution.
@@ -68,6 +71,10 @@ export class TaskFileWatcher {
   private watcher: fs.FSWatcher | null = null;
   /** Resolver for wait promise */
   private waitResolver: (() => void) | null = null;
+  /** Whether fs.watch recursive is available for this instance */
+  private watchAvailable = true;
+  /** Polling interval when fs.watch is unavailable (ms) */
+  private readonly pollingInterval = 5000;
 
   constructor(options: TaskFileWatcherOptions) {
     this.tasksDir = options.tasksDir;
@@ -185,11 +192,17 @@ export class TaskFileWatcher {
 
   /**
    * Wait for a new task file to be created.
-   * Uses fs.watch for efficiency.
+   * Uses fs.watch for efficiency, falls back to polling if unavailable.
    */
   private waitForNewTask(): Promise<void> {
     return new Promise<void>((resolve) => {
       this.waitResolver = resolve;
+
+      // If we already know fs.watch is unavailable, use polling
+      if (!this.watchAvailable) {
+        setTimeout(resolve, this.pollingInterval);
+        return;
+      }
 
       try {
         this.watcher = fs.watch(
@@ -211,10 +224,14 @@ export class TaskFileWatcher {
 
         logger.debug('Waiting for new task (fs.watch active)');
       } catch (error) {
-        // fs.watch recursive may not be available on all platforms
-        // Just resolve immediately and retry on next loop iteration
-        logger.warn({ err: error, tasksDir: this.tasksDir }, 'fs.watch unavailable or failed, will poll instead');
-        resolve();
+        // fs.watch recursive may not be available on all platforms (e.g., Docker)
+        // Log once globally and switch to polling mode
+        if (!watchWarningLogged) {
+          logger.info({ err: error, tasksDir: this.tasksDir }, 'fs.watch recursive unavailable, using polling mode (5s interval)');
+          watchWarningLogged = true;
+        }
+        this.watchAvailable = false;
+        setTimeout(resolve, this.pollingInterval);
       }
     });
   }

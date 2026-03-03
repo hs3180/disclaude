@@ -1,12 +1,12 @@
 {
   "apps": [{
-    "name": "disclaude-docker",
+    "name": "disclaude-primary",
     "script": "dist/cli-entry.js",
-    "args": "start --mode comm",
+    "args": "start --mode primary",
     "instances": 1,
     "autorestart": true,
     "watch": false,
-    "max_memory_restart": "1G",
+    "max_memory_restart": "2G",
     "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
     "error_file": "/app/logs/pm2-error.log",
     "out_file": "/app/logs/pm2-out.log",

@@ -297,7 +297,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.logger.info({ chatId }, 'CLI query completed normally');
     } catch (error) {
       const err = error as Error;
-      this.logger.error({ err, chatId }, 'CLI query error');
+      this.logger.error({
+        err,
+        chatId,
+        errorMessage: err.message,
+        errorStack: err.stack,
+        errorName: err.constructor.name,
+        errorCause: err.cause,
+      }, 'CLI query error');
 
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
       throw err;
@@ -412,7 +419,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Process SDK messages in background
     this.processIterator(chatId, iterator).catch((err) => {
-      this.logger.error({ err, chatId }, 'Agent loop error');
+      this.logger.error({
+        err,
+        chatId,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorStack: err instanceof Error ? err.stack : undefined,
+      }, 'Agent loop error');
       this.sessionManager.deleteTracking(chatId);
     });
   }
@@ -465,7 +477,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
       }
     } catch (error) {
       iteratorError = error as Error;
-      this.logger.error({ err: iteratorError, chatId, messageCount }, 'Iterator error');
+      this.logger.error({
+        err: iteratorError,
+        chatId,
+        messageCount,
+        errorMessage: iteratorError.message,
+        errorStack: iteratorError.stack,
+        errorName: iteratorError.constructor.name,
+        errorCause: iteratorError.cause,
+      }, 'Iterator error');
 
       const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);

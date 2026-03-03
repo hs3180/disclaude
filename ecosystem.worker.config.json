@@ -1,12 +1,12 @@
 {
   "apps": [{
-    "name": "disclaude-docker",
+    "name": "disclaude-worker",
     "script": "dist/cli-entry.js",
-    "args": "start --mode exec --comm-url ws://localhost:3001",
+    "args": "start --mode worker",
     "instances": 1,
     "autorestart": true,
     "watch": false,
-    "max_memory_restart": "2G",
+    "max_memory_restart": "4G",
     "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
     "error_file": "/app/logs/pm2-error.log",
     "out_file": "/app/logs/pm2-out.log",

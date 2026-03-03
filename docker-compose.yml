@@ -3,8 +3,8 @@
 # =============================================================================
 #
 # Architecture: Two-node distributed system
-# - Communication Node: Handles Feishu WebSocket connections
-# - Execution Node: Handles Pilot/Agent task execution
+# - Primary Node: Handles Feishu WebSocket connections + Agent execution
+# - Worker Node: Handles Pilot/Agent task execution (optional, for scaling)
 #
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
@@ -17,21 +17,25 @@
 #   # Stop
 #   docker compose down
 #
+#   # Start with worker node (for scaling)
+#   docker compose --profile worker up -d
+#
 # =============================================================================
 
 services:
-  # Communication Node (Feishu WebSocket handler)
-  comm:
+  # Primary Node (Comm + Exec)
+  # Self-contained node that handles both communication and execution
+  primary:
     build:
       context: .
       dockerfile: Dockerfile
-    image: disclaude:comm
-    container_name: disclaude-comm
+    image: disclaude:primary
+    container_name: disclaude-primary
     restart: unless-stopped
 
-    # Command: run Communication Node with PM2
+    # Command: run Primary Node with PM2
     # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.comm.config.json"]
+    command: ["pm2-runtime", "start", "ecosystem.primary.config.json"]
 
     # Network mode: host allows container to access host's CDP endpoint
     network_mode: host
@@ -40,7 +44,7 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - DISCLAUDE_MODE=comm
+      - DISCLAUDE_MODE=primary
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
@@ -50,11 +54,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 1G
+          cpus: '2'
+          memory: 4G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
 
     logging:
       driver: "json-file"
@@ -69,27 +73,30 @@ services:
       retries: 3
       start_period: 40s
 
-  # Execution Node (Pilot/Agent handler)
-  exec:
+  # Worker Node (Exec only)
+  # Optional execution node for scaling - connects to Primary via WebSocket
+  # Use --profile worker to start: docker compose --profile worker up -d
+  worker:
     build:
       context: .
-      dockerfile: Dockerfile.exec
-    image: disclaude:exec
-    container_name: disclaude-exec
+      dockerfile: Dockerfile.worker
+    image: disclaude:worker
+    container_name: disclaude-worker
     restart: unless-stopped
 
-    # Command: run Execution Node with PM2
+    # Command: run Worker Node with PM2
     # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.exec.config.json"]
+    command: ["pm2-runtime", "start", "ecosystem.worker.config.json"]
 
-    # Network mode: host for local connection to comm node
+    # Network mode: host for local connection to primary node
     network_mode: host
 
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - DISCLAUDE_MODE=exec
+      - DISCLAUDE_MODE=worker
+      - COMM_URL=ws://localhost:3001
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
@@ -118,7 +125,11 @@ services:
       retries: 3
       start_period: 40s
 
-    # Depends on comm node
+    # Worker is optional - only starts with --profile worker
+    profiles:
+      - worker
+
+    # Depends on primary node
     depends_on:
-      comm:
+      primary:
         condition: service_healthy
