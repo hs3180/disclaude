@@ -38,6 +38,7 @@ import type { ReflectionContext } from '../task/reflection.js';
 import { SkillAgent } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
+import { getTaskSuggestions, type TaskContext } from '../utils/task-suggestions.js';
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -85,6 +86,56 @@ export class TaskFlowOrchestrator {
   stop(): void {
     this.fileWatcher.stop();
     this.logger.info('TaskFlowOrchestrator stopped');
+  }
+
+  /**
+   * Send task suggestions after successful task completion.
+   * Reads the task specification and generates context-aware suggestions.
+   */
+  private async sendTaskSuggestions(
+    chatId: string,
+    messageId: string,
+    taskId: string,
+    fileManager: TaskFileManager
+  ): Promise<void> {
+    try {
+      // Get suggestions config from agent config
+      const rawConfig = Config.getRawConfig();
+      const suggestionsConfig = rawConfig.agent?.suggestions;
+
+      // Check if suggestions are enabled (default: true)
+      if (suggestionsConfig?.enabled === false) {
+        this.logger.debug({ chatId, taskId }, 'Task suggestions disabled by config');
+        return;
+      }
+
+      // Read the task specification to get context
+      let originalPrompt = '';
+      try {
+        const taskSpec = await fileManager.readTaskSpec(taskId);
+        // Extract the main task description (usually first paragraph)
+        const lines = taskSpec.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+        originalPrompt = lines.slice(0, 3).join(' ').slice(0, 200);
+      } catch {
+        this.logger.debug({ taskId }, 'Could not read task spec for suggestions context');
+      }
+
+      // Build task context
+      const taskContext: TaskContext = {
+        taskType: 'unknown',
+        originalPrompt,
+      };
+
+      // Generate and send suggestions
+      const suggestionsMessage = getTaskSuggestions(taskContext, suggestionsConfig);
+      if (suggestionsMessage) {
+        await this.messageCallbacks.sendMessage(chatId, suggestionsMessage, messageId);
+        this.logger.debug({ chatId, taskId }, 'Sent task suggestions');
+      }
+    } catch (error) {
+      // Don't fail the task if suggestions fail
+      this.logger.warn({ err: error, chatId, taskId }, 'Failed to send task suggestions');
+    }
   }
 
   /**
@@ -302,6 +353,11 @@ export class TaskFlowOrchestrator {
       const hasFinalResult = await fileManager.hasFinalResult(taskId);
       if (hasFinalResult) {
         completionReason = 'task_done';
+      }
+
+      // Send task suggestions after successful completion
+      if (completionReason === 'task_done') {
+        await this.sendTaskSuggestions(chatId, messageId, taskId, fileManager);
       }
     } catch (error) {
       this.logger.error({ err: error, chatId }, 'Task flow failed');

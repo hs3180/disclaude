@@ -30,6 +30,18 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Suggestions configuration for post-task recommendations.
+ */
+export interface SuggestionsConfig {
+  /** Enable/disable post-task suggestions */
+  enabled?: boolean;
+  /** Maximum number of suggestions to show (default: 4) */
+  maxSuggestions?: number;
+  /** Show suggestions after task completion */
+  showAfterTasks?: boolean;
+}
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -44,6 +56,8 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** Post-task suggestions configuration */
+  suggestions?: SuggestionsConfig;
 }
 
 /**
