@@ -260,6 +260,36 @@ export class DissolveGroupCommand implements Command {
 }
 
 /**
+ * Passive Command - Control passive mode for group chats.
+ * Issue #511: Group chat passive mode control
+ */
+export class PassiveCommand implements Command {
+  readonly name = 'passive';
+  readonly category = 'group' as const;
+  readonly description = '群聊被动模式开关';
+  readonly usage = 'passive [on|off|status]';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    // Default to status if no args
+    const subCommand = context.args[0]?.toLowerCase() || 'status';
+
+    // Validate subcommand
+    if (!['on', 'off', 'status'].includes(subCommand)) {
+      return {
+        success: false,
+        error: '用法: `/passive [on|off|status]`\n\n- `on` - 开启被动模式（仅响应 @提及）\n- `off` - 关闭被动模式（响应所有消息）\n- `status` - 查看当前状态',
+      };
+    }
+
+    // Actual implementation is handled by PrimaryNode/CommunicationNode
+    return {
+      success: true,
+      message: `🔄 **被动模式设置中...**`,
+    };
+  }
+}
+
+/**
  * Register default commands to a registry.
  */
 export function registerDefaultCommands(
@@ -278,4 +308,5 @@ export function registerDefaultCommands(
   registry.register(new ListMemberCommand());
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());
+  registry.register(new PassiveCommand());
 }

@@ -400,6 +400,51 @@ export class CommunicationNode extends EventEmitter {
         }
       }
 
+      // Issue #511: Passive mode control for group chats
+      case 'passive': {
+        const feishuChannel = this.channelManager.get('feishu') as FeishuChannel | undefined;
+        if (!feishuChannel) {
+          return { success: false, error: 'Feishu 通道不可用' };
+        }
+
+        const args = command.data?.args as string[] | undefined;
+        const subCommand = (args?.[0] as string)?.toLowerCase() || 'status';
+
+        switch (subCommand) {
+          case 'off': {
+            // Disable passive mode - respond to all messages
+            feishuChannel.setPassiveModeDisabled(command.chatId, true);
+            return {
+              success: true,
+              message: '✅ **被动模式已关闭**\n\nBot 将响应此群聊的所有消息，无需 @提及。',
+            };
+          }
+          case 'on': {
+            // Enable passive mode - only respond when mentioned
+            feishuChannel.setPassiveModeDisabled(command.chatId, false);
+            return {
+              success: true,
+              message: '✅ **被动模式已开启**\n\nBot 将仅在此群聊被 @提及时响应。',
+            };
+          }
+          case 'status': {
+            const isDisabled = feishuChannel.isPassiveModeDisabled(command.chatId);
+            const statusText = isDisabled
+              ? '关闭（Bot 响应所有消息）'
+              : '开启（Bot 仅响应 @提及）';
+            return {
+              success: true,
+              message: `📊 **被动模式状态**\n\n当前状态: ${statusText}\n\n用法:\n- \`/passive off\` - 关闭被动模式\n- \`/passive on\` - 开启被动模式`,
+            };
+          }
+          default:
+            return {
+              success: false,
+              error: '用法: `/passive [on|off|status]`\n\n- `on` - 开启被动模式（仅响应 @提及）\n- `off` - 关闭被动模式（响应所有消息）\n- `status` - 查看当前状态',
+            };
+        }
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
     }
