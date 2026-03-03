@@ -6,10 +6,34 @@
 
 import { describe, it, expect } from 'vitest';
 import { NodeCommand } from './builtin-commands.js';
-import type { CommandContext } from './types.js';
+import type { CommandContext, CommandServices } from './types.js';
 
 describe('NodeCommand', () => {
   const command = new NodeCommand();
+
+  // Mock services for testing
+  const mockServices: CommandServices = {
+    isRunning: () => true,
+    getLocalNodeId: () => 'test-local-node',
+    getExecNodes: () => [],
+    getChatNodeAssignment: () => undefined,
+    switchChatNode: () => false,
+    getNode: () => undefined,
+    sendCommand: () => Promise.resolve(),
+    getFeishuClient: () => null as unknown as ReturnType<CommandServices['getFeishuClient']>,
+    createDiscussionChat: () => Promise.resolve('test-chat-id'),
+    addMembers: () => Promise.resolve(),
+    removeMembers: () => Promise.resolve(),
+    getMembers: () => Promise.resolve([]),
+    dissolveChat: () => Promise.resolve(),
+    registerGroup: () => {},
+    unregisterGroup: () => false,
+    listGroups: () => [],
+    setDebugGroup: () => null,
+    getDebugGroup: () => null,
+    clearDebugGroup: () => null,
+    getChannelStatus: () => 'test: ok',
+  };
 
   describe('metadata', () => {
     it('should have correct name', () => {
@@ -34,6 +58,7 @@ describe('NodeCommand', () => {
       chatId: 'test-chat-id',
       args,
       rawText: `/node ${args.join(' ')}`,
+      services: mockServices,
     });
 
     describe('no args - help', () => {
