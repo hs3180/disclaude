@@ -632,11 +632,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         // Try to truncate at a reasonable point (e.g., at a message boundary)
         const truncatePoint = history.lastIndexOf('## [', history.length - CHAT_HISTORY.MAX_CONTEXT_LENGTH);
         if (truncatePoint > 0) {
-          history = '...(earlier messages truncated)...\n\n' + history.slice(truncatePoint);
+          history = `...(earlier messages truncated)...\n\n${history.slice(truncatePoint)}`;
         } else {
           // Fallback: just truncate from the end
           history = history.slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH);
-          history = '...(earlier messages truncated)...\n\n' + history.slice(history.indexOf('## ['));
+          history = `...(earlier messages truncated)...\n\n${history.slice(history.indexOf('## ['))}`;
         }
       }
 

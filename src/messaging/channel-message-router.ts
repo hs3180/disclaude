@@ -98,10 +98,11 @@ export class ChannelMessageRouter {
   /**
    * Default CLI sender - logs to console.
    */
-  private async defaultCliSender(chatId: string, message: OutgoingMessage): Promise<void> {
+  private defaultCliSender(chatId: string, message: OutgoingMessage): Promise<void> {
     const content = message.text ?? JSON.stringify(message.card, null, 2);
     logger.info({ chatId, type: message.type }, 'CLI message');
     console.log(`\n[${chatId}] ${content}\n`);
+    return Promise.resolve();
   }
 
   /**
@@ -190,7 +191,7 @@ export class ChannelMessageRouter {
    * @param threadId - Optional thread ID for replies
    * @returns Routing result
    */
-  async routeText(chatId: string, text: string, threadId?: string): Promise<RoutingResult> {
+  routeText(chatId: string, text: string, threadId?: string): Promise<RoutingResult> {
     return this.route(chatId, { chatId, type: 'text', text, threadId });
   }
 
@@ -202,7 +203,7 @@ export class ChannelMessageRouter {
    * @param threadId - Optional thread ID for replies
    * @returns Routing result
    */
-  async routeCard(
+  routeCard(
     chatId: string,
     card: Record<string, unknown>,
     threadId?: string
