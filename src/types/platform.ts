@@ -6,6 +6,7 @@ export interface FeishuMessageEvent {
   message: {
     message_id: string;
     chat_id: string;
+    chat_type?: 'p2p' | 'group' | 'topic';
     content: string;
     message_type: string;
     create_time?: number;
