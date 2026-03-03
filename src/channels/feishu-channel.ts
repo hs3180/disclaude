@@ -693,11 +693,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
         // Default handler: emit as interaction message
+        // Issue #525: Use button text to generate user-friendly prompt
+        const buttonText = defaultEvent.action.text || defaultEvent.action.value;
+        const messageContent = `The user clicked '${buttonText}' button`;
+
         await this.emitMessage({
           messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
           chatId: defaultEvent.chat_id,
           userId: defaultEvent.user?.sender_id?.open_id,
-          content: `[card_action] ${defaultEvent.action.value}`,
+          content: messageContent,
           messageType: 'card',
           timestamp: Date.now(),
           metadata: {
