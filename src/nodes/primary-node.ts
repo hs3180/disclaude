@@ -68,6 +68,8 @@ import {
 import {
   initWelcomeService,
 } from '../platforms/feishu/welcome-service.js';
+// Task management (Issue #468)
+import { getTaskStateManager } from '../utils/task-state-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -521,6 +523,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Build command context with services
     const debugGroupService = getDebugGroupService();
+    const taskStateManager = getTaskStateManager();
     const context = {
       chatId: command.chatId,
       userId: command.data?.senderOpenId as string | undefined,
@@ -550,6 +553,16 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        // Task management methods (Issue #468)
+        startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
+        getCurrentTask: () => taskStateManager.getCurrentTask(),
+        updateTaskProgress: (progress: number, currentStep?: string) => taskStateManager.updateProgress(progress, currentStep),
+        pauseTask: () => taskStateManager.pauseTask(),
+        resumeTask: () => taskStateManager.resumeTask(),
+        cancelTask: () => taskStateManager.cancelTask(),
+        completeTask: () => taskStateManager.completeTask(),
+        setTaskError: (error: string) => taskStateManager.setTaskError(error),
+        listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
       },
     };
 
