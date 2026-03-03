@@ -24,3 +24,9 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
+
+// Group Service (Issue #486)
+export { GroupService, getGroupService, type GroupInfo, type GroupServiceConfig } from './group-service.js';
+
+// Debug Chat Service (Issue #487)
+export { DebugChatService, getDebugChatService, type DebugChatServiceConfig } from './debug-chat-service.js';

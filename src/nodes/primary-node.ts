@@ -57,6 +57,8 @@ import {
   getMembers,
 } from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
+// Debug chat (Issue #487)
+import { DebugChatService, getDebugChatService } from '../platforms/feishu/debug-chat-service.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -110,6 +112,9 @@ export class PrimaryNode extends EventEmitter {
   private feishuAppId?: string;
   private feishuAppSecret?: string;
 
+  // Debug chat (Issue #487)
+  private debugChatService: DebugChatService;
+
   constructor(config: PrimaryNodeConfig) {
     super();
     this.port = config.port || 3001;
@@ -120,6 +125,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize GroupService
     this.groupService = getGroupService();
+
+    // Initialize DebugChatService
+    this.debugChatService = getDebugChatService();
 
     // Store Feishu credentials for group management
     this.feishuAppId = config.appId || Config.FEISHU_APP_ID;
@@ -706,6 +714,49 @@ export class PrimaryNode extends EventEmitter {
           logger.error({ err: error }, 'Failed to dissolve group');
           return { success: false, error: `解散群失败: ${(error as Error).message}` };
         }
+      }
+
+      // Debug chat commands (Issue #487)
+      case 'set-debug': {
+        const previousChatId = this.debugChatService.setDebugChat(command.chatId);
+        if (previousChatId) {
+          return {
+            success: true,
+            message: `✅ **调试群已转移**\n\n从 \`${previousChatId}\` 转移至此群 (\`${command.chatId}\`)`,
+          };
+        }
+        return {
+          success: true,
+          message: `✅ **调试群已设置**\n\n此群 (\`${command.chatId}\`) 已设为调试群`,
+        };
+      }
+
+      case 'show-debug': {
+        const debugChatId = this.debugChatService.getDebugChat();
+        if (debugChatId) {
+          return {
+            success: true,
+            message: `📋 **当前调试群**\n\n群 ID: \`${debugChatId}\``,
+          };
+        }
+        return {
+          success: true,
+          message: '📋 **当前调试群**\n\n尚未设置调试群',
+        };
+      }
+
+      case 'clear-debug': {
+        const previousChatId = this.debugChatService.clearDebugChat();
+        if (previousChatId) {
+          return {
+            success: true,
+            message: `✅ **调试群已清除**\n\n原调试群: \`${previousChatId}\``,
+          };
+        }
+        return {
+          success: true,
+          message: '✅ **调试群已清除**\n\n（此前未设置调试群）',
+        };
       }
 
       default:
