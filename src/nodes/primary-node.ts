@@ -57,6 +57,8 @@ import {
   getMembers,
 } from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
+// Debug group (Issue #487)
+import { getDebugGroupService } from './debug-group-service.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -706,6 +708,59 @@ export class PrimaryNode extends EventEmitter {
           logger.error({ err: error }, 'Failed to dissolve group');
           return { success: false, error: `解散群失败: ${(error as Error).message}` };
         }
+      }
+
+      // Debug group commands (Issue #487)
+      case 'set-debug': {
+        const debugGroupService = getDebugGroupService();
+        const previous = debugGroupService.setDebugGroup(command.chatId);
+
+        if (previous) {
+          return {
+            success: true,
+            message: `✅ **调试群已转移**\n\n从 \`${previous.chatId}\` 转移至此群 (\`${command.chatId}\`)`,
+          };
+        }
+
+        return {
+          success: true,
+          message: `✅ **调试群已设置**\n\n此群 (\`${command.chatId}\`) 已设为调试群`,
+        };
+      }
+
+      case 'show-debug': {
+        const debugGroupService = getDebugGroupService();
+        const current = debugGroupService.getDebugGroup();
+
+        if (!current) {
+          return {
+            success: true,
+            message: '📋 **调试群状态**\n\n尚未设置调试群\n\n使用 `/set-debug` 设置当前群为调试群',
+          };
+        }
+
+        const setAt = new Date(current.setAt).toLocaleString('zh-CN');
+        return {
+          success: true,
+          message: `📋 **调试群状态**\n\n群 ID: \`${current.chatId}\`\n设置时间: ${setAt}`,
+        };
+      }
+
+      case 'clear-debug': {
+        const debugGroupService = getDebugGroupService();
+        const previous = debugGroupService.clearDebugGroup();
+
+        if (!previous) {
+          return {
+            success: true,
+            message: '📋 **调试群状态**\n\n没有设置调试群，无需清除',
+          };
+        }
+
+        return {
+          success: true,
+          message: `✅ **调试群已清除**\n\n原调试群: \`${previous.chatId}\``,
+        };
       }
 
       default:
