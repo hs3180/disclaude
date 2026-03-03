@@ -95,7 +95,7 @@ export interface ExecNodeInfo {
   /** Connection timestamp */
   connectedAt: Date;
   /** Whether this is a local execution capability */
-  isLocal?: boolean;
+  isLocal: boolean;
 }
 
 /**

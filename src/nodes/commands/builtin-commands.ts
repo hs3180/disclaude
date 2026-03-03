@@ -2,8 +2,10 @@
  * Built-in Commands - Default command implementations.
  *
  * These commands are registered by default and provide core functionality.
+ * Each command uses injected services from CommandContext to execute actual logic.
  *
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
+ * Issue #537: 完成所有指令的 DI 重构
  */
 
 import type { Command, CommandContext, CommandResult } from './types.js';
@@ -16,8 +18,8 @@ export class ResetCommand implements Command {
   readonly category = 'session' as const;
   readonly description = '重置对话';
 
-  execute(_context: CommandContext): CommandResult {
-    // Actual reset is handled by PrimaryNode
+  async execute(context: CommandContext): Promise<CommandResult> {
+    await context.services.sendCommand('reset', context.chatId);
     return {
       success: true,
       message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
@@ -33,11 +35,20 @@ export class StatusCommand implements Command {
   readonly category = 'session' as const;
   readonly description = '查看状态';
 
-  execute(_context: CommandContext): CommandResult {
-    // Actual status is handled by PrimaryNode
+  execute(context: CommandContext): CommandResult {
+    const { services, chatId } = context;
+    const status = services.isRunning() ? 'Running' : 'Stopped';
+    const execNodesList = services.getExecNodes();
+    const execStatus = execNodesList.length > 0
+      ? execNodesList.map(n => `${n.name} (${n.status}${n.isLocal ? ', local' : ''})`).join(', ')
+      : 'None';
+    const channelStatus = services.getChannelStatus();
+    const currentNodeId = services.getChatNodeAssignment(chatId);
+    const currentNode = execNodesList.find(n => n.nodeId === currentNodeId);
+
     return {
       success: true,
-      message: '📊 **状态**\n\n请稍后...',
+      message: `📊 **状态**\n\n状态: ${status}\n节点ID: ${services.getLocalNodeId()}\n执行节点: ${execStatus}\n当前节点: ${currentNode?.name || '未分配'}\n通道: ${channelStatus}`,
     };
   }
 }
@@ -72,12 +83,22 @@ export class ListNodesCommand implements Command {
   readonly category = 'node' as const;
   readonly description = '列出执行节点';
 
-  execute(_context: CommandContext): CommandResult {
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '📋 **执行节点列表**\n\n请稍后...',
-    };
+  execute(context: CommandContext): CommandResult {
+    const { services, chatId } = context;
+    const nodes = services.getExecNodes();
+
+    if (nodes.length === 0) {
+      return { success: true, message: '📋 **执行节点列表**\n\n暂无执行节点' };
+    }
+
+    const currentNodeId = services.getChatNodeAssignment(chatId);
+    const nodesList = nodes.map(n => {
+      const isCurrent = n.nodeId === currentNodeId ? ' ✓ (当前)' : '';
+      const localTag = n.isLocal ? ' [本地]' : '';
+      return `- ${n.name}${localTag} [${n.status}]${isCurrent} (${n.activeChats} 活跃会话)`;
+    }).join('\n');
+
+    return { success: true, message: `📋 **执行节点列表**\n\n${nodesList}` };
   }
 }
 
@@ -91,17 +112,26 @@ export class SwitchNodeCommand implements Command {
   readonly usage = 'switch-node <nodeId>';
 
   execute(context: CommandContext): CommandResult {
-    if (context.args.length === 0) {
+    const { services, chatId, args } = context;
+
+    if (args.length === 0) {
+      const nodes = services.getExecNodes();
+      const nodesList = nodes.map(n => `- \`${n.nodeId}\` (${n.name}${n.isLocal ? ', local' : ''})`).join('\n');
       return {
         success: false,
-        error: '请指定目标节点 ID。\n\n用法: `/switch-node <nodeId>`',
+        error: `请指定目标节点ID。\n\n可用节点:\n${nodesList}`,
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **切换节点中...**',
-    };
+
+    const [targetNodeId] = args;
+    const success = services.switchChatNode(chatId, targetNodeId);
+
+    if (success) {
+      const node = services.getNode(targetNodeId);
+      return { success: true, message: `✅ **已切换执行节点**\n\n当前节点: ${node?.name || targetNodeId}` };
+    } else {
+      return { success: false, error: `切换失败，节点 \`${targetNodeId}\` 不可用` };
+    }
   }
 }
 
@@ -113,8 +143,8 @@ export class RestartCommand implements Command {
   readonly category = 'node' as const;
   readonly description = '重启服务';
 
-  execute(_context: CommandContext): CommandResult {
-    // Actual implementation is handled by PrimaryNode
+  async execute(context: CommandContext): Promise<CommandResult> {
+    await context.services.sendCommand('restart', context.chatId);
     return {
       success: true,
       message: '🔄 **正在重启服务...**',
@@ -131,18 +161,44 @@ export class CreateGroupCommand implements Command {
   readonly description = '创建群';
   readonly usage = 'create-group <name> <members>';
 
-  execute(context: CommandContext): CommandResult {
-    if (context.args.length < 2) {
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args, userId } = context;
+
+    if (args.length < 2) {
       return {
         success: false,
         error: '用法: `/create-group <群名称> <成员1,成员2,...>`\n\n示例: `/create-group 讨论组 ou_xxx,ou_yyy`',
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **创建群中...**',
-    };
+
+    const [name, ...restArgs] = args;
+    const membersArg = restArgs.join(' ');
+    const members = membersArg.split(',').map(m => m.trim()).filter(m => m);
+
+    if (members.length === 0) {
+      return { success: false, error: '请至少指定一个成员 (open_id 格式: ou_xxx)' };
+    }
+
+    try {
+      const client = services.getFeishuClient();
+      const chatId = await services.createDiscussionChat(client, { topic: name, members });
+
+      // Register the group
+      services.registerGroup({
+        chatId,
+        name,
+        createdAt: Date.now(),
+        createdBy: userId,
+        initialMembers: members,
+      });
+
+      return {
+        success: true,
+        message: `✅ **群创建成功**\n\n群名称: ${name}\n群 ID: \`${chatId}\`\n成员数: ${members.length}`,
+      };
+    } catch (error) {
+      return { success: false, error: `创建群失败: ${(error as Error).message}` };
+    }
   }
 }
 
@@ -155,18 +211,25 @@ export class AddMemberCommand implements Command {
   readonly description = '添加成员';
   readonly usage = 'add-member <groupId> <member>';
 
-  execute(context: CommandContext): CommandResult {
-    if (context.args.length < 2) {
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args } = context;
+
+    if (args.length < 2) {
       return {
         success: false,
         error: '用法: `/add-member <群ID> <成员ID>`\n\n示例: `/add-member oc_xxx ou_yyy`',
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **添加成员中...**',
-    };
+
+    const [groupId, memberId] = args;
+
+    try {
+      const client = services.getFeishuClient();
+      await services.addMembers(client, groupId, [memberId]);
+      return { success: true, message: `✅ **成员添加成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
+    } catch (error) {
+      return { success: false, error: `添加成员失败: ${(error as Error).message}` };
+    }
   }
 }
 
@@ -179,18 +242,25 @@ export class RemoveMemberCommand implements Command {
   readonly description = '移除成员';
   readonly usage = 'remove-member <groupId> <member>';
 
-  execute(context: CommandContext): CommandResult {
-    if (context.args.length < 2) {
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args } = context;
+
+    if (args.length < 2) {
       return {
         success: false,
         error: '用法: `/remove-member <群ID> <成员ID>`\n\n示例: `/remove-member oc_xxx ou_yyy`',
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **移除成员中...**',
-    };
+
+    const [groupId, memberId] = args;
+
+    try {
+      const client = services.getFeishuClient();
+      await services.removeMembers(client, groupId, [memberId]);
+      return { success: true, message: `✅ **成员移除成功**\n\n群 ID: \`${groupId}\`\n成员: \`${memberId}\`` };
+    } catch (error) {
+      return { success: false, error: `移除成员失败: ${(error as Error).message}` };
+    }
   }
 }
 
@@ -203,18 +273,34 @@ export class ListMemberCommand implements Command {
   readonly description = '列出成员';
   readonly usage = 'list-member <groupId>';
 
-  execute(context: CommandContext): CommandResult {
-    if (context.args.length < 1) {
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args } = context;
+
+    if (args.length < 1) {
       return {
         success: false,
         error: '用法: `/list-member <群ID>`\n\n示例: `/list-member oc_xxx`',
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **获取成员列表中...**',
-    };
+
+    const [groupId] = args;
+
+    try {
+      const client = services.getFeishuClient();
+      const members = await services.getMembers(client, groupId);
+
+      if (members.length === 0) {
+        return { success: true, message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: 0` };
+      }
+
+      const memberList = members.map(m => `- \`${m}\``).join('\n');
+      return {
+        success: true,
+        message: `📋 **群成员列表**\n\n群 ID: \`${groupId}\`\n成员数: ${members.length}\n\n${memberList}`,
+      };
+    } catch (error) {
+      return { success: false, error: `获取成员列表失败: ${(error as Error).message}` };
+    }
   }
 }
 
@@ -226,11 +312,21 @@ export class ListGroupCommand implements Command {
   readonly category = 'group' as const;
   readonly description = '列出群';
 
-  execute(_context: CommandContext): CommandResult {
-    // Actual implementation is handled by PrimaryNode
+  execute(context: CommandContext): CommandResult {
+    const groups = context.services.listGroups();
+
+    if (groups.length === 0) {
+      return { success: true, message: '📋 **管理的群列表**\n\n暂无管理的群' };
+    }
+
+    const groupList = groups.map(g => {
+      const createdAt = new Date(g.createdAt).toLocaleString('zh-CN');
+      return `- **${g.name}** \`${g.chatId}\`\n  创建时间: ${createdAt}\n  初始成员: ${g.initialMembers.length}`;
+    }).join('\n\n');
+
     return {
       success: true,
-      message: '🔄 **获取群列表中...**',
+      message: `📋 **管理的群列表**\n\n群数量: ${groups.length}\n\n${groupList}`,
     };
   }
 }
@@ -244,18 +340,32 @@ export class DissolveGroupCommand implements Command {
   readonly description = '解散群';
   readonly usage = 'dissolve-group <groupId>';
 
-  execute(context: CommandContext): CommandResult {
-    if (context.args.length < 1) {
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args } = context;
+
+    if (args.length < 1) {
       return {
         success: false,
         error: '用法: `/dissolve-group <群ID>`\n\n示例: `/dissolve-group oc_xxx`',
       };
     }
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **解散群中...**',
-    };
+
+    const [groupId] = args;
+
+    try {
+      const client = services.getFeishuClient();
+      await services.dissolveChat(client, groupId);
+
+      // Unregister the group
+      const wasManaged = services.unregisterGroup(groupId);
+
+      return {
+        success: true,
+        message: `✅ **群解散成功**\n\n群 ID: \`${groupId}\`${wasManaged ? '' : ' (非托管群)'}`,
+      };
+    } catch (error) {
+      return { success: false, error: `解散群失败: ${(error as Error).message}` };
+    }
   }
 }
 
@@ -285,6 +395,85 @@ export class PassiveCommand implements Command {
     return {
       success: true,
       message: '🔄 **被动模式设置中...**',
+      // Signal that this needs special handling
+      data: { subCommand, needsSpecialHandling: true },
+    };
+  }
+}
+
+/**
+ * Set Debug Command - Set the debug group.
+ */
+export class SetDebugCommand implements Command {
+  readonly name = 'set-debug';
+  readonly category = 'debug' as const;
+  readonly description = '设置调试群';
+
+  execute(context: CommandContext): CommandResult {
+    const { services, chatId } = context;
+    const previous = services.setDebugGroup(chatId);
+
+    if (previous) {
+      return {
+        success: true,
+        message: `✅ **调试群已转移**\n\n从 \`${previous.chatId}\` 转移至此群 (\`${chatId}\`)`,
+      };
+    }
+
+    return {
+      success: true,
+      message: `✅ **调试群已设置**\n\n此群 (\`${chatId}\`) 已设为调试群`,
+    };
+  }
+}
+
+/**
+ * Show Debug Command - Show the current debug group.
+ */
+export class ShowDebugCommand implements Command {
+  readonly name = 'show-debug';
+  readonly category = 'debug' as const;
+  readonly description = '查看调试群';
+
+  execute(context: CommandContext): CommandResult {
+    const current = context.services.getDebugGroup();
+
+    if (!current) {
+      return {
+        success: true,
+        message: '📋 **调试群状态**\n\n尚未设置调试群\n\n使用 `/set-debug` 设置当前群为调试群',
+      };
+    }
+
+    const setAt = new Date(current.setAt).toLocaleString('zh-CN');
+    return {
+      success: true,
+      message: `📋 **调试群状态**\n\n群 ID: \`${current.chatId}\`\n设置时间: ${setAt}`,
+    };
+  }
+}
+
+/**
+ * Clear Debug Command - Clear the debug group.
+ */
+export class ClearDebugCommand implements Command {
+  readonly name = 'clear-debug';
+  readonly category = 'debug' as const;
+  readonly description = '清除调试群';
+
+  execute(context: CommandContext): CommandResult {
+    const previous = context.services.clearDebugGroup();
+
+    if (!previous) {
+      return {
+        success: true,
+        message: '📋 **调试群状态**\n\n没有设置调试群，无需清除',
+      };
+    }
+
+    return {
+      success: true,
+      message: `✅ **调试群已清除**\n\n原调试群: \`${previous.chatId}\``,
     };
   }
 }
@@ -348,7 +537,7 @@ export class NodeCommand implements Command {
     // Actual implementation is handled by PrimaryNode
     return {
       success: true,
-      message: `🔄 **节点命令执行中...**`,
+      message: '🔄 **节点命令执行中...**',
       // Pass through the subcommand and remaining args for PrimaryNode to handle
       data: {
         subcommand: subCommand,
@@ -378,6 +567,9 @@ export function registerDefaultCommands(
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());
   registry.register(new PassiveCommand());
+  registry.register(new SetDebugCommand());
+  registry.register(new ShowDebugCommand());
+  registry.register(new ClearDebugCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
 }
