@@ -71,6 +71,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
+  /**
+   * Passive mode state storage.
+   * Key: chatId, Value: true if passive mode is disabled (bot responds to all messages)
+   * Issue #511: Group chat passive mode control
+   */
+  private passiveModeDisabled: Map<string, boolean> = new Map();
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
@@ -317,6 +324,48 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Check if passive mode is disabled for a specific chat.
+   * When passive mode is disabled, the bot responds to all messages in group chats.
+   *
+   * Issue #511: Group chat passive mode control
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if passive mode is disabled (bot responds to all messages)
+   */
+  isPassiveModeDisabled(chatId: string): boolean {
+    return this.passiveModeDisabled.get(chatId) === true;
+  }
+
+  /**
+   * Set passive mode state for a specific chat.
+   *
+   * Issue #511: Group chat passive mode control
+   *
+   * @param chatId - Chat ID to configure
+   * @param disabled - true to disable passive mode (respond to all messages)
+   */
+  setPassiveModeDisabled(chatId: string, disabled: boolean): void {
+    if (disabled) {
+      this.passiveModeDisabled.set(chatId, true);
+      logger.info({ chatId }, 'Passive mode disabled for chat');
+    } else {
+      this.passiveModeDisabled.delete(chatId);
+      logger.info({ chatId }, 'Passive mode enabled for chat');
+    }
+  }
+
+  /**
+   * Get all chats with passive mode disabled.
+   *
+   * Issue #511: Group chat passive mode control
+   *
+   * @returns Array of chat IDs with passive mode disabled
+   */
+  getPassiveModeDisabledChats(): string[] {
+    return Array.from(this.passiveModeDisabled.keys());
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -519,10 +568,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
     }
 
-    // Issue #460: Group chat passive mode
+    // Issue #460 & #511: Group chat passive mode
     // In group chats, only respond when bot is mentioned (@bot)
     // This allows scheduled tasks to broadcast without triggering unwanted responses
-    if (this.isGroupChat(chat_type) && !botMentioned) {
+    // Issue #511: Passive mode can be disabled per chat via /passive command
+    const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
+    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled) {
       logger.debug(
         { messageId: message_id, chatId: chat_id, chat_type },
         'Skipped group chat message without @mention (passive mode)'
