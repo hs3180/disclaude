@@ -292,4 +292,14 @@ ${task.prompt}`;
   getRunningTaskIds(): string[] {
     return Array.from(this.runningTasks);
   }
+
+  /**
+   * Manually trigger a task execution.
+   * Issue #469: Schedule control commands
+   *
+   * @param task - Task to execute
+   */
+  async triggerTask(task: ScheduledTask): Promise<void> {
+    await this.executeTask(task);
+  }
 }

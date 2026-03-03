@@ -550,6 +550,23 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        // Schedule management (Issue #469)
+        listSchedules: async (chatId: string) => {
+          if (!this.schedulerService) return [];
+          return this.schedulerService.listSchedules(chatId);
+        },
+        getSchedule: async (taskId: string) => {
+          if (!this.schedulerService) return undefined;
+          return this.schedulerService.getSchedule(taskId);
+        },
+        toggleSchedule: async (taskId: string, enabled: boolean) => {
+          if (!this.schedulerService) return false;
+          return this.schedulerService.toggleSchedule(taskId, enabled);
+        },
+        triggerSchedule: async (taskId: string) => {
+          if (!this.schedulerService) return false;
+          return this.schedulerService.triggerSchedule(taskId);
+        },
       },
     };
 

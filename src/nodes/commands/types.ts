@@ -111,6 +111,35 @@ export interface CommandServices {
 
   /** Get channel status list */
   getChannelStatus: () => string;
+
+  // Schedule management (Issue #469)
+
+  /** List all schedules for current chat */
+  listSchedules: (chatId: string) => Promise<{
+    id: string;
+    name: string;
+    cron: string;
+    enabled: boolean;
+    isRunning?: boolean;
+  }[]>;
+
+  /** Get a specific schedule by ID */
+  getSchedule: (taskId: string) => Promise<{
+    id: string;
+    name: string;
+    cron: string;
+    enabled: boolean;
+    chatId: string;
+    prompt: string;
+    blocking?: boolean;
+    isRunning?: boolean;
+  } | undefined>;
+
+  /** Toggle schedule enabled state */
+  toggleSchedule: (taskId: string, enabled: boolean) => Promise<boolean>;
+
+  /** Trigger a schedule manually */
+  triggerSchedule: (taskId: string) => Promise<boolean>;
 }
 
 /**

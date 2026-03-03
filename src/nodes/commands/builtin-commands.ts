@@ -548,6 +548,181 @@ export class NodeCommand implements Command {
 }
 
 /**
+ * Schedule Command - Unified schedule management commands.
+ * Issue #469: 定时任务控制指令
+ *
+ * Subcommands:
+ * - list: List all schedules for current chat
+ * - status <name>: View schedule details
+ * - enable <name>: Enable a schedule
+ * - disable <name>: Disable a schedule
+ * - run <name>: Manually trigger a schedule
+ */
+export class ScheduleCommand implements Command {
+  readonly name = 'schedule';
+  readonly category = 'schedule' as const;
+  readonly description = '定时任务管理';
+  readonly usage = 'schedule <list|status|enable|disable|run> [name]';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const subCommand = context.args[0]?.toLowerCase();
+
+    // If no subcommand, show help
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `⏰ **定时任务管理指令**
+
+用法: \`/schedule <子命令> [参数]\`
+
+**可用子命令:**
+- \`list\` - 列出当前聊天的所有定时任务
+- \`status <任务ID>\` - 查看任务详细状态
+- \`enable <任务ID>\` - 启用定时任务
+- \`disable <任务ID>\` - 禁用定时任务
+- \`run <任务ID>\` - 手动触发定时任务
+
+示例:
+\`\`\`
+/schedule list
+/schedule status schedule-daily-report
+/schedule enable schedule-daily-report
+/schedule run schedule-daily-report
+\`\`\``,
+      };
+    }
+
+    const { services, chatId } = context;
+    const taskId = context.args[1];
+
+    switch (subCommand) {
+      case 'list':
+        return this.listSchedules(services, chatId);
+
+      case 'status':
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule status <任务ID>`' };
+        }
+        return this.showScheduleStatus(services, taskId);
+
+      case 'enable':
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule enable <任务ID>`' };
+        }
+        return this.toggleSchedule(services, taskId, true);
+
+      case 'disable':
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule disable <任务ID>`' };
+        }
+        return this.toggleSchedule(services, taskId, false);
+
+      case 'run':
+        if (!taskId) {
+          return { success: false, error: '请指定任务ID\n\n用法: `/schedule run <任务ID>`' };
+        }
+        return this.triggerSchedule(services, taskId);
+
+      default:
+        return {
+          success: false,
+          error: `未知的子命令: \`${subCommand}\`
+
+可用子命令: \`list\`, \`status\`, \`enable\`, \`disable\`, \`run\``,
+        };
+    }
+  }
+
+  private async listSchedules(
+    services: CommandContext['services'],
+    chatId: string
+  ): Promise<CommandResult> {
+    const schedules = await services.listSchedules(chatId);
+
+    if (schedules.length === 0) {
+      return { success: true, message: '⏰ **定时任务列表**\n\n当前聊天没有定时任务' };
+    }
+
+    const scheduleList = schedules.map(s => {
+      const status = s.enabled ? '✅' : '❌';
+      const running = s.isRunning ? ' 🔄执行中' : '';
+      return `- ${status} \`${s.id}\` - ${s.name} (\`${s.cron}\`)${running}`;
+    }).join('\n');
+
+    return {
+      success: true,
+      message: `⏰ **定时任务列表**\n\n任务数: ${schedules.length}\n\n${scheduleList}`,
+    };
+  }
+
+  private async showScheduleStatus(
+    services: CommandContext['services'],
+    taskId: string
+  ): Promise<CommandResult> {
+    const schedule = await services.getSchedule(taskId);
+
+    if (!schedule) {
+      return { success: false, error: `任务 \`${taskId}\` 不存在` };
+    }
+
+    const status = schedule.enabled ? '✅ 已启用' : '❌ 已禁用';
+    const running = schedule.isRunning ? '\n\n🔄 **正在执行中**' : '';
+    const blocking = schedule.blocking ? '是' : '否';
+
+    return {
+      success: true,
+      message: `⏰ **定时任务详情**
+
+**ID:** \`${schedule.id}\`
+**名称:** ${schedule.name}
+**状态:** ${status}
+**Cron:** \`${schedule.cron}\`
+**阻塞模式:** ${blocking}
+**聊天ID:** \`${schedule.chatId}\`
+
+**任务内容:**
+\`\`\`
+${schedule.prompt.slice(0, 200)}${schedule.prompt.length > 200 ? '...' : ''}
+\`\`\`${running}`,
+    };
+  }
+
+  private async toggleSchedule(
+    services: CommandContext['services'],
+    taskId: string,
+    enabled: boolean
+  ): Promise<CommandResult> {
+    const success = await services.toggleSchedule(taskId, enabled);
+
+    if (!success) {
+      return { success: false, error: `任务 \`${taskId}\` 不存在或操作失败` };
+    }
+
+    const action = enabled ? '启用' : '禁用';
+    return {
+      success: true,
+      message: `✅ **定时任务已${action}**\n\n任务 \`${taskId}\` 已${action}`,
+    };
+  }
+
+  private async triggerSchedule(
+    services: CommandContext['services'],
+    taskId: string
+  ): Promise<CommandResult> {
+    const success = await services.triggerSchedule(taskId);
+
+    if (!success) {
+      return { success: false, error: `任务 \`${taskId}\` 不存在或触发失败` };
+    }
+
+    return {
+      success: true,
+      message: `🚀 **定时任务已触发**\n\n任务 \`${taskId}\` 已开始执行`,
+    };
+  }
+}
+
+/**
  * Register default commands to a registry.
  */
 export function registerDefaultCommands(
@@ -572,4 +747,6 @@ export function registerDefaultCommands(
   registry.register(new ClearDebugCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
+  // Issue #469: Schedule management command
+  registry.register(new ScheduleCommand());
 }
