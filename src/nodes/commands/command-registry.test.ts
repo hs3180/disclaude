@@ -35,6 +35,13 @@ function createMockServices(): CommandServices {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'feishu: connected',
+    // Schedule management (Issue #469)
+    listSchedules: () => Promise.resolve([]),
+    getSchedule: () => Promise.resolve(undefined),
+    enableSchedule: () => Promise.resolve(false),
+    disableSchedule: () => Promise.resolve(false),
+    runSchedule: () => Promise.resolve(false),
+    isScheduleRunning: () => false,
   };
 }
 

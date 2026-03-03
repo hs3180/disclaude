@@ -15,6 +15,29 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
 
 /**
+ * Schedule task info for display.
+ * Issue #469: 定时任务控制指令
+ */
+export interface ScheduleTaskInfo {
+  /** Task ID */
+  id: string;
+  /** Task name */
+  name: string;
+  /** Cron expression */
+  cron: string;
+  /** Whether task is enabled */
+  enabled: boolean;
+  /** Whether task is currently scheduled */
+  isScheduled: boolean;
+  /** Whether task is currently running */
+  isRunning: boolean;
+  /** Target chat ID */
+  chatId: string;
+  /** Creation timestamp */
+  createdAt?: string;
+}
+
+/**
  * Execution node info for status display.
  */
 export interface ExecNodeInfo {
@@ -111,6 +134,25 @@ export interface CommandServices {
 
   /** Get channel status list */
   getChannelStatus: () => string;
+
+  // Schedule management (Issue #469)
+  /** List all scheduled tasks */
+  listSchedules: () => Promise<ScheduleTaskInfo[]>;
+
+  /** Get a schedule by name or ID */
+  getSchedule: (nameOrId: string) => Promise<ScheduleTaskInfo | undefined>;
+
+  /** Enable a schedule */
+  enableSchedule: (nameOrId: string) => Promise<boolean>;
+
+  /** Disable a schedule */
+  disableSchedule: (nameOrId: string) => Promise<boolean>;
+
+  /** Manually trigger a schedule */
+  runSchedule: (nameOrId: string) => Promise<boolean>;
+
+  /** Check if a schedule is currently running */
+  isScheduleRunning: (taskId: string) => boolean;
 }
 
 /**
