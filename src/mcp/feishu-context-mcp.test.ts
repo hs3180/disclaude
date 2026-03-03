@@ -191,6 +191,61 @@ describe('Feishu Context MCP Tools', () => {
         );
       });
 
+      it('should return messageId from API response (Issue #525)', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({
+          data: { message_id: 'om_test_message_id' },
+        });
+
+        const result = await send_user_feedback({
+          content: 'Hello Feishu',
+          format: 'text',
+          chatId: 'chat-123',
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.messageId).toBe('om_test_message_id');
+      });
+
+      it('should return messageId for card messages (Issue #525)', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({
+          data: { message_id: 'om_card_message_id' },
+        });
+
+        const cardContent = {
+          config: { wide_screen_mode: true },
+          header: {
+            title: { tag: 'plain_text', content: 'Test Card' },
+            template: 'blue',
+          },
+          elements: [{ tag: 'markdown', content: '**Hello**' }],
+        };
+
+        const result = await send_user_feedback({
+          content: cardContent,
+          format: 'card',
+          chatId: 'chat-123',
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.messageId).toBe('om_card_message_id');
+      });
+
+      it('should return messageId for thread replies (Issue #525)', async () => {
+        mockClient.im.message.reply.mockResolvedValueOnce({
+          data: { message_id: 'om_reply_message_id' },
+        });
+
+        const result = await send_user_feedback({
+          content: 'Thread reply',
+          format: 'text',
+          chatId: 'chat-123',
+          parentMessageId: 'msg-456',
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.messageId).toBe('om_reply_message_id');
+      });
+
       it('should send text message with thread reply', async () => {
         mockClient.im.message.reply.mockResolvedValueOnce({});
 
