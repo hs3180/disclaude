@@ -12,12 +12,13 @@
 # Run Modes:
 #   This image supports two deployment modes:
 #
-#   1. Communication Node (default) - Handles Feishu WebSocket connections
+#   1. Primary Node (default) - Handles Feishu WebSocket + Agent execution
 #      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
 #
-#   2. Execution Node - Handles Pilot/Agent task execution
+#   2. Worker Node - Handles Pilot/Agent task execution only
 #      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
-#        disclaude:latest pm2-runtime start ecosystem.exec.config.json
+#        -e COMM_URL=ws://primary:3001 \
+#        disclaude:latest pm2-runtime start ecosystem.worker.config.json
 #
 # For production deployment with both nodes, use docker-compose.yml.
 # =============================================================================
@@ -114,8 +115,11 @@ RUN groupadd -g 1001 disclaude && \
     useradd -r -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -c "Disclaude user" disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.pm2 && \
-    chown -R disclaude:disclaude /app/workspace /app/logs /app/.claude /app/.pm2
+# Also create .claude.json with empty JSON object to avoid SDK config parse errors
+# SDK requires this file to be valid JSON or it will crash on startup
+RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.claude/backups /app/.claude/debug /app/.pm2 && \
+    echo '{}' > /app/.claude.json && \
+    chown -R disclaude:disclaude /app
 
 # Copy built artifacts from builder and production dependencies from deps
 # Use --chown to set ownership during copy, avoiding slow recursive chown of node_modules
@@ -124,40 +128,42 @@ COPY --from=deps --chown=disclaude:disclaude /app/node_modules ./node_modules
 COPY --from=builder --chown=disclaude:disclaude /app/package.json ./
 
 # Copy PM2 ecosystem configs for Docker (one for each mode)
-COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.comm.config.json ./
-COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.exec.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.primary.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.worker.config.json ./
 
 # Copy skills directory if it exists
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 
 # Set environment variables
 ENV NODE_ENV=production
+ENV DISCLAUDE_MODE=primary
 
 # Health check - check if PM2 process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pm2 pid disclaude-docker > /dev/null 2>&1 || exit 1
+    CMD pm2 pid disclaude-primary > /dev/null 2>&1 || exit 1
 
 # Switch to non-root user
 USER disclaude
 
-# Default command: run Communication Node (comm mode) with PM2
+# Default command: run Primary Node with PM2
 #
 # This image supports two modes:
-#   - comm: Communication Node (Feishu WebSocket handler) - DEFAULT
-#   - exec: Execution Node (Pilot/Agent handler)
+#   - primary: Primary Node (Feishu WebSocket + Agent handler) - DEFAULT
+#   - worker: Worker Node (Agent handler only, connects to Primary)
 #
 # Usage examples:
 #
-#   # Run with default comm mode (recommended for most users)
+#   # Run with default primary mode (recommended for most users)
 #   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
 #
-#   # Run exec mode (for distributed deployment)
+#   # Run worker mode (for distributed deployment)
 #   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
-#     disclaude:latest pm2-runtime start ecosystem.exec.config.json
+#     -e COMM_URL=ws://primary:3001 \
+#     disclaude:latest pm2-runtime start ecosystem.worker.config.json
 #
 # For full two-node deployment, use docker-compose.yml which configures both modes.
 #
 # Logs will be available at:
 #   - /app/logs/disclaude-combined.log (pino application logs)
 #   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
-CMD ["pm2-runtime", "start", "ecosystem.comm.config.json"]
+CMD ["pm2-runtime", "start", "ecosystem.primary.config.json"]

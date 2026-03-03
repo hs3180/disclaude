@@ -1,14 +1,14 @@
 # =============================================================================
-# Disclaude Exec Node Dockerfile
+# Disclaude Worker Node Dockerfile
 # =============================================================================
-# Python-based image for the Execution Node to enhance data analysis capabilities.
+# Python-based image for the Worker Node to enhance data analysis capabilities.
 #
-# This Dockerfile is specifically for the exec node, which needs:
+# This Dockerfile is specifically for the worker node, which needs:
 # - Python runtime for data analysis tasks (pandas, numpy, matplotlib, etc.)
 # - Node.js runtime for the Disclaude TypeScript application
 #
 # Build:
-#   docker build -f Dockerfile.exec -t disclaude:exec .
+#   docker build -f Dockerfile.worker -t disclaude:worker .
 #
 # =============================================================================
 
@@ -150,8 +150,8 @@ COPY --from=deps --chown=disclaude:disclaude /app/node_modules ./node_modules
 COPY --from=builder --chown=disclaude:disclaude /app/package.json ./
 
 # Copy PM2 ecosystem configs for Docker (one for each mode)
-COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.comm.config.json ./
-COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.exec.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.primary.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.worker.config.json ./
 
 # Copy skills directory if it exists
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
@@ -163,10 +163,11 @@ RUN chown disclaude:disclaude /app
 # Set environment variables
 ENV NODE_ENV=production
 ENV PYTHONUNBUFFERED=1
+ENV DISCLAUDE_MODE=worker
 
 # Health check - check if PM2 process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pm2 pid disclaude-docker > /dev/null 2>&1 || exit 1
+    CMD pm2 pid disclaude-worker > /dev/null 2>&1 || exit 1
 
 # Switch to non-root user
 USER disclaude
@@ -175,4 +176,4 @@ USER disclaude
 # Logs will be available at:
 #   - /app/logs/disclaude-combined.log (pino application logs)
 #   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
-CMD ["pm2-runtime", "start", "ecosystem.exec.config.json"]
+CMD ["pm2-runtime", "start", "ecosystem.worker.config.json"]
