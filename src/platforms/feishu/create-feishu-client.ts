@@ -34,7 +34,7 @@ function isRetryableError(error: unknown): boolean {
 
   // Server errors (5xx) are potentially retryable
   if (axiosError.response?.status) {
-    const status = axiosError.response.status;
+    const { status } = axiosError.response;
     // 429 Too Many Requests, 500+ server errors
     return status === 429 || (status >= 500 && status < 600);
   }
@@ -124,7 +124,7 @@ async function requestWithRetry<T>(
 function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstance {
   return {
     request: async (opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.request({
           url: opts.url,
           method: opts.method,
@@ -138,7 +138,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     get: async (url, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.get(url, {
           params: opts?.params,
           headers: opts?.headers,
@@ -149,7 +149,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     delete: async (url, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.delete(url, {
           params: opts?.params,
           headers: opts?.headers,
@@ -160,7 +160,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     head: async (url, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.head(url, {
           params: opts?.params,
           headers: opts?.headers,
@@ -171,7 +171,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     options: async (url, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.options(url, {
           params: opts?.params,
           headers: opts?.headers,
@@ -182,7 +182,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     post: async (url, data, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.post(url, data, {
           params: opts?.params,
           headers: opts?.headers,
@@ -193,7 +193,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     put: async (url, data, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.put(url, data, {
           params: opts?.params,
           headers: opts?.headers,
@@ -204,7 +204,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
       );
     },
     patch: async (url, data, opts) => {
-      return requestWithRetry(
+      return await requestWithRetry(
         () => axiosInstance.patch(url, data, {
           params: opts?.params,
           headers: opts?.headers,

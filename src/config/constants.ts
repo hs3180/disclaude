@@ -64,7 +64,6 @@ export const FEISHU_API = {
 } as const;
 
 /**
-<<<<<<< feat/issue-517-passive-mode-chat-history
  * Chat history configuration for passive mode (Issue #517)
  */
 export const CHAT_HISTORY = {
@@ -74,8 +73,9 @@ export const CHAT_HISTORY = {
   /** Maximum number of messages to include in context */
   MAX_MESSAGES: 50,
 } as const;
-=======
- * Error codes that should trigger a retry
+
+/**
+ * Error codes that should trigger a retry (Issue #507)
  */
 export const RETRYABLE_ERROR_CODES = [
   'ETIMEDOUT',
@@ -87,4 +87,3 @@ export const RETRYABLE_ERROR_CODES = [
   'ENETUNREACH',
   'EPROTO',
 ] as const;
->>>>>>> main
