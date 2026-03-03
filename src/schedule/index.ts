@@ -19,7 +19,7 @@
  */
 
 export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from './schedule-manager.js';
-export { Scheduler, type SchedulerOptions, type FeedbackChannelContext } from './scheduler.js';
+export { Scheduler, type SchedulerOptions } from './scheduler.js';
 export {
   ScheduleFileScanner,
   ScheduleFileWatcher,
