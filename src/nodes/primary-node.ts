@@ -441,9 +441,9 @@ export class PrimaryNode extends EventEmitter {
       throw new Error('Local execution not initialized');
     }
 
-    const { chatId, prompt, messageId, senderOpenId, threadId, attachments } = message;
+    const { chatId, prompt, messageId, senderOpenId, threadId, attachments, chatHistoryContext } = message;
     logger.info(
-      { chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments },
+      { chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
       'Executing prompt locally'
     );
 
@@ -457,7 +457,7 @@ export class PrimaryNode extends EventEmitter {
 
     try {
       // Use processMessage for persistent session context
-      this.sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments);
+      this.sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
       logger.error({ err, chatId }, 'Local execution failed');
@@ -510,6 +510,7 @@ export class PrimaryNode extends EventEmitter {
       senderOpenId: message.userId,
       threadId: message.threadId,
       attachments,
+      chatHistoryContext: message.metadata?.chatHistoryContext as string | undefined,
     });
   }
 

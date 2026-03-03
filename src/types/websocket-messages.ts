@@ -21,6 +21,8 @@ export interface PromptMessage {
   threadId?: string;
   /** File attachments (if any) */
   attachments?: FileRef[];
+  /** Chat history context for passive mode (Issue #517) */
+  chatHistoryContext?: string;
 }
 
 /**
