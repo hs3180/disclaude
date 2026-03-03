@@ -22,6 +22,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
     register: vi.fn().mockReturnThis(),
   })),
   LoggerLevel: { info: 'info' },
+  Domain: { Feishu: 'https://open.feishu.cn' },
 }));
 
 vi.mock('../utils/logger.js', () => ({
@@ -44,6 +45,7 @@ vi.mock('../config/index.js', () => ({
 vi.mock('../config/constants.js', () => ({
   DEDUPLICATION: { MAX_MESSAGE_AGE: 300000 },
   REACTIONS: { TYPING: 'Typing' },
+  FEISHU_API: { REQUEST_TIMEOUT_MS: 30000 },
 }));
 
 vi.mock('../feishu/message-logger.js', () => ({
