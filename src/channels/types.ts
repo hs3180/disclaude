@@ -109,7 +109,19 @@ export interface OutgoingMessage {
 /**
  * Control command types.
  */
-export type ControlCommandType = 'reset' | 'restart' | 'status' | 'list-nodes' | 'switch-node';
+export type ControlCommandType =
+  | 'reset'
+  | 'restart'
+  | 'status'
+  | 'list-nodes'
+  | 'switch-node'
+  // Group management commands (Issue #486)
+  | 'create-group'
+  | 'add-member'
+  | 'remove-member'
+  | 'list-member'
+  | 'list-group'
+  | 'dissolve-group';
 
 /**
  * Control command from user to agent.
