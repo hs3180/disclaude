@@ -2,11 +2,12 @@
  * Tests for ChatOps utility functions.
  *
  * @see Issue #402
+ * @see Issue #486 - Added removeMembers, getMembers
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createDiscussionChat, dissolveChat, addMembers } from './chat-ops.js';
+import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers } from './chat-ops.js';
 
 // Mock lark client
 const mockClient = {
@@ -17,6 +18,8 @@ const mockClient = {
     },
     chatMembers: {
       create: vi.fn(),
+      delete: vi.fn(),
+      get: vi.fn(),
     },
   },
 } as unknown as lark.Client;
@@ -132,6 +135,80 @@ describe('ChatOps', () => {
       await expect(
         addMembers(mockClient, 'oc_chat_123', ['ou_invalid_user'])
       ).rejects.toThrow('User not found');
+    });
+  });
+
+  describe('removeMembers', () => {
+    it('should remove members from a chat successfully', async () => {
+      const mockDelete = mockClient.im.chatMembers.delete as ReturnType<typeof vi.fn>;
+      mockDelete.mockResolvedValue({});
+
+      await removeMembers(mockClient, 'oc_chat_123', ['ou_user_1']);
+
+      expect(mockDelete).toHaveBeenCalledWith({
+        path: { chat_id: 'oc_chat_123' },
+        data: { id_list: ['ou_user_1'] },
+        params: { member_id_type: 'open_id' },
+      });
+    });
+
+    it('should throw on remove members error', async () => {
+      const mockDelete = mockClient.im.chatMembers.delete as ReturnType<typeof vi.fn>;
+      mockDelete.mockRejectedValue(new Error('Permission denied'));
+
+      await expect(
+        removeMembers(mockClient, 'oc_chat_123', ['ou_user_1'])
+      ).rejects.toThrow('Permission denied');
+    });
+  });
+
+  describe('getMembers', () => {
+    it('should get members from a chat successfully', async () => {
+      const mockGet = mockClient.im.chatMembers.get as ReturnType<typeof vi.fn>;
+      mockGet.mockResolvedValue({
+        data: {
+          items: [
+            { member_id: 'ou_user_1' },
+            { member_id: 'ou_user_2' },
+            { member_id: 'ou_user_3' },
+          ],
+        },
+      });
+
+      const members = await getMembers(mockClient, 'oc_chat_123');
+
+      expect(members).toEqual(['ou_user_1', 'ou_user_2', 'ou_user_3']);
+      expect(mockGet).toHaveBeenCalledWith({
+        path: { chat_id: 'oc_chat_123' },
+        params: { member_id_type: 'open_id' },
+      });
+    });
+
+    it('should return empty array when no members', async () => {
+      const mockGet = mockClient.im.chatMembers.get as ReturnType<typeof vi.fn>;
+      mockGet.mockResolvedValue({
+        data: { items: [] },
+      });
+
+      const members = await getMembers(mockClient, 'oc_chat_123');
+
+      expect(members).toEqual([]);
+    });
+
+    it('should return empty array when data is undefined', async () => {
+      const mockGet = mockClient.im.chatMembers.get as ReturnType<typeof vi.fn>;
+      mockGet.mockResolvedValue({});
+
+      const members = await getMembers(mockClient, 'oc_chat_123');
+
+      expect(members).toEqual([]);
+    });
+
+    it('should throw on get members error', async () => {
+      const mockGet = mockClient.im.chatMembers.get as ReturnType<typeof vi.fn>;
+      mockGet.mockRejectedValue(new Error('Chat not found'));
+
+      await expect(getMembers(mockClient, 'oc_invalid_chat')).rejects.toThrow('Chat not found');
     });
   });
 });

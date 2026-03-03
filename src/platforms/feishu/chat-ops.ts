@@ -116,3 +116,56 @@ export async function addMembers(
     throw error;
   }
 }
+
+/**
+ * Remove members from a chat.
+ *
+ * @param client - Feishu API client
+ * @param chatId - Target chat ID
+ * @param members - Member open_ids to remove
+ */
+export async function removeMembers(
+  client: lark.Client,
+  chatId: string,
+  members: string[]
+): Promise<void> {
+  try {
+    await client.im.chatMembers.delete({
+      path: { chat_id: chatId },
+      data: { id_list: members },
+      params: { member_id_type: 'open_id' },
+    });
+    logger.info({ chatId, memberCount: members.length }, 'Members removed');
+  } catch (error) {
+    logger.error({ err: error, chatId }, 'Failed to remove members');
+    throw error;
+  }
+}
+
+/**
+ * Get members of a chat.
+ *
+ * @param client - Feishu API client
+ * @param chatId - Target chat ID
+ * @returns Array of member open_ids
+ */
+export async function getMembers(
+  client: lark.Client,
+  chatId: string
+): Promise<string[]> {
+  try {
+    const response = await client.im.chatMembers.get({
+      path: { chat_id: chatId },
+      params: { member_id_type: 'open_id' },
+    });
+
+    const members = response?.data?.items
+      ?.map((item) => item.member_id)
+      .filter((id): id is string => !!id) || [];
+    logger.info({ chatId, memberCount: members.length }, 'Members retrieved');
+    return members;
+  } catch (error) {
+    logger.error({ err: error, chatId }, 'Failed to get members');
+    throw error;
+  }
+}

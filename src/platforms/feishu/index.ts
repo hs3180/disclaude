@@ -19,6 +19,8 @@ export {
   createDiscussionChat,
   dissolveChat,
   addMembers,
+  removeMembers,
+  getMembers,
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
