@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import { loadConfigFile, getConfigFromFile, validateConfig, getPreloadedConfig } from './loader.js';
-import type { DisclaudeConfig, ConfigValidationError } from './types.js';
+import type { DisclaudeConfig, ConfigValidationError, SuggestionsConfig } from './types.js';
 
 // Export constants and types
 export * from './constants.js';
@@ -335,5 +335,18 @@ export class Config {
    */
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
+  }
+
+  /**
+   * Get task suggestions configuration (Issue #470).
+   *
+   * @returns Suggestions configuration or default config
+   */
+  static getSuggestionsConfig(): SuggestionsConfig {
+    return fileConfigOnly.agent?.suggestions || {
+      enabled: true,
+      maxSuggestions: 4,
+      showAfterTasks: true,
+    };
   }
 }
