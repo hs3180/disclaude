@@ -1009,12 +1009,23 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
   },
 ];
 
+// Import and merge Human-in-the-Loop tools (Issue #532)
+import { humanLoopToolDefinitions } from '../human-loop/index.js';
+
+/**
+ * Combined Feishu tool definitions including Human-in-the-Loop tools.
+ */
+export const allFeishuToolDefinitions: InlineToolDefinition[] = [
+  ...feishuToolDefinitions,
+  ...humanLoopToolDefinitions,
+];
+
 /**
  * SDK-compatible tools array.
  *
- * @deprecated Use feishuToolDefinitions with getProvider().createMcpServer() instead.
+ * @deprecated Use allFeishuToolDefinitions with getProvider().createMcpServer() instead.
  */
-export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().createInlineTool(def));
+export const feishuSdkTools = allFeishuToolDefinitions.map(def => getProvider().createInlineTool(def));
 
 /**
  * SDK MCP Server factory for Feishu context tools.
@@ -1045,6 +1056,6 @@ export function createFeishuSdkMcpServer() {
     type: 'inline',
     name: 'feishu-context',
     version: '1.0.0',
-    tools: feishuToolDefinitions,
+    tools: allFeishuToolDefinitions,
   });
 }
