@@ -9,6 +9,8 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /** Chat type: p2p (private), group, or topic */
+    chat_type?: 'p2p' | 'group' | 'topic';
     mentions?: Array<{
       key: string;
       id: {

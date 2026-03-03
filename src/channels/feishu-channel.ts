@@ -266,13 +266,25 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /**
    * Check if the chat is a group chat.
-   * In Feishu, group chat IDs start with 'oc_'.
+   * Uses chat_type from Feishu message event for accurate detection.
+   * Falls back to chatId prefix check if chat_type is not available.
    *
-   * @param chatId - Chat ID to check
+   * @param chatType - Chat type from Feishu message event (p2p, group, topic)
+   * @param chatId - Chat ID to check (used as fallback)
    * @returns true if it's a group chat
    */
-  private isGroupChat(chatId: string): boolean {
-    return chatId.startsWith('oc_');
+  private isGroupChat(chatType?: string, chatId?: string): boolean {
+    // Use chat_type if available (accurate method)
+    if (chatType) {
+      return chatType === 'group' || chatType === 'topic';
+    }
+    // Fallback to chatId prefix check (less accurate, private chats can also start with 'oc_')
+    // This maintains backward compatibility for cases where chat_type is not provided
+    if (chatId) {
+      return chatId.startsWith('oc_');
+    }
+    // Default to false (treat as private chat) if no information available
+    return false;
   }
 
   /**
@@ -311,7 +323,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (!message) {return;}
 
-    const { message_id, chat_id, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, content, message_type, create_time, mentions, chat_type } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -521,9 +533,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #460: Group chat passive mode
     // In group chats, only respond when bot is mentioned (@bot)
     // This allows scheduled tasks to broadcast without triggering unwanted responses
-    if (this.isGroupChat(chat_id) && !botMentioned) {
+    if (this.isGroupChat(chat_type, chat_id) && !botMentioned) {
       logger.debug(
-        { messageId: message_id, chatId: chat_id },
+        { messageId: message_id, chatId: chat_id, chatType: chat_type },
         'Skipped group chat message without @mention (passive mode)'
       );
       return;
