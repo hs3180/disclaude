@@ -111,6 +111,25 @@ export interface CommandServices {
 
   /** Get channel status list */
   getChannelStatus: () => string;
+
+  // Issue #455: Skill Agent management
+  /** Start a skill agent */
+  startSkillAgent: (options: { skillName: string; chatId: string; input?: string }) => Promise<string>;
+
+  /** Stop a skill agent */
+  stopSkillAgent: (agentId: string) => boolean;
+
+  /** List skill agents */
+  listSkillAgents: (chatId?: string) => Array<{
+    id: string;
+    skillName: string;
+    chatId: string;
+    status: string;
+    startedAt: Date;
+  }>;
+
+  /** List available skills */
+  listAvailableSkills: () => Promise<Array<{ name: string; path: string }>>;
 }
 
 /**

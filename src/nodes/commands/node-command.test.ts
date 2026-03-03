@@ -33,6 +33,11 @@ describe('NodeCommand', () => {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'test: ok',
+    // Issue #455: Skill Agent management
+    startSkillAgent: () => Promise.resolve('skill-test-123'),
+    stopSkillAgent: () => true,
+    listSkillAgents: () => [],
+    listAvailableSkills: () => Promise.resolve([]),
   };
 
   describe('metadata', () => {

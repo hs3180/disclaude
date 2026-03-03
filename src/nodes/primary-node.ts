@@ -44,6 +44,7 @@ import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
+import { SkillAgentManager } from './skill-agent-manager.js';
 import { FeedbackRouter } from './feedback-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
@@ -109,6 +110,7 @@ export class PrimaryNode extends EventEmitter {
   private feedbackRouter: FeedbackRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
+  private skillAgentManager?: SkillAgentManager;
 
   // Local execution
   private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
@@ -406,6 +408,18 @@ export class PrimaryNode extends EventEmitter {
 
     await this.schedulerService.start();
 
+    // Initialize SkillAgentManager (Issue #455)
+    this.skillAgentManager = new SkillAgentManager({
+      callbacks: {
+        sendMessage: async (chatId, text) => {
+          await this.sendMessage(chatId, text);
+        },
+        sendCard: async (chatId, card) => {
+          await this.sendCard(chatId, card);
+        },
+      },
+    });
+
     // Initialize TaskFlowOrchestrator
     const taskTracker = new TaskTracker();
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
@@ -550,6 +564,37 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        // Issue #455: Skill Agent management
+        startSkillAgent: async (options: { skillName: string; chatId: string; input?: string }) => {
+          if (!this.skillAgentManager) {
+            throw new Error('SkillAgentManager not initialized');
+          }
+          return await this.skillAgentManager.start(options);
+        },
+        stopSkillAgent: (agentId: string) => {
+          if (!this.skillAgentManager) {
+            return false;
+          }
+          return this.skillAgentManager.stop(agentId);
+        },
+        listSkillAgents: (chatId?: string) => {
+          if (!this.skillAgentManager) {
+            return [];
+          }
+          return this.skillAgentManager.list(chatId).map(a => ({
+            id: a.id,
+            skillName: a.skillName,
+            chatId: a.chatId,
+            status: a.status,
+            startedAt: a.startedAt,
+          }));
+        },
+        listAvailableSkills: async () => {
+          if (!this.skillAgentManager) {
+            return [];
+          }
+          return await this.skillAgentManager.listAvailableSkills();
+        },
       },
     };
 
@@ -561,7 +606,133 @@ export class PrimaryNode extends EventEmitter {
       return { success: false, error: `Unknown command: ${command.type}` };
     }
 
+    // Handle skill command (Issue #455)
+    if (result.success && result.data?.subcommand && command.type === 'skill') {
+      return await this.handleSkillCommand(command.chatId, result.data.subcommand as string, result.data.skillArgs as string[]);
+    }
+
     return result;
+  }
+
+  /**
+   * Handle skill command (Issue #455).
+   */
+  private async handleSkillCommand(
+    chatId: string,
+    subcommand: string,
+    args: string[]
+  ): Promise<ControlResponse> {
+    if (!this.skillAgentManager) {
+      return { success: false, error: 'SkillAgentManager not initialized' };
+    }
+
+    switch (subcommand) {
+      case 'run': {
+        const [skillName] = args;
+        if (!skillName) {
+          return { success: false, error: '请指定技能名称\n\n用法: `/skill run <技能名> [输入]`' };
+        }
+
+        const input = args.slice(1).join(' ');
+
+        try {
+          const agentId = await this.skillAgentManager.start({
+            skillName,
+            chatId,
+            input: input || undefined,
+          });
+
+          return {
+            success: true,
+            message: `✅ **Skill Agent 已启动**
+
+技能: \`${skillName}\`
+ID: \`${agentId}\`
+
+Agent 正在后台执行，完成后将通知您。`,
+          };
+        } catch (error) {
+          const err = error as Error;
+          return { success: false, error: `启动 Skill Agent 失败: ${err.message}` };
+        }
+      }
+
+      case 'list': {
+        const agents = this.skillAgentManager.list(chatId);
+
+        if (agents.length === 0) {
+          return { success: true, message: '📋 **运行中的 Agent**\n\n当前没有运行中的 Agent' };
+        }
+
+        const agentList = agents.map(a => {
+          const duration = Math.round((Date.now() - a.startedAt.getTime()) / 1000);
+          return `- \`${a.id}\`\n  技能: ${a.skillName} | 状态: ${a.status} | 运行: ${duration}s`;
+        }).join('\n\n');
+
+        return {
+          success: true,
+          message: `📋 **运行中的 Agent**\n\n共 ${agents.length} 个 Agent\n\n${agentList}`,
+        };
+      }
+
+      case 'skills': {
+        const skills = await this.skillAgentManager.listAvailableSkills();
+
+        if (skills.length === 0) {
+          return { success: true, message: '📋 **可用技能**\n\n没有找到可用的技能' };
+        }
+
+        const skillList = skills.map(s => `- \`${s.name}\` - ${s.path}`).join('\n');
+
+        return {
+          success: true,
+          message: `📋 **可用技能**\n\n共 ${skills.length} 个技能\n\n${skillList}`,
+        };
+      }
+
+      case 'stop': {
+        const [agentId] = args;
+        if (!agentId) {
+          return { success: false, error: '请指定 Agent ID\n\n用法: `/skill stop <agent-id>`' };
+        }
+
+        const stopped = this.skillAgentManager.stop(agentId);
+
+        if (stopped) {
+          return { success: true, message: `✅ **Agent 已停止**\n\nID: \`${agentId}\`` };
+        } else {
+          return { success: false, error: `停止失败: Agent \`${agentId}\` 不存在或未运行` };
+        }
+      }
+
+      case 'status': {
+        const [agentId] = args;
+        if (!agentId) {
+          return { success: false, error: '请指定 Agent ID\n\n用法: `/skill status <agent-id>`' };
+        }
+
+        const agent = this.skillAgentManager.getStatus(agentId);
+        if (!agent) {
+          return { success: false, error: `Agent \`${agentId}\` 不存在` };
+        }
+
+        const duration = Math.round((Date.now() - agent.startedAt.getTime()) / 1000);
+        let message = `📊 **Agent 状态**\n\nID: \`${agent.id}\`\n技能: \`${agent.skillName}\`\n状态: ${agent.status}\n运行时间: ${duration}s`;
+
+        if (agent.error) {
+          message += `\n\n❌ 错误: ${agent.error}`;
+        }
+
+        if (agent.result) {
+          message += `\n\n📝 结果: ${agent.result.slice(0, 200)}${agent.result.length > 200 ? '...' : ''}`;
+        }
+
+        return { success: true, message };
+      }
+
+      default:
+        return { success: false, error: `未知的子命令: ${subcommand}` };
+    }
   }
 
   /**

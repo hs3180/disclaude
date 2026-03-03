@@ -548,6 +548,75 @@ export class NodeCommand implements Command {
 }
 
 /**
+ * Skill Command - Manage skill agents.
+ * Issue #455: Skill Agent system
+ *
+ * Subcommands:
+ * - run <skill-name> [input]: Start a skill agent
+ * - list: List all running skill agents
+ * - skills: List all available skills
+ * - stop <agent-id>: Stop a running skill agent
+ * - status <agent-id>: View skill agent status
+ */
+export class SkillCommand implements Command {
+  readonly name = 'skill';
+  readonly category = 'skill' as const;
+  readonly description = '技能 Agent 管理';
+  readonly usage = 'skill <run|list|skills|stop|status>';
+
+  execute(context: CommandContext): CommandResult {
+    const subCommand = context.args[0]?.toLowerCase();
+
+    // If no subcommand, show help
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `🎯 **技能 Agent 管理**
+
+用法: \`/skill <子命令>\`
+
+**可用子命令:**
+- \`run <技能名> [输入]\` - 启动技能 Agent
+- \`list\` - 列出运行中的 Agent
+- \`skills\` - 列出所有可用技能
+- \`stop <agent-id>\` - 停止 Agent
+- \`status <agent-id>\` - 查看 Agent 状态
+
+示例:
+\`\`\`
+/skill run site-miner 提取 https://example.com 的产品列表
+/skill list
+/skill skills
+/skill stop skill-site-miner-abc123
+\`\`\``,
+      };
+    }
+
+    // Validate subcommand
+    const validSubcommands = ['run', 'list', 'skills', 'stop', 'status'];
+    if (!validSubcommands.includes(subCommand)) {
+      return {
+        success: false,
+        error: `未知的子命令: \`${subCommand}\`
+
+可用子命令: ${validSubcommands.map(c => `\`${c}\``).join(', ')}`,
+      };
+    }
+
+    // Actual implementation is handled by PrimaryNode
+    return {
+      success: true,
+      message: '🔄 **技能命令执行中...**',
+      // Pass through the subcommand and remaining args for PrimaryNode to handle
+      data: {
+        subcommand: subCommand,
+        skillArgs: context.args.slice(1),
+      },
+    };
+  }
+}
+
+/**
  * Register default commands to a registry.
  */
 export function registerDefaultCommands(
@@ -572,4 +641,6 @@ export function registerDefaultCommands(
   registry.register(new ClearDebugCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
+  // Issue #455: Skill Agent command
+  registry.register(new SkillCommand());
 }
