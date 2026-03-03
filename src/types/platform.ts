@@ -112,3 +112,61 @@ export interface InteractionContext {
  * Interaction handler function type.
  */
 export type InteractionHandler = (action: FeishuCardActionEvent) => Promise<void>;
+
+/**
+ * Feishu chat member added event.
+ * Triggered when members (including bot) are added to a chat.
+ * @see https://open.feishu.cn/document/client-docs/bot-v3/events/chat-member-added
+ */
+export interface FeishuChatMemberAddedEvent {
+  /** Chat ID */
+  chat_id: string;
+  /** Timestamp */
+  timestamp: string;
+  /** Members added to the chat */
+  members: Array<{
+    member_id_type: string;
+    member_id: string;
+    name?: string;
+    tenant_key?: string;
+  }>;
+  /** Operator who added the members */
+  operator: {
+    operator_id_type: string;
+    operator_id: string;
+    tenant_key?: string;
+  };
+}
+
+/**
+ * Feishu chat member added event data wrapper.
+ */
+export interface FeishuChatMemberAddedEventData {
+  event?: FeishuChatMemberAddedEvent;
+  [key: string]: unknown;
+}
+
+/**
+ * Feishu P2P chat entered event.
+ * Triggered when a user starts a private chat with the bot.
+ * @see https://open.feishu.cn/document/client-docs/bot-v3/events/bot-p2p-chat-entered
+ */
+export interface FeishuP2PChatEnteredEvent {
+  /** User who entered the chat */
+  user: {
+    open_id: string;
+    union_id?: string;
+    user_id?: string;
+    tenant_key?: string;
+  };
+  /** Timestamp */
+  timestamp: string;
+}
+
+/**
+ * Feishu P2P chat entered event data wrapper.
+ */
+export interface FeishuP2PChatEnteredEventData {
+  event?: FeishuP2PChatEnteredEvent;
+  [key: string]: unknown;
+}

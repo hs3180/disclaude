@@ -59,6 +59,15 @@ import {
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
 // Debug group (Issue #487)
 import { getDebugGroupService } from './debug-group-service.js';
+// Command system (Issue #463)
+import {
+  getCommandRegistry,
+  registerDefaultCommands,
+} from './commands/index.js';
+// Welcome service (Issue #463)
+import {
+  initWelcomeService,
+} from '../platforms/feishu/welcome-service.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -142,6 +151,10 @@ export class PrimaryNode extends EventEmitter {
       sendFileToUser: this.sendFileToUser.bind(this),
     });
 
+    // Issue #463: Initialize CommandRegistry with default commands
+    const commandRegistry = getCommandRegistry();
+    registerDefaultCommands(commandRegistry, () => commandRegistry.generateHelpText());
+
     // Register custom channels if provided
     if (config.channels) {
       for (const channel of config.channels) {
@@ -165,6 +178,14 @@ export class PrimaryNode extends EventEmitter {
         sendCard: this.sendCard.bind(this),
         sendFile: this.sendFileToUser.bind(this),
       });
+
+      // Issue #463: Initialize WelcomeService and set to FeishuChannel
+      const welcomeService = initWelcomeService({
+        generateHelpText: () => commandRegistry.generateHelpText(),
+        generateWelcomeMessage: () => commandRegistry.generateWelcomeMessage(),
+        sendMessage: this.sendMessage.bind(this),
+      });
+      feishuChannel.setWelcomeService(welcomeService);
 
       this.registerChannel(feishuChannel);
       logger.info('Feishu channel registered');
@@ -515,6 +536,12 @@ export class PrimaryNode extends EventEmitter {
           success: true,
           message: `📊 **状态**\n\n状态: ${status}\n节点ID: ${this.localNodeId}\n执行节点: ${execStatus}\n当前节点: ${currentNode?.name || '未分配'}\n通道: ${channelStatus}`,
         };
+      }
+
+      // Issue #463: Help command using CommandRegistry
+      case 'help': {
+        const registry = getCommandRegistry();
+        return { success: true, message: registry.generateHelpText() };
       }
 
       case 'list-nodes': {

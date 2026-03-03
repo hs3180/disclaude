@@ -113,6 +113,7 @@ export type ControlCommandType =
   | 'reset'
   | 'restart'
   | 'status'
+  | 'help'
   | 'list-nodes'
   | 'switch-node'
   // Group management commands (Issue #486)

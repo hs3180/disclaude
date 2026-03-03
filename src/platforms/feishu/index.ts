@@ -24,3 +24,12 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
 } from './chat-ops.js';
+
+// Welcome Service (Issue #463)
+export {
+  WelcomeService,
+  initWelcomeService,
+  getWelcomeService,
+  resetWelcomeService,
+  type WelcomeServiceConfig,
+} from './welcome-service.js';
