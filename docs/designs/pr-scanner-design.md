@@ -89,9 +89,9 @@ This document covers:
 | Dependency | Status | PR/Issue | Blocking | Notes |
 |------------|--------|----------|----------|-------|
 | Scheduler | ✅ Ready | #357 | No | Already implemented |
-| ChatOps (createDiscussionChat) | ⏳ Pending | PR #423 | **Yes** | Group chat creation |
-| FeedbackController | ⏳ Pending | PR #412 | Partial | Interactive cards |
-| PR State Storage | ❓ Needed | This doc | No | Simple JSON file |
+| ChatOps (createDiscussionChat) | ✅ Ready | PR #423 (merged) | ~~Yes~~ No | Group chat creation |
+| FeedbackController | ⏳ Optional | PR #412 | Partial | Interactive cards (Phase 3) |
+| PR State Storage | ✅ Ready | This doc | No | Simple JSON file |
 
 ### 3.2 ChatOps API (PR #423)
 
@@ -180,12 +180,12 @@ Scan for new PRs and send notifications.
 5. Update history file
 ```
 
-### Phase 2: Group Chat Creation ⏳ Blocked by PR #423
+### Phase 2: Group Chat Creation ✅ Ready (PR #423 merged)
 
 **Goal**: Create dedicated group chat for each PR
 
 **Requirements**:
-- ⏳ ChatOps `createDiscussionChat()` (PR #423)
+- ✅ ChatOps `createDiscussionChat()` (PR #423 merged)
 
 **Additional Steps**:
 1. Call `createDiscussionChat()` for new PRs
@@ -302,9 +302,10 @@ interface PRScannerHistory {
 - [ ] Create history file schema
 - [ ] Test with notification-only mode
 
-### Blocked (Phase 2)
-- [ ] Wait for PR #423 (ChatOps) to merge
-- [ ] Add group chat creation
+### Ready (Phase 2)
+- [x] PR #423 (ChatOps) merged
+- [x] createDiscussionChat() available in chat-ops.ts
+- [ ] Update schedule file to use create_discussion
 - [ ] Test group chat flow
 
 ### Blocked (Phase 3)
@@ -343,6 +344,6 @@ interface PRScannerHistory {
 
 - Issue #393: feat: 定时扫描 PR 并创建讨论群聊
 - Issue #357: 智能定时任务推荐系统
-- PR #423: feat(feishu): add ChatOps utility (pending)
-- PR #412: feat(feedback): add FeedbackController (pending)
+- PR #423: feat(feishu): add ChatOps utility (**merged** - ChatOps available)
+- PR #412: feat(feedback): add FeedbackController (pending - Phase 3)
 - PR #421: Previous attempt (closed - lacked design analysis)
