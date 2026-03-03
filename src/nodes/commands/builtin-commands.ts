@@ -359,6 +359,91 @@ export class NodeCommand implements Command {
 }
 
 /**
+ * Task Command - Unified task management commands.
+ * Issue #468: 任务控制指令 - deep task 执行管理
+ *
+ * Subcommands:
+ * - <prompt>: Start a new task with the given prompt
+ * - status: View current task status
+ * - list: List task history
+ * - cancel: Cancel current task
+ * - pause: Pause current task
+ * - resume: Resume paused task
+ */
+export class TaskCommand implements Command {
+  readonly name = 'task';
+  readonly category = 'task' as const;
+  readonly description = '任务控制指令';
+  readonly usage = 'task [<prompt>|status|list|cancel|pause|resume]';
+
+  execute(context: CommandContext): CommandResult {
+    const subCommand = context.args[0]?.toLowerCase();
+
+    // If no subcommand, show help
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `📋 **任务控制指令**
+
+用法: \`/task <子命令>\` 或 \`/task <任务描述>\`
+
+**可用子命令:**
+- \`<任务描述>\` - 启动新任务（直接输入任务描述）
+- \`status\` - 查看当前任务状态
+- \`list\` - 列出任务历史
+- \`cancel\` - 取消当前任务
+- \`pause\` - 暂停当前任务
+- \`resume\` - 恢复暂停的任务
+
+示例:
+\`\`\`
+/task 分析 src 目录下的文件依赖关系
+/task status
+/task list
+/task cancel
+/task pause
+/task resume
+\`\`\``,
+      };
+    }
+
+    const validSubcommands = ['status', 'list', 'cancel', 'pause', 'resume'];
+
+    // If it's a valid subcommand, pass to PrimaryNode
+    if (validSubcommands.includes(subCommand)) {
+      return {
+        success: true,
+        message: '🔄 **任务命令执行中...**',
+        data: {
+          subcommand: subCommand,
+        },
+      };
+    }
+
+    // Otherwise, treat the entire input as a task prompt
+    // Join all args as the prompt
+    const prompt = context.rawText.replace(/^\/task\s+/i, '').trim();
+
+    if (!prompt) {
+      return {
+        success: false,
+        error: '请提供任务描述。\n\n用法: `/task <任务描述>`',
+      };
+    }
+
+    // Pass to PrimaryNode to start a new task
+    return {
+      success: true,
+      message: '🚀 **启动任务中...**',
+      data: {
+        subcommand: 'start',
+        prompt,
+      },
+    };
+  }
+}
+
+/**
  * Register default commands to a registry.
  */
 export function registerDefaultCommands(
@@ -380,4 +465,6 @@ export function registerDefaultCommands(
   registry.register(new PassiveCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
+  // Issue #468: Task control command
+  registry.register(new TaskCommand());
 }
