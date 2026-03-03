@@ -123,7 +123,7 @@ export class SwitchNodeCommand implements Command {
       };
     }
 
-    const targetNodeId = args[0];
+    const [targetNodeId] = args;
     const success = services.switchChatNode(chatId, targetNodeId);
 
     if (success) {
@@ -537,7 +537,7 @@ export class NodeCommand implements Command {
     // Actual implementation is handled by PrimaryNode
     return {
       success: true,
-      message: `🔄 **节点命令执行中...**`,
+      message: '🔄 **节点命令执行中...**',
       // Pass through the subcommand and remaining args for PrimaryNode to handle
       data: {
         subcommand: subCommand,
