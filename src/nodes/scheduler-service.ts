@@ -5,6 +5,7 @@
  * - Scheduler initialization and lifecycle
  * - Schedule file watching for hot reload
  * - Callbacks for schedule execution
+ * - Schedule CRUD operations for control commands
  *
  * Architecture:
  * ```
@@ -24,6 +25,7 @@ import {
 } from '../schedule/index.js';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
 import type { ChatAgent } from '../agents/types.js';
+import type { ScheduledTask } from '../schedule/schedule-manager.js';
 
 const logger = createLogger('SchedulerService');
 
@@ -189,5 +191,192 @@ export class SchedulerService {
    */
   getScheduler(): Scheduler | undefined {
     return this.scheduler;
+  }
+
+  // ============================================================================
+  // Schedule Control Methods (Issue #469)
+  // ============================================================================
+
+  /**
+   * List all scheduled tasks.
+   *
+   * @returns Array of all scheduled tasks
+   */
+  async listSchedules(): Promise<ScheduledTask[]> {
+    if (!this.scheduler) {
+      return [];
+    }
+
+    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    return scheduleManager.listAll();
+  }
+
+  /**
+   * Get a specific schedule by ID.
+   *
+   * @param taskId - Task ID
+   * @returns The task or undefined
+   */
+  async getSchedule(taskId: string): Promise<ScheduledTask | undefined> {
+    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    return scheduleManager.get(taskId);
+  }
+
+  /**
+   * Enable a scheduled task.
+   *
+   * @param taskId - Task ID to enable
+   * @returns true if enabled, false if not found
+   */
+  async enableSchedule(taskId: string): Promise<boolean> {
+    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    const task = await scheduleManager.get(taskId);
+
+    if (!task) {
+      return false;
+    }
+
+    if (task.enabled) {
+      return true; // Already enabled
+    }
+
+    // Update the task file
+    const fileScanner = scheduleManager.getFileScanner();
+    const updatedTask = { ...task, enabled: true };
+    await fileScanner.writeTask(updatedTask);
+
+    // The file watcher will pick up the change and update the scheduler
+    logger.info({ taskId }, 'Schedule enabled');
+    return true;
+  }
+
+  /**
+   * Disable a scheduled task.
+   *
+   * @param taskId - Task ID to disable
+   * @returns true if disabled, false if not found
+   */
+  async disableSchedule(taskId: string): Promise<boolean> {
+    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    const task = await scheduleManager.get(taskId);
+
+    if (!task) {
+      return false;
+    }
+
+    if (!task.enabled) {
+      return true; // Already disabled
+    }
+
+    // Update the task file
+    const fileScanner = scheduleManager.getFileScanner();
+    const updatedTask = { ...task, enabled: false };
+    await fileScanner.writeTask(updatedTask);
+
+    // The file watcher will pick up the change and update the scheduler
+    logger.info({ taskId }, 'Schedule disabled');
+    return true;
+  }
+
+  /**
+   * Manually trigger a scheduled task.
+   *
+   * @param taskId - Task ID to run
+   * @returns true if triggered, false if not found or already running
+   */
+  async runSchedule(taskId: string): Promise<{ success: boolean; message: string }> {
+    if (!this.scheduler) {
+      return { success: false, message: '调度器未启动' };
+    }
+
+    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    const task = await scheduleManager.get(taskId);
+
+    if (!task) {
+      return { success: false, message: `定时任务 \`${taskId}\` 不存在` };
+    }
+
+    // Check if task is already running (blocking mode)
+    if (this.scheduler.isTaskRunning(taskId)) {
+      return { success: false, message: `定时任务「${task.name}」正在执行中` };
+    }
+
+    // Trigger the task immediately
+    // We need to access the private executeTask method, so we use a workaround
+    // by directly scheduling a one-time execution
+    logger.info({ taskId, name: task.name }, 'Manually triggering scheduled task');
+
+    // Execute the task directly
+    try {
+      // Set up feedback channel for the task
+      if (task.chatId) {
+        this.setFeedbackChannel(task.chatId, (feedback: FeedbackMessage) => {
+          this.callbacks.handleFeedback(feedback);
+        });
+      }
+
+      // Execute the task using the pilot
+      await this.pilot.executeOnce(
+        task.chatId,
+        `⚠️ **手动触发定时任务**
+
+定时任务名称: "${task.name}"
+任务 ID: \`${task.id}\`
+
+---
+
+**任务内容:**
+${task.prompt}`,
+        undefined,
+        task.createdBy
+      );
+
+      logger.info({ taskId }, 'Manually triggered task completed');
+      return { success: true, message: `✅ 定时任务「${task.name}」执行完成` };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, taskId }, 'Manually triggered task failed');
+      return { success: false, message: `❌ 定时任务「${task.name}」执行失败: ${errorMessage}` };
+
+    } finally {
+      // Clear feedback channel
+      if (task.chatId) {
+        this.clearFeedbackChannel(task.chatId);
+      }
+    }
+  }
+
+  /**
+   * Get schedule status including scheduler state.
+   *
+   * @param taskId - Optional task ID to get specific status
+   * @returns Status information
+   */
+  async getScheduleStatus(taskId?: string): Promise<{
+    schedulerRunning: boolean;
+    activeJobsCount: number;
+    runningTasks: string[];
+    task?: ScheduledTask;
+  }> {
+    const runningTasks = this.scheduler?.getRunningTaskIds() || [];
+
+    if (taskId) {
+      const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+      const task = await scheduleManager.get(taskId);
+
+      return {
+        schedulerRunning: this.scheduler?.isRunning() || false,
+        activeJobsCount: this.scheduler?.getActiveJobs().length || 0,
+        runningTasks,
+        task,
+      };
+    }
+
+    return {
+      schedulerRunning: this.scheduler?.isRunning() || false,
+      activeJobsCount: this.scheduler?.getActiveJobs().length || 0,
+      runningTasks,
+    };
   }
 }

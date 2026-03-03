@@ -121,7 +121,9 @@ export type ControlCommandType =
   | 'remove-member'
   | 'list-member'
   | 'list-group'
-  | 'dissolve-group';
+  | 'dissolve-group'
+  // Schedule control commands (Issue #469)
+  | 'schedule';
 
 /**
  * Control command from user to agent.
