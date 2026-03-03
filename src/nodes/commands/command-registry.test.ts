@@ -35,6 +35,11 @@ function createMockServices(): CommandServices {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'feishu: connected',
+    // Issue #455: Skill Agent management
+    startSkillAgent: () => Promise.resolve('skill-test-123'),
+    stopSkillAgent: () => Promise.resolve(true),
+    listSkillAgents: () => [],
+    listAvailableSkills: () => Promise.resolve([]),
   };
 }
 
