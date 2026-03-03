@@ -27,7 +27,7 @@ describe('CommandRegistry', () => {
         name: 'test',
         description: 'Test command',
         category: 'session',
-        execute: async () => ({ success: true, message: 'Test' }),
+        execute: () => ({ success: true, message: 'Test' }),
       };
 
       registry.register(cmd);
@@ -42,13 +42,13 @@ describe('CommandRegistry', () => {
         name: 'test',
         description: 'First',
         category: 'session',
-        execute: async () => ({ success: true }),
+        execute: () => ({ success: true }),
       };
       const cmd2: Command = {
         name: 'test',
         description: 'Second',
         category: 'session',
-        execute: async () => ({ success: true }),
+        execute: () => ({ success: true }),
       };
 
       registry.register(cmd1);
@@ -61,8 +61,8 @@ describe('CommandRegistry', () => {
   describe('registerAll', () => {
     it('should register multiple commands', () => {
       const commands: Command[] = [
-        { name: 'cmd1', description: 'Command 1', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'cmd2', description: 'Command 2', category: 'group', execute: async () => ({ success: true }) },
+        { name: 'cmd1', description: 'Command 1', category: 'session', execute: () => ({ success: true }) },
+        { name: 'cmd2', description: 'Command 2', category: 'group', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -75,8 +75,8 @@ describe('CommandRegistry', () => {
   describe('getAll', () => {
     it('should return all enabled commands', () => {
       const commands: Command[] = [
-        { name: 'enabled', description: 'Enabled', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'disabled', description: 'Disabled', category: 'session', enabled: false, execute: async () => ({ success: true }) },
+        { name: 'enabled', description: 'Enabled', category: 'session', execute: () => ({ success: true }) },
+        { name: 'disabled', description: 'Disabled', category: 'session', enabled: false, execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -90,8 +90,8 @@ describe('CommandRegistry', () => {
   describe('getByCategory', () => {
     it('should filter commands by category', () => {
       const commands: Command[] = [
-        { name: 'session-cmd', description: 'Session', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'group-cmd', description: 'Group', category: 'group', execute: async () => ({ success: true }) },
+        { name: 'session-cmd', description: 'Session', category: 'session', execute: () => ({ success: true }) },
+        { name: 'group-cmd', description: 'Group', category: 'group', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -105,9 +105,9 @@ describe('CommandRegistry', () => {
   describe('getActiveCategories', () => {
     it('should return categories in correct order', () => {
       const commands: Command[] = [
-        { name: 'schedule-cmd', description: 'Schedule', category: 'schedule', execute: async () => ({ success: true }) },
-        { name: 'session-cmd', description: 'Session', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'group-cmd', description: 'Group', category: 'group', execute: async () => ({ success: true }) },
+        { name: 'schedule-cmd', description: 'Schedule', category: 'schedule', execute: () => ({ success: true }) },
+        { name: 'session-cmd', description: 'Session', category: 'session', execute: () => ({ success: true }) },
+        { name: 'group-cmd', description: 'Group', category: 'group', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -120,9 +120,9 @@ describe('CommandRegistry', () => {
   describe('generateHelpText', () => {
     it('should generate formatted help text', () => {
       const commands: Command[] = [
-        { name: 'reset', description: '重置对话', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'status', description: '查看状态', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'create-group', description: '创建群', usage: 'create-group <name> <members>', category: 'group', execute: async () => ({ success: true }) },
+        { name: 'reset', description: '重置对话', category: 'session', execute: () => ({ success: true }) },
+        { name: 'status', description: '查看状态', category: 'session', execute: () => ({ success: true }) },
+        { name: 'create-group', description: '创建群', usage: 'create-group <name> <members>', category: 'group', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -138,8 +138,8 @@ describe('CommandRegistry', () => {
 
     it('should not include disabled commands', () => {
       const commands: Command[] = [
-        { name: 'enabled', description: 'Enabled', category: 'session', execute: async () => ({ success: true }) },
-        { name: 'disabled', description: 'Disabled', category: 'session', enabled: false, execute: async () => ({ success: true }) },
+        { name: 'enabled', description: 'Enabled', category: 'session', execute: () => ({ success: true }) },
+        { name: 'disabled', description: 'Disabled', category: 'session', enabled: false, execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -153,7 +153,7 @@ describe('CommandRegistry', () => {
   describe('generateWelcomeMessage', () => {
     it('should generate welcome message with help', () => {
       const commands: Command[] = [
-        { name: 'reset', description: '重置对话', category: 'session', execute: async () => ({ success: true }) },
+        { name: 'reset', description: '重置对话', category: 'session', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -171,7 +171,7 @@ describe('CommandRegistry', () => {
         name: 'test',
         description: 'Test',
         category: 'session',
-        execute: async (ctx: CommandContext) => ({
+        execute: (ctx: CommandContext) => ({
           success: true,
           message: `Executed with args: ${ctx.args.join(', ')}`,
         }),
@@ -206,7 +206,7 @@ describe('CommandRegistry', () => {
         description: 'Disabled',
         category: 'session',
         enabled: false,
-        execute: async () => ({ success: true }),
+        execute: () => ({ success: true }),
       };
 
       registry.register(cmd);
@@ -225,7 +225,7 @@ describe('CommandRegistry', () => {
         name: 'error-cmd',
         description: 'Error',
         category: 'session',
-        execute: async () => {
+        execute: () => {
           throw new Error('Test error');
         },
       };

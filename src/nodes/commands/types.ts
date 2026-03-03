@@ -71,9 +71,9 @@ export interface Command {
    * Execute the command.
    *
    * @param context - Command execution context
-   * @returns Command execution result
+   * @returns Command execution result (can be sync or async)
    */
-  execute(context: CommandContext): Promise<CommandResult>;
+  execute(context: CommandContext): CommandResult | Promise<CommandResult>;
 }
 
 /**

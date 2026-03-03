@@ -16,7 +16,7 @@ export class ResetCommand implements Command {
   readonly category = 'session' as const;
   readonly description = '重置对话';
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     // Actual reset is handled by PrimaryNode
     return {
       success: true,
@@ -33,7 +33,7 @@ export class StatusCommand implements Command {
   readonly category = 'session' as const;
   readonly description = '查看状态';
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     // Actual status is handled by PrimaryNode
     return {
       success: true,
@@ -56,7 +56,7 @@ export class HelpCommand implements Command {
     this.generateHelpText = generateHelpText;
   }
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     return {
       success: true,
       message: this.generateHelpText(),
@@ -72,7 +72,7 @@ export class ListNodesCommand implements Command {
   readonly category = 'node' as const;
   readonly description = '列出执行节点';
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     // Actual implementation is handled by PrimaryNode
     return {
       success: true,
@@ -90,7 +90,7 @@ export class SwitchNodeCommand implements Command {
   readonly description = '切换执行节点';
   readonly usage = 'switch-node <nodeId>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length === 0) {
       return {
         success: false,
@@ -113,7 +113,7 @@ export class RestartCommand implements Command {
   readonly category = 'node' as const;
   readonly description = '重启服务';
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     // Actual implementation is handled by PrimaryNode
     return {
       success: true,
@@ -131,7 +131,7 @@ export class CreateGroupCommand implements Command {
   readonly description = '创建群';
   readonly usage = 'create-group <name> <members>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length < 2) {
       return {
         success: false,
@@ -155,7 +155,7 @@ export class AddMemberCommand implements Command {
   readonly description = '添加成员';
   readonly usage = 'add-member <groupId> <member>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length < 2) {
       return {
         success: false,
@@ -179,7 +179,7 @@ export class RemoveMemberCommand implements Command {
   readonly description = '移除成员';
   readonly usage = 'remove-member <groupId> <member>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length < 2) {
       return {
         success: false,
@@ -203,7 +203,7 @@ export class ListMemberCommand implements Command {
   readonly description = '列出成员';
   readonly usage = 'list-member <groupId>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length < 1) {
       return {
         success: false,
@@ -226,7 +226,7 @@ export class ListGroupCommand implements Command {
   readonly category = 'group' as const;
   readonly description = '列出群';
 
-  async execute(_context: CommandContext): Promise<CommandResult> {
+  execute(_context: CommandContext): CommandResult {
     // Actual implementation is handled by PrimaryNode
     return {
       success: true,
@@ -244,7 +244,7 @@ export class DissolveGroupCommand implements Command {
   readonly description = '解散群';
   readonly usage = 'dissolve-group <groupId>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     if (context.args.length < 1) {
       return {
         success: false,

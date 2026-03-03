@@ -9,8 +9,7 @@
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
  */
 
-import type { Command, CommandCategory, CommandContext, CommandResult } from './types.js';
-import { CATEGORY_CONFIG } from './types.js';
+import { CATEGORY_CONFIG, type Command, type CommandCategory, type CommandContext, type CommandResult } from './types.js';
 
 /**
  * Command Registry - Manages control command instances.
@@ -122,10 +121,14 @@ export class CommandRegistry {
 
     for (const category of categories) {
       const info = CATEGORY_CONFIG[category];
-      if (!info) continue;
+      if (!info) {
+        continue;
+      }
 
       const commands = this.getByCategory(category);
-      if (commands.length === 0) continue;
+      if (commands.length === 0) {
+        continue;
+      }
 
       lines.push(`${info.emoji} ${info.label}：`);
 

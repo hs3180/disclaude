@@ -110,7 +110,7 @@ export class WelcomeService {
    * Handle P2P chat entered event.
    * This is called when a user starts a private chat with the bot.
    */
-  async handleP2PChatEntered(chatId: string): Promise<boolean> {
+  handleP2PChatEntered(chatId: string): Promise<boolean> {
     return this.handleFirstPrivateChat(chatId);
   }
 
