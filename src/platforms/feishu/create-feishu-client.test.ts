@@ -211,21 +211,28 @@ describe('createFeishuClient', () => {
         get: (url: string) => Promise<unknown>;
       };
 
+      // Set very short delays for testing (override the default backoff)
       vi.useFakeTimers();
 
-      // Start the request and catch rejection immediately
-      const resultPromise = httpInstance.get('https://test.com').catch(e => {
-        // Catch the rejection to prevent unhandled rejection warning
-        return Promise.reject(e);
-      });
+      // Start the request
+      const resultPromise = httpInstance.get('https://test.com');
 
-      // Fast-forward through all delays
+      // Wait for the promise to settle (including all retries)
+      // Using vi.waitFor handles the async nature properly
+      let error: unknown;
+      resultPromise.catch(e => { error = e; });
+
+      // Run all pending timers and wait for the promise to settle
       await vi.runAllTimersAsync();
 
-      // Now await the result
-      await expect(resultPromise).rejects.toBeDefined();
+      // Small additional wait to ensure promise rejection is processed
+      await Promise.resolve();
 
       vi.useRealTimers();
+
+      // Verify error was caught
+      expect(error).toBeDefined();
+      expect(error).toHaveProperty('code', 'ETIMEDOUT');
 
       // Initial attempt + MAX_RETRIES (3) = 4 total calls
       expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + FEISHU_API.RETRY.MAX_RETRIES);
