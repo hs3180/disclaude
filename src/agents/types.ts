@@ -162,13 +162,15 @@ export interface ChatAgent extends Disposable {
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
+   * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
    */
   processMessage(
     chatId: string,
     text: string,
     messageId: string,
     senderOpenId?: string,
-    attachments?: FileRef[]
+    attachments?: FileRef[],
+    chatHistoryContext?: string
   ): void;
 
   /**

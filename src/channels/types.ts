@@ -128,7 +128,9 @@ export type ControlCommandType =
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive';
+  | 'passive'
+  // Node management commands (Issue #541)
+  | 'node';
 
 /**
  * Control command from user to agent.
@@ -182,7 +184,7 @@ export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'e
  * Channel interface.
  *
  * All communication channels must implement this interface.
- * The CommunicationNode uses this interface to interact with channels.
+ * The PrimaryNode uses this interface to interact with channels.
  */
 export interface IChannel {
   /**

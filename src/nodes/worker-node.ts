@@ -376,8 +376,8 @@ export class WorkerNode {
 
         // Handle prompt messages
         if (message.type === 'prompt') {
-          const { chatId, prompt, messageId, senderOpenId, threadId, attachments } = message;
-          logger.info({ chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments }, 'Received prompt');
+          const { chatId, prompt, messageId, senderOpenId, threadId, attachments, chatHistoryContext } = message;
+          logger.info({ chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext }, 'Received prompt');
 
           // Download attachments if present
           if (attachments && attachments.length > 0) {
@@ -405,7 +405,7 @@ export class WorkerNode {
 
           try {
             // Use processMessage for persistent session context
-            this.sharedPilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments);
+            this.sharedPilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');

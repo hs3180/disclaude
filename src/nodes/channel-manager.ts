@@ -6,7 +6,7 @@
  * - Message broadcasting to all channels
  * - Channel lifecycle management (start/stop)
  *
- * Extracted from CommunicationNode for better separation of concerns.
+ * Part of the PrimaryNode/WorkerNode architecture.
  */
 
 import { createLogger } from '../utils/logger.js';

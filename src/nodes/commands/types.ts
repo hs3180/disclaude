@@ -149,7 +149,7 @@ export interface CommandResult {
   /** Error message if failed */
   error?: string;
 
-  /** Additional data for special handling */
+  /** Additional data for command handler (Issue #541) */
   data?: Record<string, unknown>;
 }
 

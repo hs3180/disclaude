@@ -1,93 +1,218 @@
 /**
- * Factory function to create Lark Client with timeout configuration.
+ * Factory function to create Lark Client with timeout and retry configuration.
  *
  * The @larksuiteoapi/node-sdk doesn't support requestTimeout directly,
  * so we create a custom axios instance with timeout and wrap it as HttpInstance.
+ *
+ * Retry mechanism (Issue #507):
+ * - Automatically retries on transient network errors (ETIMEDOUT, ECONNRESET, etc.)
+ * - Uses exponential backoff with jitter to avoid thundering herd
+ * - Logs retry attempts for debugging
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import axios, { AxiosInstance } from 'axios';
-import { FEISHU_API } from '../../config/constants.js';
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import { FEISHU_API, RETRYABLE_ERROR_CODES } from '../../config/constants.js';
+import { createLogger } from '../../utils/logger.js';
+
+const logger = createLogger('FeishuClient');
+
+/**
+ * Check if an error is retryable (transient network error).
+ */
+function isRetryableError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+
+  const axiosError = error as AxiosError;
+
+  // Network errors (no response received)
+  if (!axiosError.response && axiosError.code) {
+    return RETRYABLE_ERROR_CODES.includes(axiosError.code as typeof RETRYABLE_ERROR_CODES[number]);
+  }
+
+  // Server errors (5xx) are potentially retryable
+  if (axiosError.response?.status) {
+    const status = axiosError.response.status;
+    // 429 Too Many Requests, 500+ server errors
+    return status === 429 || (status >= 500 && status < 600);
+  }
+
+  return false;
+}
+
+/**
+ * Calculate delay with exponential backoff and jitter.
+ * This helps avoid thundering herd problem when multiple clients retry simultaneously.
+ */
+function calculateRetryDelay(attempt: number): number {
+  const { INITIAL_DELAY_MS, MAX_DELAY_MS, BACKOFF_MULTIPLIER } = FEISHU_API.RETRY;
+  const exponentialDelay = INITIAL_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt);
+  const cappedDelay = Math.min(exponentialDelay, MAX_DELAY_MS);
+  // Add jitter (random 0-20% of delay) to spread out retries
+  const jitter = cappedDelay * Math.random() * 0.2;
+  return Math.floor(cappedDelay + jitter);
+}
+
+/**
+ * Sleep for specified milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Wrap axios request with retry logic.
+ */
+async function requestWithRetry<T>(
+  requestFn: () => Promise<T>,
+  context: string
+): Promise<T> {
+  const { MAX_RETRIES } = FEISHU_API.RETRY;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error) {
+      lastError = error;
+
+      // Check if we should retry
+      if (!isRetryableError(error)) {
+        throw error;
+      }
+
+      // Don't sleep after the last attempt
+      if (attempt < MAX_RETRIES) {
+        const delay = calculateRetryDelay(attempt);
+        const axiosError = error as AxiosError;
+        logger.warn(
+          {
+            context,
+            attempt: attempt + 1,
+            maxRetries: MAX_RETRIES,
+            delayMs: delay,
+            errorCode: axiosError.code,
+            errorMessage: axiosError.message,
+          },
+          'Request failed, retrying...'
+        );
+        await sleep(delay);
+      }
+    }
+  }
+
+  // All retries exhausted
+  const axiosError = lastError as AxiosError;
+  logger.error(
+    {
+      context,
+      maxRetries: MAX_RETRIES,
+      errorCode: axiosError?.code,
+      errorMessage: axiosError?.message,
+    },
+    'All retry attempts exhausted'
+  );
+  throw lastError;
+}
 
 /**
  * Wrap an axios instance to match lark SDK's HttpInstance interface.
+ * Includes retry logic for transient errors.
  */
 function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstance {
   return {
     request: async (opts) => {
-      const response = await axiosInstance.request({
-        url: opts.url,
-        method: opts.method,
-        headers: opts.headers,
-        params: opts.params,
-        data: opts.data,
-        responseType: opts.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-        timeout: opts.timeout,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.request({
+          url: opts.url,
+          method: opts.method,
+          headers: opts.headers,
+          params: opts.params,
+          data: opts.data,
+          responseType: opts.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+          timeout: opts.timeout,
+        }).then(res => res.data),
+        `request ${opts.method} ${opts.url}`
+      );
     },
     get: async (url, opts) => {
-      const response = await axiosInstance.get(url, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.get(url, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `get ${url}`
+      );
     },
     delete: async (url, opts) => {
-      const response = await axiosInstance.delete(url, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.delete(url, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `delete ${url}`
+      );
     },
     head: async (url, opts) => {
-      const response = await axiosInstance.head(url, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.head(url, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `head ${url}`
+      );
     },
     options: async (url, opts) => {
-      const response = await axiosInstance.options(url, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.options(url, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `options ${url}`
+      );
     },
     post: async (url, data, opts) => {
-      const response = await axiosInstance.post(url, data, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.post(url, data, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `post ${url}`
+      );
     },
     put: async (url, data, opts) => {
-      const response = await axiosInstance.put(url, data, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.put(url, data, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `put ${url}`
+      );
     },
     patch: async (url, data, opts) => {
-      const response = await axiosInstance.patch(url, data, {
-        params: opts?.params,
-        headers: opts?.headers,
-        timeout: opts?.timeout,
-        responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
-      });
-      return response.data;
+      return requestWithRetry(
+        () => axiosInstance.patch(url, data, {
+          params: opts?.params,
+          headers: opts?.headers,
+          timeout: opts?.timeout,
+          responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
+        }).then(res => res.data),
+        `patch ${url}`
+      );
     },
   };
 }
@@ -105,7 +230,7 @@ export interface CreateFeishuClientOptions {
 }
 
 /**
- * Create a Lark Client with configured request timeout.
+ * Create a Lark Client with configured request timeout and retry.
  *
  * @param appId - Feishu App ID
  * @param appSecret - Feishu App Secret
@@ -122,7 +247,7 @@ export function createFeishuClient(
     timeout: FEISHU_API.REQUEST_TIMEOUT_MS,
   });
 
-  // Wrap axios as lark HttpInstance
+  // Wrap axios as lark HttpInstance (with retry logic)
   const httpInstance = wrapAxiosAsHttpInstance(axiosInstance);
 
   // Create and return lark Client with custom httpInstance

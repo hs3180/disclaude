@@ -49,4 +49,41 @@ export const REACTIONS = {
 export const FEISHU_API = {
   /** Request timeout in milliseconds (30 seconds) */
   REQUEST_TIMEOUT_MS: 30 * 1000,
+
+  /** Retry configuration for transient errors */
+  RETRY: {
+    /** Maximum number of retry attempts */
+    MAX_RETRIES: 3,
+    /** Initial delay in milliseconds before first retry */
+    INITIAL_DELAY_MS: 1000,
+    /** Maximum delay in milliseconds between retries */
+    MAX_DELAY_MS: 10000,
+    /** Multiplier for exponential backoff */
+    BACKOFF_MULTIPLIER: 2,
+  },
 } as const;
+
+/**
+ * Chat history configuration for passive mode (Issue #517)
+ */
+export const CHAT_HISTORY = {
+  /** Maximum characters for chat history context */
+  MAX_CONTEXT_LENGTH: 8000,
+
+  /** Maximum number of messages to include in context */
+  MAX_MESSAGES: 50,
+} as const;
+
+/**
+ * Error codes that should trigger a retry
+ */
+export const RETRYABLE_ERROR_CODES = [
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPROTO',
+] as const;

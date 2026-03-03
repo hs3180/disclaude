@@ -1,8 +1,7 @@
 /**
  * Primary Node - Main node with both communication and execution capabilities.
  *
- * This module combines the capabilities of CommunicationNode and ExecutionRunner
- * into a single self-contained node that can:
+ * This self-contained node can:
  * - Handle multiple communication channels (Feishu, REST, etc.)
  * - Execute Agent tasks locally
  * - Accept connections from Worker Nodes for horizontal scaling
@@ -441,9 +440,9 @@ export class PrimaryNode extends EventEmitter {
       throw new Error('Local execution not initialized');
     }
 
-    const { chatId, prompt, messageId, senderOpenId, threadId, attachments } = message;
+    const { chatId, prompt, messageId, senderOpenId, threadId, attachments, chatHistoryContext } = message;
     logger.info(
-      { chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments },
+      { chatId, messageId, promptLength: prompt.length, threadId, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
       'Executing prompt locally'
     );
 
@@ -457,7 +456,7 @@ export class PrimaryNode extends EventEmitter {
 
     try {
       // Use processMessage for persistent session context
-      this.sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments);
+      this.sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
       logger.error({ err, chatId }, 'Local execution failed');
@@ -510,6 +509,7 @@ export class PrimaryNode extends EventEmitter {
       senderOpenId: message.userId,
       threadId: message.threadId,
       attachments,
+      chatHistoryContext: message.metadata?.chatHistoryContext as string | undefined,
     });
   }
 
@@ -555,6 +555,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Execute command via registry
     const result = await commandRegistry.execute(command.type, context);
+
 
     if (result === null) {
       return { success: false, error: `Unknown command: ${command.type}` };

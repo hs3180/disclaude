@@ -313,6 +313,8 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('list-nodes')).toBeDefined();
     expect(registry.get('switch-node')).toBeDefined();
     expect(registry.get('restart')).toBeDefined();
+    // Issue #541: Node management command
+    expect(registry.get('node')).toBeDefined();
 
     // Group commands
     expect(registry.get('create-group')).toBeDefined();
@@ -321,6 +323,7 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('list-member')).toBeDefined();
     expect(registry.get('list-group')).toBeDefined();
     expect(registry.get('dissolve-group')).toBeDefined();
+    expect(registry.get('passive')).toBeDefined();
   });
 
   it('should generate help text with all categories', () => {
