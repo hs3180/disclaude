@@ -12,6 +12,7 @@ import type { IMessageSender } from '../../channels/adapters/types.js';
 import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
 import { messageLogger } from '../../feishu/message-logger.js';
+import { retry } from '../../utils/retry.js';
 
 /**
  * Feishu Message Sender Configuration.
@@ -54,12 +55,25 @@ export class FeishuMessageSender implements IMessageSender {
         messageData.parent_id = threadId;
       }
 
-      const response = await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: messageData,
-      });
+      // Use retry for network resilience (Issue #498)
+      const response = await retry(
+        () => this.client.im.message.create({
+          params: {
+            receive_id_type: 'chat_id',
+          },
+          data: messageData,
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            this.logger.warn(
+              { chatId, attempt, error: error.message },
+              'Retrying sendText after failure'
+            );
+          },
+        }
+      );
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
@@ -103,12 +117,25 @@ export class FeishuMessageSender implements IMessageSender {
         messageData.parent_id = threadId;
       }
 
-      const response = await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: messageData,
-      });
+      // Use retry for network resilience (Issue #498)
+      const response = await retry(
+        () => this.client.im.message.create({
+          params: {
+            receive_id_type: 'chat_id',
+          },
+          data: messageData,
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            this.logger.warn(
+              { chatId, attempt, error: error.message },
+              'Retrying sendCard after failure'
+            );
+          },
+        }
+      );
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
@@ -132,7 +159,21 @@ export class FeishuMessageSender implements IMessageSender {
   async sendFile(chatId: string, filePath: string, threadId?: string): Promise<void> {
     try {
       const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
-      const fileSize = await uploadAndSendFile(this.client, filePath, chatId, threadId);
+
+      // Use retry for network resilience (Issue #498)
+      const fileSize = await retry(
+        () => uploadAndSendFile(this.client, filePath, chatId, threadId),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            this.logger.warn(
+              { chatId, filePath, attempt, error: error.message },
+              'Retrying sendFile after failure'
+            );
+          },
+        }
+      );
 
       const fileName = path.basename(filePath);
       const fileContent = `[File] ${fileName}\nPath: ${filePath}`;
@@ -150,16 +191,29 @@ export class FeishuMessageSender implements IMessageSender {
 
   async addReaction(messageId: string, emoji: string): Promise<boolean> {
     try {
-      await this.client.im.messageReaction.create({
-        path: {
-          message_id: messageId,
-        },
-        data: {
-          reaction_type: {
-            emoji_type: emoji,
+      // Use retry for network resilience (Issue #498)
+      await retry(
+        () => this.client.im.messageReaction.create({
+          path: {
+            message_id: messageId,
           },
-        },
-      });
+          data: {
+            reaction_type: {
+              emoji_type: emoji,
+            },
+          },
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 500, // Shorter delay for reactions
+          onRetry: (attempt, error) => {
+            this.logger.warn(
+              { messageId, emoji, attempt, error: error.message },
+              'Retrying addReaction after failure'
+            );
+          },
+        }
+      );
 
       this.logger.debug({ messageId, emoji }, 'Reaction added');
       return true;
