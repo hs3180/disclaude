@@ -64,6 +64,7 @@ vi.mock('../channels/feishu-channel.js', () => ({
     onMessage: vi.fn(),
     onControl: vi.fn(),
     initTaskFlowOrchestrator: vi.fn(),
+    setWelcomeService: vi.fn(),
   })),
 }));
 
