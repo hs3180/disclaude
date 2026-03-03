@@ -52,25 +52,16 @@ export interface SchedulerServiceConfig {
 }
 
 /**
- * Feedback context for execution.
- */
-interface FeedbackContext {
-  sendFeedback: (feedback: FeedbackMessage) => void;
-  threadId?: string;
-}
-
-/**
  * SchedulerService - Manages scheduler lifecycle.
  *
  * Handles:
  * - Scheduler initialization
  * - Schedule file watching
- * - Feedback channel management
+ * - Feedback routing to PrimaryNode
  */
 export class SchedulerService {
   private readonly callbacks: SchedulerCallbacks;
   private readonly pilot: SchedulerServiceConfig['pilot'];
-  private readonly activeFeedbackChannels = new Map<string, FeedbackContext>();
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
   private schedulesDir: string;
@@ -93,46 +84,24 @@ export class SchedulerService {
       scheduleManager,
       pilot: this.pilot,
       callbacks: {
+        // Directly route messages through PrimaryNode's handleFeedback
+        // This ensures scheduled task messages are delivered even though
+        // they don't go through PrimaryNode's activeFeedbackChannels map
         sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-          const ctx = this.activeFeedbackChannels.get(chatId);
-          if (ctx) {
-            ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
-          } else {
-            logger.warn({ chatId }, 'No feedback channel for scheduled task, message not sent');
-          }
+          this.callbacks.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
           return Promise.resolve();
         },
         sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-          const ctx = this.activeFeedbackChannels.get(chatId);
-          if (ctx) {
-            ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-          }
+          this.callbacks.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
           return Promise.resolve();
         },
         sendFile: async (chatId: string, filePath: string) => {
-          const ctx = this.activeFeedbackChannels.get(chatId);
-          if (ctx) {
-            try {
-              await this.callbacks.sendFile(chatId, filePath);
-            } catch (error) {
-              logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
-            }
+          try {
+            await this.callbacks.sendFile(chatId, filePath);
+          } catch (error) {
+            logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
           }
         },
-      },
-      setFeedbackChannel: (chatId: string, context: { threadId?: string }) => {
-        const actualContext = {
-          sendFeedback: (feedback: FeedbackMessage) => {
-            this.callbacks.handleFeedback(feedback);
-          },
-          threadId: context.threadId,
-        };
-        this.activeFeedbackChannels.set(chatId, actualContext);
-        logger.debug({ chatId }, 'Feedback channel set for scheduled task');
-      },
-      clearFeedbackChannel: (chatId: string) => {
-        this.activeFeedbackChannels.delete(chatId);
-        logger.debug({ chatId }, 'Feedback channel cleared for scheduled task');
       },
     });
 
@@ -166,22 +135,7 @@ export class SchedulerService {
   stop(): void {
     this.scheduler?.stop();
     this.scheduleFileWatcher?.stop();
-    this.activeFeedbackChannels.clear();
     logger.info('Scheduler service stopped');
-  }
-
-  /**
-   * Set feedback channel for a chat.
-   */
-  setFeedbackChannel(chatId: string, sendFeedback: (feedback: FeedbackMessage) => void, threadId?: string): void {
-    this.activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
-  }
-
-  /**
-   * Clear feedback channel for a chat.
-   */
-  clearFeedbackChannel(chatId: string): void {
-    this.activeFeedbackChannels.delete(chatId);
   }
 
   /**

@@ -316,7 +316,8 @@ export class PrimaryNode extends EventEmitter {
         if (ctx) {
           ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
         } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendMessage');
+          // Fallback for scheduled tasks: route directly through handleFeedback
+          this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
         }
         return Promise.resolve();
       },
@@ -325,27 +326,32 @@ export class PrimaryNode extends EventEmitter {
         if (ctx) {
           ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
         } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendCard');
+          // Fallback for scheduled tasks: route directly through handleFeedback
+          this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
         }
         return Promise.resolve();
       },
       sendFile: async (chatId: string, filePath: string) => {
         const ctx = this.activeFeedbackChannels.get(chatId);
-        if (!ctx) {
-          logger.warn({ chatId }, 'No active feedback channel for sendFile');
-          return;
-        }
-
-        try {
-          await this.sendFileToUser(chatId, filePath, ctx.threadId);
-        } catch (error) {
-          logger.error({ err: error, chatId, filePath }, 'Failed to send file');
-          ctx.sendFeedback({
-            type: 'error',
-            chatId,
-            error: `Failed to send file: ${(error as Error).message}`,
-            threadId: ctx.threadId,
-          });
+        if (ctx) {
+          try {
+            await this.sendFileToUser(chatId, filePath, ctx.threadId);
+          } catch (error) {
+            logger.error({ err: error, chatId, filePath }, 'Failed to send file');
+            ctx.sendFeedback({
+              type: 'error',
+              chatId,
+              error: `Failed to send file: ${(error as Error).message}`,
+              threadId: ctx.threadId,
+            });
+          }
+        } else {
+          // Fallback for scheduled tasks: send file without threadId
+          try {
+            await this.sendFileToUser(chatId, filePath);
+          } catch (error) {
+            logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
+          }
         }
       },
       onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
@@ -354,7 +360,9 @@ export class PrimaryNode extends EventEmitter {
           ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
           logger.info({ chatId }, 'Task completed, sent done signal');
         } else {
-          logger.warn({ chatId }, 'No active feedback channel for onDone');
+          // Fallback for scheduled tasks: route directly through handleFeedback
+          this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
+          logger.info({ chatId }, 'Task completed (scheduled task)');
         }
         return Promise.resolve();
       },
