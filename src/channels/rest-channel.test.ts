@@ -532,7 +532,11 @@ describe('RestChannel', () => {
       });
 
       expect(response.status).toBe(500);
-      expect(response.body.error).toBe('Failed to process message');
+      // Now returns the actual error message for better debugging
+      expect(response.body.error).toBe('Handler failed');
+      expect(response.body.errorCode).toBe('PROCESSING_ERROR');
+      expect(response.body.errorContext).toBeDefined();
+      expect(response.body.errorContext.type).toBe('PROCESSING_ERROR');
     });
   });
 

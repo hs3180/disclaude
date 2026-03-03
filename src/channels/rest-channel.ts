@@ -68,6 +68,21 @@ interface ChatResponse {
   response?: string;
   /** Error message (if failed) */
   error?: string;
+  /** Error code for programmatic handling */
+  errorCode?: string;
+  /** Additional error context */
+  errorContext?: {
+    /** Type of error */
+    type: 'TIMEOUT' | 'PROCESSING_ERROR' | 'VALIDATION_ERROR' | 'INTERNAL_ERROR';
+    /** Timestamp when error occurred */
+    timestamp: string;
+    /** Request endpoint */
+    endpoint: string;
+    /** Suggested action */
+    suggestion?: string;
+    /** Server log file path (if available) */
+    serverLog?: string;
+  };
 }
 
 /**
@@ -120,8 +135,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   protected doStart(): Promise<void> {
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((error) => {
-        logger.error({ err: error }, 'Failed to handle request');
-        this.sendError(res, 500, 'Internal server error');
+        logger.error({ err: error, url: req.url }, 'Failed to handle request');
+        this.sendError(res, 500, 'Internal server error', 'INTERNAL_ERROR', {
+          type: 'INTERNAL_ERROR',
+          timestamp: new Date().toISOString(),
+          endpoint: req.url || 'unknown',
+          suggestion: 'Check server logs for detailed error information',
+        });
       });
     });
 
@@ -345,8 +365,14 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
           threadId: chatRequest.threadId,
         });
       } catch (error) {
-        logger.error({ err: error, messageId }, 'Failed to handle message');
-        this.sendError(res, 500, 'Failed to process message');
+        logger.error({ err: error, messageId, chatId }, 'Failed to handle message');
+        const errorMessage = error instanceof Error ? error.message : 'Failed to process message';
+        this.sendError(res, 500, errorMessage, 'PROCESSING_ERROR', {
+          type: 'PROCESSING_ERROR',
+          timestamp: new Date().toISOString(),
+          endpoint: '/api/chat',
+          suggestion: 'Check if AI provider is configured correctly and API key is valid',
+        });
         return;
       }
     } else {
@@ -363,12 +389,29 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (syncMode) {
       // Wait for response with timeout (4 minutes for AI processing)
       const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
-      response.response = responseText;
+      try {
+        const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
+        response.response = responseText;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const isTimeout = errorMessage.includes('timeout');
 
-      // Cleanup
-      this.responseBuffers.delete(messageId);
-      this.chatToMessage.delete(chatId);
+        logger.error({ err: error, chatId, messageId, timeoutMs }, 'Sync response failed');
+
+        this.sendError(res, isTimeout ? 504 : 500, errorMessage, isTimeout ? 'TIMEOUT' : 'PROCESSING_ERROR', {
+          type: isTimeout ? 'TIMEOUT' : 'PROCESSING_ERROR',
+          timestamp: new Date().toISOString(),
+          endpoint: '/api/chat/sync',
+          suggestion: isTimeout
+            ? `Request timed out after ${timeoutMs / 1000}s. The AI may be processing slowly.`
+            : 'Check server logs for detailed error information',
+        });
+        return;
+      } finally {
+        // Cleanup
+        this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId);
+      }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -462,11 +505,36 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   /**
    * Send error response.
    */
-  private sendError(res: http.ServerResponse, status: number, message: string): void {
+  private sendError(
+    res: http.ServerResponse,
+    status: number,
+    message: string,
+    errorCode?: string,
+    errorContext?: ChatResponse['errorContext']
+  ): void {
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: false,
       error: message,
+      errorCode: errorCode || this.getDefaultErrorCode(status),
+      errorContext: errorContext || {
+        type: 'INTERNAL_ERROR',
+        timestamp: new Date().toISOString(),
+        endpoint: 'unknown',
+      },
     }));
+  }
+
+  /**
+   * Get default error code based on HTTP status.
+   */
+  private getDefaultErrorCode(status: number): string {
+    switch (status) {
+      case 400: return 'BAD_REQUEST';
+      case 401: return 'UNAUTHORIZED';
+      case 404: return 'NOT_FOUND';
+      case 500: return 'INTERNAL_ERROR';
+      default: return 'UNKNOWN_ERROR';
+    }
   }
 }

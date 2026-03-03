@@ -244,7 +244,16 @@ register_cleanup() {
 
 # Make HTTP request and return status code and body
 # Usage: result=$(make_request "METHOD" "/path" '{"body": "data"}' "Header: value")
-# Returns: "status_code|response_body"
+# Returns: "status_code|response_body|error_type"
+#
+# Error types:
+#   - "timeout" : Request timed out (curl exit code 28)
+#   - "connection_refused" : Server not reachable (curl exit code 7)
+#   - "connection_reset" : Connection reset by peer (curl exit code 56)
+#   - "dns_failure" : DNS resolution failed (curl exit code 6)
+#   - "ssl_error" : SSL/TLS error (curl exit code various)
+#   - "unknown" : Other curl errors
+#   - "" : No error (successful HTTP response)
 make_request() {
     local method="$1"
     local path="$2"
@@ -253,7 +262,16 @@ make_request() {
 
     local response
     local status
+    local curl_exit_code
+    local error_type=""
+    local error_file
+    local stderr_file
 
+    # Create temp files for capturing error output
+    error_file=$(mktemp)
+    stderr_file=$(mktemp)
+
+    # Make request with verbose error capture
     if [ -n "$body" ]; then
         response=$(curl -s -w "\n%{http_code}" \
             -X "$method" \
@@ -261,17 +279,52 @@ make_request() {
             -H "Content-Type: application/json" \
             ${headers:+-H "$headers"} \
             -d "$body" \
-            --max-time "$TIMEOUT" 2>&1)
+            --max-time "$TIMEOUT" \
+            --connect-timeout 10 \
+            2>"$stderr_file")
+        curl_exit_code=$?
     else
         response=$(curl -s -w "\n%{http_code}" \
             -X "$method" \
             "${API_URL}${path}" \
             ${headers:+-H "$headers"} \
-            --max-time "$TIMEOUT" 2>&1)
+            --max-time "$TIMEOUT" \
+            --connect-timeout 10 \
+            2>"$stderr_file")
+        curl_exit_code=$?
     fi
 
     status=$(echo "$response" | tail -n 1)
     body=$(echo "$response" | sed '$d')
+
+    # Check for curl errors (HTTP 000 indicates no response received)
+    if [ "$status" = "000" ] || [ $curl_exit_code -ne 0 ]; then
+        # Classify error based on curl exit code
+        case $curl_exit_code in
+            6)  error_type="DNS_FAILURE" ;;
+            7)  error_type="CONNECTION_REFUSED" ;;
+            22) error_type="HTTP_ERROR" ;;
+            28) error_type="TIMEOUT" ;;
+            52) error_type="EMPTY_RESPONSE" ;;
+            56) error_type="CONNECTION_RESET" ;;
+            35) error_type="SSL_ERROR" ;;
+            *)  error_type="UNKNOWN" ;;
+        esac
+
+        # Read stderr for additional context
+        local stderr_content
+        stderr_content=$(cat "$stderr_file" 2>/dev/null | tr '\n' ' ' | head -c 200)
+
+        # Include error details in response for debugging
+        if [ -n "$stderr_content" ]; then
+            body="{\"error\": true, \"errorType\": \"$error_type\", \"curlExitCode\": $curl_exit_code, \"details\": \"$stderr_content\", \"endpoint\": \"${method} ${path}\", \"timeout\": ${TIMEOUT}s, \"serverLog\": \"${SERVER_LOG}\"}"
+        else
+            body="{\"error\": true, \"errorType\": \"$error_type\", \"curlExitCode\": $curl_exit_code, \"endpoint\": \"${method} ${path}\", \"timeout\": ${TIMEOUT}s, \"serverLog\": \"${SERVER_LOG}\"}"
+        fi
+    fi
+
+    # Cleanup temp files
+    rm -f "$error_file" "$stderr_file" 2>/dev/null
 
     echo "$status|$body"
 }
@@ -376,8 +429,84 @@ assert_status() {
         return 0
     else
         log_fail "$test_name: expected status $expected, got $RESPONSE_STATUS"
+        # If HTTP 000, show detailed error information
+        if [ "$RESPONSE_STATUS" = "000" ]; then
+            show_request_error
+        fi
         return 1
     fi
+}
+
+# Show detailed error information for failed requests
+# Extracts error details from JSON response body
+show_request_error() {
+    local error_type
+    local endpoint
+    local timeout_val
+    local server_log
+
+    # Try to extract error details from JSON body
+    error_type=$(echo "$RESPONSE_BODY" | grep -o '"errorType":"[^"]*"' | cut -d'"' -f4)
+    endpoint=$(echo "$RESPONSE_BODY" | grep -o '"endpoint":"[^"]*"' | cut -d'"' -f4)
+    timeout_val=$(echo "$RESPONSE_BODY" | grep -o '"timeout":"[^"]*"' | cut -d'"' -f4)
+    server_log=$(echo "$RESPONSE_BODY" | grep -o '"serverLog":"[^"]*"' | cut -d'"' -f4)
+
+    echo ""
+    echo -e "${RED}═══════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}  Request Failed - Detailed Error Information${NC}"
+    echo -e "${RED}═══════════════════════════════════════════════════════${NC}"
+
+    if [ -n "$error_type" ]; then
+        echo -e "  ${YELLOW}Error Type:${NC}    $error_type"
+    fi
+    if [ -n "$endpoint" ]; then
+        echo -e "  ${YELLOW}Endpoint:${NC}      $endpoint"
+    fi
+    if [ -n "$timeout_val" ]; then
+        echo -e "  ${YELLOW}Timeout:${NC}       $timeout_val"
+    fi
+    if [ -n "$server_log" ]; then
+        echo -e "  ${YELLOW}Server Log:${NC}    $server_log"
+    fi
+
+    echo -e "${RED}═══════════════════════════════════════════════════════${NC}"
+
+    # Show suggestion based on error type
+    echo ""
+    echo -e "${BLUE}Suggestion:${NC}"
+    case "$error_type" in
+        "TIMEOUT")
+            echo "  - The request took longer than ${timeout_val:-$TIMEOUT}s"
+            echo "  - Check if the AI provider is responding slowly"
+            echo "  - Consider increasing timeout with --timeout option"
+            ;;
+        "CONNECTION_REFUSED")
+            echo "  - The server is not running or not accepting connections"
+            echo "  - Check if the server started correctly"
+            echo "  - Verify the port ($REST_PORT) is correct"
+            ;;
+        "CONNECTION_RESET")
+            echo "  - The server crashed or closed the connection unexpectedly"
+            echo "  - Check server logs for crash details"
+            ;;
+        "DNS_FAILURE")
+            echo "  - Could not resolve hostname"
+            echo "  - Check your network connection and DNS settings"
+            ;;
+        *)
+            echo "  - Check server logs for more details"
+            ;;
+    esac
+
+    # Show last few lines of server log if available
+    if [ -n "$server_log" ] && [ -f "$server_log" ]; then
+        echo ""
+        echo -e "${BLUE}Last 20 lines of server log:${NC}"
+        echo "-----------------------------------------------------------"
+        tail -20 "$server_log" 2>/dev/null || echo "(Could not read server log)"
+        echo "-----------------------------------------------------------"
+    fi
+    echo ""
 }
 
 # Assert JSON body contains a string
