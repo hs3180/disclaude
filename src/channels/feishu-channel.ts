@@ -634,7 +634,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    const event = data.event;
+    const { event } = data;
     if (!event?.user?.open_id) {
       logger.debug('P2P chat entered event missing user info');
       return;
@@ -656,7 +656,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    const event = data.event;
+    const { event } = data;
     if (!event?.chat_id || !event?.members || event.members.length === 0) {
       logger.debug('Chat member added event missing required fields');
       return;
