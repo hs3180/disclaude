@@ -93,7 +93,7 @@ export class RestAdapter implements IChannelAdapter {
    * Note: In a real implementation, this would push to a message queue
    * or notify connected WebSocket clients.
    */
-  async send(message: UniversalMessage): Promise<SendResult> {
+  send(message: UniversalMessage): Promise<SendResult> {
     try {
       const restMessage = this.convert(message);
 
@@ -111,18 +111,18 @@ export class RestAdapter implements IChannelAdapter {
         'REST message stored'
       );
 
-      return {
+      return Promise.resolve({
         success: true,
         messageId: restMessage.id,
         platformData: restMessage as unknown as Record<string, unknown>,
-      };
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId: message.chatId }, 'Failed to store REST message');
-      return {
+      return Promise.resolve({
         success: false,
         error: errorMessage,
-      };
+      });
     }
   }
 

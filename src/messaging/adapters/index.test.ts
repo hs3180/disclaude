@@ -7,8 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CliAdapter, createCliAdapter } from './cli-adapter.js';
 import { RestAdapter, createRestAdapter, resetRestAdapter, getRestAdapter } from './rest-adapter.js';
-import { isTextContent } from '../universal-message.js';
-import type { UniversalMessage } from '../universal-message.js';
+import { isTextContent, type UniversalMessage } from '../universal-message.js';
 
 // Mock Config for Feishu adapter tests
 vi.mock('../../config/index.js', () => ({
@@ -200,7 +199,7 @@ describe('Channel Adapters', () => {
 
         const messages = adapter.getMessages(chatId);
         expect(messages).toHaveLength(1);
-        const content = messages[0].content;
+        const [{ content }] = messages;
         expect(isTextContent(content) && content.text).toBe('Test message');
       });
 
@@ -222,7 +221,7 @@ describe('Channel Adapters', () => {
 
         const newMessages = adapter.getMessagesSince(chatId, result2.messageId!);
         expect(newMessages).toHaveLength(1);
-        const content = newMessages[0].content;
+        const [{ content }] = newMessages;
         expect(isTextContent(content) && content.text).toBe('Message 3');
       });
 
