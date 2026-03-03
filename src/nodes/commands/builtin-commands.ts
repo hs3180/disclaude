@@ -9,6 +9,8 @@
 import type { Command, CommandContext, CommandResult } from './types.js';
 // Issue #535: Expert registration and skill declaration
 import { ExpertCommand } from './expert-command.js';
+// Issue #538: Credit system - budget management
+import { BudgetCommand } from './budget-command.js';
 
 /**
  * Reset Command - Reset the conversation session.
@@ -384,4 +386,6 @@ export function registerDefaultCommands(
   registry.register(new NodeCommand());
   // Issue #535: Expert registration command
   registry.register(new ExpertCommand());
+  // Issue #538: Credit system budget command
+  registry.register(new BudgetCommand());
 }

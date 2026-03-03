@@ -569,6 +569,57 @@ experts:
     logger.debug({ skillName, minLevel, matchCount: results.length }, 'Found available experts');
     return results;
   }
+
+  // ============================================================================
+  // Pricing Operations (Issue #538: 积分系统 - 身价与消费)
+  // ============================================================================
+
+  /**
+   * Set expert's consultation price.
+   *
+   * @param openId - Expert's open_id
+   * @param price - Price per consultation
+   * @returns Whether the operation was successful
+   */
+  async setPrice(
+    openId: string,
+    price: number
+  ): Promise<{ success: boolean; error?: string }> {
+    await this.ensureLoaded();
+
+    const expert = this.experts.find(e => e.open_id === openId);
+    if (!expert) {
+      return { success: false, error: '您还未注册为专家，请先使用 /expert register 注册' };
+    }
+
+    if (price < 0) {
+      return { success: false, error: '身价不能为负数' };
+    }
+
+    // Use CreditManager to set price
+    const { getCreditManager } = await import('./credit-manager.js');
+    const creditManager = getCreditManager();
+    const result = await creditManager.setExpertPrice(openId, price);
+
+    if (result.success) {
+      logger.info({ openId, price }, 'Expert price set');
+      return { success: true };
+    }
+
+    return { success: false, error: result.error };
+  }
+
+  /**
+   * Get expert's consultation price.
+   *
+   * @param openId - Expert's open_id
+   * @returns Price per consultation (0 if not set)
+   */
+  async getPrice(openId: string): Promise<number> {
+    const { getCreditManager } = await import('./credit-manager.js');
+    const creditManager = getCreditManager();
+    return creditManager.getExpertPrice(openId);
+  }
 }
 
 /**

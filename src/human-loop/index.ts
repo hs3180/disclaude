@@ -19,10 +19,20 @@ export type {
   AskExpertOptions,
   CreateDiscussionResult,
   AskExpertResult,
+  // Credit System Types (Issue #538)
+  AgentAccount,
+  ExpertPricing,
+  CreditTransaction,
+  CreditSystemConfig,
+  CreditOperationResult,
+  ConsultationEligibility,
 } from './types.js';
 
 // Expert Registry
 export { ExpertRegistry, getExpertRegistry } from './expert-registry.js';
+
+// Credit Manager (Issue #538)
+export { CreditManager, getCreditManager } from './credit-manager.js';
 
 // Tools
 export {

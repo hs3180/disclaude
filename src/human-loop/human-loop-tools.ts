@@ -5,6 +5,8 @@
  * - Creating discussion chats
  * - Asking experts for help
  * - @ mentioning users
+ *
+ * @see Issue #538 - Credit system integration for ask_expert
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
@@ -13,6 +15,7 @@ import { Config } from '../config/index.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
 import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
 import { getExpertRegistry } from './expert-registry.js';
+import { getCreditManager } from './credit-manager.js';
 import type {
   CreateDiscussionOptions,
   CreateDiscussionResult,
@@ -98,13 +101,18 @@ export async function create_discussion(options: CreateDiscussionOptions): Promi
  * Finds an expert with the required skill, creates a discussion chat,
  * and sends a question card with interaction buttons.
  *
+ * Credit System (Issue #538):
+ * - If agentId is provided, checks and deducts credits
+ * - Expert's price determines the credit cost
+ * - Fails if insufficient balance or daily limit exceeded
+ *
  * @param options - Ask expert options
  * @returns Result with chat ID and expert info
  */
-export async function ask_expert(options: AskExpertOptions): Promise<AskExpertResult> {
-  const { skill, minLevel = 1, question, context, chatId: existingChatId } = options;
+export async function ask_expert(options: AskExpertOptions & { agentId?: string }): Promise<AskExpertResult> {
+  const { skill, minLevel = 1, question, context, chatId: existingChatId, agentId } = options;
 
-  logger.info({ skill, minLevel }, 'Looking for expert');
+  logger.info({ skill, minLevel, agentId }, 'Looking for expert');
 
   try {
     // Find expert
@@ -119,6 +127,48 @@ export async function ask_expert(options: AskExpertOptions): Promise<AskExpertRe
     }
 
     logger.info({ expertName: expert.name, skill }, 'Expert found');
+
+    // Get expert's price
+    const expertPrice = await registry.getPrice(expert.open_id);
+
+    // Credit check and deduction (Issue #538)
+    if (agentId && expertPrice > 0) {
+      const creditManager = getCreditManager();
+
+      // Check eligibility
+      const eligibility = await creditManager.checkConsultationEligibility(agentId, expert.open_id);
+
+      if (!eligibility.allowed) {
+        const reasonMessages: Record<string, string> = {
+          account_not_found: `积分账户不存在。请联系管理员创建账户: /budget recharge ${agentId} <积分>`,
+          insufficient_balance: `积分不足。当前余额: ${eligibility.balance}, 需要: ${eligibility.expertPrice}`,
+          daily_limit_exceeded: `已达每日上限。今日剩余: ${eligibility.dailyRemaining}, 需要: ${eligibility.expertPrice}`,
+        };
+        return {
+          success: false,
+          error: reasonMessages[eligibility.reason!] || '无法完成咨询',
+        };
+      }
+
+      // Deduct credits
+      const chargeResult = await creditManager.chargeConsultation(
+        agentId,
+        expert.open_id,
+        `咨询技能: ${skill}`
+      );
+
+      if (!chargeResult.success) {
+        return {
+          success: false,
+          error: chargeResult.error || '积分扣除失败',
+        };
+      }
+
+      logger.info(
+        { agentId, expertId: expert.open_id, price: expertPrice, newBalance: chargeResult.newBalance },
+        'Credits deducted for consultation'
+      );
+    }
 
     // Get Feishu client
     const appId = Config.FEISHU_APP_ID;
@@ -150,8 +200,9 @@ export async function ask_expert(options: AskExpertOptions): Promise<AskExpertRe
     // Build question message with @mention
     const mention = formatMention(expert.open_id);
     const contextText = context ? `\n\n**背景信息:**\n${context}` : '';
+    const priceText = expertPrice > 0 ? `\n\n💰 本次咨询消耗 ${expertPrice} 积分` : '';
 
-    const messageText = `${mention} 你好！我需要你的帮助。\n\n**技能需求:** ${skill}\n**问题:**\n${question}${contextText}`;
+    const messageText = `${mention} 你好！我需要你的帮助。\n\n**技能需求:** ${skill}\n**问题:**\n${question}${contextText}${priceText}`;
 
     // Send the question as text
     await client.im.message.create({
@@ -286,14 +337,21 @@ export const humanLoopToolDefinitions: InlineToolDefinition[] = [
 
 **How it works:**
 1. Searches the expert registry for someone with the required skill
-2. Creates a discussion chat (or uses existing one)
-3. Sends a question with @mention to the expert
+2. Checks credit balance if agentId provided and expert has a price
+3. Creates a discussion chat (or uses existing one)
+4. Sends a question with @mention to the expert
+
+**Credit System (Issue #538):**
+- If agentId is provided and expert has a price set, credits will be deducted
+- Consultation fails if insufficient balance or daily limit exceeded
+- Use /budget commands to manage credits
 
 **Expert Registry:**
 Experts are configured in \`workspace/experts.yaml\`. Each expert has:
 - open_id: Their Feishu user ID
 - name: Display name
 - skills: Array of {name, level (1-5)}
+- price (optional): Consultation price in credits
 
 **Skill Matching:**
 - Skill name uses partial, case-insensitive matching
@@ -305,6 +363,7 @@ skill: "React"
 minLevel: 3
 question: "Can you review this component design?"
 context: "We're building a dashboard with real-time updates..."
+agentId: "agent_001"  // Optional: for credit deduction
 \`\`\``,
     parameters: z.object({
       skill: z.string().describe('Skill name to search for (e.g., "React", "TypeScript")'),
@@ -312,10 +371,11 @@ context: "We're building a dashboard with real-time updates..."
       question: z.string().describe('Question or request for the expert'),
       context: z.string().optional().describe('Optional context information to help the expert understand the situation'),
       chatId: z.string().optional().describe('Optional existing chat ID to use instead of creating new one'),
+      agentId: z.string().optional().describe('Optional agent ID for credit deduction (if expert has a price)'),
     }),
-    handler: async ({ skill, minLevel, question, context, chatId }) => {
+    handler: async ({ skill, minLevel, question, context, chatId, agentId }) => {
       try {
-        const result = await ask_expert({ skill, minLevel, question, context, chatId });
+        const result = await ask_expert({ skill, minLevel, question, context, chatId, agentId });
         if (result.success) {
           return toolSuccess(
             `✅ Expert contacted\n` +

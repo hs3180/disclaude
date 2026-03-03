@@ -114,3 +114,97 @@ export interface AskExpertResult {
   /** Error message if failed */
   error?: string;
 }
+
+// ============================================================================
+// Credit System Types (Issue #538: 积分系统 - 身价与消费)
+// ============================================================================
+
+/**
+ * Agent credit account for the credit system.
+ */
+export interface AgentAccount {
+  /** Unique agent identifier */
+  agentId: string;
+  /** Agent display name */
+  name?: string;
+  /** Current credit balance */
+  balance: number;
+  /** Daily spending limit */
+  dailyLimit: number;
+  /** Amount used today */
+  usedToday: number;
+  /** Last reset date (YYYY-MM-DD) */
+  lastResetDate: string;
+}
+
+/**
+ * Expert pricing configuration.
+ */
+export interface ExpertPricing {
+  /** Expert's open_id */
+  openId: string;
+  /** Price per consultation in credits */
+  pricePerConsultation: number;
+  /** Last updated timestamp */
+  updatedAt?: string;
+}
+
+/**
+ * Credit transaction record.
+ */
+export interface CreditTransaction {
+  /** Transaction ID */
+  id: string;
+  /** Timestamp */
+  timestamp: string;
+  /** Agent ID */
+  agentId: string;
+  /** Expert ID */
+  expertId: string;
+  /** Amount of credits */
+  amount: number;
+  /** Transaction type */
+  type: 'consultation' | 'recharge' | 'refund';
+  /** Description */
+  description?: string;
+}
+
+/**
+ * Credit system configuration file format.
+ */
+export interface CreditSystemConfig {
+  /** Agent accounts */
+  accounts: AgentAccount[];
+  /** Expert pricing */
+  expertPricing: ExpertPricing[];
+  /** Transaction history (last 100) */
+  transactions: CreditTransaction[];
+}
+
+/**
+ * Result of a credit operation.
+ */
+export interface CreditOperationResult {
+  /** Whether the operation was successful */
+  success: boolean;
+  /** New balance after operation */
+  newBalance?: number;
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
+ * Result of checking consultation eligibility.
+ */
+export interface ConsultationEligibility {
+  /** Whether consultation is allowed */
+  allowed: boolean;
+  /** Reason if not allowed */
+  reason?: 'insufficient_balance' | 'daily_limit_exceeded' | 'account_not_found';
+  /** Current balance */
+  balance?: number;
+  /** Expert price */
+  expertPrice?: number;
+  /** Daily limit remaining */
+  dailyRemaining?: number;
+}

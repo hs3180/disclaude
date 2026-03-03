@@ -18,6 +18,9 @@ const mockRegistry = {
   getProfile: vi.fn(),
   getAll: vi.fn(),
   findAvailableExperts: vi.fn(),
+  // Issue #538: Price methods
+  setPrice: vi.fn(),
+  getPrice: vi.fn(),
 };
 
 vi.mock('../../human-loop/index.js', () => ({
@@ -106,6 +109,7 @@ describe('ExpertCommand', () => {
           name: 'Test User',
           skills: [{ name: 'React', level: 4 }],
         });
+        mockRegistry.getPrice.mockResolvedValue(10);
 
         const context = createMockContext(['profile']);
         const result = await command.execute(context);
@@ -113,6 +117,7 @@ describe('ExpertCommand', () => {
         expect(result.success).toBe(true);
         expect(result.message).toContain('专家档案');
         expect(result.message).toContain('Test User');
+        expect(result.message).toContain('身价'); // Issue #538: Price display
       });
 
       it('should show error if not registered', async () => {
@@ -349,6 +354,68 @@ describe('ExpertCommand', () => {
 
         expect(result.success).toBe(true);
         expect(mockRegistry.findAvailableExperts).toHaveBeenCalled();
+      });
+    });
+
+    // Issue #538: Price subcommand tests
+    describe('price', () => {
+      it('should set expert price', async () => {
+        mockRegistry.setPrice.mockResolvedValue({ success: true });
+
+        const context = createMockContext(['price', '10']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('身价已设置');
+        expect(result.message).toContain('10');
+        expect(mockRegistry.setPrice).toHaveBeenCalledWith('ou_test_user', 10);
+      });
+
+      it('should set price to 0 (free)', async () => {
+        mockRegistry.setPrice.mockResolvedValue({ success: true });
+
+        const context = createMockContext(['price', '0']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('免费咨询');
+      });
+
+      it('should fail with missing price', async () => {
+        const context = createMockContext(['price']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('用法');
+      });
+
+      it('should fail with negative price', async () => {
+        const context = createMockContext(['price', '-5']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('非负整数');
+      });
+
+      it('should fail with invalid price', async () => {
+        const context = createMockContext(['price', 'abc']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('非负整数');
+      });
+
+      it('should fail if not registered', async () => {
+        mockRegistry.setPrice.mockResolvedValue({
+          success: false,
+          error: '您还未注册为专家',
+        });
+
+        const context = createMockContext(['price', '10']);
+        const result = await command.execute(context);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('还未注册');
       });
     });
   });

@@ -18,6 +18,7 @@ import type { SkillDefinition } from '../../human-loop/types.js';
  * - skills add <name> <level> [tags]: Add a skill
  * - skills remove <name>: Remove a skill
  * - availability <schedule>: Set availability
+ * - price <credits>: Set consultation price
  * - list: List all registered experts
  * - search <skill>: Search experts by skill
  */
@@ -25,7 +26,7 @@ export class ExpertCommand implements Command {
   readonly name = 'expert';
   readonly category = 'expert' as const;
   readonly description = '专家注册与技能声明';
-  readonly usage = 'expert <register|profile|skills|availability|list|search>';
+  readonly usage = 'expert <register|profile|skills|availability|price|list|search>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const subCommand = context.args[0]?.toLowerCase();
@@ -39,7 +40,7 @@ export class ExpertCommand implements Command {
     }
 
     // Validate subcommand
-    const validSubcommands = ['register', 'profile', 'skills', 'availability', 'list', 'search'];
+    const validSubcommands = ['register', 'profile', 'skills', 'availability', 'price', 'list', 'search'];
     if (!validSubcommands.includes(subCommand)) {
       return {
         success: false,
@@ -73,6 +74,9 @@ export class ExpertCommand implements Command {
       case 'availability':
         return this.handleAvailability(registry, userId!, context.args.slice(1));
 
+      case 'price':
+        return this.handlePrice(registry, userId!, context.args.slice(1));
+
       case 'list':
         return this.handleList(registry);
 
@@ -99,6 +103,7 @@ export class ExpertCommand implements Command {
 - \`skills add <技能名> <等级(1-5)> [标签...]\` - 添加技能
 - \`skills remove <技能名>\` - 移除技能
 - \`availability <时间安排>\` - 设置可用时间
+- \`price <积分>\` - 设置每次咨询的身价（积分）
 - \`list\` - 列出所有注册的专家
 - \`search <技能名> [最低等级]\` - 按技能搜索专家
 
@@ -109,6 +114,7 @@ export class ExpertCommand implements Command {
 /expert skills add TypeScript 5
 /expert skills remove JavaScript
 /expert availability weekdays 10:00-18:00
+/expert price 10
 /expert profile
 /expert list
 /expert search React
@@ -192,6 +198,10 @@ export class ExpertCommand implements Command {
       ? `📅 **可用时间:** ${profile.availability.schedule || '未设置'}\n🌍 **时区:** ${profile.availability.timezone || '未设置'}`
       : '_未设置可用时间_';
 
+    // Get price
+    const price = await registry.getPrice(userId);
+    const priceText = price === 0 ? '免费咨询' : `每次咨询 **${price}** 积分`;
+
     return {
       success: true,
       message: `👨‍💼 **专家档案**
@@ -205,9 +215,13 @@ ${skillsText}
 **可用性:**
 ${availabilityText}
 
+**身价:**
+💰 ${priceText}
+
 ---
 💡 使用 \`/expert skills add <技能> <等级>\` 添加技能
-💡 使用 \`/expert availability <时间>\` 设置可用时间`,
+💡 使用 \`/expert availability <时间>\` 设置可用时间
+💡 使用 \`/expert price <积分>\` 设置咨询身价`,
     };
   }
 
@@ -356,6 +370,48 @@ ${availabilityText}
     }
 
     return { success: false, error: result.error || '设置可用时间失败' };
+  }
+
+  /**
+   * Handle price subcommand.
+   * Set the expert's consultation price.
+   */
+  private async handlePrice(
+    registry: ReturnType<typeof getExpertRegistry>,
+    userId: string,
+    args: string[]
+  ): Promise<CommandResult> {
+    if (args.length < 1) {
+      return {
+        success: false,
+        error: '用法: `/expert price <积分>`\n\n示例: `/expert price 10` - 设置每次咨询消耗 10 积分',
+      };
+    }
+
+    const price = parseInt(args[0], 10);
+
+    if (isNaN(price) || price < 0) {
+      return {
+        success: false,
+        error: '身价必须是非负整数\n\n示例: `/expert price 10`',
+      };
+    }
+
+    const result = await registry.setPrice(userId, price);
+
+    if (result.success) {
+      const priceText = price === 0 ? '免费咨询' : `每次咨询消耗 **${price}** 积分`;
+      return {
+        success: true,
+        message: `✅ **身价已设置**
+
+💰 ${priceText}
+
+您的咨询服务现在${price === 0 ? '对所有人免费' : `需要 ${price} 积分/次`}`,
+      };
+    }
+
+    return { success: false, error: result.error || '设置身价失败' };
   }
 
   /**
