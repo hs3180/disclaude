@@ -57,6 +57,8 @@ import {
   getMembers,
 } from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
+// Command registry (Issue #463)
+import { getCommandRegistry } from './command-registry.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -513,6 +515,11 @@ export class PrimaryNode extends EventEmitter {
           success: true,
           message: `📊 **状态**\n\n状态: ${status}\n节点ID: ${this.localNodeId}\n执行节点: ${execStatus}\n当前节点: ${currentNode?.name || '未分配'}\n通道: ${channelStatus}`,
         };
+      }
+
+      case 'help': {
+        const registry = getCommandRegistry();
+        return { success: true, message: registry.generateHelpText() };
       }
 
       case 'list-nodes': {

@@ -501,15 +501,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
           return;
         }
-
-        if (cmd === 'help') {
-          await this.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
-          });
-          return;
-        }
       }
     }
 
