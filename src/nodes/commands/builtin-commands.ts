@@ -269,7 +269,7 @@ export class PassiveCommand implements Command {
   readonly description = '群聊被动模式开关';
   readonly usage = 'passive [on|off|status]';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     // Default to status if no args
     const subCommand = context.args[0]?.toLowerCase() || 'status';
 
@@ -284,7 +284,7 @@ export class PassiveCommand implements Command {
     // Actual implementation is handled by PrimaryNode/CommunicationNode
     return {
       success: true,
-      message: `🔄 **被动模式设置中...**`,
+      message: '🔄 **被动模式设置中...**',
     };
   }
 }
