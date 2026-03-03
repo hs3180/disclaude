@@ -139,7 +139,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
     mentions?: Array<{ key: string; id: { open_id: string }; name: string }>;
   }): Promise<void> {
     // Determine chat_type based on chatId prefix if not explicitly provided
-    let chatType = options.chatType;
+    let { chatType } = options;
     if (!chatType) {
       const chatId = options.chatId || 'oc_test_group';
       if (chatId.startsWith('oc_')) {
