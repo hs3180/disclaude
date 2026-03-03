@@ -62,6 +62,21 @@ feishu:
     # Default: 60000 (1 minute)
     maxAgeMs: 60000
 
+  # Group chat passive mode configuration (Issue #511)
+  # When enabled (default), bot only responds when @mentioned in group chats
+  passiveMode:
+    # Enable/disable passive mode globally
+    # Default: true
+    enabled: true
+
+    # Per-chat exceptions to override global setting
+    # Use this to disable passive mode for specific groups
+    # exceptions:
+    #   - chatId: "oc_xxx"
+    #     passiveMode: false  # This group will respond to all messages
+    #   - chatId: "oc_yyy"
+    #     passiveMode: true   # Explicitly enable for this group
+
 # -----------------------------------------------------------------------------
 # GLM (Zhipu AI) API Configuration
 # -----------------------------------------------------------------------------

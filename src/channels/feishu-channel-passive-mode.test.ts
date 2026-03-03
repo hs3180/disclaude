@@ -41,6 +41,10 @@ vi.mock('../config/index.js', () => ({
   Config: {
     FEISHU_APP_ID: 'test-app-id',
     FEISHU_APP_SECRET: 'test-app-secret',
+    getPassiveModeConfig: () => ({
+      enabled: true,
+      exceptions: [],
+    }),
   },
 }));
 
@@ -458,6 +462,98 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
 
       // Reaction SHOULD be added for private chat messages
       expect(senderInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
+    });
+  });
+
+  describe('Passive mode control (Issue #511)', () => {
+    it('should handle /passive status command', async () => {
+      await simulateMessageReceive({
+        text: '/passive status',
+        chatId: 'oc_test_group',
+        mentions: undefined,
+      });
+
+      // Control handler should be called
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+          chatId: 'oc_test_group',
+        })
+      );
+    });
+
+    it('should handle /passive off command to disable passive mode', async () => {
+      await simulateMessageReceive({
+        text: '/passive off',
+        chatId: 'oc_test_group',
+        mentions: undefined,
+      });
+
+      // Control handler should be called
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+          chatId: 'oc_test_group',
+        })
+      );
+    });
+
+    it('should handle /passive on command to enable passive mode', async () => {
+      await simulateMessageReceive({
+        text: '/passive on',
+        chatId: 'oc_test_group',
+        mentions: undefined,
+      });
+
+      // Control handler should be called
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+          chatId: 'oc_test_group',
+        })
+      );
+    });
+
+    it('should allow messages after passive mode is disabled via setPassiveMode', async () => {
+      // Disable passive mode for this chat
+      channel.setPassiveMode('oc_test_group', false);
+
+      await simulateMessageReceive({
+        text: 'Hello everyone!',
+        chatId: 'oc_test_group',
+        mentions: undefined, // No mentions
+      });
+
+      // Message SHOULD be passed to agent because passive mode is disabled
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'Hello everyone!',
+        })
+      );
+    });
+
+    it('should skip messages after passive mode is enabled via setPassiveMode', async () => {
+      // First disable, then enable
+      channel.setPassiveMode('oc_test_group', false);
+      channel.setPassiveMode('oc_test_group', true);
+
+      await simulateMessageReceive({
+        text: 'Hello everyone!',
+        chatId: 'oc_test_group',
+        mentions: undefined, // No mentions
+      });
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should return passive mode status via getPassiveModeStatus', () => {
+      const status = channel.getPassiveModeStatus();
+
+      expect(status).toHaveProperty('globalEnabled');
+      expect(status).toHaveProperty('overridesCount');
+      expect(typeof status.globalEnabled).toBe('boolean');
+      expect(typeof status.overridesCount).toBe('number');
     });
   });
 });

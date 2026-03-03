@@ -33,6 +33,17 @@ import type {
 const logger = createLogger('FeishuChannel');
 
 /**
+ * Runtime passive mode state for each chat.
+ * Stores per-chat passive mode overrides set via /passive command.
+ */
+interface PassiveModeState {
+  /** Global passive mode enabled (from config or runtime override) */
+  globalEnabled: boolean;
+  /** Per-chat passive mode overrides (chatId -> enabled) */
+  chatOverrides: Map<string, boolean>;
+}
+
+/**
  * Feishu channel configuration.
  */
 export interface FeishuChannelConfig extends ChannelConfig {
@@ -63,6 +74,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
   private interactionManager: InteractionManager;
+  /** Passive mode state (config + runtime overrides) */
+  private passiveModeState: PassiveModeState;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -71,6 +84,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
     this.taskTracker = new TaskTracker();
+
+    // Initialize passive mode state from config
+    const passiveConfig = Config.getPassiveModeConfig();
+    this.passiveModeState = {
+      globalEnabled: passiveConfig.enabled,
+      chatOverrides: new Map(),
+    };
+    // Load exceptions from config
+    for (const exception of passiveConfig.exceptions) {
+      this.passiveModeState.chatOverrides.set(exception.chatId, exception.passiveMode ?? true);
+    }
 
     // Initialize FileHandler
     this.fileHandler = new FeishuFileHandler({
@@ -297,6 +321,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Check if passive mode is enabled for a specific chat.
+   * Priority: runtime override > config exception > global default
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if passive mode is enabled for this chat
+   */
+  private isPassiveModeEnabled(chatId: string): boolean {
+    // Check runtime override first
+    if (this.passiveModeState.chatOverrides.has(chatId)) {
+      return this.passiveModeState.chatOverrides.get(chatId)!;
+    }
+    // Fall back to global setting
+    return this.passiveModeState.globalEnabled;
+  }
+
+  /**
+   * Set passive mode for a specific chat (runtime override).
+   *
+   * @param chatId - Chat ID to set
+   * @param enabled - Whether passive mode should be enabled
+   */
+  setPassiveMode(chatId: string, enabled: boolean): void {
+    this.passiveModeState.chatOverrides.set(chatId, enabled);
+    logger.info({ chatId, passiveMode: enabled }, 'Passive mode updated');
+  }
+
+  /**
+   * Get current passive mode status.
+   *
+   * @returns Passive mode state info
+   */
+  getPassiveModeStatus(): { globalEnabled: boolean; overridesCount: number } {
+    return {
+      globalEnabled: this.passiveModeState.globalEnabled,
+      overridesCount: this.passiveModeState.chatOverrides.size,
+    };
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -444,6 +507,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       'reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
       // Group management commands (Issue #486)
       'create-group', 'add-member', 'remove-member', 'list-member', 'list-group', 'dissolve-group',
+      // Passive mode commands (Issue #511)
+      'passive',
     ];
 
     if (trimmedText.startsWith('/')) {
@@ -501,9 +566,53 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.sendMessage({
             chatId: chat_id,
             type: 'text',
-            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
+            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助\n- /passive [on|off|status] - 控制被动模式',
           });
           return;
+        }
+
+        // Handle /passive command (Issue #511)
+        if (cmd === 'passive') {
+          const subCommand = args[0]?.toLowerCase();
+          const currentEnabled = this.isPassiveModeEnabled(chat_id);
+
+          if (subCommand === 'on') {
+            this.setPassiveMode(chat_id, true);
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: '✅ **被动模式已开启**\n\nBot 将只在被 @ 时响应群聊消息。',
+            });
+            return;
+          }
+
+          if (subCommand === 'off') {
+            this.setPassiveMode(chat_id, false);
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: '✅ **被动模式已关闭**\n\nBot 将响应所有群聊消息。',
+            });
+            return;
+          }
+
+          if (subCommand === 'status' || !subCommand) {
+            const status = this.getPassiveModeStatus();
+            const chatStatus = this.isPassiveModeEnabled(chat_id);
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: `📊 **被动模式状态**\n\n` +
+                `当前群聊: ${chatStatus ? '✅ 开启' : '❌ 关闭'}\n` +
+                `全局默认: ${status.globalEnabled ? '✅ 开启' : '❌ 关闭'}\n` +
+                `自定义群聊数: ${status.overridesCount}\n\n` +
+                `用法:\n` +
+                `- /passive on - 开启被动模式\n` +
+                `- /passive off - 关闭被动模式\n` +
+                `- /passive status - 查看状态`,
+            });
+            return;
+          }
         }
       }
     }
@@ -513,13 +622,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
     }
 
-    // Issue #460: Group chat passive mode
-    // In group chats, only respond when bot is mentioned (@bot)
+    // Issue #460, #511: Group chat passive mode
+    // In group chats, only respond when bot is mentioned (@bot) if passive mode is enabled
     // This allows scheduled tasks to broadcast without triggering unwanted responses
-    if (this.isGroupChat(chat_type) && !botMentioned) {
+    // Passive mode can be configured per-chat via config file or /passive command
+    if (this.isGroupChat(chat_type) && !botMentioned && this.isPassiveModeEnabled(chat_id)) {
       logger.debug(
-        { messageId: message_id, chatId: chat_id, chat_type },
-        'Skipped group chat message without @mention (passive mode)'
+        { messageId: message_id, chatId: chat_id, chat_type, passiveMode: true },
+        'Skipped group chat message without @mention (passive mode enabled)'
       );
       return;
     }

@@ -47,6 +47,16 @@ export interface AgentConfig {
 }
 
 /**
+ * Passive mode exception configuration for specific chats.
+ */
+export interface PassiveModeException {
+  /** Chat ID to apply exception to */
+  chatId: string;
+  /** Override passive mode for this chat (false = disabled passive mode) */
+  passiveMode?: boolean;
+}
+
+/**
  * Feishu/Lark platform configuration section.
  */
 export interface FeishuConfig {
@@ -62,6 +72,17 @@ export interface FeishuConfig {
     maxIds?: number;
     /** Maximum message age in milliseconds */
     maxAgeMs?: number;
+  };
+  /**
+   * Group chat passive mode configuration.
+   * When enabled (default), bot only responds when @mentioned in group chats.
+   * @see Issue #511
+   */
+  passiveMode?: {
+    /** Enable/disable passive mode globally (default: true) */
+    enabled?: boolean;
+    /** Per-chat exceptions to override global setting */
+    exceptions?: PassiveModeException[];
   };
 }
 

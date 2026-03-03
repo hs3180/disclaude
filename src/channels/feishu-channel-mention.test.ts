@@ -22,6 +22,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
     register: vi.fn().mockReturnThis(),
   })),
   LoggerLevel: { info: 'info' },
+  Domain: { Feishu: 'https://open.feishu.cn' },
 }));
 
 vi.mock('../utils/logger.js', () => ({
@@ -38,12 +39,17 @@ vi.mock('../config/index.js', () => ({
   Config: {
     FEISHU_APP_ID: 'test-app-id',
     FEISHU_APP_SECRET: 'test-app-secret',
+    getPassiveModeConfig: () => ({
+      enabled: true,
+      exceptions: [],
+    }),
   },
 }));
 
 vi.mock('../config/constants.js', () => ({
   DEDUPLICATION: { MAX_MESSAGE_AGE: 300000 },
   REACTIONS: { TYPING: 'Typing' },
+  FEISHU_API: { REQUEST_TIMEOUT_MS: 30000 },
 }));
 
 vi.mock('../feishu/message-logger.js', () => ({

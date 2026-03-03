@@ -336,4 +336,20 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get Feishu passive mode configuration.
+   *
+   * @returns Passive mode configuration or default
+   */
+  static getPassiveModeConfig(): {
+    enabled: boolean;
+    exceptions: Array<{ chatId: string; passiveMode?: boolean }>;
+  } {
+    const passiveMode = fileConfigOnly.feishu?.passiveMode;
+    return {
+      enabled: passiveMode?.enabled ?? true, // Default to true
+      exceptions: passiveMode?.exceptions || [],
+    };
+  }
 }
