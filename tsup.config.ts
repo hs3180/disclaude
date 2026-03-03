@@ -13,6 +13,13 @@ const EXTERNAL_DEPS = [
   'pino-roll',
   'sonic-boom',
   'pino-file',
+  // CJS modules that use dynamic require - must be external for ESM build
+  // These are dependencies of @larksuiteoapi/node-sdk -> axios
+  'axios',
+  'form-data',
+  'follow-redirects',
+  'combined-stream',
+  'proxy-from-env',
 ];
 
 export default defineConfig([
