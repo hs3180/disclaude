@@ -523,7 +523,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       expect(messageHandler).toHaveBeenCalledTimes(1); // Still 1, not incremented
     });
 
-    it('should correctly report passive mode status', async () => {
+    it('should correctly report passive mode status', () => {
       // Initially passive mode is enabled (not disabled)
       expect(channel.isPassiveModeDisabled('oc_test_group')).toBe(false);
 
