@@ -185,7 +185,9 @@ export class TaskSuggestionService {
 
     // Check each task type's keywords
     for (const [type, keywords] of Object.entries(TASK_TYPE_KEYWORDS)) {
-      if (type === 'general') continue; // Skip general, it's the fallback
+      if (type === 'general') {
+        continue; // Skip general, it's the fallback
+      }
 
       for (const keyword of keywords) {
         if (lowerContent.includes(keyword.toLowerCase())) {

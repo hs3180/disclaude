@@ -47,7 +47,6 @@ import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
 import {
-  TaskSuggestionService,
   initTaskSuggestionService,
   getTaskSuggestionService,
 } from './task-suggestion.js';

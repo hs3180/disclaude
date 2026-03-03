@@ -10,8 +10,6 @@ import {
   initTaskSuggestionService,
   getTaskSuggestionService,
   resetTaskSuggestionService,
-  type TaskType,
-  type SuggestionContext,
 } from './task-suggestion.js';
 
 describe('TaskSuggestionService', () => {
