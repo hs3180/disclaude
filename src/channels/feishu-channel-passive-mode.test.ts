@@ -460,4 +460,120 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       expect(senderInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
     });
   });
+
+  /**
+   * Issue #511: Passive mode control for group chats
+   */
+  describe('Passive mode control (Issue #511)', () => {
+    it('should process group chat message when passive mode is disabled', async () => {
+      // Disable passive mode for this chat
+      channel.setPassiveModeDisabled('oc_test_group', true);
+
+      await simulateMessageReceive({
+        text: 'Hello everyone!',
+        chatId: 'oc_test_group',
+        mentions: undefined, // No mentions
+      });
+
+      // Message SHOULD be passed to agent (passive mode disabled)
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'Hello everyone!',
+        })
+      );
+    });
+
+    it('should skip group chat message when passive mode is re-enabled', async () => {
+      // First disable, then re-enable passive mode
+      channel.setPassiveModeDisabled('oc_test_group', true);
+      channel.setPassiveModeDisabled('oc_test_group', false);
+
+      await simulateMessageReceive({
+        text: 'Hello everyone!',
+        chatId: 'oc_test_group',
+        mentions: undefined,
+      });
+
+      // Message should NOT be passed to agent (passive mode re-enabled)
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should track passive mode state per chat', async () => {
+      // Disable passive mode for one chat
+      channel.setPassiveModeDisabled('oc_group_1', true);
+
+      // Simulate message in group 1 (passive mode disabled)
+      await simulateMessageReceive({
+        text: 'Hello group 1',
+        chatId: 'oc_group_1',
+        mentions: undefined,
+      });
+
+      // Should be processed
+      expect(messageHandler).toHaveBeenCalledTimes(1);
+
+      // Simulate message in group 2 (passive mode enabled by default)
+      await simulateMessageReceive({
+        text: 'Hello group 2',
+        chatId: 'oc_group_2',
+        mentions: undefined,
+      });
+
+      // Should NOT be processed (passive mode still enabled for group 2)
+      expect(messageHandler).toHaveBeenCalledTimes(1); // Still 1, not incremented
+    });
+
+    it('should correctly report passive mode status', async () => {
+      // Initially passive mode is enabled (not disabled)
+      expect(channel.isPassiveModeDisabled('oc_test_group')).toBe(false);
+
+      // After disabling
+      channel.setPassiveModeDisabled('oc_test_group', true);
+      expect(channel.isPassiveModeDisabled('oc_test_group')).toBe(true);
+
+      // After re-enabling
+      channel.setPassiveModeDisabled('oc_test_group', false);
+      expect(channel.isPassiveModeDisabled('oc_test_group')).toBe(false);
+    });
+
+    it('should return list of chats with passive mode disabled', () => {
+      // Initially empty
+      expect(channel.getPassiveModeDisabledChats()).toEqual([]);
+
+      // Add some chats
+      channel.setPassiveModeDisabled('oc_group_1', true);
+      channel.setPassiveModeDisabled('oc_group_2', true);
+
+      expect(channel.getPassiveModeDisabledChats()).toContain('oc_group_1');
+      expect(channel.getPassiveModeDisabledChats()).toContain('oc_group_2');
+
+      // Remove one
+      channel.setPassiveModeDisabled('oc_group_1', false);
+      expect(channel.getPassiveModeDisabledChats()).not.toContain('oc_group_1');
+      expect(channel.getPassiveModeDisabledChats()).toContain('oc_group_2');
+    });
+
+    it('should still process @mentioned messages when passive mode is disabled', async () => {
+      channel.setPassiveModeDisabled('oc_test_group', true);
+
+      await simulateMessageReceive({
+        text: '@bot Hello!',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'bot-open-id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Message SHOULD be passed to agent
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '@bot Hello!',
+        })
+      );
+    });
+  });
 });
