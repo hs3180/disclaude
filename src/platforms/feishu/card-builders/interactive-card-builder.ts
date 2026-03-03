@@ -24,6 +24,14 @@ export interface ButtonConfig {
   style?: ButtonStyle;
   /** URL to open when clicked (optional) */
   url?: string;
+  /**
+   * Prompt template to represent user's intent when button is clicked.
+   * When provided, this will be used to generate a message representing
+   * the user's interaction behavior, which will be sent to the agent.
+   *
+   * Example: "用户确认了删除操作" or "User selected option A"
+   */
+  promptTemplate?: string;
 }
 
 /**
@@ -104,13 +112,26 @@ export type CardElement =
 export type ActionElement = ButtonAction | MenuAction;
 
 /**
+ * Button action value structure.
+ * Used to encode button click behavior for agent processing.
+ */
+export interface ButtonActionValue {
+  /** Action identifier */
+  action: string;
+  /** Prompt template representing user's intent */
+  prompt?: string;
+  /** Additional metadata */
+  [key: string]: string | undefined;
+}
+
+/**
  * Button action element.
  */
 export interface ButtonAction {
   tag: 'button';
   text: { tag: 'plain_text'; content: string };
   type: ButtonStyle;
-  value: Record<string, string>;
+  value: ButtonActionValue;
   url?: string;
 }
 
@@ -173,14 +194,32 @@ export interface BuiltCard {
  * @returns Button action element
  *
  * @example
+ * // Simple button
  * const button = buildButton({ text: 'Confirm', value: 'confirm', style: 'primary' });
+ *
+ * // Button with prompt template (Issue #525)
+ * const button = buildButton({
+ *   text: '确认删除',
+ *   value: 'confirm_delete',
+ *   style: 'danger',
+ *   promptTemplate: '用户确认了删除操作'
+ * });
  */
 export function buildButton(config: ButtonConfig): ButtonAction {
+  const actionValue: ButtonActionValue = {
+    action: config.value,
+  };
+
+  // Include prompt template if provided (Issue #525)
+  if (config.promptTemplate) {
+    actionValue.prompt = config.promptTemplate;
+  }
+
   const button: ButtonAction = {
     tag: 'button',
     text: { tag: 'plain_text', content: config.text },
     type: config.style || 'default',
-    value: { action: config.value },
+    value: actionValue,
   };
 
   if (config.url) {

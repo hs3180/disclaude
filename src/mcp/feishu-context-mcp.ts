@@ -56,6 +56,7 @@ export function setMessageSentCallback(callback: MessageSentCallback | null): vo
  * @param msgType - Message type ('text' or 'interactive')
  * @param content - Message content (JSON stringified)
  * @param parentId - Optional parent message ID for thread replies
+ * @returns The message ID of the sent message
  * @throws Error if sending fails
  */
 async function sendMessageToFeishu(
@@ -64,7 +65,7 @@ async function sendMessageToFeishu(
   msgType: 'text' | 'interactive',
   content: string,
   parentId?: string
-): Promise<void> {
+): Promise<string> {
   const messageData: {
     receive_id_type?: string;
     msg_type: string;
@@ -76,15 +77,16 @@ async function sendMessageToFeishu(
 
   // When replying to a message, use reply method to properly quote the user's message
   if (parentId) {
-    await client.im.message.reply({
+    const response = await client.im.message.reply({
       path: {
         message_id: parentId,
       },
       data: messageData,
     });
+    return response.data?.message_id || '';
   } else {
     // New message: use create method with receive_id
-    await client.im.message.create({
+    const response = await client.im.message.create({
       params: {
         receive_id_type: 'chat_id',
       },
@@ -93,6 +95,7 @@ async function sendMessageToFeishu(
         ...messageData,
       },
     });
+    return response.data?.message_id || '';
   }
 }
 
@@ -186,6 +189,7 @@ export async function send_user_feedback(params: {
 }): Promise<{
   success: boolean;
   message: string;
+  messageId?: string;
   error?: string;
 }> {
   const { content, format, chatId, parentMessageId } = params;
@@ -225,9 +229,12 @@ export async function send_user_feedback(params: {
         }
       }
 
+      // Generate a pseudo message ID for CLI mode
+      const cliMessageId = `cli-${Date.now()}`;
       return {
         success: true,
         message: `✅ Feedback displayed (CLI mode, format: ${format})`,
+        messageId: cliMessageId,
       };
     }
 
@@ -244,31 +251,34 @@ export async function send_user_feedback(params: {
       domain: lark.Domain.Feishu,
     });
 
+    let messageId = '';
+
     if (format === 'text') {
       // Send as text message
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
-      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      messageId = await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
 
       logger.debug({
         chatId,
         messageLength: textContent.length,
         message: textContent,
         parentMessageId,
+        messageId,
       }, 'User feedback sent (text)');
     } else {
       // Card format: strict validation, no fallback
       if (typeof content === 'object' && isValidFeishuCard(content)) {
         // Valid card object - send as-is
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, hasValidStructure: true, parentMessageId }, 'User card sent (interactive)');
+        messageId = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
+        logger.debug({ chatId, hasValidStructure: true, parentMessageId, messageId }, 'User card sent (interactive)');
       } else if (typeof content === 'string') {
         // String content - must be valid JSON card
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
             // Valid JSON card string - send directly
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
-            logger.debug({ chatId, wasJsonString: true, parentMessageId }, 'User card sent (from JSON string)');
+            messageId = await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            logger.debug({ chatId, wasJsonString: true, parentMessageId, messageId }, 'User card sent (from JSON string)');
           } else {
             // Valid JSON but not a valid card - return error for LLM to fix
             const validationError = getCardValidationError(parsed);
@@ -331,6 +341,7 @@ export async function send_user_feedback(params: {
     return {
       success: true,
       message: `✅ Feedback sent (format: ${format})`,
+      messageId,
     };
 
   } catch (error) {

@@ -592,17 +592,51 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
         // Default handler: emit as interaction message
+        // Issue #525: Try to parse action value as JSON to extract prompt template
+        let messageContent: string;
+        let actionMetadata: Record<string, unknown> = {
+          cardAction: defaultEvent.action,
+          cardMessageId: defaultEvent.message_id,
+        };
+
+        try {
+          // Attempt to parse action.value as JSON (ButtonActionValue structure)
+          const parsedValue = JSON.parse(defaultEvent.action.value);
+          if (parsedValue && typeof parsedValue === 'object') {
+            // Store the full action value in metadata
+            actionMetadata.parsedAction = parsedValue;
+
+            // Use prompt template if available
+            if (parsedValue.prompt && typeof parsedValue.prompt === 'string') {
+              messageContent = parsedValue.prompt;
+              logger.debug(
+                { messageId: defaultEvent.message_id, prompt: parsedValue.prompt },
+                'Using prompt template from card action'
+              );
+            } else if (parsedValue.action) {
+              // Fallback to action name if no prompt template
+              messageContent = `[card_action] ${parsedValue.action}`;
+            } else {
+              // No action field, use raw value
+              messageContent = `[card_action] ${defaultEvent.action.value}`;
+            }
+          } else {
+            // Not a JSON object, use raw value
+            messageContent = `[card_action] ${defaultEvent.action.value}`;
+          }
+        } catch {
+          // Not valid JSON, use raw value (backward compatibility)
+          messageContent = `[card_action] ${defaultEvent.action.value}`;
+        }
+
         await this.emitMessage({
           messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
           chatId: defaultEvent.chat_id,
           userId: defaultEvent.user?.sender_id?.open_id,
-          content: `[card_action] ${defaultEvent.action.value}`,
+          content: messageContent,
           messageType: 'card',
           timestamp: Date.now(),
-          metadata: {
-            cardAction: defaultEvent.action,
-            cardMessageId: defaultEvent.message_id,
-          },
+          metadata: actionMetadata,
         });
       });
 
