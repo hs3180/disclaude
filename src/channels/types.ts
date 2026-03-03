@@ -184,7 +184,7 @@ export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'e
  * Channel interface.
  *
  * All communication channels must implement this interface.
- * The CommunicationNode uses this interface to interact with channels.
+ * The PrimaryNode uses this interface to interact with channels.
  */
 export interface IChannel {
   /**

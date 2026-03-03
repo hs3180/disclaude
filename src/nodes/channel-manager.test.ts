@@ -1,7 +1,7 @@
 /**
  * Tests for ChannelManager.
  *
- * Issue #241: Extracted from CommunicationNode for better separation of concerns.
+ * Part of the PrimaryNode/WorkerNode architecture.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

@@ -281,7 +281,7 @@ export class PassiveCommand implements Command {
       };
     }
 
-    // Actual implementation is handled by PrimaryNode/CommunicationNode
+    // Actual implementation is handled by PrimaryNode
     return {
       success: true,
       message: '🔄 **被动模式设置中...**',

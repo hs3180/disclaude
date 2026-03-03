@@ -1,8 +1,7 @@
 /**
  * Primary Node - Main node with both communication and execution capabilities.
  *
- * This module combines the capabilities of CommunicationNode and ExecutionRunner
- * into a single self-contained node that can:
+ * This self-contained node can:
  * - Handle multiple communication channels (Feishu, REST, etc.)
  * - Execute Agent tasks locally
  * - Accept connections from Worker Nodes for horizontal scaling
