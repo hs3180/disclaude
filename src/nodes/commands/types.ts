@@ -9,6 +9,9 @@
 
 import type * as lark from '@larksuiteoapi/node-sdk';
 
+// Import TaskState type for task management
+import type { TaskState } from '../../utils/task-state-manager.js';
+
 /**
  * Command category for grouping related commands.
  */
@@ -111,6 +114,35 @@ export interface CommandServices {
 
   /** Get channel status list */
   getChannelStatus: () => string;
+
+  // Task management methods (Issue #468)
+
+  /** Start a new task */
+  startTask: (prompt: string, chatId: string, userId?: string) => Promise<TaskState>;
+
+  /** Get current task */
+  getCurrentTask: () => Promise<TaskState | null>;
+
+  /** Update task progress */
+  updateTaskProgress: (progress: number, currentStep?: string) => Promise<void>;
+
+  /** Pause current task */
+  pauseTask: () => Promise<TaskState | null>;
+
+  /** Resume paused task */
+  resumeTask: () => Promise<TaskState | null>;
+
+  /** Cancel current task */
+  cancelTask: () => Promise<TaskState | null>;
+
+  /** Complete current task */
+  completeTask: () => Promise<TaskState | null>;
+
+  /** Set task error */
+  setTaskError: (error: string) => Promise<TaskState | null>;
+
+  /** List task history */
+  listTaskHistory: (limit?: number) => Promise<TaskState[]>;
 }
 
 /**

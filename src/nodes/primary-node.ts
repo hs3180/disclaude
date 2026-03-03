@@ -68,6 +68,8 @@ import {
 import {
   initWelcomeService,
 } from '../platforms/feishu/welcome-service.js';
+// Task state manager (Issue #468)
+import { getTaskStateManager } from '../utils/task-state-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -120,6 +122,9 @@ export class PrimaryNode extends EventEmitter {
   private feishuClient?: lark.Client;
   private feishuAppId?: string;
   private feishuAppSecret?: string;
+
+  // Task management (Issue #468)
+  private taskStateManager = getTaskStateManager();
 
   constructor(config: PrimaryNodeConfig) {
     super();
@@ -550,6 +555,16 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        // Task management methods (Issue #468)
+        startTask: (prompt: string, chatId: string, userId?: string) => this.taskStateManager.startTask(prompt, chatId, userId),
+        getCurrentTask: () => this.taskStateManager.getCurrentTask(),
+        updateTaskProgress: (progress: number, currentStep?: string) => this.taskStateManager.updateProgress(progress, currentStep),
+        pauseTask: () => this.taskStateManager.pauseTask(),
+        resumeTask: () => this.taskStateManager.resumeTask(),
+        cancelTask: () => this.taskStateManager.cancelTask(),
+        completeTask: () => this.taskStateManager.completeTask(),
+        setTaskError: (error: string) => this.taskStateManager.setTaskError(error),
+        listTaskHistory: (limit?: number) => this.taskStateManager.listTaskHistory(limit),
       },
     };
 
