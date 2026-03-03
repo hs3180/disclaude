@@ -359,6 +359,75 @@ export class NodeCommand implements Command {
 }
 
 /**
+ * Schedule Command - Manage scheduled tasks.
+ * Issue #469: 定时任务控制指令
+ *
+ * Subcommands:
+ * - list: List all scheduled tasks
+ * - enable <taskId>: Enable a task
+ * - disable <taskId>: Disable a task
+ * - run <taskId>: Manually trigger a task
+ * - status [taskId]: View task or scheduler status
+ */
+export class ScheduleCommand implements Command {
+  readonly name = 'schedule';
+  readonly category = 'schedule' as const;
+  readonly description = '定时任务管理';
+  readonly usage = 'schedule <list|enable|disable|run|status> [taskId]';
+
+  execute(context: CommandContext): CommandResult {
+    const subCommand = context.args[0]?.toLowerCase();
+
+    // If no subcommand, show help
+    if (!subCommand) {
+      return {
+        success: true,
+        message: `⏰ **定时任务管理指令**
+
+用法: \`/schedule <子命令> [任务ID]\`
+
+**可用子命令:**
+- \`list\` - 列出所有定时任务
+- \`enable <taskId>\` - 启用任务
+- \`disable <taskId>\` - 禁用任务
+- \`run <taskId>\` - 手动触发任务
+- \`status [taskId]\` - 查看任务或调度器状态
+
+示例:
+\`\`\`
+/schedule list
+/schedule enable schedule-daily
+/schedule run schedule-daily
+/schedule status schedule-daily
+\`\`\``,
+      };
+    }
+
+    // Validate subcommand
+    const validSubcommands = ['list', 'enable', 'disable', 'run', 'status'];
+    if (!validSubcommands.includes(subCommand)) {
+      return {
+        success: false,
+        error: `未知的子命令: \`${subCommand}\`
+
+可用子命令: ${validSubcommands.map(c => `\`${c}\``).join(', ')}`,
+      };
+    }
+
+    // Actual implementation is handled by PrimaryNode
+    return {
+      success: true,
+      message: `🔄 **定时任务命令执行中...**`,
+      // Pass through the subcommand and remaining args for PrimaryNode to handle
+      data: {
+        subcommand: subCommand,
+        scheduleArgs: context.args.slice(1),
+      },
+    };
+  }
+}
+
+/**
  * Register default commands to a registry.
  */
 export function registerDefaultCommands(
@@ -380,4 +449,6 @@ export function registerDefaultCommands(
   registry.register(new PassiveCommand());
   // Issue #541: Node management command
   registry.register(new NodeCommand());
+  // Issue #469: Schedule control command
+  registry.register(new ScheduleCommand());
 }

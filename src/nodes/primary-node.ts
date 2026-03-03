@@ -938,6 +938,133 @@ export class PrimaryNode extends EventEmitter {
         };
       }
 
+      // Schedule control commands (Issue #469)
+      case 'schedule': {
+        if (!this.schedulerService) {
+          return { success: false, error: '调度器服务未初始化' };
+        }
+
+        const args = command.data?.args as string[] | undefined;
+        const subCommand = args?.[0]?.toLowerCase();
+
+        if (!subCommand) {
+          return {
+            success: false,
+            error: '用法: `/schedule <list|enable|disable|run|status> [taskId]`\n\n示例:\n- `/schedule list` - 列出所有定时任务\n- `/schedule enable schedule-daily` - 启用任务\n- `/schedule disable schedule-daily` - 禁用任务\n- `/schedule run schedule-daily` - 手动触发任务\n- `/schedule status schedule-daily` - 查看任务状态',
+          };
+        }
+
+        switch (subCommand) {
+          case 'list': {
+            const tasks = await this.schedulerService.listSchedules();
+            if (tasks.length === 0) {
+              return { success: true, message: '📋 **定时任务列表**\n\n暂无定时任务' };
+            }
+
+            const enabledCount = tasks.filter(t => t.enabled).length;
+            const disabledCount = tasks.length - enabledCount;
+            const scheduler = this.schedulerService.getScheduler();
+
+            const taskList = tasks.map(t => {
+              const status = t.enabled ? '✅' : '⏸️';
+              const running = scheduler?.isTaskRunning(t.id) ? ' 🔄' : '';
+              return `- ${status} \`${t.id}\` - ${t.name} (\`${t.cron}\`)${running}`;
+            }).join('\n');
+
+            return {
+              success: true,
+              message: `📋 **定时任务列表**\n\n任务数: ${tasks.length} (启用: ${enabledCount}, 禁用: ${disabledCount})\n\n${taskList}`,
+            };
+          }
+
+          case 'enable': {
+            const taskId = args?.[1];
+            if (!taskId) {
+              return { success: false, error: '用法: `/schedule enable <taskId>`\n\n使用 `/schedule list` 查看所有任务 ID' };
+            }
+
+            const task = await this.schedulerService.enableSchedule(taskId);
+            if (!task) {
+              return { success: false, error: `定时任务 \`${taskId}\` 不存在` };
+            }
+
+            return { success: true, message: `✅ **定时任务已启用**\n\n任务: ${task.name}\nID: \`${taskId}\`` };
+          }
+
+          case 'disable': {
+            const taskId = args?.[1];
+            if (!taskId) {
+              return { success: false, error: '用法: `/schedule disable <taskId>`\n\n使用 `/schedule list` 查看所有任务 ID' };
+            }
+
+            const task = await this.schedulerService.disableSchedule(taskId);
+            if (!task) {
+              return { success: false, error: `定时任务 \`${taskId}\` 不存在` };
+            }
+
+            return { success: true, message: `⏸️ **定时任务已禁用**\n\n任务: ${task.name}\nID: \`${taskId}\`` };
+          }
+
+          case 'run': {
+            const taskId = args?.[1];
+            if (!taskId) {
+              return { success: false, error: '用法: `/schedule run <taskId>`\n\n使用 `/schedule list` 查看所有任务 ID' };
+            }
+
+            const task = await this.schedulerService.getSchedule(taskId);
+            if (!task) {
+              return { success: false, error: `定时任务 \`${taskId}\` 不存在` };
+            }
+
+            // Run the task asynchronously
+            this.schedulerService.runSchedule(taskId, command.chatId).then(success => {
+              if (success) {
+                logger.info({ taskId }, 'Manual schedule run completed');
+              }
+            }).catch(error => {
+              logger.error({ err: error, taskId }, 'Manual schedule run failed');
+            });
+
+            return { success: true, message: `🔄 **定时任务已触发**\n\n任务: ${task.name}\nID: \`${taskId}\`\n\n执行结果将发送到此会话` };
+          }
+
+          case 'status': {
+            const taskId = args?.[1];
+
+            if (taskId) {
+              const status = await this.schedulerService.getScheduleStatus(taskId);
+              if (!status.task) {
+                return { success: false, error: `定时任务 \`${taskId}\` 不存在` };
+              }
+
+              const task = status.task;
+              const enabledStatus = task.enabled ? '✅ 已启用' : '⏸️ 已禁用';
+              const runningStatus = status.isCurrentlyRunning ? '\n执行中: 🔄 是' : '';
+              const blockingStatus = task.blocking ? '是' : '否';
+              const createdAt = new Date(task.createdAt).toLocaleString('zh-CN');
+
+              return {
+                success: true,
+                message: `📋 **定时任务状态**\n\n**名称**: ${task.name}\n**ID**: \`${task.id}\`\n**状态**: ${enabledStatus}${runningStatus}\n**Cron**: \`${task.cron}\`\n**阻塞模式**: ${blockingStatus}\n**创建时间**: ${createdAt}`,
+              };
+            }
+
+            // Show scheduler status
+            const status = await this.schedulerService.getScheduleStatus();
+            return {
+              success: true,
+              message: `📋 **调度器状态**\n\n运行中: ${status.running ? '✅' : '❌'}\n活跃任务: ${status.activeJobsCount ?? 0}`,
+            };
+          }
+
+          default:
+            return {
+              success: false,
+              error: `未知的 schedule 子命令: \`${subCommand}\`\n\n可用子命令: list, enable, disable, run, status`,
+            };
+        }
+      }
+
       default:
         return { success: false, error: `Unknown command: ${command.type}` };
     }
