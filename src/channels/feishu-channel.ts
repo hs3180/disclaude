@@ -14,6 +14,7 @@ import { messageLogger } from '../feishu/message-logger.js';
 import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
+import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
@@ -222,14 +223,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
-   * Get or create Lark HTTP client.
+   * Get or create Lark HTTP client with timeout configuration.
    */
   private getClient(): lark.Client {
     if (!this.client) {
-      this.client = new lark.Client({
-        appId: this.appId,
-        appSecret: this.appSecret,
-      });
+      this.client = createFeishuClient(this.appId, this.appSecret);
       this.messageSender = new FeishuMessageSender({
         client: this.client,
         logger,

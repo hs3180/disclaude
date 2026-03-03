@@ -42,3 +42,11 @@ export const REACTIONS = {
   /** Emoji to indicate the bot is typing/processing (👀 = 正在查看/处理中) */
   TYPING: 'Typing',
 } as const;
+
+/**
+ * Feishu API configuration constants (Issue #498, #507)
+ */
+export const FEISHU_API = {
+  /** Request timeout in milliseconds (30 seconds) */
+  REQUEST_TIMEOUT_MS: 30 * 1000,
+} as const;

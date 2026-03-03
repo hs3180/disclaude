@@ -10,6 +10,7 @@ import type { Logger } from 'pino';
 import type { IPlatformAdapter } from '../../channels/adapters/types.js';
 import { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 import { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
+import { createFeishuClient } from './create-feishu-client.js';
 
 /**
  * Feishu Platform Adapter Configuration.
@@ -85,14 +86,9 @@ export class FeishuPlatformAdapter implements IPlatformAdapter {
   }
 
   /**
-   * Create a new Lark client.
+   * Create a new Lark client with timeout configuration.
    */
   private createClient(appId: string, appSecret: string): lark.Client {
-    // Dynamic import to avoid circular dependencies
-    const larkModule = require('@larksuiteoapi/node-sdk');
-    return new larkModule.Client({
-      appId,
-      appSecret,
-    });
+    return createFeishuClient(appId, appSecret);
   }
 }

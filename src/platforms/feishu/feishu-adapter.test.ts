@@ -48,6 +48,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
       },
     },
   })),
+  Domain: { Feishu: 'https://open.feishu.cn' },
 }));
 
 describe('FeishuPlatformAdapter', () => {
