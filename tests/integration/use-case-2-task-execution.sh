@@ -60,6 +60,12 @@ test_calculation_task() {
     log_debug "HTTP code: $RESPONSE_STATUS"
     log_debug "Response: $RESPONSE_BODY"
 
+    # Check for network errors first
+    if is_network_error; then
+        print_network_error "Calculation task"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Request failed with HTTP $RESPONSE_STATUS"
         log_debug "Response: $RESPONSE_BODY"
@@ -115,6 +121,12 @@ test_file_listing_task() {
     log_debug "HTTP code: $RESPONSE_STATUS"
     log_debug "Response: $RESPONSE_BODY"
 
+    # Check for network errors first
+    if is_network_error; then
+        print_network_error "File listing task"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Request failed with HTTP $RESPONSE_STATUS"
         log_debug "Response: $RESPONSE_BODY"
@@ -169,6 +181,12 @@ test_text_analysis_task() {
 
     log_debug "HTTP code: $RESPONSE_STATUS"
     log_debug "Response: $RESPONSE_BODY"
+
+    # Check for network errors first
+    if is_network_error; then
+        print_network_error "Text analysis task"
+        return 1
+    fi
 
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Request failed with HTTP $RESPONSE_STATUS"

@@ -61,6 +61,12 @@ test_basic_greeting() {
     log_debug "HTTP code: $RESPONSE_STATUS"
     log_debug "Response: $RESPONSE_BODY"
 
+    # Check for network errors first
+    if is_network_error; then
+        print_network_error "Basic greeting"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Request failed with HTTP $RESPONSE_STATUS"
         log_debug "Response: $RESPONSE_BODY"
@@ -115,6 +121,12 @@ test_custom_chatid() {
 
     log_debug "HTTP code: $RESPONSE_STATUS"
     log_debug "Response: $RESPONSE_BODY"
+
+    # Check for network errors first
+    if is_network_error; then
+        print_network_error "Custom chatId test"
+        return 1
+    fi
 
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Request failed with HTTP $RESPONSE_STATUS"

@@ -242,9 +242,27 @@ register_cleanup() {
 # HTTP Request Helpers
 # =============================================================================
 
+# Describe curl error code with human-readable message
+# Usage: description=$(describe_curl_error "error_code")
+describe_curl_error() {
+    local error_code="$1"
+    case "$error_code" in
+        "6")   echo "DNS_RESOLUTION_FAILED - Could not resolve host" ;;
+        "7")   echo "CONNECTION_REFUSED - Server refused connection (is the server running?)" ;;
+        "22")  echo "HTTP_ERROR - Server returned HTTP error >= 400" ;;
+        "28")  echo "CONNECTION_TIMEOUT - Request timed out after ${TIMEOUT}s" ;;
+        "35")  echo "SSL_CONNECT_FAILED - SSL/TLS handshake failed" ;;
+        "52")  echo "EMPTY_RESPONSE - Server returned no content" ;;
+        "56")  echo "RECV_ERROR - Failed to receive data from server" ;;
+        "000"|"0") echo "NETWORK_ERROR - Request failed to complete (check server logs)" ;;
+        *)     echo "CURL_ERROR_${error_code} - Unknown network error" ;;
+    esac
+}
+
 # Make HTTP request and return status code and body
 # Usage: result=$(make_request "METHOD" "/path" '{"body": "data"}' "Header: value")
 # Returns: "status_code|response_body"
+# On network error, status is "000" and body contains structured error info
 make_request() {
     local method="$1"
     local path="$2"
@@ -253,25 +271,69 @@ make_request() {
 
     local response
     local status
+    local curl_exit_code
+    local temp_file
+    local error_file
 
+    # Use temp files to capture both stdout and stderr separately
+    temp_file=$(mktemp)
+    error_file=$(mktemp)
+
+    # Make request and capture exit code
     if [ -n "$body" ]; then
-        response=$(curl -s -w "\n%{http_code}" \
+        curl -s -w "\n%{http_code}" \
             -X "$method" \
             "${API_URL}${path}" \
             -H "Content-Type: application/json" \
             ${headers:+-H "$headers"} \
             -d "$body" \
-            --max-time "$TIMEOUT" 2>&1)
+            --max-time "$TIMEOUT" \
+            -o "$temp_file" \
+            2> "$error_file"
+        curl_exit_code=$?
     else
-        response=$(curl -s -w "\n%{http_code}" \
+        curl -s -w "\n%{http_code}" \
             -X "$method" \
             "${API_URL}${path}" \
             ${headers:+-H "$headers"} \
-            --max-time "$TIMEOUT" 2>&1)
+            --max-time "$TIMEOUT" \
+            -o "$temp_file" \
+            2> "$error_file"
+        curl_exit_code=$?
     fi
 
+    # Read response body
+    response=$(cat "$temp_file")
+    local curl_error
+    curl_error=$(cat "$error_file")
+
+    # Cleanup temp files
+    rm -f "$temp_file" "$error_file"
+
+    # Extract HTTP status code from last line
     status=$(echo "$response" | tail -n 1)
     body=$(echo "$response" | sed '$d')
+
+    # Handle curl errors (exit code != 0 or status 000)
+    if [ "$curl_exit_code" -ne 0 ] || [ "$status" = "000" ]; then
+        local error_desc
+        error_desc=$(describe_curl_error "$curl_exit_code")
+
+        # Build structured error message
+        local error_json="{\"error\": true, \"errorType\": \"${error_desc%% -*}\", \"description\": \"${error_desc#* - }\", \"context\": {\"endpoint\": \"${method} ${path}\", \"timeout\": \"${TIMEOUT}s\", \"serverLog\": \"${SERVER_LOG:-disclaude-test-server.log}\"}"
+
+        # Include curl stderr if available
+        if [ -n "$curl_error" ]; then
+            # Escape special characters for JSON
+            curl_error=$(echo "$curl_error" | tr '\n' ' ' | sed 's/"/\\"/g')
+            error_json="${error_json%,}, \"curlError\": \"$curl_error\"}"
+        else
+            error_json="${error_json}}"
+        fi
+
+        echo "000|$error_json"
+        return
+    fi
 
     echo "$status|$body"
 }
@@ -408,6 +470,90 @@ extract_json_field() {
 extract_json_bool() {
     local field="$1"
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
+}
+
+# =============================================================================
+# Error Handling Helpers
+# =============================================================================
+
+# Check if response indicates a network error (HTTP 000)
+# Usage: if is_network_error; then ...
+is_network_error() {
+    [ "$RESPONSE_STATUS" = "000" ]
+}
+
+# Get error type from structured error response
+# Usage: error_type=$(get_error_type)
+get_error_type() {
+    echo "$RESPONSE_BODY" | grep -o '"errorType":"[^"]*"' | cut -d'"' -f4
+}
+
+# Get error description from structured error response
+# Usage: description=$(get_error_description)
+get_error_description() {
+    echo "$RESPONSE_BODY" | grep -o '"description":"[^"]*"' | cut -d'"' -f4
+}
+
+# Print detailed error information for network errors
+# Usage: print_network_error "test_name"
+print_network_error() {
+    local test_name="${1:-Request}"
+    local error_type
+    local description
+
+    error_type=$(get_error_type)
+    description=$(get_error_description)
+
+    log_error "$test_name failed: $error_type"
+    log_error "  Description: $description"
+
+    # Extract and display context if available
+    local endpoint
+    endpoint=$(echo "$RESPONSE_BODY" | grep -o '"endpoint":"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$endpoint" ]; then
+        log_error "  Endpoint: $endpoint"
+    fi
+
+    local timeout_val
+    timeout_val=$(echo "$RESPONSE_BODY" | grep -o '"timeout":"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$timeout_val" ]; then
+        log_error "  Timeout: $timeout_val"
+    fi
+
+    local server_log
+    server_log=$(echo "$RESPONSE_BODY" | grep -o '"serverLog":"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$server_log" ]; then
+        log_error "  Server log: $server_log"
+    fi
+
+    # Show last few lines of server log if available
+    if [ -n "$server_log" ] && [ -f "$server_log" ]; then
+        log_error ""
+        log_error "  Last server activity:"
+        tail -5 "$server_log" | while IFS= read -r line; do
+            log_error "    $line"
+        done
+    fi
+}
+
+# Enhanced assert_status that handles network errors specially
+# Usage: assert_status_ok "test_name"
+assert_status_ok() {
+    local test_name="${1:-status check}"
+
+    if is_network_error; then
+        print_network_error "$test_name"
+        return 1
+    fi
+
+    if [ "$RESPONSE_STATUS" = "200" ]; then
+        log_pass "$test_name: status is 200"
+        return 0
+    else
+        log_fail "$test_name: expected status 200, got $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
 }
 
 # =============================================================================

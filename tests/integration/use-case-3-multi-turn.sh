@@ -101,16 +101,20 @@ test_number_context() {
     # Turn 1: Tell agent my favorite number
     log_debug "Turn 1: Telling agent my favorite number is 42"
     result=$(make_sync_request "我的幸运数字是 42，请记住它" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 1 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Number context - Turn 1"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 1 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 1 response: $response_text"
     log_info "Turn 1: Agent acknowledged the number"
 
@@ -119,16 +123,20 @@ test_number_context() {
     # Turn 2: Ask agent to recall the number
     log_debug "Turn 2: Asking agent to recall my favorite number"
     result=$(make_sync_request "我的幸运数字是多少？" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 2 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Number context - Turn 2"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 2 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 2 response: $response_text"
 
     # Check if agent recalled the number 42
@@ -143,16 +151,20 @@ test_number_context() {
     # Turn 3: Ask agent to calculate using the remembered number
     log_debug "Turn 3: Asking agent to calculate using the number"
     result=$(make_sync_request "用我的幸运数字乘以 2 等于多少？" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 3 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Number context - Turn 3"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 3 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 3 response: $response_text"
 
     # Check if agent calculated 84 (42 * 2)
@@ -178,16 +190,20 @@ test_name_context() {
     # Turn 1: Introduce name
     log_debug "Turn 1: Introducing myself as Xiaoming"
     result=$(make_sync_request "你好，我叫小明，我是一名程序员" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 1 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Name context - Turn 1"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 1 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 1 response: $response_text"
     log_info "Turn 1: Agent acknowledged the introduction"
 
@@ -196,16 +212,20 @@ test_name_context() {
     # Turn 2: Ask about my name
     log_debug "Turn 2: Asking about my name"
     result=$(make_sync_request "你还记得我叫什么名字吗？" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 2 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Name context - Turn 2"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 2 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 2 response: $response_text"
 
     # Check if agent recalled the name "小明"
@@ -220,16 +240,20 @@ test_name_context() {
     # Turn 3: Ask about my profession
     log_debug "Turn 3: Asking about my profession"
     result=$(make_sync_request "我的职业是什么？" "$chat_id")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Turn 3 failed with HTTP $status"
-        log_debug "Response: $body"
+    if is_network_error; then
+        print_network_error "Name context - Turn 3"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Turn 3 failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Turn 3 response: $response_text"
 
     # Check if agent recalled the profession "程序员"
@@ -256,11 +280,15 @@ test_context_isolation() {
     # Chat 1: Set a secret number
     log_debug "Chat 1: Setting secret number 123"
     result=$(make_sync_request "我的秘密数字是 123" "$chat_id_1")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Chat 1 Turn 1 failed with HTTP $status"
+    if is_network_error; then
+        print_network_error "Context isolation - Chat 1"
+        return 1
+    fi
+
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Chat 1 Turn 1 failed with HTTP $RESPONSE_STATUS"
         return 1
     fi
     log_debug "Chat 1: Secret number set"
@@ -270,15 +298,19 @@ test_context_isolation() {
     # Chat 2: Try to access the secret number (should not know it)
     log_debug "Chat 2: Trying to recall secret number from different chat"
     result=$(make_sync_request "我的秘密数字是多少？" "$chat_id_2")
-    status="${result%%|*}"
-    body="${result#*|}"
+    parse_response "$result"
 
-    if [ "$status" != "200" ]; then
-        log_fail "Chat 2 failed with HTTP $status"
+    if is_network_error; then
+        print_network_error "Context isolation - Chat 2"
         return 1
     fi
 
-    response_text=$(echo "$body" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Chat 2 failed with HTTP $RESPONSE_STATUS"
+        return 1
+    fi
+
+    response_text=$(echo "$RESPONSE_BODY" | grep -o '"response":"[^"]*"' | cut -d'"' -f4)
     log_debug "Chat 2 response: $response_text"
 
     # Chat 2 should NOT know the number 123 (context isolation)

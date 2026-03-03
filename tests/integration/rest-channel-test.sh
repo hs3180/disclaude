@@ -90,6 +90,11 @@ test_chat_valid_request() {
     result=$(make_request "POST" "/api/chat" '{"message":"test message"}')
     parse_response "$result"
 
+    if is_network_error; then
+        print_network_error "Chat valid request"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" = "200" ]; then
         if echo "$RESPONSE_BODY" | grep -q '"success":true' && \
            echo "$RESPONSE_BODY" | grep -q '"messageId"' && \
@@ -110,6 +115,11 @@ test_chat_missing_message() {
     local result
     result=$(make_request "POST" "/api/chat" '{}')
     parse_response "$result"
+
+    if is_network_error; then
+        print_network_error "Chat missing message"
+        return 1
+    fi
 
     if [ "$RESPONSE_STATUS" = "400" ]; then
         if echo "$RESPONSE_BODY" | grep -q '"error"'; then
@@ -153,6 +163,11 @@ test_chat_custom_chatid() {
     result=$(make_request "POST" "/api/chat" '{"message":"test","chatId":"custom-test-id-123"}')
     parse_response "$result"
 
+    if is_network_error; then
+        print_network_error "Custom chatId"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" = "200" ]; then
         if echo "$RESPONSE_BODY" | grep -q '"chatId":"custom-test-id-123"'; then
             log_pass "Chat endpoint preserves custom chatId"
@@ -189,6 +204,11 @@ test_options_preflight() {
     result=$(make_request "OPTIONS" "/api/chat")
     parse_response "$result"
 
+    if is_network_error; then
+        print_network_error "OPTIONS preflight"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" = "204" ]; then
         log_pass "OPTIONS preflight returns 204"
     else
@@ -204,6 +224,11 @@ test_unknown_route() {
     result=$(make_request "GET" "/unknown/path")
     parse_response "$result"
 
+    if is_network_error; then
+        print_network_error "Unknown route"
+        return 1
+    fi
+
     if [ "$RESPONSE_STATUS" = "404" ]; then
         log_pass "Unknown route returns 404"
     else
@@ -218,6 +243,11 @@ test_control_missing_fields() {
     local result
     result=$(make_request "POST" "/api/control" '{"type":"reset"}')
     parse_response "$result"
+
+    if is_network_error; then
+        print_network_error "Control missing fields"
+        return 1
+    fi
 
     if [ "$RESPONSE_STATUS" = "400" ]; then
         log_pass "Control endpoint rejects missing chatId with 400"
