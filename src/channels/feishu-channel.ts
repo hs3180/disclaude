@@ -15,6 +15,8 @@ import { FeishuFileHandler } from '../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
+import type { WelcomeService } from '../platforms/feishu/welcome-service.js';
+import { getCommandRegistry } from '../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
@@ -24,6 +26,8 @@ import type {
   FeishuMessageEvent,
   FeishuCardActionEvent,
   FeishuCardActionEventData,
+  FeishuChatMemberAddedEventData,
+  FeishuP2PChatEnteredEventData,
 } from '../types/platform.js';
 import type {
   ChannelConfig,
@@ -63,6 +67,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
   private interactionManager: InteractionManager;
+  private welcomeService?: WelcomeService;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -117,7 +122,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': async () => {},
-      'im.chat.access_event.bot_p2p_chat_entered_v1': async () => {},
+      // Issue #463: Handle P2P chat entered for welcome message
+      'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
+        try {
+          await this.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle P2P chat entered');
+        }
+      },
+      // Issue #463: Handle bot added to group for welcome message
+      'im.chat.member.added_v1': async (data: unknown) => {
+        try {
+          await this.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle chat member added');
+        }
+      },
     });
 
     // Create WebSocket client
@@ -438,13 +458,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
-    // Control commands that should always be handled locally through the control channel
-    // These commands affect session/agent lifecycle and should not be passed to the agent
-    const CONTROL_COMMANDS = [
-      'reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
-      // Group management commands (Issue #486)
-      'create-group', 'add-member', 'remove-member', 'list-member', 'list-group', 'dissolve-group',
-    ];
+    // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
+    const commandRegistry = getCommandRegistry();
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
@@ -453,7 +468,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Handle control commands through the control channel
       // Control commands are ALWAYS handled locally, regardless of @mentions
       // Non-control commands with @mention are passed to agent
-      const isControlCommand = CONTROL_COMMANDS.includes(cmd);
+      const isControlCommand = commandRegistry.has(cmd);
 
       if (isControlCommand || !botMentioned) {
         if (this.controlHandler) {
@@ -493,15 +508,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             chatId: chat_id,
             type: 'text',
             text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
-          });
-          return;
-        }
-
-        if (cmd === 'help') {
-          await this.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '📖 **帮助**\n\n可用命令:\n- /reset - 重置对话\n- /status - 查看状态\n- /help - 显示帮助',
           });
           return;
         }
@@ -619,10 +625,67 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Handle P2P chat entered event.
+   * Triggered when a user starts a private chat with the bot.
+   * Issue #463: Send welcome message on first private chat.
+   */
+  private async handleP2PChatEntered(data: FeishuP2PChatEnteredEventData): Promise<void> {
+    if (!this.isRunning || !this.welcomeService) {
+      return;
+    }
+
+    const event = data.event;
+    if (!event?.user?.open_id) {
+      logger.debug('P2P chat entered event missing user info');
+      return;
+    }
+
+    const userId = event.user.open_id;
+    logger.info({ userId }, 'P2P chat entered, sending welcome message');
+
+    await this.welcomeService.handleP2PChatEntered(userId);
+  }
+
+  /**
+   * Handle chat member added event.
+   * Triggered when members are added to a chat.
+   * Issue #463: Send welcome message when new members join a group.
+   */
+  private async handleChatMemberAdded(data: FeishuChatMemberAddedEventData): Promise<void> {
+    if (!this.isRunning || !this.welcomeService) {
+      return;
+    }
+
+    const event = data.event;
+    if (!event?.chat_id || !event?.members || event.members.length === 0) {
+      logger.debug('Chat member added event missing required fields');
+      return;
+    }
+
+    // Only send welcome to group chats
+    if (!this.isGroupChat(event.chat_id)) {
+      logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping welcome');
+      return;
+    }
+
+    logger.info({ chatId: event.chat_id, memberCount: event.members.length }, 'New members joined group, sending welcome message');
+
+    await this.welcomeService.handleBotAddedToGroup(event.chat_id);
+  }
+
+  /**
    * Get the InteractionManager for this channel.
    * Used for registering custom interaction handlers.
    */
   getInteractionManager(): InteractionManager {
     return this.interactionManager;
+  }
+
+  /**
+   * Set the WelcomeService for this channel.
+   * Used for sending welcome messages on bot added to group or first private chat.
+   */
+  setWelcomeService(service: WelcomeService): void {
+    this.welcomeService = service;
   }
 }

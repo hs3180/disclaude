@@ -95,6 +95,16 @@ vi.mock('../utils/task-tracker.js', () => ({
   TaskTracker: vi.fn(),
 }));
 
+vi.mock('../nodes/commands/command-registry.js', () => ({
+  getCommandRegistry: vi.fn(() => ({
+    has: (name: string) => ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
+      'create-group', 'add-member', 'remove-member', 'list-member', 'list-group', 'dissolve-group'].includes(name),
+    getAll: () => [],
+    register: vi.fn(),
+  })),
+  resetCommandRegistry: vi.fn(),
+}));
+
 import { FeishuChannel } from './feishu-channel.js';
 
 describe('FeishuChannel - Control Command Handling (Issue #387)', () => {
