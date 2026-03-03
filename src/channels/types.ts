@@ -126,7 +126,9 @@ export type ControlCommandType =
   // Debug group commands (Issue #487)
   | 'set-debug'
   | 'show-debug'
-  | 'clear-debug';
+  | 'clear-debug'
+  // Passive mode control (Issue #511)
+  | 'passive';
 
 /**
  * Control command from user to agent.
