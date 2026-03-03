@@ -56,6 +56,12 @@ export interface FeishuCardActionEvent {
     trigger: 'button' | 'menu' | 'date' | 'input' | 'static';
     /** For menu/dropdown: the selected option */
     option?: string;
+    /**
+     * Button or option text displayed to user.
+     * Used to generate user-friendly prompt when action is triggered.
+     * Issue #525: Simple card interaction without promptTemplate
+     */
+    text?: string;
   };
   /** The message containing the card */
   message_id: string;
