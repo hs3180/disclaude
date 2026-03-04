@@ -120,7 +120,7 @@ export type ControlCommandType =
   | 'create-group'
   | 'add-member'
   | 'remove-member'
-  | 'list-member'
+  | 'list-group-members'
   | 'list-group'
   | 'dissolve-group'
   // Debug group commands (Issue #487)

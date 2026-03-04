@@ -340,7 +340,7 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('create-group')).toBeDefined();
     expect(registry.get('add-member')).toBeDefined();
     expect(registry.get('remove-member')).toBeDefined();
-    expect(registry.get('list-member')).toBeDefined();
+    expect(registry.get('list-group-members')).toBeDefined();
     expect(registry.get('list-group')).toBeDefined();
     expect(registry.get('dissolve-group')).toBeDefined();
     expect(registry.get('passive')).toBeDefined();

@@ -265,13 +265,13 @@ export class RemoveMemberCommand implements Command {
 }
 
 /**
- * List Member Command - List members of a group.
+ * List Group Members Command - List members of a group.
  */
-export class ListMemberCommand implements Command {
-  readonly name = 'list-member';
+export class ListGroupMembersCommand implements Command {
+  readonly name = 'list-group-members';
   readonly category = 'group' as const;
-  readonly description = '列出成员';
-  readonly usage = 'list-member <groupId>';
+  readonly description = '列出群成员';
+  readonly usage = 'list-group-members <groupId>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const { services, args } = context;
@@ -279,7 +279,7 @@ export class ListMemberCommand implements Command {
     if (args.length < 1) {
       return {
         success: false,
-        error: '用法: `/list-member <群ID>`\n\n示例: `/list-member oc_xxx`',
+        error: '用法: `/list-group-members <群ID>`\n\n示例: `/list-group-members oc_xxx`',
       };
     }
 
@@ -970,7 +970,7 @@ export function registerDefaultCommands(
   registry.register(new CreateGroupCommand());
   registry.register(new AddMemberCommand());
   registry.register(new RemoveMemberCommand());
-  registry.register(new ListMemberCommand());
+  registry.register(new ListGroupMembersCommand());
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());
   registry.register(new PassiveCommand());
