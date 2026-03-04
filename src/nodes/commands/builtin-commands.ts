@@ -502,75 +502,6 @@ export class ClearDebugCommand implements Command {
 }
 
 /**
- * Node Command - Unified node management commands.
- * Issue #541: 节点管理指令
- *
- * Subcommands:
- * - list: List all nodes and their status
- * - status [node-id]: View node detailed status
- * - info: View current node info
- * - switch <node-id>: Switch to specified node
- * - auto: Switch to auto-selection mode
- */
-export class NodeCommand implements Command {
-  readonly name = 'node';
-  readonly category = 'node' as const;
-  readonly description = '节点管理指令';
-  readonly usage = 'node <list|status|info|switch|auto>';
-
-  execute(context: CommandContext): CommandResult {
-    const subCommand = context.args[0]?.toLowerCase();
-
-    // If no subcommand, show help
-    if (!subCommand) {
-      return {
-        success: true,
-        message: `🖥️ **节点管理指令**
-
-用法: \`/node <子命令>\`
-
-**可用子命令:**
-- \`list\` - 列出所有节点及其状态
-- \`status [node-id]\` - 查看节点详细状态（不指定则查看当前）
-- \`info\` - 查看当前节点信息
-- \`switch <node-id>\` - 切换到指定节点
-- \`auto\` - 切换到自动选择模式
-
-示例:
-\`\`\`
-/node list
-/node status
-/node switch worker-abc123
-/node auto
-\`\`\``,
-      };
-    }
-
-    // Validate subcommand
-    const validSubcommands = ['list', 'status', 'info', 'switch', 'auto'];
-    if (!validSubcommands.includes(subCommand)) {
-      return {
-        success: false,
-        error: `未知的子命令: \`${subCommand}\`
-
-可用子命令: ${validSubcommands.map(c => `\`${c}\``).join(', ')}`,
-      };
-    }
-
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **节点命令执行中...**',
-      // Pass through the subcommand and remaining args for PrimaryNode to handle
-      data: {
-        subcommand: subCommand,
-        nodeArgs: context.args.slice(1),
-      },
-    };
-  }
-}
-
-/**
  * Schedule Command - Manage scheduled tasks.
  * Issue #469: 定时任务控制指令
  *
@@ -977,8 +908,6 @@ export function registerDefaultCommands(
   registry.register(new SetDebugCommand());
   registry.register(new ShowDebugCommand());
   registry.register(new ClearDebugCommand());
-  // Issue #541: Node management command
-  registry.register(new NodeCommand());
   // Issue #469: Schedule management command
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
