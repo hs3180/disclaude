@@ -424,6 +424,78 @@ describe('Feishu Context MCP Tools', () => {
     });
   });
 
+  describe('Graceful Degradation (No Feishu Credentials)', () => {
+    // These tests verify the fix for Issue #581
+    // When Feishu credentials are not configured, tools should handle gracefully
+
+    // Temporarily override the Config mock for these tests
+    let originalConfig: typeof import('../config/index.js').Config;
+
+    beforeAll(async () => {
+      // Save original config
+      originalConfig = (await import('../config/index.js')).Config;
+      // Re-mock Config without credentials
+      vi.resetModules();
+      vi.doMock('../config/index.js', () => ({
+        Config: {
+          FEISHU_APP_ID: '',
+          FEISHU_APP_SECRET: '',
+          getWorkspaceDir: vi.fn(() => '/test/workspace'),
+        },
+      }));
+    });
+
+    afterAll(() => {
+      vi.doUnmock('../config/index.js');
+    });
+
+    it('send_user_feedback should gracefully handle missing credentials', async () => {
+      // Re-import to get the mocked version
+      const { send_user_feedback: sendFeedbackNoCreds } = await import('./feishu-context-mcp.js');
+
+      const result = await sendFeedbackNoCreds({
+        content: 'Test message',
+        format: 'text',
+        chatId: 'chat-no-creds',
+      });
+
+      // Should succeed with graceful degradation message
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('Feishu not configured');
+    });
+
+    it('send_file_to_feishu should return soft error when credentials missing', async () => {
+      const { send_file_to_feishu: sendFileNoCreds } = await import('./feishu-context-mcp.js');
+
+      const result = await sendFileNoCreds({
+        filePath: '/test/file.txt',
+        chatId: 'chat-no-creds',
+      });
+
+      // Should return soft error (not throw)
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Feishu credentials not configured');
+    });
+
+    it('update_card should return soft error when credentials missing', async () => {
+      const { update_card: updateCardNoCreds } = await import('./feishu-context-mcp.js');
+
+      const result = await updateCardNoCreds({
+        messageId: 'msg-123',
+        card: {
+          config: { wide_screen_mode: true },
+          header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
+          elements: [],
+        },
+        chatId: 'chat-no-creds',
+      });
+
+      // Should return soft error (not throw)
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Feishu credentials not configured');
+    });
+  });
+
   describe('send_file_to_feishu', () => {
     it('should require chatId', async () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
