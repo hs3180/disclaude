@@ -30,6 +30,7 @@
  */
 
 import { EventEmitter } from 'events';
+import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory } from '../agents/index.js';
@@ -68,6 +69,10 @@ import {
 import {
   initWelcomeService,
 } from '../platforms/feishu/welcome-service.js';
+// Schedule management (Issue #469)
+import { ScheduleManager } from '../schedule/schedule-manager.js';
+import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
+import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
 
@@ -111,6 +116,9 @@ export class PrimaryNode extends EventEmitter {
   private feedbackRouter: FeedbackRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
+  // Schedule management (Issue #469)
+  private scheduleManager?: ScheduleManager;
+  private scheduleFileScanner?: ScheduleFileScanner;
 
   // Local execution
   private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
@@ -408,6 +416,12 @@ export class PrimaryNode extends EventEmitter {
 
     await this.schedulerService.start();
 
+    // Initialize ScheduleManager and FileScanner for command access (Issue #469)
+    const workspaceDir = Config.getWorkspaceDir();
+    const schedulesDir = path.join(workspaceDir, 'schedules');
+    this.scheduleManager = new ScheduleManager({ schedulesDir });
+    this.scheduleFileScanner = new ScheduleFileScanner({ schedulesDir });
+
     // Initialize TaskFlowOrchestrator
     const taskTracker = new TaskTracker();
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
@@ -553,6 +567,13 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        // Schedule management (Issue #469)
+        listSchedules: () => this.listSchedules(),
+        getSchedule: (nameOrId: string) => this.getSchedule(nameOrId),
+        enableSchedule: (nameOrId: string) => this.enableSchedule(nameOrId),
+        disableSchedule: (nameOrId: string) => this.disableSchedule(nameOrId),
+        runSchedule: (nameOrId: string) => this.runSchedule(nameOrId),
+        isScheduleRunning: (taskId: string) => this.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false,
         // Task management methods (Issue #468)
         startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
         getCurrentTask: () => taskStateManager.getCurrentTask(),
@@ -778,5 +799,135 @@ export class PrimaryNode extends EventEmitter {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  // ============================================================================
+  // Schedule Management (Issue #469)
+  // ============================================================================
+
+  /**
+   * List all scheduled tasks.
+   */
+  private async listSchedules(): Promise<ScheduleTaskInfo[]> {
+    if (!this.scheduleManager) {
+      return [];
+    }
+
+    const tasks = await this.scheduleManager.listAll();
+    const scheduler = this.schedulerService?.getScheduler();
+    const activeJobs = scheduler?.getActiveJobs() ?? [];
+
+    return tasks.map(task => {
+      const activeJob = activeJobs.find(j => j.taskId === task.id);
+      return {
+        id: task.id,
+        name: task.name,
+        cron: task.cron,
+        enabled: task.enabled,
+        isScheduled: !!activeJob,
+        isRunning: scheduler?.isTaskRunning(task.id) ?? false,
+        chatId: task.chatId,
+        createdAt: task.createdAt,
+      };
+    });
+  }
+
+  /**
+   * Get a schedule by name or ID.
+   */
+  private async getSchedule(nameOrId: string): Promise<ScheduleTaskInfo | undefined> {
+    const tasks = await this.listSchedules();
+
+    // Try to find by ID first, then by name
+    return tasks.find(t => t.id === nameOrId || t.id === `schedule-${nameOrId}` || t.name === nameOrId);
+  }
+
+  /**
+   * Enable a schedule.
+   */
+  private async enableSchedule(nameOrId: string): Promise<boolean> {
+    const task = await this.getSchedule(nameOrId);
+    if (!task) {
+      return false;
+    }
+
+    // If already enabled, return false
+    if (task.enabled) {
+      return false;
+    }
+
+    // Update the task file
+    const fullTask = await this.scheduleManager?.get(task.id);
+    if (!fullTask) {
+      return false;
+    }
+
+    const updatedTask = { ...fullTask, enabled: true };
+    await this.scheduleFileScanner?.writeTask(updatedTask);
+
+    return true;
+  }
+
+  /**
+   * Disable a schedule.
+   */
+  private async disableSchedule(nameOrId: string): Promise<boolean> {
+    const task = await this.getSchedule(nameOrId);
+    if (!task) {
+      return false;
+    }
+
+    // If already disabled, return false
+    if (!task.enabled) {
+      return false;
+    }
+
+    // Update the task file
+    const fullTask = await this.scheduleManager?.get(task.id);
+    if (!fullTask) {
+      return false;
+    }
+
+    const updatedTask = { ...fullTask, enabled: false };
+    await this.scheduleFileScanner?.writeTask(updatedTask);
+
+    return true;
+  }
+
+  /**
+   * Manually trigger a schedule.
+   */
+  private async runSchedule(nameOrId: string): Promise<boolean> {
+    const task = await this.getSchedule(nameOrId);
+    if (!task) {
+      return false;
+    }
+
+    // Get the full task
+    const fullTask = await this.scheduleManager?.get(task.id);
+    if (!fullTask) {
+      return false;
+    }
+
+    // Execute the task directly
+    try {
+      // Send start notification
+      await this.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
+
+      // Execute task using Pilot
+      if (this.sharedPilot) {
+        await this.sharedPilot.executeOnce(
+          fullTask.chatId,
+          fullTask.prompt,
+          undefined,
+          fullTask.createdBy
+        );
+      }
+
+      return true;
+    } catch (error) {
+      logger.error({ err: error, taskId: task.id }, 'Failed to run schedule manually');
+      return false;
+    }
   }
 }
