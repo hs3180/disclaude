@@ -33,6 +33,16 @@ describe('NodeCommand', () => {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'test: ok',
+    // Task management methods (Issue #468)
+    startTask: () => Promise.resolve({ id: 'task_test', prompt: 'test', status: 'running', progress: 0, chatId: 'oc_test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    getCurrentTask: () => Promise.resolve(null),
+    updateTaskProgress: () => Promise.resolve(),
+    pauseTask: () => Promise.resolve(null),
+    resumeTask: () => Promise.resolve(null),
+    cancelTask: () => Promise.resolve(null),
+    completeTask: () => Promise.resolve(null),
+    setTaskError: () => Promise.resolve(null),
+    listTaskHistory: () => Promise.resolve([]),
   };
 
   describe('metadata', () => {

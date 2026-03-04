@@ -35,6 +35,16 @@ function createMockServices(): CommandServices {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'feishu: connected',
+    // Task management methods (Issue #468)
+    startTask: () => Promise.resolve({ id: 'task_test', prompt: 'test', status: 'running', progress: 0, chatId: 'oc_test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    getCurrentTask: () => Promise.resolve(null),
+    updateTaskProgress: () => Promise.resolve(),
+    pauseTask: () => Promise.resolve(null),
+    resumeTask: () => Promise.resolve(null),
+    cancelTask: () => Promise.resolve(null),
+    completeTask: () => Promise.resolve(null),
+    setTaskError: () => Promise.resolve(null),
+    listTaskHistory: () => Promise.resolve([]),
   };
 }
 
@@ -324,6 +334,9 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('list-group')).toBeDefined();
     expect(registry.get('dissolve-group')).toBeDefined();
     expect(registry.get('passive')).toBeDefined();
+
+    // Task commands (Issue #468)
+    expect(registry.get('task')).toBeDefined();
   });
 
   it('should generate help text with all categories', () => {
