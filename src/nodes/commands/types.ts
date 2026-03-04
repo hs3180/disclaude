@@ -182,6 +182,13 @@ export interface CommandServices {
 
   /** List task history */
   listTaskHistory: (limit?: number) => Promise<import('../../utils/task-state-manager.js').TaskState[]>;
+
+  // Passive mode management (Issue #601)
+  /** Set passive mode for a chat (true = respond to all, false = only @mention) */
+  setPassiveMode: (chatId: string, disabled: boolean) => void;
+
+  /** Get passive mode status for a chat (true = respond to all, false = only @mention) */
+  getPassiveMode: (chatId: string) => boolean;
 }
 
 /**

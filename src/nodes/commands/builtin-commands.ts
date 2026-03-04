@@ -372,6 +372,7 @@ export class DissolveGroupCommand implements Command {
 /**
  * Passive Command - Control passive mode for group chats.
  * Issue #511: Group chat passive mode control
+ * Issue #601: Fix passive command not returning status
  */
 export class PassiveCommand implements Command {
   readonly name = 'passive';
@@ -380,6 +381,7 @@ export class PassiveCommand implements Command {
   readonly usage = 'passive [on|off|status]';
 
   execute(context: CommandContext): CommandResult {
+    const { services, chatId } = context;
     // Default to status if no args
     const subCommand = context.args[0]?.toLowerCase() || 'status';
 
@@ -391,13 +393,34 @@ export class PassiveCommand implements Command {
       };
     }
 
-    // Actual implementation is handled by PrimaryNode
-    return {
-      success: true,
-      message: '🔄 **被动模式设置中...**',
-      // Signal that this needs special handling
-      data: { subCommand, needsSpecialHandling: true },
-    };
+    // Handle subcommands directly (Issue #601: fix missing status response)
+    if (subCommand === 'status') {
+      const isDisabled = services.getPassiveMode(chatId);
+      const statusText = isDisabled ? '关闭（响应所有消息）' : '开启（仅响应 @提及）';
+      return {
+        success: true,
+        message: `📋 **被动模式状态**\n\n当前状态: ${statusText}\n\n- 开启时，仅响应 @提及的消息\n- 关闭时，响应所有消息`,
+      };
+    }
+
+    if (subCommand === 'on') {
+      services.setPassiveMode(chatId, false); // false = passive mode enabled = only @mention
+      return {
+        success: true,
+        message: '✅ **被动模式已开启**\n\nBot 将仅响应 @提及的消息',
+      };
+    }
+
+    if (subCommand === 'off') {
+      services.setPassiveMode(chatId, true); // true = passive mode disabled = respond to all
+      return {
+        success: true,
+        message: '✅ **被动模式已关闭**\n\nBot 将响应所有消息',
+      };
+    }
+
+    // This should never be reached due to validation above
+    return { success: false, error: '未知子命令' };
   }
 }
 

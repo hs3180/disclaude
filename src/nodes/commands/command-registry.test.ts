@@ -52,6 +52,9 @@ function createMockServices(): CommandServices {
     completeTask: () => Promise.resolve(null),
     setTaskError: () => Promise.resolve(null),
     listTaskHistory: () => Promise.resolve([]),
+    // Passive mode management (Issue #601)
+    setPassiveMode: () => {},
+    getPassiveMode: () => false,
   };
 }
 
