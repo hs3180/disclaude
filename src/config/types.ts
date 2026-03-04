@@ -44,6 +44,8 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** Task suggestions configuration */
+  suggestions?: SuggestionsConfig;
 }
 
 /**
@@ -214,6 +216,18 @@ export interface DebugConfig {
   filterForwardChatId?: string;
   /** Filter reasons to include in forwarding (empty = all) */
   includeReasons?: FilterReason[];
+}
+
+/**
+ * Task suggestion configuration.
+ * When enabled, Agent will suggest follow-up actions after completing a task.
+ * @see Issue #470
+ */
+export interface SuggestionsConfig {
+  /** Enable/disable task suggestions */
+  enabled?: boolean;
+  /** Maximum number of suggestions to show (default: 4) */
+  maxSuggestions?: number;
 }
 
 /**

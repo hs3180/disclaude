@@ -617,6 +617,9 @@ ${msg.chatHistoryContext}
     // Build capability-aware tools section (Issue #582)
     const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
 
+    // Build suggestions section if enabled (Issue #470)
+    const suggestionsSection = this.buildSuggestionsSection();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -646,7 +649,7 @@ ${chatHistorySection}${mentionSection}
 ---
 
 ## Tools
-${toolsSection}
+${toolsSection}${suggestionsSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -658,7 +661,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 **Message ID:** ${msg.messageId}
 ${chatHistorySection}
 ## Tools
-${toolsSection}
+${toolsSection}${suggestionsSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -712,6 +715,53 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * Build suggestions section for the prompt.
+   * When enabled, Agent will suggest follow-up actions after completing a task.
+   * @see Issue #470
+   *
+   * @returns Suggestions section string for the prompt, or empty string if disabled
+   */
+  private buildSuggestionsSection(): string {
+    const suggestionsConfig = Config.getSuggestionsConfig();
+
+    if (!suggestionsConfig.enabled) {
+      return '';
+    }
+
+    const maxSuggestions = suggestionsConfig.maxSuggestions ?? 4;
+
+    return `
+
+---
+
+## Task Completion Suggestions
+
+After completing the user's task, suggest ${maxSuggestions} relevant follow-up actions based on:
+- The task you just completed
+- The context of the conversation
+- What would be most helpful for the user
+
+Format your suggestions at the end of your response:
+
+\`\`\`
+─────────────
+💡 接下来你可以：
+
+1. [emoji] [操作描述]
+2. [emoji] [操作描述]
+3. [emoji] [操作描述]
+4. [emoji] [操作描述]
+\`\`\`
+
+**Guidelines:**
+- Analyze the task context to generate relevant suggestions
+- Each suggestion should be actionable and specific
+- Use appropriate emojis for visual clarity
+- Maximum ${maxSuggestions} suggestions
+- Only show suggestions after completing a meaningful task, not for simple queries`;
   }
 
   /**

@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Pilot, type PilotCallbacks } from './pilot.js';
+import { Config } from '../config/index.js';
 
 // Mock the SDK to avoid unhandled errors
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -35,6 +36,10 @@ vi.mock('../config/index.js', () => ({
       pretty: true,
       rotate: false,
       sdkDebug: true,
+    })),
+    getSuggestionsConfig: vi.fn(() => ({
+      enabled: false,
+      maxSuggestions: 4,
     })),
   },
 }));
@@ -335,6 +340,74 @@ describe('Pilot (Streaming Input)', () => {
 
       // Should have received at least one message
       expect(results.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Task Suggestions (Issue #470)', () => {
+    it('should not include suggestions section when disabled', () => {
+      // Mock getSuggestionsConfig to return disabled
+      vi.mocked(Config.getSuggestionsConfig).mockReturnValue({
+        enabled: false,
+        maxSuggestions: 4,
+      });
+
+      // Access private method via bracket notation
+      const content = pilot['buildEnhancedContent']('chat-123', {
+        text: 'Hello',
+        messageId: 'msg-001',
+      });
+
+      // Should not include suggestions section
+      expect(content).not.toContain('Task Completion Suggestions');
+      expect(content).not.toContain('接下来你可以');
+    });
+
+    it('should include suggestions section when enabled', () => {
+      // Mock getSuggestionsConfig to return enabled
+      vi.mocked(Config.getSuggestionsConfig).mockReturnValue({
+        enabled: true,
+        maxSuggestions: 4,
+      });
+
+      const content = pilot['buildEnhancedContent']('chat-123', {
+        text: 'Hello',
+        messageId: 'msg-001',
+      });
+
+      // Should include suggestions section
+      expect(content).toContain('Task Completion Suggestions');
+      expect(content).toContain('接下来你可以');
+    });
+
+    it('should use custom maxSuggestions value', () => {
+      vi.mocked(Config.getSuggestionsConfig).mockReturnValue({
+        enabled: true,
+        maxSuggestions: 3,
+      });
+
+      const content = pilot['buildEnhancedContent']('chat-123', {
+        text: 'Hello',
+        messageId: 'msg-001',
+      });
+
+      // Should include the custom max value
+      expect(content).toContain('3');
+      expect(content).toContain('Maximum 3 suggestions');
+    });
+
+    it('should not include suggestions for skill commands', () => {
+      vi.mocked(Config.getSuggestionsConfig).mockReturnValue({
+        enabled: true,
+        maxSuggestions: 4,
+      });
+
+      const content = pilot['buildEnhancedContent']('chat-123', {
+        text: '/help',
+        messageId: 'msg-001',
+      });
+
+      // Skill commands should not include suggestions
+      expect(content).not.toContain('Task Completion Suggestions');
     });
   });
 });

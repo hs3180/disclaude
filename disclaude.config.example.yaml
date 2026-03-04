@@ -41,6 +41,17 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
+  # Task suggestions configuration
+  # When enabled, Agent will suggest follow-up actions after completing a task
+  suggestions:
+    # Enable/disable task suggestions
+    # Default: false
+    enabled: false
+
+    # Maximum number of suggestions to show
+    # Default: 4
+    maxSuggestions: 4
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------

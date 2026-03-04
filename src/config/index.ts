@@ -346,4 +346,18 @@ export class Config {
   static getDebugConfig(): import('./types.js').DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
   }
+
+  /**
+   * Get task suggestions configuration.
+   * @see Issue #470
+   *
+   * @returns Suggestions configuration object with defaults
+   */
+  static getSuggestionsConfig(): import('./types.js').SuggestionsConfig {
+    const config = fileConfigOnly.agent?.suggestions;
+    return {
+      enabled: config?.enabled ?? false,
+      maxSuggestions: config?.maxSuggestions ?? 4,
+    };
+  }
 }
