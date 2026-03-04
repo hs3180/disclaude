@@ -8,6 +8,11 @@
  * - POST /api/chat - Send a message and receive response (streaming)
  * - POST /api/chat/sync - Send a message and wait for complete response
  * - GET /api/health - Health check
+ * - POST /api/files/upload - Upload a file (base64 encoded)
+ * - GET /api/files/:fileId - Get file metadata
+ * - GET /api/files/:fileId/download - Download a file (base64 encoded)
+ *
+ * @see Issue #583 - REST Channel file transfer
  */
 
 import http from 'node:http';
@@ -19,6 +24,11 @@ import type {
   OutgoingMessage,
   ControlCommand,
 } from './types.js';
+import {
+  FileStorageService,
+  type FileRef,
+  type FileStorageConfig,
+} from '../file-transfer/index.js';
 
 const logger = createLogger('RestChannel');
 
@@ -36,6 +46,10 @@ export interface RestChannelConfig extends ChannelConfig {
   authToken?: string;
   /** Enable CORS (default: true) */
   enableCors?: boolean;
+  /** File storage directory (default: ./data/rest-files) */
+  fileStorageDir?: string;
+  /** Maximum file size in bytes (default: 100MB) */
+  maxFileSize?: number;
 }
 
 /**
@@ -71,6 +85,58 @@ interface ChatResponse {
 }
 
 /**
+ * File upload request structure.
+ */
+interface FileUploadRequest {
+  /** File name */
+  fileName: string;
+  /** MIME type (optional) */
+  mimeType?: string;
+  /** File content (base64 encoded) */
+  content: string;
+  /** Associated chat ID (optional) */
+  chatId?: string;
+}
+
+/**
+ * File upload response structure.
+ */
+interface FileUploadResponse {
+  /** Success status */
+  success: boolean;
+  /** File reference */
+  file?: FileRef;
+  /** Error message (if failed) */
+  error?: string;
+}
+
+/**
+ * File info response structure.
+ */
+interface FileInfoResponse {
+  /** Success status */
+  success: boolean;
+  /** File reference */
+  file?: FileRef;
+  /** Error message (if failed) */
+  error?: string;
+}
+
+/**
+ * File download response structure.
+ */
+interface FileDownloadResponse {
+  /** Success status */
+  success: boolean;
+  /** File reference */
+  file?: FileRef;
+  /** File content (base64 encoded) */
+  content?: string;
+  /** Error message (if failed) */
+  error?: string;
+}
+
+/**
  * Pending response for sync mode.
  */
 interface PendingResponse {
@@ -87,6 +153,9 @@ interface PendingResponse {
  * - POST /api/chat - Send message (streaming response)
  * - POST /api/chat/sync - Send message (synchronous response)
  * - GET /api/health - Health check
+ * - POST /api/files/upload - Upload a file
+ * - GET /api/files/:fileId - Get file metadata
+ * - GET /api/files/:fileId/download - Download a file
  * - Optional authentication via Authorization header
  * - CORS support
  */
@@ -96,8 +165,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private apiPrefix: string;
   private authToken?: string;
   private enableCors: boolean;
+  private fileStorageDir: string;
+  private maxFileSize: number;
 
   private server?: http.Server;
+  private fileStorage?: FileStorageService;
 
   // Pending responses for sync mode (chatId -> PendingResponse)
   private pendingResponses = new Map<string, PendingResponse>();
@@ -105,6 +177,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private responseBuffers = new Map<string, string[]>();
   // Chat ID to message ID mapping
   private chatToMessage = new Map<string, string>();
+  // File ID to Chat ID mapping (for file uploads)
+  private fileToChat = new Map<string, string>();
 
   constructor(config: RestChannelConfig = {}) {
     super(config, 'rest', 'REST');
@@ -113,11 +187,21 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.apiPrefix = config.apiPrefix || '/api';
     this.authToken = config.authToken;
     this.enableCors = config.enableCors ?? true;
+    this.fileStorageDir = config.fileStorageDir || './data/rest-files';
+    this.maxFileSize = config.maxFileSize ?? 100 * 1024 * 1024; // 100MB
 
     logger.info({ id: this.id, port: this.port }, 'RestChannel created');
   }
 
-  protected doStart(): Promise<void> {
+  protected async doStart(): Promise<void> {
+    // Initialize file storage service
+    this.fileStorage = new FileStorageService({
+      storageDir: this.fileStorageDir,
+      maxFileSize: this.maxFileSize,
+    });
+    await this.fileStorage.initialize();
+    logger.info({ storageDir: this.fileStorageDir }, 'File storage initialized');
+
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((error) => {
         logger.error({ err: error }, 'Failed to handle request');
@@ -147,6 +231,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.pendingResponses.clear();
     this.responseBuffers.clear();
     this.chatToMessage.clear();
+    this.fileToChat.clear();
+
+    // Shutdown file storage
+    if (this.fileStorage) {
+      this.fileStorage.shutdown();
+      this.fileStorage = undefined;
+    }
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -271,6 +362,25 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     // Control endpoints
     if (url === `${this.apiPrefix}/control` && req.method === 'POST') {
       await this.handleControl(req, res);
+      return;
+    }
+
+    // File upload endpoint
+    if (url === `${this.apiPrefix}/files/upload` && req.method === 'POST') {
+      await this.handleFileUpload(req, res);
+      return;
+    }
+
+    // file info endpoint
+    if (url.startsWith(`${this.apiPrefix}/files/`) && url.includes('/files/')) {
+      this.handleFileInfo(req, res, fileId);
+      return;
+    }
+
+    // file download endpoint
+    const fileDownloadMatch = url.match(/^\/api\/files\/(\d+\/download)$/);
+    if (url.match(/^\/api\/files\/([^/]+)\/?$/)) {
+      await this.handleFileDownload(req, res, fileId);
       return;
     }
 
