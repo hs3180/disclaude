@@ -588,4 +588,213 @@ describe('RestChannel', () => {
       }
     });
   });
+
+  describe('File Transfer', () => {
+    beforeEach(async () => {
+      channel = new RestChannel({ port });
+      await channel.start();
+    });
+
+    describe('File Upload', () => {
+      it('should upload a file successfully', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'test.txt',
+            mimeType: 'text/plain',
+            content: Buffer.from('Hello, World!').toString('base64'),
+          },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.file).toBeDefined();
+        expect(response.body.file?.fileName).toBe('test.txt');
+        expect(response.body.file?.mimeType).toBe('text/plain');
+        expect(response.body.file?.size).toBe(13);
+        expect(response.body.file?.id).toBeDefined();
+      });
+
+      it('should upload a file with chatId', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'test.txt',
+            content: Buffer.from('Test content').toString('base64'),
+            chatId: 'test-chat-123',
+          },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.file).toBeDefined();
+      });
+
+      it('should reject upload without fileName', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            content: Buffer.from('Test').toString('base64'),
+          },
+        });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('fileName is required');
+      });
+
+      it('should reject upload without content', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'test.txt',
+          },
+        });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('content is required');
+      });
+
+      it('should reject invalid base64 content', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'test.txt',
+            content: 'not-valid-base64!!!',
+          },
+        });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('Invalid base64 content');
+      });
+
+      it('should reject empty request body', async () => {
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {},
+        });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('fileName is required');
+      });
+    });
+
+    describe('File Info', () => {
+      it('should return file info for existing file', async () => {
+        // First upload a file
+        const uploadResponse = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'info-test.txt',
+            mimeType: 'text/plain',
+            content: Buffer.from('Test content for info').toString('base64'),
+          },
+        });
+
+        const fileId = uploadResponse.body.file?.id;
+
+        // Then get file info
+        const response = await makeRequest(port, {
+          method: 'GET',
+          path: `/api/files/${fileId}`,
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.file).toBeDefined();
+        expect(response.body.file?.id).toBe(fileId);
+        expect(response.body.file?.fileName).toBe('info-test.txt');
+      });
+
+      it('should return 404 for non-existent file', async () => {
+        const response = await makeRequest(port, {
+          method: 'GET',
+          path: '/api/files/non-existent-file-id',
+        });
+
+        expect(response.status).toBe(404);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error).toBe('File not found');
+      });
+    });
+
+    describe('File Download', () => {
+      it('should download file content', async () => {
+        const originalContent = 'Download test content';
+        const base64Content = Buffer.from(originalContent).toString('base64');
+
+        // First upload a file
+        const uploadResponse = await makeRequest(port, {
+          method: 'POST',
+          path: '/api/files/upload',
+          body: {
+            fileName: 'download-test.txt',
+            mimeType: 'text/plain',
+            content: base64Content,
+          },
+        });
+
+        const fileId = uploadResponse.body.file?.id;
+
+        // Then download the file
+        const response = await makeRequest(port, {
+          method: 'GET',
+          path: `/api/files/${fileId}/download`,
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.file).toBeDefined();
+        expect(response.body.file?.id).toBe(fileId);
+        expect(response.body.content).toBe(base64Content);
+
+        // Verify content matches
+        const decodedContent = Buffer.from(
+          response.body.content as string,
+          'base64'
+        ).toString();
+        expect(decodedContent).toBe(originalContent);
+      });
+
+      it('should return 404 for non-existent file download', async () => {
+        const response = await makeRequest(port, {
+          method: 'GET',
+          path: '/api/files/non-existent-id/download',
+        });
+
+        expect(response.status).toBe(404);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error).toBe('File not found');
+      });
+    });
+
+    describe('File Transfer with Custom API Prefix', () => {
+      it('should use custom API prefix for file endpoints', async () => {
+        // Stop the default channel
+        await channel.stop();
+
+        // Create channel with custom prefix
+        channel = new RestChannel({ port, apiPrefix: '/v2' });
+        await channel.start();
+
+        const response = await makeRequest(port, {
+          method: 'POST',
+          path: '/v2/files/upload',
+          body: {
+            fileName: 'test.txt',
+            content: Buffer.from('Test').toString('base64'),
+          },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+      });
+    });
+  });
 });
