@@ -607,11 +607,11 @@ export class ScheduleCommand implements Command {
 
     // Handle list subcommand
     if (subCommand === 'list') {
-      return this.handleList(services);
+      return await this.handleList(services);
     }
 
     // Other subcommands require a task name
-    const taskName = context.args[1];
+    const [, taskName] = context.args;
     if (!taskName) {
       return {
         success: false,
@@ -622,13 +622,13 @@ export class ScheduleCommand implements Command {
     // Handle other subcommands
     switch (subCommand) {
       case 'status':
-        return this.handleStatus(services, taskName);
+        return await this.handleStatus(services, taskName);
       case 'enable':
-        return this.handleEnable(services, taskName);
+        return await this.handleEnable(services, taskName);
       case 'disable':
-        return this.handleDisable(services, taskName);
+        return await this.handleDisable(services, taskName);
       case 'run':
-        return this.handleRun(services, taskName);
+        return await this.handleRun(services, taskName);
       default:
         return { success: false, error: `未知子命令: ${subCommand}` };
     }
