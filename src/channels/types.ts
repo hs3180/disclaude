@@ -184,6 +184,7 @@ export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'e
  * Channel capabilities interface.
  * Describes what features a channel supports.
  * Used for capability-aware prompt generation (Issue #582).
+ * Extended with supportedMcpTools for Issue #590 Phase 3.
  */
 export interface ChannelCapabilities {
   /** Whether the channel supports interactive cards */
@@ -198,6 +199,12 @@ export interface ChannelCapabilities {
   supportsMention: boolean;
   /** Whether the channel supports message updates */
   supportsUpdate: boolean;
+  /**
+   * Supported MCP tools for this channel.
+   * Issue #590 Phase 3: Agent Prompt 动态适配
+   * Used to filter available tools in the prompt based on channel capabilities.
+   */
+  supportedMcpTools?: string[];
 }
 
 /**
@@ -210,6 +217,7 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   supportsMarkdown: true,
   supportsMention: false,
   supportsUpdate: false,
+  supportedMcpTools: [],
 };
 
 /**

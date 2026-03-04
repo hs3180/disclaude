@@ -237,6 +237,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   /**
    * Get the capabilities of Feishu channel.
    * Feishu supports cards, threads, files, markdown, mentions, and updates.
+   * Issue #590 Phase 3: Added supportedMcpTools for dynamic prompt adaptation.
    */
   getCapabilities(): ChannelCapabilities {
     return {
@@ -246,6 +247,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsMarkdown: true,
       supportsMention: true,
       supportsUpdate: true,
+      supportedMcpTools: [
+        'send_user_feedback',
+        'send_file_to_feishu',
+        'update_card',
+        'wait_for_interaction',
+      ],
     };
   }
 

@@ -310,6 +310,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   /**
    * Get the capabilities of REST channel.
    * REST channel supports cards and markdown, but not threads or files via MCP tools.
+   * Issue #590 Phase 3: Added supportedMcpTools for dynamic prompt adaptation.
    */
   getCapabilities(): ChannelCapabilities {
     return {
@@ -319,6 +320,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
+      supportedMcpTools: ['send_user_feedback'],
     };
   }
 
