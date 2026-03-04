@@ -360,9 +360,17 @@ export class TaskStateManager {
         }
       }
 
-      // Sort by creation date (newest first) and limit
+      // Sort by update date (newest first), use id as tiebreaker for stability
+      // Issue #624: Use updatedAt for history order (most recently completed first)
       return tasks
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .sort((a, b) => {
+          const timeDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          if (timeDiff !== 0) {
+            return timeDiff;
+          }
+          // Use id as tiebreaker (id contains timestamp: task_${Date.now()}_${random})
+          return b.id.localeCompare(a.id);
+        })
         .slice(0, limit);
     } catch {
       return [];
