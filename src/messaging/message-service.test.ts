@@ -51,7 +51,7 @@ class MockAdapter implements IChannelAdapter {
   }
 
   async send(message: UniversalMessage): Promise<SendResult> {
-    return this.sendFn(message);
+    return await this.sendFn(message);
   }
 }
 
@@ -67,15 +67,15 @@ describe('MessageService', () => {
       const adapter = new MockAdapter(
         'mock',
         () => true,
-        async () => ({ success: true })
+        () => Promise.resolve({ success: true })
       );
       service = new MessageService({ adapters: [adapter] });
       expect(service.getAdapterNames()).toContain('mock');
     });
 
     it('should register multiple adapters', () => {
-      const adapter1 = new MockAdapter('mock1', () => false, async () => ({ success: true }));
-      const adapter2 = new MockAdapter('mock2', () => true, async () => ({ success: true }));
+      const adapter1 = new MockAdapter('mock1', () => false, () => Promise.resolve({ success: true }));
+      const adapter2 = new MockAdapter('mock2', () => true, () => Promise.resolve({ success: true }));
       service = new MessageService({ adapters: [adapter1, adapter2] });
       expect(service.getAdapterNames()).toHaveLength(2);
     });
@@ -84,7 +84,7 @@ describe('MessageService', () => {
   describe('registerAdapter', () => {
     it('should add new adapter', () => {
       service = new MessageService({ adapters: [] });
-      const adapter = new MockAdapter('mock', () => true, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => true, () => Promise.resolve({ success: true }));
       service.registerAdapter(adapter);
       expect(service.getAdapterNames()).toContain('mock');
     });
@@ -95,7 +95,7 @@ describe('MessageService', () => {
       const adapter = new MockAdapter(
         'mock',
         (chatId) => chatId.startsWith('test_'),
-        async () => ({ success: true })
+        () => Promise.resolve({ success: true })
       );
       service = new MessageService({ adapters: [adapter] });
 
@@ -109,7 +109,7 @@ describe('MessageService', () => {
       const adapter = new MockAdapter(
         'mock',
         () => true,
-        async () => ({ success: true }),
+        () => Promise.resolve({ success: true }),
         { supportsCard: true, maxMessageLength: 10000 }
       );
       service = new MessageService({ adapters: [adapter] });
@@ -144,7 +144,7 @@ describe('MessageService', () => {
     });
 
     it('should return error for unknown chatId', async () => {
-      const adapter = new MockAdapter('mock', () => false, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => false, () => Promise.resolve({ success: true }));
       service = new MessageService({ adapters: [adapter] });
 
       const msg: UniversalMessage = {
@@ -210,7 +210,7 @@ describe('MessageService', () => {
   describe('update', () => {
     it('should update message if adapter supports it', async () => {
       const updateMock = vi.fn().mockResolvedValue({ success: true });
-      const adapter = new MockAdapter('mock', () => true, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => true, () => Promise.resolve({ success: true }));
       (adapter as any).update = updateMock;
       service = new MessageService({ adapters: [adapter] });
 
@@ -224,7 +224,7 @@ describe('MessageService', () => {
     });
 
     it('should return error if adapter does not support update', async () => {
-      const adapter = new MockAdapter('mock', () => true, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => true, () => Promise.resolve({ success: true }));
       service = new MessageService({ adapters: [adapter] });
 
       const msg: UniversalMessage = {
@@ -241,7 +241,7 @@ describe('MessageService', () => {
   describe('delete', () => {
     it('should delete message if adapter supports it', async () => {
       const deleteMock = vi.fn().mockResolvedValue(true);
-      const adapter = new MockAdapter('mock', () => true, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => true, () => Promise.resolve({ success: true }));
       (adapter as any).delete = deleteMock;
       service = new MessageService({ adapters: [adapter] });
 
@@ -250,7 +250,7 @@ describe('MessageService', () => {
     });
 
     it('should return false if adapter does not support delete', async () => {
-      const adapter = new MockAdapter('mock', () => true, async () => ({ success: true }));
+      const adapter = new MockAdapter('mock', () => true, () => Promise.resolve({ success: true }));
       service = new MessageService({ adapters: [adapter] });
 
       const result = await service.delete('test_chat', 'msg_123');

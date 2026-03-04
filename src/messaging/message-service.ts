@@ -25,9 +25,8 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import type { IChannelAdapter, ChannelCapabilities } from './channel-adapter.js';
+import { cardToText, getFallbackContentType, type IChannelAdapter, type ChannelCapabilities } from './channel-adapter.js';
 import type { UniversalMessage, SendResult, CardContent } from './universal-message.js';
-import { cardToText, getFallbackContentType } from './channel-adapter.js';
 
 const logger = createLogger('MessageService');
 
@@ -189,7 +188,7 @@ export class MessageService {
       'Sending message'
     );
 
-    return adapter.send(messageToSend);
+    return await adapter.send(messageToSend);
   }
 
   /**
@@ -212,7 +211,7 @@ export class MessageService {
       };
     }
 
-    return adapter.update(messageId, message);
+    return await adapter.update(messageId, message);
   }
 
   /**
@@ -231,7 +230,7 @@ export class MessageService {
       return false;
     }
 
-    return adapter.delete(messageId);
+    return await adapter.delete(messageId);
   }
 
   /**
