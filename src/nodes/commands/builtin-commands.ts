@@ -638,7 +638,7 @@ export class TaskCommand implements Command {
       const tasksList = tasks.map(t => {
         const emoji = statusEmoji[t.status] || '❓';
         const date = new Date(t.createdAt).toLocaleDateString('zh-CN');
-        const truncatedPrompt = t.prompt.length > 30 ? t.prompt.substring(0, 30) + '...' : t.prompt;
+        const truncatedPrompt = t.prompt.length > 30 ? `${t.prompt.substring(0, 30)}...` : t.prompt;
         return `${emoji} \`${t.id}\` - ${truncatedPrompt} (${date})`;
       }).join('\n');
 
