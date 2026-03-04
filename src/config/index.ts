@@ -336,4 +336,14 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get debug configuration for filtered message forwarding.
+   * @see Issue #597
+   *
+   * @returns Debug configuration object
+   */
+  static getDebugConfig(): import('./types.js').DebugConfig {
+    return fileConfigOnly.messaging?.debug || {};
+  }
 }
