@@ -62,10 +62,58 @@ claude --version
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Option A: Install from GitHub (Recommended for Users)
+
+Install directly from GitHub without cloning the repository:
 
 ```bash
-git clone <repo-url>
+# Install globally from GitHub
+npm install -g hs3180/disclaude
+
+# Or using SSH
+npm install -g git+ssh://git@github.com:hs3180/disclaude.git
+```
+
+After installation, you can use the `disclaude` command directly:
+
+```bash
+# Show help
+disclaude --help
+
+# Start Feishu bot
+disclaude start --mode feishu
+```
+
+#### Configuration for Global Install
+
+Create a configuration file in your working directory:
+
+```bash
+# Create config file
+mkdir -p ~/.disclaude
+cp ~/.disclaude/disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
+# Or download from GitHub:
+curl -o ~/.disclaude/disclaude.config.yaml https://raw.githubusercontent.com/hs3180/disclaude/main/disclaude.config.example.yaml
+```
+
+Edit `~/.disclaude/disclaude.config.yaml` with your credentials.
+
+#### Update to Latest Version
+
+```bash
+# Update to latest version
+npm update -g hs3180/disclaude
+
+# Or reinstall for a clean update
+npm install -g hs3180/disclaude
+```
+
+### Option B: Clone for Development
+
+For development or customization, clone the repository:
+
+```bash
+git clone https://github.com/hs3180/disclaude.git
 cd disclaude
 npm install
 ```
@@ -76,7 +124,7 @@ The project includes an `.npmrc` file that ensures devDependencies are installed
 npm install --production=false
 ```
 
-### 2. Install Claude CLI (Required)
+### Install Claude CLI (Required)
 
 Make sure Claude CLI is installed (see [Requirements](#requirements) for installation instructions). Without it, you'll encounter errors like:
 
