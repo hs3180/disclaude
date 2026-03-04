@@ -19,6 +19,8 @@ import type { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import { getCommandRegistry } from '../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
+import { filteredMessageForwarder } from '../feishu/filtered-message-forwarder.js';
+import type { FilterReason } from '../config/types.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
 import type {
@@ -275,6 +277,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         client: this.client,
         logger,
       });
+      // Initialize filtered message forwarder (Issue #597)
+      filteredMessageForwarder.setMessageSender({
+        sendText: async (chatId: string, text: string) => {
+          await this.messageSender!.sendText(chatId, text);
+        },
+      });
     }
     return this.client;
   }
@@ -382,6 +390,36 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Forward a filtered message to the debug chat.
+   * @see Issue #597
+   *
+   * @param reason - The reason the message was filtered
+   * @param messageId - The message ID
+   * @param chatId - The chat ID
+   * @param content - The message content
+   * @param userId - The user ID (optional)
+   * @param metadata - Additional metadata (optional)
+   */
+  private async forwardFilteredMessage(
+    reason: FilterReason,
+    messageId: string,
+    chatId: string,
+    content: string,
+    userId?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    await filteredMessageForwarder.forward({
+      messageId,
+      chatId,
+      userId,
+      content,
+      reason,
+      metadata,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   private async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -408,12 +446,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Deduplication
     if (messageLogger.isMessageProcessed(message_id)) {
       logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+      await this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
       return;
     }
 
     // Ignore bot messages
     if (sender?.sender_type === 'app') {
       logger.debug('Skipped bot message');
+      await this.forwardFilteredMessage('bot', message_id, chat_id, content);
       return;
     }
 
@@ -422,6 +462,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       const messageAge = Date.now() - create_time;
       if (messageAge > this.MAX_MESSAGE_AGE) {
         logger.debug({ messageId: message_id }, 'Skipped old message');
+        await this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
         return;
       }
     }
@@ -474,6 +515,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
+      await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
       return;
     }
 
@@ -502,6 +544,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (!text) {
       logger.debug('Skipped empty text');
+      await this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
       return;
     }
 
@@ -612,6 +655,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         { messageId: message_id, chatId: chat_id, chat_type },
         'Skipped group chat message without @mention (passive mode)'
       );
+      // Issue #597: Forward filtered message to debug chat
+      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;
     }
 

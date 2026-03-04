@@ -192,6 +192,31 @@ export interface ChannelsConfig {
 }
 
 /**
+ * Filter reason types for message filtering.
+ * @see Issue #597
+ */
+export type FilterReason =
+  | 'duplicate'
+  | 'bot'
+  | 'old'
+  | 'unsupported'
+  | 'empty'
+  | 'passive_mode';
+
+/**
+ * Debug configuration for filtered message forwarding.
+ * @see Issue #597
+ */
+export interface DebugConfig {
+  /** Enable filtered message forwarding */
+  enabled?: boolean;
+  /** Chat ID to forward filtered messages to */
+  filterForwardChatId?: string;
+  /** Filter reasons to include in forwarding (empty = all) */
+  includeReasons?: FilterReason[];
+}
+
+/**
  * Messaging routing configuration section.
  *
  * Controls how messages are routed between admin and user chats.
@@ -226,6 +251,8 @@ export interface MessagingConfig {
       showDetails?: 'admin' | 'all';
     };
   };
+  /** Debug configuration for filtered message forwarding */
+  debug?: DebugConfig;
 }
 
 /**
