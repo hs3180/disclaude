@@ -12,7 +12,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 /**
  * Command category for grouping related commands.
  */
-export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
+export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill' | 'expert';
 
 /**
  * Schedule task info for display.
@@ -287,4 +287,5 @@ export const CATEGORY_CONFIG: Record<CommandCategory, CategoryInfo> = {
   task: { label: '任务', emoji: '📋', order: 5 },
   schedule: { label: '定时', emoji: '⏰', order: 6 },
   skill: { label: '技能', emoji: '🎯', order: 7 },
+  expert: { label: '专家', emoji: '🧑‍💼', order: 8 },
 };

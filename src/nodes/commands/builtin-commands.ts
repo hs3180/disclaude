@@ -9,6 +9,7 @@
  */
 
 import type { Command, CommandContext, CommandResult } from './types.js';
+import { ExpertCommand } from '../../expert/expert-command.js';
 
 /**
  * Reset Command - Reset the conversation session.
@@ -919,4 +920,6 @@ export function registerDefaultCommands(
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
   registry.register(new TaskCommand());
+  // Issue #535: Expert registration and skill declaration
+  registry.register(new ExpertCommand());
 }
