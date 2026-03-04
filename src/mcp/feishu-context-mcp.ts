@@ -235,8 +235,34 @@ export async function send_user_feedback(params: {
     const appId = Config.FEISHU_APP_ID;
     const appSecret = Config.FEISHU_APP_SECRET;
 
+    // Graceful degradation: When Feishu credentials are not configured,
+    // log the message instead of failing. This allows REST channel and
+    // test environments to work without Feishu credentials.
     if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured in Config');
+      const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      logger.info({
+        chatId,
+        format,
+        contentPreview: displayContent.substring(0, 200),
+        reason: 'Feishu credentials not configured'
+      }, 'Feedback logged (graceful degradation mode)');
+
+      // Use console.log for visibility in non-Feishu environments
+      console.log(`\n[Feedback] ${displayContent}\n`);
+
+      // Notify callback that a message was sent (for dialogue bridge tracking)
+      if (messageSentCallback) {
+        try {
+          messageSentCallback(chatId);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to invoke message sent callback');
+        }
+      }
+
+      return {
+        success: true,
+        message: `✅ Feedback logged (Feishu not configured, format: ${format})`,
+      };
     }
 
     // Create Lark client and send message
@@ -387,8 +413,21 @@ export async function send_file_to_feishu(params: {
     const appId = Config.FEISHU_APP_ID;
     const appSecret = Config.FEISHU_APP_SECRET;
 
+    // Graceful degradation: When Feishu credentials are not configured,
+    // return a soft error instead of throwing. This allows the agent to
+    // continue execution in REST channel and test environments.
     if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured in Config');
+      logger.warn({
+        filePath,
+        chatId,
+        reason: 'Feishu credentials not configured'
+      }, 'File send skipped (Feishu not configured)');
+
+      return {
+        success: false,
+        error: 'Feishu credentials not configured',
+        message: '⚠️ File cannot be sent: Feishu is not configured. File will be available locally.',
+      };
     }
 
     // Resolve file path
@@ -625,8 +664,21 @@ export async function update_card(params: {
     const appId = Config.FEISHU_APP_ID;
     const appSecret = Config.FEISHU_APP_SECRET;
 
+    // Graceful degradation: When Feishu credentials are not configured,
+    // return a soft error instead of throwing. This allows the agent to
+    // continue execution in REST channel and test environments.
     if (!appId || !appSecret) {
-      throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured');
+      logger.warn({
+        messageId,
+        chatId,
+        reason: 'Feishu credentials not configured'
+      }, 'Card update skipped (Feishu not configured)');
+
+      return {
+        success: false,
+        error: 'Feishu credentials not configured',
+        message: '⚠️ Card cannot be updated: Feishu is not configured.',
+      };
     }
 
     // Create Lark client
