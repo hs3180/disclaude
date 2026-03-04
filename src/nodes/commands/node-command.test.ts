@@ -33,6 +33,13 @@ describe('NodeCommand', () => {
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
     getChannelStatus: () => 'test: ok',
+    // Schedule management (Issue #469)
+    listSchedules: () => Promise.resolve([]),
+    getSchedule: () => Promise.resolve(undefined),
+    enableSchedule: () => Promise.resolve(false),
+    disableSchedule: () => Promise.resolve(false),
+    runSchedule: () => Promise.resolve(false),
+    isScheduleRunning: () => false,
     // Task management methods (Issue #468)
     startTask: () => Promise.resolve({ id: 'task_test', prompt: 'test', status: 'running', progress: 0, chatId: 'oc_test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
     getCurrentTask: () => Promise.resolve(null),
