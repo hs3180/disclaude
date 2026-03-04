@@ -89,9 +89,10 @@ This document covers:
 | Dependency | Status | PR/Issue | Blocking | Notes |
 |------------|--------|----------|----------|-------|
 | Scheduler | ✅ Ready | #357 | No | Already implemented |
-| ChatOps (createDiscussionChat) | ⏳ Pending | PR #423 | **Yes** | Group chat creation |
-| FeedbackController | ⏳ Pending | PR #412 | Partial | Interactive cards |
-| PR State Storage | ❓ Needed | This doc | No | Simple JSON file |
+| ChatOps (createDiscussionChat) | ✅ Merged | PR #423 | No | Group chat creation (code exists) |
+| ChatOps MCP Tool | ⏳ Needed | New Issue | **Yes** | Need MCP tool for Agent to call |
+| FeedbackController | ❌ Closed | PR #412 | No | Will not implement Phase 3 |
+| PR State Storage | ✅ Ready | This doc | No | Simple JSON file |
 
 ### 3.2 ChatOps API (PR #423)
 
@@ -106,7 +107,9 @@ const chatId = await createDiscussionChat(client, {
 });
 ```
 
-**Status**: PR #423 is open and unmerged. This is a **blocking dependency**.
+**Status**: PR #423 has been merged. The `createDiscussionChat` function exists in code.
+However, **no MCP tool is available** for Agent to call during scheduled task execution.
+Phase 2 requires adding a new MCP tool `create_discussion_chat`.
 
 ### 3.3 FeedbackController Integration (PR #412)
 
@@ -122,7 +125,7 @@ FeedbackController.createChannel({ type: 'existing', chatId })
   .getDecision();
 ```
 
-**Status**: PR #412 is open. Not blocking, but enables better UX.
+**Status**: PR #412 was closed (not_planned). Phase 3 will not be implemented.
 
 ### 3.4 PR State Storage
 
@@ -295,22 +298,23 @@ interface PRScannerHistory {
 
 ## 6. Implementation Checklist
 
-### Ready to Implement (Phase 1)
+### Phase 1: Basic Scanner ✅ Complete
 - [x] Scheduler infrastructure exists
 - [x] `send_user_feedback` available
-- [ ] Create schedule file `pr-scanner.md`
-- [ ] Create history file schema
+- [x] Create schedule file `workspace/schedules/pr-scanner.md`
+- [x] Create history file schema `workspace/pr-scanner-history.json`
 - [ ] Test with notification-only mode
 
-### Blocked (Phase 2)
-- [ ] Wait for PR #423 (ChatOps) to merge
-- [ ] Add group chat creation
+### Phase 2: Group Chat Creation ⏳ Partially Ready
+- [x] PR #423 (ChatOps) merged - `createDiscussionChat` code exists
+- [ ] Add MCP tool `create_discussion_chat` for Agent to call
+- [ ] Update schedule file to use new MCP tool
 - [ ] Test group chat flow
 
-### Blocked (Phase 3)
-- [ ] Wait for PR #412 (FeedbackController) to merge
-- [ ] Add interactive action buttons
-- [ ] Implement action execution
+### Phase 3: Interactive Actions ❌ Not Planned
+- [x] PR #412 (FeedbackController) closed - will not implement
+- ~~Add interactive action buttons~~
+- ~~Implement action execution~~
 
 ## 7. Testing Plan
 
@@ -334,7 +338,7 @@ interface PRScannerHistory {
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| PR #423 not merged | Cannot create group chats | Phase 1 uses existing chat |
+| No MCP tool for chat creation | Cannot create group chats | Phase 1 uses existing chat |
 | GitHub API rate limits | Scan failures | Add rate limit handling |
 | History file corruption | Lost state | Backup before write |
 | Multiple PRs at once | Spam | Batch notifications |
@@ -343,6 +347,6 @@ interface PRScannerHistory {
 
 - Issue #393: feat: 定时扫描 PR 并创建讨论群聊
 - Issue #357: 智能定时任务推荐系统
-- PR #423: feat(feishu): add ChatOps utility (pending)
-- PR #412: feat(feedback): add FeedbackController (pending)
+- PR #423: feat(feishu): add ChatOps utility (merged)
+- PR #412: feat(feedback): add FeedbackController (closed)
 - PR #421: Previous attempt (closed - lacked design analysis)
