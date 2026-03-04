@@ -171,7 +171,8 @@ describe('CommandRegistry', () => {
       const commands: Command[] = [
         { name: 'reset', description: '重置对话', category: 'session', execute: () => ({ success: true }) },
         { name: 'status', description: '查看状态', category: 'session', execute: () => ({ success: true }) },
-        { name: 'create-group', description: '创建群', usage: 'create-group <name> <members>', category: 'group', execute: () => ({ success: true }) },
+        { name: 'create-group', description: '创建群', usage: 'create-group [name]',
+ category: 'group', execute: () => ({ success: true }) },
       ];
 
       registry.registerAll(commands);
@@ -182,7 +183,7 @@ describe('CommandRegistry', () => {
       expect(helpText).toContain('- /reset - 重置对话');
       expect(helpText).toContain('- /status - 查看状态');
       expect(helpText).toContain('👥 群管理：');
-      expect(helpText).toContain('- /create-group <name> <members> - 创建群');
+      expect(helpText).toContain('- /create-group [name] - 创建群');
     });
 
     it('should not include disabled commands', () => {

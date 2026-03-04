@@ -154,47 +154,54 @@ export class RestartCommand implements Command {
 
 /**
  * Create Group Command - Create a new group chat.
+ *
+ * Issue #599: 简化建群指令
+ * - 无需 members 列表（自动拉入发起者）
+ * - 群名可选（自动生成）
  */
 export class CreateGroupCommand implements Command {
   readonly name = 'create-group';
   readonly category = 'group' as const;
   readonly description = '创建群';
-  readonly usage = 'create-group <name> <members>';
+  readonly usage = 'create-group [name]';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const { services, args, userId } = context;
 
-    if (args.length < 2) {
-      return {
-        success: false,
-        error: '用法: `/create-group <群名称> <成员1,成员2,...>`\n\n示例: `/create-group 讨论组 ou_xxx,ou_yyy`',
-      };
-    }
+    // Parse arguments: name is optional
+    const name = args.length > 0 ? args.join(' ') : undefined;
 
-    const [name, ...restArgs] = args;
-    const membersArg = restArgs.join(' ');
-    const members = membersArg.split(',').map(m => m.trim()).filter(m => m);
-
-    if (members.length === 0) {
-      return { success: false, error: '请至少指定一个成员 (open_id 格式: ou_xxx)' };
+    // Parse members if provided (format: --members ou_xxx,ou_yyy)
+    let members: string[] | undefined;
+    const membersIndex = args.findIndex(arg => arg === '--members');
+    if (membersIndex !== -1 && args[membersIndex + 1]) {
+      members = args[membersIndex + 1].split(',').map(m => m.trim()).filter(m => m);
     }
 
     try {
       const client = services.getFeishuClient();
-      const chatId = await services.createDiscussionChat(client, { topic: name, members });
+      // Pass creatorId to auto-add creator if no members specified
+      const chatId = await services.createDiscussionChat(
+        client,
+        { topic: name, members },
+        userId
+      );
+
+      // Determine actual members for registration
+      const actualMembers = members && members.length > 0 ? members : (userId ? [userId] : []);
 
       // Register the group
       services.registerGroup({
         chatId,
-        name,
+        name: name || '自动命名',  // Will be updated by createDiscussionChat
         createdAt: Date.now(),
         createdBy: userId,
-        initialMembers: members,
+        initialMembers: actualMembers,
       });
 
       return {
         success: true,
-        message: `✅ **群创建成功**\n\n群名称: ${name}\n群 ID: \`${chatId}\`\n成员数: ${members.length}`,
+        message: `✅ **群创建成功**\n\n群 ID: \`${chatId}\`\n${name ? `群名称: ${name}\n` : ''}成员数: ${actualMembers.length}`,
       };
     } catch (error) {
       return { success: false, error: `创建群失败: ${(error as Error).message}` };
