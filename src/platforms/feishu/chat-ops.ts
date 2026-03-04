@@ -17,10 +17,10 @@ const logger = createLogger('ChatOps');
  * Options for creating a discussion chat.
  */
 export interface CreateDiscussionOptions {
-  /** Chat topic/name */
-  topic: string;
-  /** Initial member open_ids */
-  members: string[];
+  /** Chat topic/name (optional, auto-generated if not provided) */
+  topic?: string;
+  /** Initial member open_ids (optional, creator will be auto-added) */
+  members?: string[];
 }
 
 /**
@@ -34,27 +34,57 @@ export interface ChatOpsConfig {
 }
 
 /**
+ * Generate a default group name based on timestamp.
+ *
+ * @returns Auto-generated group name
+ */
+function generateDefaultGroupName(): string {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).replace(/\//g, '-');
+  const timeStr = now.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `讨论组 ${dateStr} ${timeStr}`;
+}
+
+/**
  * Create a discussion group chat.
  *
  * @param client - Feishu API client
  * @param options - Chat creation options
+ * @param creatorId - Optional creator open_id to auto-add as member
  * @returns The created chat ID
  * @throws Error if chat creation fails
  */
 export async function createDiscussionChat(
   client: lark.Client,
-  options: CreateDiscussionOptions
+  options: CreateDiscussionOptions = {},
+  creatorId?: string
 ): Promise<string> {
   const { topic, members } = options;
   const log = logger;
 
+  // Auto-generate topic if not provided
+  const chatName = topic || generateDefaultGroupName();
+
+  // Build member list: use provided members, or add creator if available
+  let memberList = members || [];
+  if (memberList.length === 0 && creatorId) {
+    memberList = [creatorId];
+  }
+
   try {
     const response = await client.im.chat.create({
       data: {
-        name: topic,
+        name: chatName,
         chat_mode: 'group',
         chat_type: 'group',
-        user_id_list: members,
+        user_id_list: memberList,
       },
       params: {
         user_id_type: 'open_id',
@@ -66,10 +96,10 @@ export async function createDiscussionChat(
       throw new Error('Failed to get chat_id from response');
     }
 
-    log.info({ chatId, topic, memberCount: members.length }, 'Discussion chat created');
+    log.info({ chatId, topic: chatName, memberCount: memberList.length }, 'Discussion chat created');
     return chatId;
   } catch (error) {
-    log.error({ err: error, topic }, 'Failed to create discussion chat');
+    log.error({ err: error, topic: chatName }, 'Failed to create discussion chat');
     throw error;
   }
 }
