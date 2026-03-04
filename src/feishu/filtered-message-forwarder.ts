@@ -146,7 +146,7 @@ export class FilteredMessageForwarder {
     const emoji = reasonEmoji[message.reason] || '🚫';
     const timestamp = new Date(message.timestamp).toISOString();
     const truncatedContent = message.content.length > 200
-      ? message.content.slice(0, 200) + '...'
+      ? `${message.content.slice(0, 200)}...`
       : message.content;
 
     return `${emoji} **被过滤消息**
