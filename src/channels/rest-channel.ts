@@ -28,7 +28,6 @@ import type {
 import {
   FileStorageService,
   type FileRef,
-  type FileStorageConfig,
 } from '../file-transfer/index.js';
 
 const logger = createLogger('RestChannel');
@@ -387,16 +386,17 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       return;
     }
 
-    // file info endpoint
-    if (url.startsWith(`${this.apiPrefix}/files/`) && url.includes('/files/')) {
-      this.handleFileInfo(req, res, fileId);
-      return;
-    }
+    // File endpoints: /api/files/:fileId and /api/files/:fileId/download
+    const fileMatch = url.match(new RegExp(`^${this.apiPrefix}/files/([^/]+)(/download)?$`));
+    if (fileMatch && req.method === 'GET') {
+      const [, fileId, downloadSuffix] = fileMatch;
+      const isDownload = downloadSuffix === '/download';
 
-    // file download endpoint
-    const fileDownloadMatch = url.match(/^\/api\/files\/(\d+\/download)$/);
-    if (url.match(/^\/api\/files\/([^/]+)\/?$/)) {
-      await this.handleFileDownload(req, res, fileId);
+      if (isDownload) {
+        await this.handleFileDownload(req, res, fileId);
+      } else {
+        await this.handleFileInfo(req, res, fileId);
+      }
       return;
     }
 
@@ -594,5 +594,147 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       success: false,
       error: message,
     }));
+  }
+
+  /**
+   * Handle file upload request.
+   */
+  private async handleFileUpload(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    if (!this.fileStorage) {
+      this.sendError(res, 503, 'File storage not available');
+      return;
+    }
+
+    const body = await this.readBody(req);
+    if (!body) {
+      this.sendError(res, 400, 'Empty request body');
+      return;
+    }
+
+    let uploadRequest: FileUploadRequest;
+    try {
+      uploadRequest = JSON.parse(body) as FileUploadRequest;
+    } catch {
+      this.sendError(res, 400, 'Invalid JSON');
+      return;
+    }
+
+    // Validate request
+    if (!uploadRequest.fileName || !uploadRequest.content) {
+      this.sendError(res, 400, 'fileName and content are required');
+      return;
+    }
+
+    try {
+      const fileRef = await this.fileStorage.storeFromBase64(
+        uploadRequest.content,
+        uploadRequest.fileName,
+        uploadRequest.mimeType,
+        'user',
+        uploadRequest.chatId
+      );
+
+      // Track chat association
+      if (uploadRequest.chatId) {
+        this.fileToChat.set(fileRef.id, uploadRequest.chatId);
+      }
+
+      const response: FileUploadResponse = {
+        success: true,
+        file: fileRef,
+      };
+
+      logger.info({
+        fileId: fileRef.id,
+        fileName: uploadRequest.fileName,
+        chatId: uploadRequest.chatId,
+      }, 'File uploaded');
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to upload file');
+      this.sendError(res, 500, error instanceof Error ? error.message : 'Failed to upload file');
+    }
+  }
+
+  /**
+   * Handle file info request.
+   */
+  private async handleFileInfo(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    fileId: string
+  ): Promise<void> {
+    // Use await to satisfy require-await rule
+    await Promise.resolve();
+
+    if (!this.fileStorage) {
+      this.sendError(res, 503, 'File storage not available');
+      return;
+    }
+
+    const stored = this.fileStorage.get(fileId);
+    if (!stored) {
+      const response: FileInfoResponse = {
+        success: false,
+        error: 'File not found',
+      };
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+      return;
+    }
+
+    const response: FileInfoResponse = {
+      success: true,
+      file: stored.ref,
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(response));
+  }
+
+  /**
+   * Handle file download request.
+   */
+  private async handleFileDownload(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    fileId: string
+  ): Promise<void> {
+    if (!this.fileStorage) {
+      this.sendError(res, 503, 'File storage not available');
+      return;
+    }
+
+    const stored = this.fileStorage.get(fileId);
+    if (!stored) {
+      const response: FileDownloadResponse = {
+        success: false,
+        error: 'File not found',
+      };
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+      return;
+    }
+
+    try {
+      const content = await this.fileStorage.getContent(fileId);
+
+      const response: FileDownloadResponse = {
+        success: true,
+        file: stored.ref,
+        content,
+      };
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+    } catch (error) {
+      logger.error({ err: error, fileId }, 'Failed to download file');
+      this.sendError(res, 500, 'Failed to read file');
+    }
   }
 }
