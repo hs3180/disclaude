@@ -8,9 +8,8 @@
  */
 
 import { createLogger } from '../../utils/logger.js';
-import type { IChannelAdapter, ChannelCapabilities } from '../channel-adapter.js';
+import { cardToText, type IChannelAdapter, type ChannelCapabilities } from '../channel-adapter.js';
 import type { UniversalMessage, SendResult, MessageContent } from '../universal-message.js';
-import { cardToText } from '../channel-adapter.js';
 
 const logger = createLogger('CliAdapter');
 
@@ -75,7 +74,7 @@ export class CliAdapter implements IChannelAdapter {
   /**
    * Send a message to the console.
    */
-  async send(message: UniversalMessage): Promise<SendResult> {
+  send(message: UniversalMessage): Promise<SendResult> {
     try {
       const text = this.convert(message);
 
@@ -84,18 +83,18 @@ export class CliAdapter implements IChannelAdapter {
 
       logger.debug({ chatId: message.chatId }, 'CLI message displayed');
 
-      return {
+      return Promise.resolve({
         success: true,
         // CLI doesn't have real message IDs, generate a pseudo one
         messageId: `cli-${Date.now()}`,
-      };
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId: message.chatId }, 'Failed to display CLI message');
-      return {
+      return Promise.resolve({
         success: false,
         error: errorMessage,
-      };
+      });
     }
   }
 }

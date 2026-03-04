@@ -130,7 +130,9 @@ export type ControlCommandType =
   // Passive mode control (Issue #511)
   | 'passive'
   // Node management commands (Issue #541)
-  | 'node';
+  | 'node'
+  // Task control commands (Issue #468)
+  | 'task';
 
 /**
  * Control command from user to agent.

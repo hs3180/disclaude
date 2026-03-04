@@ -153,6 +153,35 @@ export interface CommandServices {
 
   /** Check if a schedule is currently running */
   isScheduleRunning: (taskId: string) => boolean;
+
+  // Task management methods (Issue #468)
+
+  /** Start a new task */
+  startTask: (prompt: string, chatId: string, userId?: string) => Promise<import('../../utils/task-state-manager.js').TaskState>;
+
+  /** Get current task */
+  getCurrentTask: () => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** Update task progress */
+  updateTaskProgress: (progress: number, currentStep?: string) => Promise<void>;
+
+  /** Pause current task */
+  pauseTask: () => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** Resume paused task */
+  resumeTask: () => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** Cancel current task */
+  cancelTask: () => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** Complete current task */
+  completeTask: () => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** Set task error */
+  setTaskError: (error: string) => Promise<import('../../utils/task-state-manager.js').TaskState | null>;
+
+  /** List task history */
+  listTaskHistory: (limit?: number) => Promise<import('../../utils/task-state-manager.js').TaskState[]>;
 }
 
 /**

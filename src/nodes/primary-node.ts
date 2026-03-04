@@ -73,6 +73,8 @@ import {
 import { ScheduleManager } from '../schedule/schedule-manager.js';
 import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
 import type { ScheduleTaskInfo } from './commands/types.js';
+// Task management (Issue #468)
+import { getTaskStateManager } from '../utils/task-state-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -535,6 +537,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Build command context with services
     const debugGroupService = getDebugGroupService();
+    const taskStateManager = getTaskStateManager();
     const context = {
       chatId: command.chatId,
       userId: command.data?.senderOpenId as string | undefined,
@@ -571,6 +574,16 @@ export class PrimaryNode extends EventEmitter {
         disableSchedule: (nameOrId: string) => this.disableSchedule(nameOrId),
         runSchedule: (nameOrId: string) => this.runSchedule(nameOrId),
         isScheduleRunning: (taskId: string) => this.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false,
+        // Task management methods (Issue #468)
+        startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
+        getCurrentTask: () => taskStateManager.getCurrentTask(),
+        updateTaskProgress: (progress: number, currentStep?: string) => taskStateManager.updateProgress(progress, currentStep),
+        pauseTask: () => taskStateManager.pauseTask(),
+        resumeTask: () => taskStateManager.resumeTask(),
+        cancelTask: () => taskStateManager.cancelTask(),
+        completeTask: () => taskStateManager.completeTask(),
+        setTaskError: (error: string) => taskStateManager.setTaskError(error),
+        listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
       },
     };
 
