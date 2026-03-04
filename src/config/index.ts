@@ -346,4 +346,14 @@ export class Config {
   static getDebugConfig(): import('./types.js').DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
   }
+
+  /**
+   * Get recommendations configuration for task completion suggestions.
+   * @see Issue #470
+   *
+   * @returns Recommendations configuration object
+   */
+  static getRecommendationsConfig(): import('./types.js').RecommendationsConfig {
+    return fileConfigOnly.recommendations || {};
+  }
 }

@@ -217,6 +217,48 @@ export interface DebugConfig {
 }
 
 /**
+ * Task type for recommendation matching.
+ * @see Issue #470
+ */
+export type TaskType = 'code' | 'documentation' | 'research' | 'testing' | 'general';
+
+/**
+ * A single recommendation item.
+ * @see Issue #470
+ */
+export interface RecommendationItem {
+  /** Emoji icon for the recommendation */
+  emoji: string;
+  /** Description of the recommended action */
+  description: string;
+}
+
+/**
+ * Recommendations configuration section.
+ * Controls automatic next-step suggestions after task completion.
+ * @see Issue #470
+ */
+export interface RecommendationsConfig {
+  /** Enable/disable recommendations feature */
+  enabled?: boolean;
+  /** Maximum number of recommendations to show (default: 4) */
+  maxRecommendations?: number;
+  /** Custom recommendations by task type */
+  byTaskType?: {
+    /** Code-related task recommendations */
+    code?: RecommendationItem[];
+    /** Documentation task recommendations */
+    documentation?: RecommendationItem[];
+    /** Research task recommendations */
+    research?: RecommendationItem[];
+    /** Testing task recommendations */
+    testing?: RecommendationItem[];
+    /** General task recommendations */
+    general?: RecommendationItem[];
+  };
+}
+
+/**
  * Messaging routing configuration section.
  *
  * Controls how messages are routed between admin and user chats.
@@ -287,6 +329,8 @@ export interface DisclaudeConfig {
   channels?: ChannelsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Task completion recommendations */
+  recommendations?: RecommendationsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

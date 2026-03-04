@@ -47,6 +47,7 @@ import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
+import { generateRecommendations } from '../utils/recommendations.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -144,6 +145,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private readonly sessionManager: SessionManager;
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
+
+  /** Store last user message per chatId for recommendations (Issue #470) */
+  private readonly lastUserMessages = new Map<string, string>();
 
   constructor(config: PilotConfig) {
     super(config);
@@ -353,6 +357,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Track thread root using ConversationContext
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
+    // Store user message for recommendations (Issue #470)
+    this.lastUserMessages.set(chatId, text);
+
     // Get or create session using SessionManager
     if (!this.sessionManager.has(chatId)) {
       this.logger.info({ chatId }, 'No existing session, starting agent loop');
@@ -481,6 +488,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Send recommendations (Issue #470)
+          await this.sendRecommendations(chatId, parsed.content);
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -759,6 +769,9 @@ You can read these files using the Read tool with the local paths above.`;
 
     // Clear all restart states
     this.restartManager.clearAll();
+
+    // Clear stored user messages (Issue #470)
+    this.lastUserMessages.clear();
   }
 
   /**
@@ -777,6 +790,9 @@ You can read these files using the Read tool with the local paths above.`;
 
     // Reset restart state
     this.restartManager.reset(chatId);
+
+    // Clear stored user message (Issue #470)
+    this.lastUserMessages.delete(chatId);
 
     if (deleted) {
       // Also clear thread root
@@ -824,6 +840,52 @@ You can read these files using the Read tool with the local paths above.`;
     // Clear restart states
     this.restartManager.clearAll();
 
+    // Clear stored user messages
+    this.lastUserMessages.clear();
+
     this.logger.info('Pilot shutdown complete');
+  }
+
+  /**
+   * Send task completion recommendations to the user.
+   *
+   * Generates and sends next-step suggestions based on the completed task type.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param agentResponse - The agent's response content
+   * @see Issue #470
+   */
+  private async sendRecommendations(
+    chatId: string,
+    agentResponse?: string
+  ): Promise<void> {
+    try {
+      const recommendationsConfig = Config.getRecommendationsConfig();
+
+      // Get the last user message for this chat
+      const userMessage = this.lastUserMessages.get(chatId);
+
+      if (!userMessage) {
+        this.logger.debug({ chatId }, 'No user message stored, skipping recommendations');
+        return;
+      }
+
+      // Generate recommendations
+      const recommendationsMessage = generateRecommendations(
+        userMessage,
+        agentResponse,
+        recommendationsConfig
+      );
+
+      // Send recommendations if not empty
+      if (recommendationsMessage) {
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        await this.callbacks.sendMessage(chatId, recommendationsMessage, threadRoot);
+        this.logger.debug({ chatId }, 'Recommendations sent');
+      }
+    } catch (error) {
+      // Log error but don't fail the task
+      this.logger.warn({ err: error, chatId }, 'Failed to send recommendations');
+    }
   }
 }

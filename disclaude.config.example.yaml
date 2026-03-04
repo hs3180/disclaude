@@ -206,6 +206,34 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Task Completion Recommendations
+# -----------------------------------------------------------------------------
+# Automatically suggest next steps after a task is completed.
+# @see Issue #470
+recommendations:
+  # Enable/disable recommendations
+  # Default: true
+  enabled: true
+
+  # Maximum number of recommendations to show
+  # Default: 4
+  maxRecommendations: 4
+
+  # Custom recommendations by task type (optional)
+  # If not specified, default recommendations are used
+  # byTaskType:
+  #   code:
+  #     - emoji: "🔍"
+  #       description: "搜索项目中相关代码"
+  #     - emoji: "📝"
+  #       description: "添加单元测试"
+  #   documentation:
+  #     - emoji: "📚"
+  #       description: "编写使用文档"
+  #     - emoji: "📊"
+  #       description: "生成 API 文档"
+
 # =============================================================================
 # Notes
 # =============================================================================
