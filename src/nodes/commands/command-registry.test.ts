@@ -334,8 +334,6 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('list-nodes')).toBeDefined();
     expect(registry.get('switch-node')).toBeDefined();
     expect(registry.get('restart')).toBeDefined();
-    // Issue #541: Node management command
-    expect(registry.get('node')).toBeDefined();
 
     // Group commands
     expect(registry.get('create-group')).toBeDefined();

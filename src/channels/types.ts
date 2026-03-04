@@ -129,8 +129,6 @@ export type ControlCommandType =
   | 'clear-debug'
   // Passive mode control (Issue #511)
   | 'passive'
-  // Node management commands (Issue #541)
-  | 'node'
   // Task control commands (Issue #468)
   | 'task';
 
