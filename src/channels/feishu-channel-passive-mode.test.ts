@@ -265,7 +265,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should process non-control command in group chat WITH @mention', async () => {
+    it('should show error for unknown command in group chat WITH @mention (Issue #595)', async () => {
       await simulateMessageReceive({
         text: '/custom-command',
         chatId: 'oc_test_group',
@@ -278,15 +278,12 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         ],
       });
 
-      // Control handler should NOT be called (unknown command with @mention goes to agent)
+      // Control handler should NOT be called (unknown command)
       expect(controlHandler).not.toHaveBeenCalled();
 
-      // Message SHOULD be passed to agent
-      expect(messageHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content: '/custom-command',
-        })
-      );
+      // Message should NOT be passed to agent (Issue #595 fix)
+      // Instead, an error message is shown to the user
+      expect(messageHandler).not.toHaveBeenCalled();
     });
   });
 

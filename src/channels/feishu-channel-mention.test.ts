@@ -284,8 +284,8 @@ describe('FeishuChannel - Control Command Handling (Issue #387)', () => {
     });
   });
 
-  describe('Non-control commands with @mention should be passed to agent', () => {
-    it('should pass unknown commands directly to agent when bot is mentioned', async () => {
+  describe('Unknown commands with @mention should show error (Issue #595)', () => {
+    it('should show error for unknown commands when bot is mentioned', async () => {
       await simulateMessageReceive({
         text: '/unknown-command',
         mentions: [
@@ -297,16 +297,12 @@ describe('FeishuChannel - Control Command Handling (Issue #387)', () => {
         ],
       });
 
-      // Control handler should NOT be called for unknown commands with @mention
-      // (unknown commands with @mention are passed directly to agent)
+      // Control handler should NOT be called for unknown commands
       expect(controlHandler).not.toHaveBeenCalled();
 
-      // Message should be passed to agent
-      expect(messageHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content: '/unknown-command',
-        })
-      );
+      // Message should NOT be passed to agent (Issue #595 fix)
+      // Instead, an error message is sent to the user
+      expect(messageHandler).not.toHaveBeenCalled();
     });
 
     it('should handle regular messages normally (without / prefix)', async () => {
