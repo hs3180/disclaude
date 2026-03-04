@@ -30,6 +30,7 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     isHealthy: vi.fn().mockReturnValue(true),
+    getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
   };
 }
 

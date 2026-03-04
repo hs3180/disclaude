@@ -21,6 +21,7 @@ import type {
   MessageHandler,
   ControlHandler,
   ControlResponse,
+  ChannelCapabilities,
 } from './types.js';
 
 const logger = createLogger('BaseChannel');
@@ -303,4 +304,12 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * Called by isHealthy() when status is 'running'.
    */
   protected abstract checkHealth(): boolean;
+
+  /**
+   * Get the capabilities of this channel.
+   * Subclasses should override to provide specific capabilities.
+   *
+   * @returns Channel capabilities describing what features are supported
+   */
+  abstract getCapabilities(): ChannelCapabilities;
 }

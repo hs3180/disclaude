@@ -23,6 +23,7 @@ import type {
   ChannelConfig,
   OutgoingMessage,
   ControlCommand,
+  ChannelCapabilities,
 } from './types.js';
 import {
   FileStorageService,
@@ -305,6 +306,21 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
   protected checkHealth(): boolean {
     return this.server !== undefined;
+  }
+
+  /**
+   * Get the capabilities of REST channel.
+   * REST channel supports cards and markdown, but not threads or files via MCP tools.
+   */
+  getCapabilities(): ChannelCapabilities {
+    return {
+      supportsCard: true,
+      supportsThread: false,
+      supportsFile: false,
+      supportsMarkdown: true,
+      supportsMention: false,
+      supportsUpdate: false,
+    };
   }
 
   /**
