@@ -532,7 +532,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
       // Handle control commands through the control channel
       // Control commands are ALWAYS handled locally, regardless of @mentions
-      // Non-control commands with @mention are passed to agent
+      // Non-control commands with @mention show error instead of passing to agent (Issue #595)
       const isControlCommand = commandRegistry.has(cmd);
 
       if (isControlCommand || !botMentioned) {
@@ -555,7 +555,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             }
             return;
           }
-          // Unknown command: fall through to emitMessage for Agent to handle
+          // Without @mention: unknown commands fall through to agent (original behavior)
+          // With @mention: show error instead of passing to agent (Issue #595)
+          if (botMentioned) {
+            await this.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+            });
+            return;
+          }
         }
 
         // Default command handling if no control handler registered
@@ -576,6 +585,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
           return;
         }
+      } else {
+        // Unknown command with @mention: show error instead of passing to agent
+        // Issue #595: Control commands not parsed when bot is @mentioned in group chat
+        await this.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+        });
+        return;
       }
     }
 
