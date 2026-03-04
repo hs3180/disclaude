@@ -127,6 +127,8 @@ function generateTaskId(fileName: string): string {
 export interface ScheduleFileScannerOptions {
   /** Directory to scan for schedule files */
   schedulesDir: string;
+  /** Default chat ID for tasks without explicit chatId */
+  defaultChatId?: string;
 }
 
 /**
@@ -134,10 +136,12 @@ export interface ScheduleFileScannerOptions {
  */
 export class ScheduleFileScanner {
   private schedulesDir: string;
+  private defaultChatId?: string;
 
   constructor(options: ScheduleFileScannerOptions) {
     this.schedulesDir = options.schedulesDir;
-    logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileScanner initialized');
+    this.defaultChatId = options.defaultChatId;
+    logger.info({ schedulesDir: this.schedulesDir, defaultChatId: this.defaultChatId }, 'ScheduleFileScanner initialized');
   }
 
   /**
@@ -191,10 +195,28 @@ export class ScheduleFileScanner {
       const stats = await fsPromises.stat(filePath);
       const { frontmatter, contentStart } = parseScheduleFrontmatter(content);
 
-      // Validate required fields
-      if (!frontmatter['name'] || !frontmatter['cron'] || !frontmatter['chatId']) {
-        logger.warn({ filePath }, 'Schedule file missing required fields (name, cron, chatId)');
+      // Validate required fields (chatId is optional if defaultChatId is set)
+      if (!frontmatter['name'] || !frontmatter['cron']) {
+        logger.warn({ filePath }, 'Schedule file missing required fields (name, cron)');
         return null;
+      }
+
+      // Resolve chatId: use frontmatter value, or defaultChatId, or reject
+      let chatId = frontmatter['chatId'] as string | undefined;
+      const isPlaceholder = chatId && (
+        chatId === 'REPLACE_WITH_ACTUAL_CHAT_ID' ||
+        chatId.startsWith('REPLACE_') ||
+        chatId === 'YOUR_CHAT_ID'
+      );
+
+      if (isPlaceholder || !chatId) {
+        if (this.defaultChatId) {
+          chatId = this.defaultChatId;
+          logger.debug({ filePath, defaultChatId: this.defaultChatId }, 'Using default chatId for schedule file');
+        } else {
+          logger.warn({ filePath }, 'Schedule file has placeholder chatId and no defaultChatId configured');
+          return null;
+        }
       }
 
       const prompt = content.slice(contentStart).trim();
@@ -204,7 +226,7 @@ export class ScheduleFileScanner {
         id: generateTaskId(fileName),
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
-        chatId: frontmatter['chatId'] as string,
+        chatId,
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,

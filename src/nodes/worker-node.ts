@@ -192,7 +192,11 @@ export class WorkerNode {
     // Initialize Schedule Manager and Scheduler
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
-    const scheduleManager = new ScheduleManager({ schedulesDir });
+    const schedulesConfig = Config.getSchedulesConfig();
+    const scheduleManager = new ScheduleManager({
+      schedulesDir,
+      defaultChatId: schedulesConfig.defaultChatId,
+    });
     this.scheduler = new Scheduler({
       scheduleManager,
       pilot: this.sharedPilot,

@@ -229,6 +229,17 @@ export interface MessagingConfig {
 }
 
 /**
+ * Scheduled tasks configuration section.
+ *
+ * Controls default behavior for scheduled tasks.
+ * @see Issue #357
+ */
+export interface SchedulesConfig {
+  /** Default chat ID for scheduled tasks without explicit chatId */
+  defaultChatId?: string;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -260,6 +271,8 @@ export interface DisclaudeConfig {
   channels?: ChannelsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Scheduled tasks configuration */
+  schedules?: SchedulesConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

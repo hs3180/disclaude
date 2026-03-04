@@ -78,7 +78,11 @@ export class SchedulerService {
    * Start the scheduler service.
    */
   async start(): Promise<void> {
-    const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
+    const schedulesConfig = Config.getSchedulesConfig();
+    const scheduleManager = new ScheduleManager({
+      schedulesDir: this.schedulesDir,
+      defaultChatId: schedulesConfig.defaultChatId,
+    });
 
     this.scheduler = new Scheduler({
       scheduleManager,

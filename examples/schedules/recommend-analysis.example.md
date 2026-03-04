@@ -3,7 +3,10 @@ name: "智能推荐分析"
 cron: "0 3 * * *"
 enabled: false
 blocking: true
-chatId: "REPLACE_WITH_ACTUAL_CHAT_ID"
+# chatId 可通过以下两种方式配置：
+# 1. 在此文件中直接设置 chatId（优先级更高）
+# 2. 在 disclaude.config.yaml 中设置 schedules.defaultChatId（全局默认值）
+# chatId: "oc_your_chat_id"
 createdAt: "2026-03-01T00:00:00.000Z"
 ---
 
@@ -13,7 +16,30 @@ createdAt: "2026-03-01T00:00:00.000Z"
 
 ## 配置说明
 
-**重要**: 使用前请将 `chatId` 替换为实际的飞书 Chat ID，并将 `enabled` 设为 `true`。
+有两种方式配置消息发送目标：
+
+### 方式 1: 全局默认 chatId（推荐）
+
+在 `disclaude.config.yaml` 中添加：
+
+```yaml
+schedules:
+  defaultChatId: "oc_your_chat_id"
+```
+
+这样所有定时任务都会使用这个默认 chatId，无需在每个任务文件中单独配置。
+
+### 方式 2: 任务级 chatId
+
+在任务的 frontmatter 中直接设置 `chatId`：
+
+```yaml
+---
+chatId: "oc_your_chat_id"
+---
+```
+
+**启用任务**: 将 `enabled` 设为 `true`。
 
 ## 执行步骤
 

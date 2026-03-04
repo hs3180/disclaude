@@ -336,4 +336,13 @@ export class Config {
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
   }
+
+  /**
+   * Get schedules configuration.
+   *
+   * @returns Schedules configuration object
+   */
+  static getSchedulesConfig(): import('./types.js').SchedulesConfig {
+    return fileConfigOnly.schedules || {};
+  }
 }

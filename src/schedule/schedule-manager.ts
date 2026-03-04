@@ -51,6 +51,8 @@ export interface ScheduledTask {
 export interface ScheduleManagerOptions {
   /** Directory for schedule files */
   schedulesDir: string;
+  /** Default chat ID for tasks without explicit chatId */
+  defaultChatId?: string;
 }
 
 /**
@@ -74,8 +76,11 @@ export class ScheduleManager {
   private fileScanner: ScheduleFileScanner;
 
   constructor(options: ScheduleManagerOptions) {
-    this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
-    logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized (no cache)');
+    this.fileScanner = new ScheduleFileScanner({
+      schedulesDir: options.schedulesDir,
+      defaultChatId: options.defaultChatId,
+    });
+    logger.info({ schedulesDir: options.schedulesDir, defaultChatId: options.defaultChatId }, 'ScheduleManager initialized (no cache)');
   }
 
   /**
