@@ -30,6 +30,18 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Task suggestion configuration (Issue #470).
+ */
+export interface SuggestionsConfig {
+  /** Enable/disable suggestion feature */
+  enabled?: boolean;
+  /** Maximum number of suggestions to show (default: 4) */
+  maxSuggestions?: number;
+  /** Show suggestions after all tasks (default: true) */
+  showAfterTasks?: boolean;
+}
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -44,6 +56,8 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** Task completion suggestions configuration (Issue #470) */
+  suggestions?: SuggestionsConfig;
 }
 
 /**

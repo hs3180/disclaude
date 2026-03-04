@@ -817,23 +817,48 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     try {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-        // Default handler: emit as interaction message
-        // Issue #525: Use button text to generate user-friendly prompt
-        const buttonText = defaultEvent.action.text || defaultEvent.action.value;
-        const messageContent = `The user clicked '${buttonText}' button`;
+        // Check if this is a suggestion action (Issue #470)
+        const actionValue = defaultEvent.action.value;
+        let suggestionAction: { action: string; prompt?: string } | null = null;
 
-        await this.emitMessage({
-          messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
-          chatId: defaultEvent.chat_id,
-          userId: defaultEvent.user?.sender_id?.open_id,
-          content: messageContent,
-          messageType: 'card',
-          timestamp: Date.now(),
-          metadata: {
-            cardAction: defaultEvent.action,
-            cardMessageId: defaultEvent.message_id,
-          },
-        });
+        // Try to parse the action value as JSON (suggestion buttons use JSON)
+        if (typeof actionValue === 'string' && actionValue.startsWith('{')) {
+          try {
+            suggestionAction = JSON.parse(actionValue);
+          } catch {
+            // Not JSON, use default handling
+          }
+        }
+
+        // If this is a suggestion action, send the prompt as user message
+        if (suggestionAction?.action === 'suggestion' && suggestionAction.prompt) {
+          await this.emitMessage({
+            messageId: `${defaultEvent.message_id}-suggestion`,
+            chatId: defaultEvent.chat_id,
+            userId: defaultEvent.user?.sender_id?.open_id,
+            content: suggestionAction.prompt,
+            messageType: 'text',
+            timestamp: Date.now(),
+          });
+        } else {
+          // Default handler: emit as interaction message
+          // Issue #525: Use button text to generate user-friendly prompt
+          const buttonText = defaultEvent.action.text || defaultEvent.action.value;
+          const messageContent = `The user clicked '${buttonText}' button`;
+
+          await this.emitMessage({
+            messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
+            chatId: defaultEvent.chat_id,
+            userId: defaultEvent.user?.sender_id?.open_id,
+            content: messageContent,
+            messageType: 'card',
+            timestamp: Date.now(),
+            metadata: {
+              cardAction: defaultEvent.action,
+              cardMessageId: defaultEvent.message_id,
+            },
+          });
+        }
       });
 
       if (!handled) {

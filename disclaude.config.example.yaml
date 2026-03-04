@@ -41,7 +41,20 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
-# -----------------------------------------------------------------------------
+  # Task completion suggestions ( Issue #470)
+  # Show follow-up suggestions after a task is completed
+  suggestions:
+    # Enable/disable suggestion feature
+    # Default: true
+    enabled: true
+
+    # Maximum number of suggestions to show
+    # default: 4
+    maxSuggestions: 4
+
+    # Show suggestions after all tasks
+    # default: true
+    showAfterTasks: true# -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------
 feishu:

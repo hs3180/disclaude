@@ -47,6 +47,10 @@ import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
+import {
+  initTaskSuggestionService,
+  getTaskSuggestionService,
+} from './task-suggestion.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -159,6 +163,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
       initialBackoffMs: 5000,  // Start with 5 seconds
       maxBackoffMs: 60000,     // Max 1 minute
     });
+
+    // Initialize task suggestion service (Issue #470)
+    const suggestionConfig = Config.getSuggestionsConfig();
+    if (suggestionConfig.enabled) {
+      // Only initialize if not already initialized (singleton)
+      if (!getTaskSuggestionService()) {
+        initTaskSuggestionService(suggestionConfig);
+      }
+    }
   }
 
   protected getAgentName(): string {
@@ -481,6 +494,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Generate task suggestions card (Issue #470)
+          const suggestionService = getTaskSuggestionService();
+          if (suggestionService && suggestionService.isEnabled() && parsed.content) {
+            const suggestionCard = suggestionService.generateFromResult(parsed.content);
+            if (suggestionCard) {
+              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              await this.callbacks.sendCard(chatId, suggestionCard, 'Task suggestions', threadRoot);
+            }
+          }
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
