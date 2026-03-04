@@ -20,6 +20,11 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
+import {
+  leave_note,
+  read_notes,
+  check_answers,
+} from '../offline-notes/offline-notes-tools.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -1056,6 +1061,102 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         }
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // ============================================================================
+  // Offline Notes Tools (Issue #631)
+  // ============================================================================
+  {
+    name: 'leave_note',
+    description: 'Send a non-blocking message to a human and continue working.\n\n**This tool does NOT wait for a response.** Use this when you need input but want to continue working.\n\n**Workflow:**\n1. Agent sends a question to the human\n2. Agent continues working on other tasks\n3. Later, use `read_notes` to check for responses\n4. Human responses are stored in workspace/notes/\n\n**Use Cases:**\n- Ask for clarification without blocking\n- Request review of work in progress\n- Get decisions on design choices\n- Collect feedback asynchronously\n\n**Note:** Notes expire after 7 days by default. Use expiresIn to customize.',
+    parameters: z.object({
+      question: z.string().describe('The question or message to send to the human'),
+      chatId: z.string().describe('Feishu chat ID to send the note to'),
+      context: z.string().optional().describe('Additional context for the question'),
+      taskContext: z.string().optional().describe('What task the agent is working on'),
+      parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      expiresIn: z.number().optional().describe('Expiration time in seconds (default: 7 days = 604800)'),
+      tags: z.array(z.string()).optional().describe('Tags for categorization'),
+    }),
+    handler: async ({ question, chatId, context, taskContext, parentMessageId, expiresIn, tags }) => {
+      try {
+        const result = await leave_note({ question, chatId, context, taskContext, parentMessageId, expiresIn, tags });
+        if (result.success) {
+          return toolSuccess(`✅ Note left successfully. Note ID: ${result.noteId}\nYou can continue working. Use read_notes later to check for responses.`);
+        } else {
+          return toolSuccess(`⚠️ Failed to leave note: ${result.error}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Leave note failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'read_notes',
+    description: 'Read notes and their responses from humans.\n\n**Use this to check if humans have responded to your previous notes.**\n\n**Returns:**\n- Notes with their questions and any answers\n- Status: pending (waiting), answered (has response), or expired\n\n**Filter Options:**\n- status: Filter by note status\n- chatId: Only notes from a specific chat\n- since: Only notes created after this date\n- limit: Maximum number of notes to return',
+    parameters: z.object({
+      status: z.enum(['pending', 'answered', 'expired']).optional().describe('Filter by note status'),
+      chatId: z.string().optional().describe('Filter by chat ID'),
+      since: z.string().optional().describe('Only notes created after this ISO date'),
+      limit: z.number().optional().describe('Maximum number of notes to return (default: 20)'),
+    }),
+    handler: async ({ status, chatId, since, limit }) => {
+      try {
+        const result = await read_notes({ status, chatId, since, limit });
+        if (result.success && result.notes) {
+          if (result.notes.length === 0) {
+            return toolSuccess('No notes found matching the criteria.');
+          }
+          const notesText = result.notes.map(note => {
+            let text = `📝 **Note ${note.id}** (${note.status})\n`;
+            text += `   Question: ${note.question}\n`;
+            if (note.answer) {
+              text += `   ✅ Answer: ${note.answer}\n`;
+              if (note.answeredBy) {
+                text += `   Answered by: ${note.answeredBy}\n`;
+              }
+            }
+            text += `   Created: ${note.createdAt}\n`;
+            return text;
+          }).join('\n');
+          return toolSuccess(`Found ${result.notes.length} notes:\n\n${notesText}`);
+        } else {
+          return toolSuccess(`⚠️ Failed to read notes: ${result.error}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Read notes failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'check_answers',
+    description: 'Check for new answers to your pending notes.\n\n**Convenience function** - equivalent to read_notes with status="answered".\n\nUse this to quickly check if any humans have responded to your questions.',
+    parameters: z.object({
+      chatId: z.string().optional().describe('Filter by chat ID'),
+    }),
+    handler: async ({ chatId }) => {
+      try {
+        const result = await check_answers(chatId);
+        if (result.success && result.notes) {
+          if (result.notes.length === 0) {
+            return toolSuccess('No new answers found. Your notes are still pending.');
+          }
+          const answersText = result.notes.map(note => {
+            let text = `📝 **Note ${note.id}**\n`;
+            text += `   Question: ${note.question}\n`;
+            text += `   ✅ Answer: ${note.answer}\n`;
+            if (note.answeredBy) {
+              text += `   Answered by: ${note.answeredBy} at ${note.answeredAt}\n`;
+            }
+            return text;
+          }).join('\n');
+          return toolSuccess(`🎉 You have ${result.notes.length} new answers:\n\n${answersText}`);
+        } else {
+          return toolSuccess(`⚠️ Failed to check answers: ${result.error}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Check answers failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
