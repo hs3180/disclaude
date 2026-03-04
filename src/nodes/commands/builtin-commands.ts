@@ -10,6 +10,7 @@
 
 import type { Command, CommandContext, CommandResult } from './types.js';
 import { ExpertCommand } from '../../expert/expert-command.js';
+import { BudgetCommand } from '../../expert/budget-command.js';
 
 /**
  * Reset Command - Reset the conversation session.
@@ -922,4 +923,6 @@ export function registerDefaultCommands(
   registry.register(new TaskCommand());
   // Issue #535: Expert registration and skill declaration
   registry.register(new ExpertCommand());
+  // Issue #538: Budget management command
+  registry.register(new BudgetCommand());
 }

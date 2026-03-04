@@ -243,6 +243,29 @@ export class ExpertManager {
   }
 
   /**
+   * Set expert price per consultation.
+   *
+   * @param openId - Feishu open_id
+   * @param price - Price in credits per consultation
+   * @returns Updated expert or undefined if not found
+   */
+  async setPrice(openId: string, price: number): Promise<Expert | undefined> {
+    const registry = await this.loadRegistry();
+    const expert = registry.experts.find(e => e.open_id === openId);
+
+    if (!expert) {
+      return undefined;
+    }
+
+    expert.price = price;
+    expert.updatedAt = new Date().toISOString();
+    await this.saveRegistry();
+    logger.info({ openId, price }, 'Expert price set');
+
+    return expert;
+  }
+
+  /**
    * Unregister an expert.
    *
    * @param openId - Feishu open_id

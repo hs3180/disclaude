@@ -62,6 +62,8 @@ export class ExpertCommand implements Command {
         return await this.handleSkills(userId, context);
       case 'availability':
         return await this.handleAvailability(userId, context);
+      case 'price':
+        return await this.handlePrice(userId, context);
       default:
         return {
           success: false,
@@ -84,6 +86,7 @@ export class ExpertCommand implements Command {
 - \`skills add <技能名> <等级(1-5)> [标签...]\` - 添加技能
 - \`skills remove <技能名>\` - 移除技能
 - \`availability <时间安排> [时区]\` - 设置可用时间
+- \`price <积分>\` - 设置每次咨询的身价
 
 **示例:**
 \`\`\`
@@ -93,6 +96,7 @@ export class ExpertCommand implements Command {
 /expert skills add TypeScript 5
 /expert skills remove JavaScript
 /expert availability "weekdays 10:00-18:00" Asia/Shanghai
+/expert price 50
 \`\`\`
 
 **技能等级说明:**
@@ -105,7 +109,7 @@ export class ExpertCommand implements Command {
   }
 
   private getUsageText(): string {
-    return `用法: \`/expert <register|profile|skills|availability>\`
+    return `用法: \`/expert <register|profile|skills|availability|price>\`
 
 输入 \`/expert\` 查看完整帮助。`;
   }
@@ -162,6 +166,10 @@ ${expert.name ? `名称: ${expert.name}` : ''}
       ? `\n可用时间: ${expert.availability.schedule}${expert.availability.timezone ? ` (${expert.availability.timezone})` : ''}`
       : '';
 
+    const price = expert.price !== undefined
+      ? `\n身价: **${expert.price}** 积分/次`
+      : '';
+
     return {
       success: true,
       message: `📋 **专家档案**
@@ -172,7 +180,7 @@ ${expert.name ? `名称: ${expert.name}` : ''}
 更新时间: ${new Date(expert.updatedAt).toLocaleString('zh-CN')}
 
 **技能列表:**
-${skillsList}${availability}`,
+${skillsList}${availability}${price}`,
     };
   }
 
@@ -353,6 +361,70 @@ ${skillsList}${availability}`,
       return {
         success: false,
         error: `设置可用时间失败: ${(error as Error).message}`,
+      };
+    }
+  }
+
+  private async handlePrice(userId: string, context: CommandContext): Promise<CommandResult> {
+    const manager = getExpertManager();
+
+    // Check if user is registered
+    const expert = await manager.getExpert(userId);
+    if (!expert) {
+      return {
+        success: false,
+        error: '您尚未注册为专家。请先使用 `/expert register` 注册。',
+      };
+    }
+
+    const [, priceStr] = context.args;
+
+    if (!priceStr) {
+      // Show current price if set
+      const currentPrice = expert.price !== undefined
+        ? `当前身价: **${expert.price}** 积分/次`
+        : '尚未设置身价';
+      return {
+        success: true,
+        message: `💰 **专家身价设置**
+
+${currentPrice}
+
+用法: \`/expert price <积分>\`
+示例: \`/expert price 50\``,
+      };
+    }
+
+    const price = parseInt(priceStr, 10);
+    if (isNaN(price) || price < 0) {
+      return {
+        success: false,
+        error: '身价必须是非负整数。\n\n用法: `/expert price <积分>`',
+      };
+    }
+
+    try {
+      const updatedExpert = await manager.setPrice(userId, price);
+
+      if (!updatedExpert) {
+        return {
+          success: false,
+          error: '设置身价失败，请重试。',
+        };
+      }
+
+      return {
+        success: true,
+        message: `✅ **身价已设置**
+
+每次咨询消耗: **${price}** 积分
+
+使用 \`/expert profile\` 查看完整档案。`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `设置身价失败: ${(error as Error).message}`,
       };
     }
   }
