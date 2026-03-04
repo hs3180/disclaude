@@ -110,7 +110,7 @@ describe('ChatOps', () => {
         })
       );
       // Verify the name contains date pattern
-      const callArgs = mockCreate.mock.calls[0][0];
+      const [[callArgs]] = mockCreate.mock.calls as [[{ data: { name: string } }]];
       expect(callArgs.data.name).toMatch(/讨论组 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
     });
 

@@ -143,8 +143,7 @@ describe('FilteredMessageForwarder', () => {
         timestamp: Date.now(),
       });
 
-      const call = sendText.mock.calls[0];
-      const message = call[1] as string;
+      const [, message] = sendText.mock.calls[0] as [unknown, string];
       expect(message).toContain('...');
     });
   });
