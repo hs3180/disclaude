@@ -100,7 +100,7 @@ export interface CommandServices {
   getFeishuClient: () => lark.Client;
 
   /** Create a discussion chat */
-  createDiscussionChat: (client: lark.Client, options: { topic: string; members: string[] }) => Promise<string>;
+  createDiscussionChat: (client: lark.Client, options: { topic?: string; members?: string[] }, creatorId?: string) => Promise<string>;
 
   /** Add members to a chat */
   addMembers: (client: lark.Client, chatId: string, members: string[]) => Promise<void>;

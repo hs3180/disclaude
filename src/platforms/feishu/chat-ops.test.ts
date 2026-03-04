@@ -65,6 +65,55 @@ describe('ChatOps', () => {
       });
     });
 
+    it('should create a group chat without members (using creatorId)', async () => {
+      const mockCreate = mockClient.im.chat.create as ReturnType<typeof vi.fn>;
+      mockCreate.mockResolvedValue({
+        data: { chat_id: 'oc_new_chat_456' },
+      });
+
+      const chatId = await createDiscussionChat(
+        mockClient,
+        { topic: 'Test Group' },
+        'ou_creator_1'
+      );
+
+      expect(chatId).toBe('oc_new_chat_456');
+      expect(mockCreate).toHaveBeenCalledWith({
+        data: {
+          name: 'Test Group',
+          chat_mode: 'group',
+          chat_type: 'group',
+          user_id_list: ['ou_creator_1'],
+        },
+        params: {
+          user_id_type: 'open_id',
+        },
+      });
+    });
+
+    it('should create a group chat with auto-generated name', async () => {
+      const mockCreate = mockClient.im.chat.create as ReturnType<typeof vi.fn>;
+      mockCreate.mockResolvedValue({
+        data: { chat_id: 'oc_new_chat_789' },
+      });
+
+      const chatId = await createDiscussionChat(mockClient, {}, 'ou_creator_1');
+
+      expect(chatId).toBe('oc_new_chat_789');
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            chat_mode: 'group',
+            chat_type: 'group',
+            user_id_list: ['ou_creator_1'],
+          }),
+        })
+      );
+      // Verify the name contains date pattern
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.data.name).toMatch(/讨论组 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    });
+
     it('should throw error when chat_id is not returned', async () => {
       const mockCreate = mockClient.im.chat.create as ReturnType<typeof vi.fn>;
       mockCreate.mockResolvedValue({
