@@ -584,6 +584,20 @@ export class PrimaryNode extends EventEmitter {
         completeTask: () => taskStateManager.completeTask(),
         setTaskError: (error: string) => taskStateManager.setTaskError(error),
         listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
+        // Passive mode management (Issue #601)
+        setPassiveMode: (chatId: string, disabled: boolean) => {
+          const feishuChannel = this.feedbackRouter.getChannels().find(c => c.name === 'Feishu');
+          if (feishuChannel && 'setPassiveModeDisabled' in feishuChannel) {
+            (feishuChannel as any).setPassiveModeDisabled(chatId, disabled);
+          }
+        },
+        getPassiveMode: (chatId: string) => {
+          const feishuChannel = this.feedbackRouter.getChannels().find(c => c.name === 'Feishu');
+          if (feishuChannel && 'isPassiveModeDisabled' in feishuChannel) {
+            return (feishuChannel as any).isPassiveModeDisabled(chatId);
+          }
+          return false; // Default: passive mode enabled (only @mention)
+        },
       },
     };
 

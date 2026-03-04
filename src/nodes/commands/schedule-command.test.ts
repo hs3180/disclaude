@@ -76,6 +76,9 @@ describe('ScheduleCommand', () => {
     completeTask: () => Promise.resolve(null),
     setTaskError: () => Promise.resolve(null),
     listTaskHistory: () => Promise.resolve([]),
+    // Passive mode management (Issue #601)
+    setPassiveMode: () => {},
+    getPassiveMode: () => false,
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({
