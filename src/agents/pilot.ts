@@ -47,6 +47,10 @@ import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
+import {
+  getTaskSuggestionService,
+  type TaskSuggestionService,
+} from './task-suggestion.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -145,8 +149,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
 
+  /** Track original user messages for task suggestions (Issue #470) */
+  private readonly userMessageTracking = new Map<string, string>();
+
+  /** Task suggestion service (Issue #470) */
+  private readonly suggestionService: TaskSuggestionService | null;
+
   constructor(config: PilotConfig) {
     super(config);
+    this.userMessageTracking = new Map();
+    this.suggestionService = getTaskSuggestionService();
 
     this.callbacks = config.callbacks;
 
@@ -353,6 +365,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Track thread root using ConversationContext
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
+    // Track original user message for suggestion context (Issue #470)
+    this.userMessageTracking.set(chatId, text);
+
     // Get or create session using SessionManager
     if (!this.sessionManager.has(chatId)) {
       this.logger.info({ chatId }, 'No existing session, starting agent loop');
@@ -481,6 +496,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Generate task suggestions (Issue #470)
+          await this.sendTaskSuggestions(chatId, parsed.content || '');
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -778,12 +796,62 @@ You can read these files using the Read tool with the local paths above.`;
     // Reset restart state
     this.restartManager.reset(chatId);
 
+    // Clear user message tracking (Issue #470)
+    this.userMessageTracking.delete(chatId);
+
     if (deleted) {
       // Also clear thread root
       this.conversationOrchestrator.deleteThreadRoot(chatId);
       this.logger.info({ chatId }, 'State reset for chatId');
     } else {
       this.logger.debug({ chatId }, 'No state to reset for chatId');
+    }
+  }
+
+  /**
+   * Send task suggestions after result is received (Issue #470).
+   *
+   * Uses LLM to analyze the task context and generate relevant follow-up suggestions.
+   * The suggestions are sent as interactive card buttons.
+   *
+   * @param chatId - Chat ID
+   * @param resultContent - The result message content
+   */
+  private async sendTaskSuggestions(chatId: string, resultContent: string): Promise<void> {
+    // Check if suggestion service is available
+    if (!this.suggestionService) {
+      this.logger.debug({ chatId }, 'TaskSuggestionService not available, skipping suggestions');
+      return;
+    }
+
+    // Get the original user message for context
+    const userMessage = this.userMessageTracking.get(chatId);
+    if (!userMessage) {
+      this.logger.debug({ chatId }, 'No user message tracked, skipping suggestions');
+      return;
+    }
+
+    try {
+      // Generate suggestions using LLM
+      const suggestionCard = await this.suggestionService.generateSuggestionCard({
+        userMessage,
+        resultContent,
+        chatId,
+      });
+
+      if (suggestionCard) {
+        // Send the card via callback
+        // Cast BuiltCard to Record<string, unknown> for callback compatibility
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        await this.callbacks.sendCard(chatId, suggestionCard as unknown as Record<string, unknown>, 'Task suggestions', threadRoot);
+        this.logger.debug({ chatId }, 'Task suggestions sent');
+      }
+    } catch (error) {
+      // Log error but don't fail the turn
+      this.logger.error({ err: error, chatId }, 'Failed to generate task suggestions');
+    } finally {
+      // Clear the tracked message after suggestions are sent
+      this.userMessageTracking.delete(chatId);
     }
   }
 

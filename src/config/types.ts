@@ -44,6 +44,18 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** Task suggestion configuration (Issue #470) */
+  taskSuggestion?: TaskSuggestionConfig;
+}
+
+/**
+ * Task suggestion configuration (Issue #470).
+ */
+export interface TaskSuggestionConfig {
+  /** Enable/disable suggestion feature */
+  enabled?: boolean;
+  /** Maximum number of suggestions to show (default: 4) */
+  maxSuggestions?: number;
 }
 
 /**

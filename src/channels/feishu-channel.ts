@@ -21,6 +21,7 @@ import { resolvePendingInteraction } from '../mcp/feishu-context-mcp.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { filteredMessageForwarder } from '../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../config/types.js';
+import { isSuggestionAction } from '../agents/task-suggestion.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { BaseChannel } from './base-channel.js';
 import type {
@@ -812,6 +813,27 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     if (resolved) {
       logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
       return;
+    }
+
+    // Handle suggestion button clicks (Issue #470)
+    // Parse action value to check if it's a suggestion
+    try {
+      const actionValue = typeof action.value === 'string' ? JSON.parse(action.value) : action.value;
+      if (isSuggestionAction(actionValue)) {
+        // This is a suggestion - emit the prompt to the agent
+        await this.emitMessage({
+          messageId: `suggestion-${message_id}`,
+          chatId: chat_id,
+          userId: user?.sender_id?.open_id,
+          content: actionValue.prompt,
+          messageType: 'text',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+    } catch (parseError) {
+      logger.debug({ parseError, messageId: message_id, chatId: chat_id }, 'Action value is not a suggestion');
+      // Not a JSON value or not a suggestion action, continue with normal handling
     }
 
     try {
