@@ -297,6 +297,44 @@ export class PrimaryNode extends EventEmitter {
     return this.feedbackRouter.getChannels();
   }
 
+  /**
+   * Get capabilities for a specific chatId.
+   * Routes to the appropriate channel based on chatId prefix (Issue #582).
+   *
+   * ChatId patterns:
+   * - 'oc_' or 'ou_' prefix: Feishu channel (full capabilities)
+   * - 'cli-' prefix: CLI channel (limited capabilities)
+   * - Others: REST channel or default
+   *
+   * @param chatId - Chat ID to get capabilities for
+   * @returns Channel capabilities or undefined if no matching channel
+   */
+  getChannelCapabilities(chatId: string) {
+    // Find the appropriate channel based on chatId
+    const channels = this.feedbackRouter.getChannels();
+
+    // Try to find a channel that matches the chatId pattern
+    for (const channel of channels) {
+      // Feishu channel handles oc_ and ou_ prefixed chatIds
+      if (channel.id === 'feishu' && (chatId.startsWith('oc_') || chatId.startsWith('ou_'))) {
+        return channel.getCapabilities();
+      }
+      // REST channel handles other chatIds (or as fallback)
+      if (channel.id === 'rest' && !chatId.startsWith('oc_') && !chatId.startsWith('ou_') && !chatId.startsWith('cli-')) {
+        return channel.getCapabilities();
+      }
+    }
+
+    // Default: return capabilities from the first available channel
+    // This handles CLI mode and other edge cases
+    if (channels.length > 0) {
+      return channels[0].getCapabilities();
+    }
+
+    // No channels available - return undefined
+    return undefined;
+  }
+
   // ============================================================================
   // Execution Node Management (delegated to ExecNodeRegistry)
   // ============================================================================
@@ -392,6 +430,10 @@ export class PrimaryNode extends EventEmitter {
           logger.info({ chatId }, 'Task completed (scheduled task)');
         }
         return Promise.resolve();
+      },
+      // Capability-aware prompt generation (Issue #582)
+      getCapabilities: (chatId: string) => {
+        return this.getChannelCapabilities(chatId);
       },
     });
 

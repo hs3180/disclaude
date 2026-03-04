@@ -183,6 +183,38 @@ export type ControlHandler = (command: ControlCommand) => Promise<ControlRespons
 export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
 
 /**
+ * Channel capabilities interface.
+ * Describes what features a channel supports.
+ * Used for capability-aware prompt generation (Issue #582).
+ */
+export interface ChannelCapabilities {
+  /** Whether the channel supports interactive cards */
+  supportsCard: boolean;
+  /** Whether the channel supports threaded replies */
+  supportsThread: boolean;
+  /** Whether the channel supports file attachments */
+  supportsFile: boolean;
+  /** Whether the channel supports markdown formatting */
+  supportsMarkdown: boolean;
+  /** Whether the channel supports @mentions */
+  supportsMention: boolean;
+  /** Whether the channel supports message updates */
+  supportsUpdate: boolean;
+}
+
+/**
+ * Default capabilities for a basic channel.
+ */
+export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
+  supportsCard: false,
+  supportsThread: false,
+  supportsFile: false,
+  supportsMarkdown: true,
+  supportsMention: false,
+  supportsUpdate: false,
+};
+
+/**
  * Channel interface.
  *
  * All communication channels must implement this interface.
@@ -245,6 +277,14 @@ export interface IChannel {
    * Used for health checks and monitoring.
    */
   isHealthy(): boolean;
+
+  /**
+   * Get the capabilities of this channel.
+   * Used for capability-aware prompt generation.
+   *
+   * @returns Channel capabilities describing what features are supported
+   */
+  getCapabilities(): ChannelCapabilities;
 }
 
 /**

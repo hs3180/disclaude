@@ -42,6 +42,7 @@ import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { ChatAgent, UserInput } from './types.js';
 import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
+import type { ChannelCapabilities } from '../channels/types.js';
 import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
@@ -82,6 +83,14 @@ export interface PilotCallbacks {
    * @param parentMessageId - Optional parent message ID for thread replies
    */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+
+  /**
+   * Get the capabilities of the channel for a specific chat.
+   * Used for capability-aware prompt generation (Issue #582).
+   * @param chatId - Platform-specific chat identifier
+   * @returns Channel capabilities or undefined if not available
+   */
+  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
 }
 
 /**
@@ -561,10 +570,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * - Keep the command at START for SDK skill detection
    * - Append minimal context AFTER the command for skill to extract
    * - Do NOT wrap with system prompt template
+   *
+   * **Capability-aware**: Adjusts available tools based on channel capabilities (Issue #582).
    */
   private buildEnhancedContent(chatId: string, msg: MessageData): string {
     // Check if this is a skill command (starts with /)
     const isSkillCommand = msg.text.trimStart().startsWith('/');
+
+    // Get channel capabilities (Issue #582)
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
 
     // Build chat history section if available (Issue #517)
     const chatHistorySection = msg.chatHistoryContext
@@ -600,14 +614,14 @@ ${msg.chatHistoryContext}
       return `${msg.text}${contextInfo}`;
     }
 
+    // Build capability-aware tools section (Issue #582)
+    const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
-      return `You are responding in a Feishu chat.
+      const mentionSection = capabilities?.supportsMention !== false
+        ? `
 
-**Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}
-**Sender Open ID:** ${msg.senderOpenId}
-${chatHistorySection}
 ---
 
 ## @ Mention the User
@@ -619,15 +633,20 @@ To notify the user in your FINAL response, use:
 
 **Rules:**
 - Use @ ONLY in your **final/complete response**, NOT in intermediate messages
-- This triggers a Feishu notification to the user
+- This triggers a Feishu notification to the user`
+        : '';
+
+      return `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
+**Sender Open ID:** ${msg.senderOpenId}
+${chatHistorySection}${mentionSection}
 
 ---
 
 ## Tools
-
-When using send_file_to_feishu or send_user_feedback, use:
-- Chat ID: \`${chatId}\`
-- parentMessageId: \`${msg.messageId}\` (for thread replies)
+${toolsSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -638,12 +657,61 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 ${chatHistorySection}
-When using send_file_to_feishu or send_user_feedback, use:
-- Chat ID: \`${chatId}\`
-- parentMessageId: \`${msg.messageId}\` (for thread replies)
+## Tools
+${toolsSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+  }
+
+  /**
+   * Build capability-aware tools section for the prompt.
+   * Adjusts available tools based on channel capabilities (Issue #582).
+   *
+   * @param chatId - Chat ID for tool usage
+   * @param messageId - Message ID for thread replies
+   * @param capabilities - Channel capabilities (optional, defaults to all enabled)
+   * @param _senderOpenId - Optional sender Open ID for mentions
+   * @returns Tools section string for the prompt
+   */
+  private buildToolsSection(
+    chatId: string,
+    messageId: string,
+    capabilities?: ChannelCapabilities,
+    _senderOpenId?: string
+  ): string {
+    const parts: string[] = [];
+
+    // Always include send_user_feedback (text format)
+    parts.push(`When using send_user_feedback, use:
+- Chat ID: \`${chatId}\`
+- parentMessageId: \`${messageId}\` (for thread replies)`);
+
+    // Include card support note if supported
+    if (capabilities?.supportsCard !== false) {
+      parts.push(`
+- For rich content, use format: "card" with a valid Feishu card structure`);
+    } else {
+      parts.push(`
+- Note: This channel does not support interactive cards. Use text format only.`);
+    }
+
+    // Include file support if supported
+    if (capabilities?.supportsFile !== false) {
+      parts.push(`
+- send_file_to_feishu is available for sending files`);
+    } else {
+      parts.push(`
+- Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
+    }
+
+    // Include thread support note
+    if (capabilities?.supportsThread === false) {
+      parts.push(`
+- Note: Thread replies are NOT supported on this channel.`);
+    }
+
+    return parts.join('\n');
   }
 
   /**

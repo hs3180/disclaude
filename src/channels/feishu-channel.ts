@@ -32,6 +32,7 @@ import type {
 import type {
   ChannelConfig,
   OutgoingMessage,
+  ChannelCapabilities,
 } from './types.js';
 
 const logger = createLogger('FeishuChannel');
@@ -220,6 +221,21 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   protected checkHealth(): boolean {
     return this.wsClient !== undefined;
+  }
+
+  /**
+   * Get the capabilities of Feishu channel.
+   * Feishu supports cards, threads, files, markdown, mentions, and updates.
+   */
+  getCapabilities(): ChannelCapabilities {
+    return {
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: true,
+    };
   }
 
   /**

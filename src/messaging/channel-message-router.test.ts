@@ -194,6 +194,7 @@ describe('ChannelMessageRouter', () => {
         start: vi.fn(),
         stop: vi.fn(),
         isHealthy: vi.fn().mockReturnValue(true),
+        getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
       };
 
       const mockChannel2: IChannel = {
@@ -206,6 +207,7 @@ describe('ChannelMessageRouter', () => {
         start: vi.fn(),
         stop: vi.fn(),
         isHealthy: vi.fn().mockReturnValue(true),
+        getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
       };
 
       const channels = new Map<string, IChannel>();
@@ -248,6 +250,7 @@ describe('ChannelMessageRouter', () => {
         start: vi.fn(),
         stop: vi.fn(),
         isHealthy: vi.fn().mockReturnValue(true),
+        getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
       };
 
       const mockChannel2: IChannel = {
@@ -260,6 +263,7 @@ describe('ChannelMessageRouter', () => {
         start: vi.fn(),
         stop: vi.fn(),
         isHealthy: vi.fn().mockReturnValue(true),
+        getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
       };
 
       const channels = new Map<string, IChannel>();

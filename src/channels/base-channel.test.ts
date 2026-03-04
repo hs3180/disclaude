@@ -59,6 +59,17 @@ class TestChannel extends BaseChannel<ChannelConfig> {
     return this.checkHealthResult;
   }
 
+  getCapabilities() {
+    return {
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: true,
+    };
+  }
+
   // Expose protected methods for testing
   public testSetStatus(status: Parameters<BaseChannel['setStatus']>[0]): void {
     this.setStatus(status);
@@ -266,6 +277,7 @@ describe('BaseChannel', () => {
         protected doStop(): Promise<void> { return Promise.resolve(); }
         protected doSendMessage(): Promise<void> { return Promise.resolve(); }
         protected checkHealth(): boolean { return true; }
+        getCapabilities() { return { supportsCard: false, supportsThread: false, supportsFile: false, supportsMarkdown: true, supportsMention: false, supportsUpdate: false }; }
       }
 
       const failingChannel = new FailingChannel({}, 'fail', 'Fail');
@@ -285,6 +297,7 @@ describe('BaseChannel', () => {
         }
         protected doSendMessage(): Promise<void> { return Promise.resolve(); }
         protected checkHealth(): boolean { return true; }
+        getCapabilities() { return { supportsCard: false, supportsThread: false, supportsFile: false, supportsMarkdown: true, supportsMention: false, supportsUpdate: false }; }
       }
 
       const failingChannel = new FailingStopChannel({}, 'fail', 'Fail');
