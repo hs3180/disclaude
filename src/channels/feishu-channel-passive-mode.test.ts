@@ -16,7 +16,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before importing
 vi.mock('@larksuiteoapi/node-sdk', () => ({
-  Client: vi.fn(() => ({})),
+  Client: vi.fn(() => ({
+    request: vi.fn().mockResolvedValue({
+      data: {
+        bot: {
+          open_id: 'cli_test_bot_id',
+          app_name: 'Test Bot',
+        },
+      },
+    }),
+  })),
   WSClient: vi.fn(() => ({
     start: vi.fn().mockResolvedValue(undefined),
   })),
@@ -198,7 +207,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         mentions: [
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
             name: 'Bot',
           },
         ],
@@ -272,7 +281,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         mentions: [
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id
             name: 'Bot',
           },
         ],
@@ -313,7 +322,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         mentions: [
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
             name: 'Bot',
           },
         ],
@@ -393,7 +402,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
           },
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
             name: 'Bot',
           },
         ],
@@ -403,6 +412,66 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       expect(messageHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           content: '@user1 @bot help me',
+        })
+      );
+    });
+
+    it('should NOT respond when only other user is mentioned (Issue #600)', async () => {
+      await simulateMessageReceive({
+        text: '@user1 can you help?',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_user1',
+            id: { open_id: 'user1-open-id' }, // Another user, not bot
+            name: 'User1',
+          },
+        ],
+      });
+
+      // Should NOT process (bot is NOT mentioned)
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should respond when bot is mentioned with correct open_id (Issue #600)', async () => {
+      await simulateMessageReceive({
+        text: '@bot please help',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Should process (bot IS mentioned with correct open_id)
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '@bot please help',
+        })
+      );
+    });
+
+    it('should respond to bot mention with exact open_id match', async () => {
+      // When bot's open_id is fetched, only exact matches should trigger response
+      await simulateMessageReceive({
+        text: '@bot help',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'cli_test_bot_id' }, // Exact match with mock botOpenId
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Should process (exact open_id match)
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: '@bot help',
         })
       );
     });
@@ -431,7 +500,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         mentions: [
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
             name: 'Bot',
           },
         ],
@@ -562,7 +631,7 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
         mentions: [
           {
             key: '@_bot',
-            id: { open_id: 'bot-open-id' },
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
             name: 'Bot',
           },
         ],

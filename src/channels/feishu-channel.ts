@@ -79,6 +79,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   private passiveModeDisabled: Map<string, boolean> = new Map();
 
+  /**
+   * Bot's open_id for mention detection.
+   * Issue #600: Correctly identify bot mentions in group chats
+   */
+  private botOpenId?: string;
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
@@ -112,6 +118,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Get bot's open_id for mention detection (Issue #600)
+    await this.fetchBotOpenId();
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -317,8 +326,36 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Fetch bot's open_id from Feishu API.
+   * This is used to correctly identify when the bot is mentioned.
+   *
+   * Issue #600: Correctly identify bot mentions in group chats
+   */
+  private async fetchBotOpenId(): Promise<void> {
+    try {
+      const client = this.getClient();
+      // Use bot info API to get bot's open_id
+      const response = await client.request({
+        method: 'GET',
+        url: '/open-apis/bot/v3/info',
+      });
+
+      if (response.data?.bot?.open_id) {
+        this.botOpenId = response.data.bot.open_id;
+        logger.info({ botOpenId: this.botOpenId }, 'Bot open_id fetched for mention detection');
+      } else {
+        logger.warn('Failed to fetch bot open_id, mention detection may be less accurate');
+      }
+    } catch (error) {
+      logger.warn({ err: error }, 'Failed to fetch bot open_id, mention detection may be less accurate');
+    }
+  }
+
+  /**
    * Check if the bot is mentioned in the message.
    * When bot is mentioned, commands should be passed through to the agent.
+   *
+   * Issue #600: Correctly identify bot mentions in group chats
    *
    * @param mentions - Mentions array from Feishu message
    * @returns true if bot is mentioned
@@ -327,15 +364,24 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     if (!mentions || mentions.length === 0) {
       return false;
     }
-    // In Feishu, when bot is mentioned, it appears in the mentions array
-    // The bot's id type is typically 'app' or has a specific pattern
-    // We check if any mention has an id that looks like a bot/app
-    return mentions.some((_mention) => {
-      // Bot mentions typically have open_id starting with 'ou_' or 'on_'
-      // but we should check all mentions since user might @bot
-      // The safest approach: if there's any mention, treat it as bot mention
-      // This ensures commands with @mentions are passed to agent
-      return true;
+
+    // If we have bot's open_id, check if any mention matches
+    if (this.botOpenId) {
+      return mentions.some((mention) => {
+        // Check if the mention's open_id matches bot's open_id
+        return mention.id?.open_id === this.botOpenId;
+      });
+    }
+
+    // Fallback: Check for bot mention patterns
+    // Bot mentions typically have open_id starting with 'cli_' (app ID format)
+    // or have key containing 'bot'
+    return mentions.some((mention) => {
+      const openId = mention.id?.open_id || '';
+      const key = mention.key || '';
+      // Bot's open_id typically starts with 'cli_' (app/bot ID format)
+      // or the key contains 'bot' (e.g., '@_bot')
+      return openId.startsWith('cli_') || key.toLowerCase().includes('bot');
     });
   }
 
