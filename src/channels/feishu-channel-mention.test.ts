@@ -39,6 +39,7 @@ vi.mock('../config/index.js', () => ({
   Config: {
     FEISHU_APP_ID: 'test-app-id',
     FEISHU_APP_SECRET: 'test-app-secret',
+    getDebugConfig: vi.fn().mockReturnValue({}),
   },
 }));
 
