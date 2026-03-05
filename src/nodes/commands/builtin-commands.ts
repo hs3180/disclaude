@@ -40,6 +40,7 @@ import {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  BudgetCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -62,6 +63,7 @@ export {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  BudgetCommand,
 };
 
 /**
@@ -91,4 +93,6 @@ export function registerDefaultCommands(
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
   registry.register(new TaskCommand());
+  // Issue #538: Credit management command
+  registry.register(new BudgetCommand());
 }

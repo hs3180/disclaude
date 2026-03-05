@@ -82,6 +82,13 @@ describe('ScheduleCommand', () => {
     // Passive mode management (Issue #601)
     setPassiveMode: () => {},
     getPassiveMode: () => false,
+    // Credit management (Issue #538)
+    createCreditAccount: () => ({ agentId: 'test', balance: 0, dailyLimit: 100, usedToday: 0, lastResetAt: Date.now(), createdAt: Date.now(), updatedAt: Date.now() }),
+    getCreditAccount: () => undefined,
+    hasCreditAccount: () => false,
+    rechargeCredits: () => undefined,
+    setCreditDailyLimit: () => undefined,
+    listCreditAccounts: () => [],
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({

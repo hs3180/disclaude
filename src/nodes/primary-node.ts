@@ -77,6 +77,8 @@ import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
 import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
+// Credit management (Issue #538)
+import { CreditService } from '../credits/index.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -126,6 +128,7 @@ export class PrimaryNode extends EventEmitter {
   private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
+  private creditService: CreditService;
 
   // Group management (Issue #486)
   private groupService: GroupService;
@@ -143,6 +146,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize GroupService
     this.groupService = getGroupService();
+
+    // Initialize CreditService (Issue #538)
+    this.creditService = new CreditService();
 
     // Store Feishu credentials for group management
     this.feishuAppId = config.appId || Config.FEISHU_APP_ID;
@@ -659,6 +665,13 @@ export class PrimaryNode extends EventEmitter {
           }
           return false; // Default: passive mode enabled (only @mention)
         },
+        // Credit management (Issue #538)
+        createCreditAccount: (options: import('../credits/types.js').CreateAccountOptions) => this.creditService.createAccount(options),
+        getCreditAccount: (agentId: string) => this.creditService.getAccount(agentId),
+        hasCreditAccount: (agentId: string) => this.creditService.hasAccount(agentId),
+        rechargeCredits: (options: import('../credits/types.js').RechargeOptions) => this.creditService.recharge(options),
+        setCreditDailyLimit: (options: import('../credits/types.js').SetDailyLimitOptions) => this.creditService.setDailyLimit(options),
+        listCreditAccounts: () => this.creditService.listAccounts(),
       },
     };
 

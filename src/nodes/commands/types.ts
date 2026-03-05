@@ -12,7 +12,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 /**
  * Command category for grouping related commands.
  */
-export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
+export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill' | 'credit';
 
 /**
  * Schedule task info for display.
@@ -207,6 +207,25 @@ export interface CommandServices {
 
   /** Get passive mode status for a chat (true = respond to all, false = only @mention) */
   getPassiveMode: (chatId: string) => boolean;
+
+  // Credit management (Issue #538)
+  /** Create a credit account */
+  createCreditAccount: (options: import('../../credits/types.js').CreateAccountOptions) => import('../../credits/types.js').AgentAccount;
+
+  /** Get credit account */
+  getCreditAccount: (agentId: string) => import('../../credits/types.js').AgentAccount | undefined;
+
+  /** Check if credit account exists */
+  hasCreditAccount: (agentId: string) => boolean;
+
+  /** Recharge credits */
+  rechargeCredits: (options: import('../../credits/types.js').RechargeOptions) => import('../../credits/types.js').AgentAccount | undefined;
+
+  /** Set daily limit */
+  setCreditDailyLimit: (options: import('../../credits/types.js').SetDailyLimitOptions) => import('../../credits/types.js').AgentAccount | undefined;
+
+  /** List all credit accounts */
+  listCreditAccounts: () => import('../../credits/types.js').AgentAccount[];
 }
 
 /**
@@ -305,4 +324,5 @@ export const CATEGORY_CONFIG: Record<CommandCategory, CategoryInfo> = {
   task: { label: '任务', emoji: '📋', order: 5 },
   schedule: { label: '定时', emoji: '⏰', order: 6 },
   skill: { label: '技能', emoji: '🎯', order: 7 },
+  credit: { label: '积分', emoji: '💰', order: 8 },
 };
