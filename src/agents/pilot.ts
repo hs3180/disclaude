@@ -772,30 +772,67 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
   /**
    * Build attachments info string for the message content.
+   *
+   * Issue #656: Enhanced to provide image-specific guidance for multimodal support.
+   * When images are attached, guides the agent to use analyze_image tool if available,
+   * providing a seamless multimodal experience regardless of the underlying model.
    */
   private buildAttachmentsInfo(attachments?: FileRef[]): string {
     if (!attachments || attachments.length === 0) {
       return '';
     }
 
-    const attachmentList = attachments
-      .map((att, index) => {
-        const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
-        return `${index + 1}. **${att.fileName}**${sizeInfo}
+    // Separate images from other attachments for special handling
+    const imageAttachments = attachments.filter(att => att.mimeType?.startsWith('image/'));
+    const otherAttachments = attachments.filter(att => !att.mimeType?.startsWith('image/'));
+
+    const parts: string[] = [];
+
+    // Build image attachments section with multimodal guidance
+    if (imageAttachments.length > 0) {
+      const imageList = imageAttachments
+        .map((att, index) => {
+          const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
+          return `${index + 1}. **${att.fileName}**${sizeInfo}
+   - File ID: \`${att.id}\`
+   - Local path: \`${att.localPath}\`
+   - MIME type: ${att.mimeType}`;
+        })
+        .join('\n');
+
+      parts.push(`
+--- Image Attachments ---
+The user has attached ${imageAttachments.length} image(s). These images have been downloaded to local storage:
+
+${imageList}
+
+**For image analysis:**
+- If you have access to the \`analyze_image\` tool (e.g., from MCP servers), use it with the local path above for image understanding.
+- Otherwise, use the Read tool with the local path. If your model supports native multimodal input, the Read tool will provide image understanding.`);
+    }
+
+    // Build other attachments section
+    if (otherAttachments.length > 0) {
+      const otherList = otherAttachments
+        .map((att, index) => {
+          const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
+          return `${index + 1}. **${att.fileName}**${sizeInfo}
    - File ID: \`${att.id}\`
    - Local path: \`${att.localPath}\`
    - MIME type: ${att.mimeType || 'unknown'}`;
-      })
-      .join('\n');
+        })
+        .join('\n');
 
-    return `
+      parts.push(`
+--- File Attachments ---
+The user has attached ${otherAttachments.length} file(s). These files have been downloaded to local storage:
 
---- Attachments ---
-The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
+${otherList}
 
-${attachmentList}
+You can read these files using the Read tool with the local paths above.`);
+    }
 
-You can read these files using the Read tool with the local paths above.`;
+    return '\n' + parts.join('\n');
   }
 
   /**
