@@ -30,6 +30,12 @@ export interface GroupInfo {
   createdBy?: string;
   /** Initial members */
   initialMembers: string[];
+  /**
+   * Whether this is a topic group (BBS mode).
+   * Topic groups are used for one-way broadcasts like daily reflections.
+   * @see Issue #721 - Topic Group Infrastructure
+   */
+  isTopicGroup?: boolean;
 }
 
 /**
@@ -167,6 +173,60 @@ export class GroupService {
    */
   listGroups(): GroupInfo[] {
     return Object.values(this.registry.groups);
+  }
+
+  /**
+   * Set or unset a group as a topic group.
+   *
+   * Topic groups are used for BBS-mode communication where the agent
+   * can push messages without expecting immediate responses.
+   *
+   * @param chatId - Group chat ID
+   * @param isTopicGroup - Whether to mark as topic group
+   * @returns Whether the operation was successful
+   *
+   * @see Issue #721 - Topic Group Infrastructure
+   */
+  setTopicGroup(chatId: string, isTopicGroup: boolean): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot set topic group: group not found');
+      return false;
+    }
+
+    if (isTopicGroup) {
+      group.isTopicGroup = true;
+    } else {
+      delete group.isTopicGroup;
+    }
+    this.save();
+
+    logger.info({ chatId, name: group.name, isTopicGroup }, 'Topic group status updated');
+    return true;
+  }
+
+  /**
+   * Check if a group is a topic group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group is a topic group
+   *
+   * @see Issue #721 - Topic Group Infrastructure
+   */
+  isTopicGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.isTopicGroup === true;
+  }
+
+  /**
+   * List all topic groups.
+   *
+   * @returns Array of topic group info
+   *
+   * @see Issue #721 - Topic Group Infrastructure
+   */
+  listTopicGroups(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
   }
 
   /**

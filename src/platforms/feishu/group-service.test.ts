@@ -3,6 +3,7 @@
  *
  * @see Issue #486 - Group management commands
  * @see Issue #692 - GroupService.createGroup() method
+ * @see Issue #721 - Topic Group Infrastructure
  */
 
 import * as fs from 'fs';
@@ -288,6 +289,113 @@ describe('GroupService', () => {
       await expect(service.createGroup(mockClient, {
         topic: 'Test Group',
       })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('Topic Group', () => {
+    it('should set a group as topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_topic1',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = service.setTopicGroup('oc_topic1', true);
+
+      expect(result).toBe(true);
+      expect(service.isTopicGroup('oc_topic1')).toBe(true);
+      expect(service.getGroup('oc_topic1')?.isTopicGroup).toBe(true);
+    });
+
+    it('should unset a topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_topic2',
+        name: 'Topic Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      const result = service.setTopicGroup('oc_topic2', false);
+
+      expect(result).toBe(true);
+      expect(service.isTopicGroup('oc_topic2')).toBe(false);
+      expect(service.getGroup('oc_topic2')?.isTopicGroup).toBeUndefined();
+    });
+
+    it('should return false when setting topic group for non-existent group', () => {
+      const result = service.setTopicGroup('oc_nonexistent', true);
+      expect(result).toBe(false);
+    });
+
+    it('should return false for non-topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_regular',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.isTopicGroup('oc_regular')).toBe(false);
+    });
+
+    it('should return false for non-existent group when checking isTopicGroup', () => {
+      expect(service.isTopicGroup('oc_nonexistent')).toBe(false);
+    });
+
+    it('should list only topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_regular',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+      service.registerGroup({
+        chatId: 'oc_topic1',
+        name: 'Topic Group 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+      service.registerGroup({
+        chatId: 'oc_topic2',
+        name: 'Topic Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      const topicGroups = service.listTopicGroups();
+
+      expect(topicGroups.length).toBe(2);
+      expect(topicGroups.map(g => g.chatId).sort()).toEqual(['oc_topic1', 'oc_topic2']);
+    });
+
+    it('should return empty array when no topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_regular',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.listTopicGroups()).toEqual([]);
+    });
+
+    it('should persist topic group status', () => {
+      service.registerGroup({
+        chatId: 'oc_topic',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+      service.setTopicGroup('oc_topic', true);
+
+      // Create a new service instance to verify persistence
+      const newService = new GroupService({ filePath: testFilePath });
+      expect(newService.isTopicGroup('oc_topic')).toBe(true);
+      expect(newService.getGroup('oc_topic')?.isTopicGroup).toBe(true);
     });
   });
 });
