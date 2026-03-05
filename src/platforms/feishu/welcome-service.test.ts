@@ -79,6 +79,49 @@ describe('WelcomeService', () => {
     });
   });
 
+  describe('handleUserJoinedGroup', () => {
+    it('should send help message to group when users join', async () => {
+      await service.handleUserJoinedGroup('oc_test123', ['ou_user1', 'ou_user2']);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '👋 Welcome!');
+    });
+
+    it('should use custom help message if provided', async () => {
+      const customService = new WelcomeService({
+        generateWelcomeMessage: () => '👋 Welcome!',
+        generateHelpMessage: () => '📖 Help info for new users',
+        sendMessage: sendMessageMock,
+      });
+
+      await customService.handleUserJoinedGroup('oc_test123', ['ou_user1']);
+
+      expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '📖 Help info for new users');
+    });
+
+    it('should not send message to non-group chat', async () => {
+      await service.handleUserJoinedGroup('ou_test123', ['ou_user1']);
+
+      expect(sendMessageMock).not.toHaveBeenCalled();
+    });
+
+    it('should handle send message error', async () => {
+      sendMessageMock.mockRejectedValueOnce(new Error('Send failed'));
+
+      // Should not throw
+      await service.handleUserJoinedGroup('oc_test123', ['ou_user1']);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should work without user IDs parameter', async () => {
+      await service.handleUserJoinedGroup('oc_test123');
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageMock).toHaveBeenCalledWith('oc_test123', '👋 Welcome!');
+    });
+  });
+
   describe('handleFirstPrivateChat', () => {
     it('should send welcome message on first private chat', async () => {
       const result = await service.handleFirstPrivateChat('ou_user123');
