@@ -2,7 +2,7 @@
  * Message logger for persistent message history.
  *
  * Logs all user and bot messages to chat-specific MD files.
- * Uses date-based directory structure: {chatId}/{YYYY-MM-DD}.md
+ * Uses date-based directory structure: {YYYY-MM-DD}/{chatId}.md
  * Provides message ID-based deduplication via in-memory cache only.
  */
 
@@ -91,19 +91,18 @@ export class MessageLogger {
 
       const today = getDateString();
 
+      // Create today's directory
+      const todayDir = path.join(this.chatDir, today);
+      await fs.mkdir(todayDir, { recursive: true });
+
       for (const file of legacyFiles) {
         const legacyPath = path.join(this.chatDir, file.name);
-        const chatId = file.name.replace('.md', '');
 
-        // Create chat directory
-        const chatDir = path.join(this.chatDir, chatId);
-        await fs.mkdir(chatDir, { recursive: true });
-
-        // Move to new location
-        const newPath = path.join(chatDir, `${today}.md`);
+        // Move to new location: {date}/{chatId}.md
+        const newPath = path.join(todayDir, file.name);
         await fs.rename(legacyPath, newPath);
 
-        console.log(`[MessageLogger] Migrated ${file.name} -> ${chatId}/${today}.md`);
+        console.log(`[MessageLogger] Migrated ${file.name} -> ${today}/${file.name}`);
       }
     } catch (_error) {
       // Directory doesn't exist or migration failed, that's fine
@@ -173,12 +172,12 @@ export class MessageLogger {
 
   /**
    * Get chat log file path for a specific date.
-   * Structure: {chatDir}/{chatId}/{YYYY-MM-DD}.md
+   * Structure: {chatDir}/{YYYY-MM-DD}/{chatId}.md
    */
   private getChatLogPath(chatId: string, date: Date = new Date()): string {
     const sanitizedId = this.sanitizeId(chatId);
     const dateStr = getDateString(date);
-    return path.join(this.chatDir, sanitizedId, `${dateStr}.md`);
+    return path.join(this.chatDir, dateStr, `${sanitizedId}.md`);
   }
 
   /**
