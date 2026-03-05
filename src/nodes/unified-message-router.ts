@@ -6,16 +6,18 @@
  * - Supports admin chat for debug/progress messages
  * - Handles feedback messages (text, card, file, done, error)
  *
- * Routing Rules (Issue #659):
+ * Routing Rules (Issue #659, Issue #675):
  * ```
  * Message Type          →    Target Channel
  * ────────────────────────────────────────────
- * text/result/complete  →    user chat
- * card/file             →    user chat
+ * text/result/complete  →    admin + user chat
+ * card/file             →    admin + user chat
  * error/critical        →    admin + user chat
  * debug/progress        →    admin chat only
- * done                  →    user chat (triggers onTaskDone)
+ * done                  →    admin + user chat (triggers onTaskDone)
  * ```
+ *
+ * Note: Admin chat receives ALL messages for system monitoring (Issue #675).
  *
  * Architecture:
  * ```
@@ -245,11 +247,11 @@ export class UnifiedMessageRouter {
       case 'card':
       case 'file':
       case 'done':
-        // User-facing messages → user chat only (unless level-based override)
+        // User-facing messages → admin + user chat (admin receives all for monitoring)
+        decision.toAdmin = !!this.adminChatId;
         decision.toUser = true;
         if (level && !this.userLevels.has(level)) {
           decision.toUser = false;
-          decision.toAdmin = !!this.adminChatId;
         }
         break;
     }
