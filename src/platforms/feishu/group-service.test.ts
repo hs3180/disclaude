@@ -7,8 +7,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GroupService, type GroupInfo } from './group-service.js';
+import * as chatOps from './chat-ops.js';
+
+vi.mock('./chat-ops.js', () => ({
+  createDiscussionChat: vi.fn(),
+}));
 
 describe('GroupService', () => {
   let tempDir: string;
@@ -29,17 +34,17 @@ describe('GroupService', () => {
 
   describe('registerGroup', () => {
     it('should register a new group', () => {
-      const info: GroupInfo = {
-        chatId: 'oc_test123',
-        name: 'Test Group',
-        createdAt: Date.now(),
-        initialMembers: ['ou_user1', 'ou_user2'],
-      };
+        const info: GroupInfo = {
+          chatId: 'oc_test123',
+          name: 'Test Group',
+          createdAt: Date.now(),
+          initialMembers: ['ou_user1', 'ou_user2'],
+        };
 
-      service.registerGroup(info);
+        service.registerGroup(info);
 
-      expect(service.isManaged('oc_test123')).toBe(true);
-      expect(service.getGroup('oc_test123')).toEqual(info);
+        expect(service.isManaged('oc_test123')).toBe(true);
+        expect(service.getGroup('oc_test123')).toEqual(info);
     });
 
     it('should persist group to file', () => {
@@ -198,6 +203,90 @@ describe('GroupService', () => {
   describe('getFilePath', () => {
     it('should return the configured file path', () => {
       expect(service.getFilePath()).toBe(testFilePath);
+    });
+  });
+
+  describe('createGroup', () => {
+    const mockClient = {} as any;
+
+    beforeEach(() => {
+      vi.resetAllMocks();
+    });
+
+    it('should create group and register it', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockResolvedValue('oc_created_123');
+
+      const result = await service.createGroup(mockClient, {
+        topic: 'Test Group',
+        members: ['ou_user1', 'ou_user2'],
+        creatorId: 'ou_creator',
+      });
+
+      expect(mockCreateDiscussionChat).toHaveBeenCalledWith(
+        mockClient,
+        { topic: 'Test Group', members: ['ou_user1', 'ou_user2'] },
+        'ou_creator'
+      );
+
+      expect(result).toEqual({
+        chatId: 'oc_created_123',
+        name: 'Test Group',
+        createdAt: expect.any(Number),
+        createdBy: 'ou_creator',
+        initialMembers: ['ou_user1', 'ou_user2'],
+      });
+
+      // Verify group is registered
+      expect(service.getGroup('oc_created_123')).toEqual({
+        chatId: 'oc_created_123',
+        name: 'Test Group',
+        createdAt: expect.any(Number),
+        createdBy: 'ou_creator',
+        initialMembers: ['ou_user1', 'ou_user2'],
+      });
+    });
+
+    it('should auto-add creator if no members specified', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockResolvedValue('oc_created_456');
+
+      const result = await service.createGroup(mockClient, {
+        topic: 'Auto Add Test',
+        creatorId: 'ou_creator',
+      });
+
+      expect(mockCreateDiscussionChat).toHaveBeenCalledWith(
+        mockClient,
+        { topic: 'Auto Add Test', members: undefined },
+        'ou_creator'
+      );
+
+      expect(result.initialMembers).toEqual(['ou_creator']);
+    });
+
+    it('should use default name if topic not provided', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockResolvedValue('oc_created_789');
+
+      const result = await service.createGroup(mockClient, {
+        creatorId: 'ou_creator',
+      });
+
+      expect(result.name).toBe('自动命名');
+    });
+
+    it('should propagate errors from createDiscussionChat', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockRejectedValue(new Error('API Error'));
+
+      await expect(service.createGroup(mockClient, {
+        topic: 'Test Group',
+      })).rejects.toThrow('API Error');
     });
   });
 });
