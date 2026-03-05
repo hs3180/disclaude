@@ -71,12 +71,12 @@ export function decryptMessage(
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     decipher.setAutoPadding(false);
 
-    let decrypted = Buffer.concat([
+    const decryptedRaw = Buffer.concat([
       decipher.update(encrypted),
       decipher.final(),
     ]);
 
-    decrypted = pkcs7Unpad(decrypted) as Buffer;
+    const decrypted = pkcs7Unpad(decryptedRaw);
 
     // Remove random bytes (first 16 bytes) and length prefix
     // Format: random(16) + msgLen(4) + msg + appId
