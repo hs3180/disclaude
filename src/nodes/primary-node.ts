@@ -46,7 +46,7 @@ import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
-import { FeedbackRouter } from './feedback-router.js';
+import { UnifiedMessageRouter } from './unified-message-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 // Group management (Issue #486)
@@ -115,7 +115,7 @@ export class PrimaryNode extends EventEmitter {
 
   // Services (refactored)
   private execNodeRegistry: ExecNodeRegistry;
-  private feedbackRouter: FeedbackRouter;
+  private messageRouter: UnifiedMessageRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
   // Schedule management (Issue #469)
@@ -158,10 +158,12 @@ export class PrimaryNode extends EventEmitter {
     this.execNodeRegistry.on('node:registered', (nodeId) => this.emit('worker:connected', nodeId));
     this.execNodeRegistry.on('node:unregistered', (nodeId) => this.emit('worker:disconnected', nodeId));
 
-    // Initialize FeedbackRouter
-    this.feedbackRouter = new FeedbackRouter({
+    // Issue #659: Initialize UnifiedMessageRouter (replaces FeedbackRouter)
+    this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
       onTaskDone: this.triggerNextStepRecommendation.bind(this),
+      // Admin chat can be configured via environment or config
+      adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
     });
 
     // Issue #463: Initialize CommandRegistry with default commands
@@ -260,12 +262,12 @@ export class PrimaryNode extends EventEmitter {
    * Register a communication channel.
    */
   registerChannel(channel: IChannel): void {
-    if (this.feedbackRouter.getChannels().some(c => c.id === channel.id)) {
+    if (this.messageRouter.getChannels().some(c => c.id === channel.id)) {
       logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
     }
 
     // Register with FeedbackRouter
-    this.feedbackRouter.registerChannel(channel);
+    this.messageRouter.registerChannel(channel);
 
     // Set up message handler
     channel.onMessage(async (message: IncomingMessage) => {
@@ -290,14 +292,14 @@ export class PrimaryNode extends EventEmitter {
    * Get a registered channel by ID.
    */
   getChannel(channelId: string): IChannel | undefined {
-    return this.feedbackRouter.getChannels().find(c => c.id === channelId);
+    return this.messageRouter.getChannels().find(c => c.id === channelId);
   }
 
   /**
    * Get all registered channels.
    */
   getChannels(): IChannel[] {
-    return this.feedbackRouter.getChannels();
+    return this.messageRouter.getChannels();
   }
 
   /**
@@ -314,7 +316,7 @@ export class PrimaryNode extends EventEmitter {
    */
   getChannelCapabilities(chatId: string) {
     // Find the appropriate channel based on chatId
-    const channels = this.feedbackRouter.getChannels();
+    const channels = this.messageRouter.getChannels();
 
     // Try to find a channel that matches the chatId pattern
     for (const channel of channels) {
@@ -612,7 +614,7 @@ export class PrimaryNode extends EventEmitter {
         setDebugGroup: (chatId: string, name?: string) => debugGroupService.setDebugGroup(chatId, name),
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
-        getChannelStatus: () => this.feedbackRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+        getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
         // Schedule management (Issue #469)
         listSchedules: () => this.listSchedules(),
         getSchedule: (nameOrId: string) => this.getSchedule(nameOrId),
@@ -632,13 +634,13 @@ export class PrimaryNode extends EventEmitter {
         listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
         // Passive mode management (Issue #601)
         setPassiveMode: (chatId: string, disabled: boolean) => {
-          const feishuChannel = this.feedbackRouter.getChannels().find(c => c.name === 'Feishu');
+          const feishuChannel = this.messageRouter.getChannels().find(c => c.name === 'Feishu');
           if (feishuChannel && 'setPassiveModeDisabled' in feishuChannel) {
             (feishuChannel as any).setPassiveModeDisabled(chatId, disabled);
           }
         },
         getPassiveMode: (chatId: string) => {
-          const feishuChannel = this.feedbackRouter.getChannels().find(c => c.name === 'Feishu');
+          const feishuChannel = this.messageRouter.getChannels().find(c => c.name === 'Feishu');
           if (feishuChannel && 'isPassiveModeDisabled' in feishuChannel) {
             return (feishuChannel as any).isPassiveModeDisabled(chatId);
           }
@@ -721,7 +723,7 @@ export class PrimaryNode extends EventEmitter {
    * Handle feedback from execution node (remote or local).
    */
   private async handleFeedback(message: FeedbackMessage): Promise<void> {
-    await this.feedbackRouter.handleFeedback(message);
+    await this.messageRouter.handleFeedback(message);
   }
 
   // ============================================================================
@@ -732,7 +734,7 @@ export class PrimaryNode extends EventEmitter {
    * Send a text message to all channels (broadcast mode).
    */
   async sendMessage(chatId: string, text: string, threadMessageId?: string): Promise<void> {
-    await this.feedbackRouter.sendMessage(chatId, text, threadMessageId);
+    await this.messageRouter.sendMessage(chatId, text, threadMessageId);
   }
 
   /**
@@ -744,7 +746,7 @@ export class PrimaryNode extends EventEmitter {
     description?: string,
     threadMessageId?: string
   ): Promise<void> {
-    await this.feedbackRouter.sendCard(chatId, card, description, threadMessageId);
+    await this.messageRouter.sendCard(chatId, card, description, threadMessageId);
   }
 
   /**
@@ -753,7 +755,7 @@ export class PrimaryNode extends EventEmitter {
   async sendFileToUser(chatId: string, filePath: string, _threadId?: string): Promise<void> {
     // For now, broadcast file path as a message
     // TODO: Implement proper file handling through channels
-    await this.feedbackRouter.sendMessage(chatId, `📎 文件: ${filePath}`, _threadId);
+    await this.messageRouter.sendMessage(chatId, `📎 文件: ${filePath}`, _threadId);
   }
 
   // ============================================================================
@@ -785,7 +787,7 @@ export class PrimaryNode extends EventEmitter {
         void this.handleFeedback(feedback);
       },
       getCapabilities: () => this.getCapabilities(),
-      getChannelIds: () => this.feedbackRouter.getChannels().map(c => c.id),
+      getChannelIds: () => this.messageRouter.getChannels().map(c => c.id),
     });
 
     // Start WebSocket server
@@ -795,7 +797,7 @@ export class PrimaryNode extends EventEmitter {
     await this.initLocalExecution();
 
     // Start all registered channels
-    for (const channel of this.feedbackRouter.getChannels()) {
+    for (const channel of this.messageRouter.getChannels()) {
       try {
         await channel.start();
         logger.info({ channelId: channel.id }, 'Channel started');
@@ -810,7 +812,7 @@ export class PrimaryNode extends EventEmitter {
     console.log(`Node ID: ${this.localNodeId}`);
     console.log(`WebSocket Server: ws://${this.host}:${this.port}`);
     console.log('Channels:');
-    for (const channel of this.feedbackRouter.getChannels()) {
+    for (const channel of this.messageRouter.getChannels()) {
       console.log(`  - ${channel.name} (${channel.id}): ${channel.status}`);
     }
     console.log('Execution:');
@@ -838,7 +840,7 @@ export class PrimaryNode extends EventEmitter {
     await this.wsServerService?.stop();
 
     // Stop all channels
-    for (const channel of this.feedbackRouter.getChannels()) {
+    for (const channel of this.messageRouter.getChannels()) {
       try {
         await channel.stop();
         logger.info({ channelId: channel.id }, 'Channel stopped');
@@ -849,7 +851,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Clear execution nodes
     this.execNodeRegistry.clear();
-    this.feedbackRouter.clear();
+    this.messageRouter.clear();
 
     logger.info('PrimaryNode stopped');
   }
