@@ -383,9 +383,10 @@ export class PrimaryNode extends EventEmitter {
     console.log('Initializing local execution capability...');
 
     // Issue #644: Create AgentPool with factory function
-    // Each chatId gets its own Pilot instance for complete isolation
+    // Issue #711: Use new chatAgentFactory property name
+    // Each chatId gets its own ChatAgent instance for complete isolation
     this.agentPool = new AgentPool({
-      pilotFactory: (chatId: string) => {
+      chatAgentFactory: (chatId: string) => {
         return AgentFactory.createChatAgent('pilot', chatId, {
           sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
             const ctx = this.activeFeedbackChannels.get(chatId);
@@ -451,8 +452,8 @@ export class PrimaryNode extends EventEmitter {
     });
 
     // Initialize SchedulerService
+    // Issue #711: No longer requires agentPool parameter
     this.schedulerService = new SchedulerService({
-      agentPool: this.agentPool,
       callbacks: {
         sendMessage: async (chatId, text, threadId) => {
           await this.sendMessage(chatId, text, threadId);

@@ -1,11 +1,12 @@
 /**
- * Scheduler Tests - Issue #86, Issue #89
+ * Scheduler Tests - Issue #86, Issue #89, Issue #711
  *
  * Tests for:
  * - No duplicate scheduling when addTask is called multiple times
  * - Proper task removal
  * - Active jobs count consistency
  * - Blocking mechanism for concurrent task execution
+ * - Issue #711: Short-lived ScheduleAgent creation and disposal
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -14,16 +15,16 @@ import * as path from 'path';
 import * as os from 'os';
 import { Scheduler } from './scheduler.js';
 import { ScheduleManager } from './schedule-manager.js';
+import { AgentFactory } from '../agents/index.js';
 import type { ScheduledTask } from './index.js';
 import type { PilotCallbacks } from '../agents/pilot.js';
-import type { AgentPool } from '../agents/agent-pool.js';
 import type { ChatAgent } from '../agents/types.js';
 
-// Mock Pilot
-const createMockPilot = (): ChatAgent => {
+// Mock Pilot / ScheduleAgent
+const createMockAgent = (): ChatAgent => {
   return {
     type: 'chat',
-    name: 'MockPilot',
+    name: 'MockScheduleAgent',
     start: vi.fn().mockResolvedValue(undefined),
     executeOnce: vi.fn().mockResolvedValue(undefined),
     processMessage: vi.fn(),
@@ -31,29 +32,6 @@ const createMockPilot = (): ChatAgent => {
     dispose: vi.fn(),
     handleInput: vi.fn(),
   } as unknown as ChatAgent;
-};
-
-// Mock AgentPool
-const createMockAgentPool = (): AgentPool => {
-  const pilots = new Map<string, ChatAgent>();
-  return {
-    getOrCreate: vi.fn((chatId: string) => {
-      if (!pilots.has(chatId)) {
-        pilots.set(chatId, createMockPilot());
-      }
-      return pilots.get(chatId)!;
-    }),
-    has: vi.fn((chatId: string) => pilots.has(chatId)),
-    get: vi.fn((chatId: string) => pilots.get(chatId)),
-    dispose: vi.fn((chatId: string) => {
-      pilots.delete(chatId);
-      return true;
-    }),
-    reset: vi.fn(),
-    size: vi.fn(() => pilots.size),
-    getActiveChatIds: vi.fn(() => Array.from(pilots.keys())),
-    disposeAll: vi.fn(() => pilots.clear()),
-  } as unknown as AgentPool;
 };
 
 // Mock callbacks
@@ -108,26 +86,31 @@ async function deleteScheduleFile(testDir: string, baseName: string): Promise<vo
 describe('Scheduler', () => {
   let scheduler: Scheduler;
   let manager: ScheduleManager;
-  let mockAgentPool: AgentPool;
   let mockCallbacks: PilotCallbacks;
   let testDir: string;
+  let mockAgent: ChatAgent;
+  let createScheduleAgentSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     testDir = path.join(os.tmpdir(), `scheduler-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.mkdir(testDir, { recursive: true });
 
-    mockAgentPool = createMockAgentPool();
     mockCallbacks = createMockCallbacks();
+    mockAgent = createMockAgent();
+
+    // Issue #711: Mock AgentFactory.createScheduleAgent
+    createScheduleAgentSpy = vi.spyOn(AgentFactory, 'createScheduleAgent').mockReturnValue(mockAgent);
+
     manager = new ScheduleManager({ schedulesDir: testDir });
     scheduler = new Scheduler({
       scheduleManager: manager,
-      agentPool: mockAgentPool,
       callbacks: mockCallbacks,
     });
   });
 
   afterEach(async () => {
     scheduler.stop();
+    createScheduleAgentSpy?.mockRestore();
     try {
       await fs.rm(testDir, { recursive: true, force: true });
     } catch {
@@ -418,14 +401,13 @@ describe('Scheduler', () => {
 
   describe('Issue #89: 阻塞机制', () => {
     it('should skip task execution when blocking is true and task is running', async () => {
-      // Create a pilot that takes time to complete
+      // Create an agent that takes time to complete
       let resolveExecute: () => void;
       const executePromise = new Promise<void>((resolve) => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-blocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
-      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
+      (mockAgent.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
         id: 'schedule-blocking-test',
@@ -453,7 +435,7 @@ describe('Scheduler', () => {
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
 
       // ExecuteOnce should have been called only once (second call skipped)
-      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(1);
+      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(1);
 
       // Complete the first execution
       resolveExecute!();
@@ -464,14 +446,13 @@ describe('Scheduler', () => {
     });
 
     it('should allow concurrent execution when blocking is false', async () => {
-      // Create a pilot that takes time to complete
+      // Create an agent that takes time to complete
       let resolveExecute: () => void;
       const executePromise = new Promise<void>((resolve) => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-nonblocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
-      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
+      (mockAgent.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
         id: 'schedule-nonblocking-test',
@@ -512,7 +493,7 @@ describe('Scheduler', () => {
       await Promise.resolve();
 
       // ExecuteOnce should have been called twice (concurrent execution allowed)
-      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
+      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(2);
 
       // Complete executions
       resolveExecute!();
@@ -521,8 +502,7 @@ describe('Scheduler', () => {
 
     it('should default blocking to true when not specified', async () => {
       const taskChatId = 'test-chat-default';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
-      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (mockAgent.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
         id: 'schedule-default-blocking',
@@ -546,8 +526,7 @@ describe('Scheduler', () => {
 
     it('should allow task to run after previous execution completes', async () => {
       const taskChatId = 'test-chat-sequential';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
-      (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (mockAgent.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
         id: 'schedule-blocking-sequential',
@@ -564,14 +543,44 @@ describe('Scheduler', () => {
 
       // First execution
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
-      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(1);
+      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(1);
 
       // Task should no longer be running
       expect(scheduler.isTaskRunning(task.id)).toBe(false);
 
       // Second execution should proceed
       await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
-      expect(mockPilot.executeOnce).toHaveBeenCalledTimes(2);
+      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(2);
+    });
+
+    it('Issue #711: should create ScheduleAgent and dispose after execution', async () => {
+      const taskChatId = 'test-chat-issue711';
+      (mockAgent.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (mockAgent.dispose as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+      const task: ScheduledTask = {
+        id: 'schedule-issue711-test',
+        name: 'Issue 711 Test',
+        cron: '0 9 * * *',
+        prompt: 'Test',
+        chatId: taskChatId,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      scheduler.addTask(task);
+
+      // Trigger execution
+      await (scheduler as unknown as { executeTask: (t: ScheduledTask) => Promise<void> }).executeTask(task);
+
+      // Verify AgentFactory.createScheduleAgent was called
+      expect(createScheduleAgentSpy).toHaveBeenCalledWith(taskChatId, mockCallbacks);
+
+      // Verify executeOnce was called
+      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(1);
+
+      // Verify agent was disposed after execution
+      expect(mockAgent.dispose).toHaveBeenCalledTimes(1);
     });
   });
 });
