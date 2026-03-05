@@ -60,6 +60,10 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
   // Execution capabilities
   /** Enable local execution (default: true) */
   enableLocalExec?: boolean;
+
+  // Message routing (Issue #659)
+  /** Admin chat ID for debug/progress messages */
+  adminChatId?: string;
 }
 
 /**
