@@ -360,9 +360,18 @@ export class TaskStateManager {
         }
       }
 
-      // Sort by creation date (newest first) and limit
+      // Sort by completion time (newest first) and limit
+      // Use updatedAt since it reflects when the task was completed/cancelled
+      // Secondary sort by createdAt for stable ordering when updatedAt is equal
       return tasks
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .sort((a, b) => {
+          const updatedAtDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          if (updatedAtDiff !== 0) {
+            return updatedAtDiff;
+          }
+          // When updatedAt is equal, sort by createdAt (newest first)
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        })
         .slice(0, limit);
     } catch {
       return [];
