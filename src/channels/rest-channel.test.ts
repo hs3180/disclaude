@@ -36,6 +36,7 @@ interface ApiResponseBody {
   response?: string;
   channel?: string;
   id?: string;
+  status?: string;
   file?: {
     id?: string;
     fileName?: string;
@@ -816,6 +817,150 @@ describe('RestChannel', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
+    });
+  });
+
+  describe('Async Mode (POST /api/chat/{chatId})', () => {
+    beforeEach(async () => {
+      channel = new RestChannel({ port });
+      await channel.start();
+    });
+
+    it('should return 204 No Content when polling non-existent session', async () => {
+      const response = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/non-existent-chat-id',
+      });
+
+      expect(response.status).toBe(204);
+    });
+
+    it('should return 202 Accepted when sending a message', async () => {
+      const response = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/test-chat-123',
+        body: { message: 'Hello async' },
+      });
+
+      expect(response.status).toBe(202);
+      expect(response.body.success).toBe(true);
+      expect(response.body.chatId).toBe('test-chat-123');
+      expect(response.body.status).toBe('processing');
+      expect(response.body.messageId).toBeDefined();
+    });
+
+    it('should return 202 when polling a processing session', async () => {
+      // Send a message first
+      await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/processing-chat',
+        body: { message: 'Processing test' },
+      });
+
+      // Poll immediately - should be processing
+      const response = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/processing-chat',
+      });
+
+      expect(response.status).toBe(202);
+      expect(response.body.status).toBe('processing');
+    });
+
+    it('should return 200 with response when session is completed', async () => {
+      // Set up message handler that will respond
+      channel.onMessage(async (msg) => {
+        // Simulate agent response
+        await channel.sendMessage({
+          type: 'text',
+          text: 'Hello from agent!',
+          chatId: msg.chatId,
+        });
+        // Signal completion
+        await channel.sendMessage({
+          type: 'done',
+          chatId: msg.chatId,
+        });
+      });
+
+      // Send a message
+      const sendResponse = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/completed-chat',
+        body: { message: 'Hello' },
+      });
+
+      expect(sendResponse.status).toBe(202);
+
+      // Wait a bit for processing
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Poll - should be completed with response
+      const pollResponse = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/completed-chat',
+      });
+
+      expect(pollResponse.status).toBe(200);
+      expect(pollResponse.body.success).toBe(true);
+      expect(pollResponse.body.status).toBe('completed');
+      expect(pollResponse.body.response).toBe('Hello from agent!');
+    });
+
+    it('should support appending messages to existing session', async () => {
+      // Send first message
+      const response1 = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/append-chat',
+        body: { message: 'First message' },
+      });
+
+      expect(response1.status).toBe(202);
+
+      // Send second message (append)
+      const response2 = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/append-chat',
+        body: { message: 'Second message' },
+      });
+
+      expect(response2.status).toBe(202);
+      expect(response2.body.messageId).toBeDefined();
+      // MessageId should be different
+      expect(response2.body.messageId).not.toBe(response1.body.messageId);
+    });
+
+    it('should handle message handler errors in async mode', async () => {
+      channel.onMessage(() => {
+        throw new Error('Async handler failed');
+      });
+
+      const response = await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat/error-chat',
+        body: { message: 'This will fail' },
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body.error).toBe('Failed to process message');
+    });
+
+    it('should work with custom API prefix', async () => {
+      // Stop current channel first
+      await channel.stop();
+
+      // Create new channel with custom prefix
+      channel = new RestChannel({ port, apiPrefix: '/custom' });
+      await channel.start();
+
+      const response = await makeRequest(port, {
+        method: 'POST',
+        path: '/custom/chat/custom-prefix-chat',
+        body: { message: 'Custom prefix test' },
+      });
+
+      expect(response.status).toBe(202);
+      expect(response.body.chatId).toBe('custom-prefix-chat');
     });
   });
 });
