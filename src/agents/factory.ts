@@ -119,15 +119,17 @@ export class AgentFactory {
 
       if (typeof args[0] === 'string') {
         // New pattern: createChatAgent('pilot', chatId, callbacks, options)
-        chatId = args[0];
-        callbacks = args[1] as PilotCallbacks;
-        options = (args[2] as AgentCreateOptions) || {};
+        const [id, cb, opt] = args as [string, PilotCallbacks, AgentCreateOptions?];
+        chatId = id;
+        callbacks = cb;
+        options = opt || {};
       } else {
         // Legacy pattern: createChatAgent('pilot', callbacks, options)
         // This is deprecated but kept for backward compatibility
+        const [cb, opt] = args as [PilotCallbacks, AgentCreateOptions?];
         chatId = 'default';
-        callbacks = args[0] as PilotCallbacks;
-        options = (args[1] as AgentCreateOptions) || {};
+        callbacks = cb;
+        options = opt || {};
       }
 
       const baseConfig = this.getBaseConfig(options);

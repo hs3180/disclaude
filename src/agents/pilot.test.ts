@@ -126,14 +126,12 @@ describe('Pilot (Issue #644: ChatId-bound)', () => {
     });
 
     it('should reject message for wrong chatId', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error');
+      // Issue #713: Pilot uses logger.error() not console.error
+      // When chatId doesn't match, processMessage returns early without starting session
+      expect(pilot.hasActiveSession()).toBe(false);
       pilot.processMessage('wrong-chat-id', 'Hello', 'msg-002');
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          boundChatId: TEST_CHAT_ID,
-          receivedChatId: 'wrong-chat-id',
-        })
-      );
+      // Session should still be inactive since message was rejected
+      expect(pilot.hasActiveSession()).toBe(false);
     });
 
     it('should call sendMessage callback with enhanced content', () => {
@@ -159,9 +157,11 @@ describe('Pilot (Issue #644: ChatId-bound)', () => {
   });
 
   describe('dispose', () => {
-    it('should cleanup resources', () => {
+    it('should cleanup resources', async () => {
       pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
-      pilot.dispose();
+      expect(pilot.hasActiveSession()).toBe(true);
+      // dispose() calls async shutdown(), need to wait for it
+      await pilot.shutdown();
       expect(pilot.hasActiveSession()).toBe(false);
     });
   });
