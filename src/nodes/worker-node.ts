@@ -122,16 +122,16 @@ export class WorkerNode {
   }
 
   /**
-   * Initialize the AgentPool for per-chatId Pilot instances.
+   * Initialize the AgentPool for per-chatId ChatAgent instances.
    *
-   * Issue #644: Each chatId gets its own Pilot instance.
+   * Issue #644: Each chatId gets its own ChatAgent instance.
    */
   private async initPilot(): Promise<void> {
     console.log('Initializing execution capability...');
 
     // Issue #644: Create AgentPool with factory function
     this.agentPool = new AgentPool({
-      pilotFactory: (chatId: string) => {
+      chatAgentFactory: (chatId: string) => {
         return AgentFactory.createChatAgent('pilot', chatId, {
           sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
             const ctx = this.activeFeedbackChannels.get(chatId);
@@ -412,9 +412,9 @@ export class WorkerNode {
           this.activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
 
           try {
-            // Issue #644: Get Pilot for this chatId from AgentPool
-            const pilot = this.agentPool?.getOrCreate(chatId);
-            pilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+            // Issue #644: Get ChatAgent for this chatId from AgentPool
+            const agent = this.agentPool?.getOrCreateChatAgent(chatId);
+            agent?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');

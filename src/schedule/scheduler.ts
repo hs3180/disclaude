@@ -219,13 +219,13 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #644: Get Pilot for this chatId from AgentPool
-      // Each chatId gets its own Pilot instance for complete isolation
-      const pilot = this.agentPool.getOrCreate(task.chatId);
+      // Issue #644: Get ChatAgent for this chatId from AgentPool
+      // Each chatId gets its own ChatAgent instance for complete isolation
+      const agent = this.agentPool.getOrCreateChatAgent(task.chatId);
 
-      // Execute task using Pilot's executeOnce method
+      // Execute task using ChatAgent's executeOnce method
       // messageId is undefined - scheduled tasks send new messages, not replies
-      await pilot.executeOnce(
+      await agent.executeOnce(
         task.chatId,
         wrappedPrompt,
         undefined,

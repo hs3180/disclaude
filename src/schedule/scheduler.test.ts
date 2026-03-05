@@ -35,24 +35,24 @@ const createMockPilot = (): ChatAgent => {
 
 // Mock AgentPool
 const createMockAgentPool = (): AgentPool => {
-  const pilots = new Map<string, ChatAgent>();
+  const chatAgents = new Map<string, ChatAgent>();
   return {
-    getOrCreate: vi.fn((chatId: string) => {
-      if (!pilots.has(chatId)) {
-        pilots.set(chatId, createMockPilot());
+    getOrCreateChatAgent: vi.fn((chatId: string) => {
+      if (!chatAgents.has(chatId)) {
+        chatAgents.set(chatId, createMockPilot());
       }
-      return pilots.get(chatId)!;
+      return chatAgents.get(chatId)!;
     }),
-    has: vi.fn((chatId: string) => pilots.has(chatId)),
-    get: vi.fn((chatId: string) => pilots.get(chatId)),
+    has: vi.fn((chatId: string) => chatAgents.has(chatId)),
+    get: vi.fn((chatId: string) => chatAgents.get(chatId)),
     dispose: vi.fn((chatId: string) => {
-      pilots.delete(chatId);
+      chatAgents.delete(chatId);
       return true;
     }),
     reset: vi.fn(),
-    size: vi.fn(() => pilots.size),
-    getActiveChatIds: vi.fn(() => Array.from(pilots.keys())),
-    disposeAll: vi.fn(() => pilots.clear()),
+    size: vi.fn(() => chatAgents.size),
+    getActiveChatIds: vi.fn(() => Array.from(chatAgents.keys())),
+    disposeAll: vi.fn(() => chatAgents.clear()),
   } as unknown as AgentPool;
 };
 
@@ -424,7 +424,7 @@ describe('Scheduler', () => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-blocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -470,7 +470,7 @@ describe('Scheduler', () => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-nonblocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -521,7 +521,7 @@ describe('Scheduler', () => {
 
     it('should default blocking to true when not specified', async () => {
       const taskChatId = 'test-chat-default';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -546,7 +546,7 @@ describe('Scheduler', () => {
 
     it('should allow task to run after previous execution completes', async () => {
       const taskChatId = 'test-chat-sequential';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
