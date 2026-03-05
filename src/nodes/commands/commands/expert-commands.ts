@@ -25,8 +25,8 @@ function parseSkillLevel(levelStr: string): SkillLevel | null {
  */
 function formatProfile(profile: ExpertProfile): string {
   const lines: string[] = [
-    `📋 **专家档案**`,
-    ``,
+    '📋 **专家档案**',
+    '',
     `👤 用户 ID: \`${profile.userId}\``,
     `📅 注册时间: ${new Date(profile.registeredAt).toLocaleString('zh-CN')}`,
     `🔄 更新时间: ${new Date(profile.updatedAt).toLocaleString('zh-CN')}`,
@@ -34,19 +34,19 @@ function formatProfile(profile: ExpertProfile): string {
 
   // Skills
   if (profile.skills.length > 0) {
-    lines.push(``, `🎯 **技能** (${profile.skills.length}):`);
+    lines.push('', `🎯 **技能** (${profile.skills.length}):`);
     for (const skill of profile.skills) {
       const stars = '⭐'.repeat(skill.level);
       const tags = skill.tags.length > 0 ? ` [${skill.tags.join(', ')}]` : '';
       lines.push(`  • ${skill.name} - ${stars} (Lv.${skill.level})${tags}`);
     }
   } else {
-    lines.push(``, `🎯 **技能**: 暂无`);
+    lines.push('', '🎯 **技能**: 暂无');
   }
 
   // Availability
   if (profile.availability) {
-    lines.push(``, `⏰ **可用时间**: ${profile.availability.days} ${profile.availability.timeRange}`);
+    lines.push('', `⏰ **可用时间**: ${profile.availability.days} ${profile.availability.timeRange}`);
   }
 
   return lines.join('\n');
@@ -61,7 +61,7 @@ export class ExpertRegisterCommand implements Command {
   readonly description = '注册为专家';
   readonly usage = 'expert-register';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, userId } = context;
 
     if (!userId) {
@@ -73,7 +73,7 @@ export class ExpertRegisterCommand implements Command {
     if (profile.registeredAt === profile.updatedAt) {
       return {
         success: true,
-        message: `✅ **注册成功**\n\n您已成功注册为专家！\n\n使用以下命令添加技能:\n• \`/expert-skill-add <技能名> <等级1-5> [标签...]\`\n\n使用以下命令设置可用时间:\n• \`/expert-availability <日期模式> <时间范围>\``,
+        message: '✅ **注册成功**\n\n您已成功注册为专家！\n\n使用以下命令添加技能:\n• `/expert-skill-add <技能名> <等级1-5> [标签...]`\n\n使用以下命令设置可用时间:\n• `/expert-availability <日期模式> <时间范围>`',
       };
     } else {
       return {
@@ -93,7 +93,7 @@ export class ExpertProfileCommand implements Command {
   readonly description = '查看专家档案';
   readonly usage = 'expert-profile [用户ID]';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, args, userId } = context;
 
     // Use provided userId or current user
@@ -131,7 +131,7 @@ export class ExpertSkillAddCommand implements Command {
   readonly description = '添加技能';
   readonly usage = 'expert-skill-add <技能名> <等级1-5> [标签...]';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, args, userId } = context;
 
     if (!userId) {
@@ -145,7 +145,7 @@ export class ExpertSkillAddCommand implements Command {
       };
     }
 
-    const skillName = args[0];
+    const [skillName] = args;
     const level = parseSkillLevel(args[1]);
 
     if (!level) {
@@ -184,7 +184,7 @@ export class ExpertSkillRemoveCommand implements Command {
   readonly description = '移除技能';
   readonly usage = 'expert-skill-remove <技能名>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, args, userId } = context;
 
     if (!userId) {
@@ -198,7 +198,7 @@ export class ExpertSkillRemoveCommand implements Command {
       };
     }
 
-    const skillName = args[0];
+    const [skillName] = args;
 
     const profile = services.removeExpertSkill({
       userId,
@@ -228,7 +228,7 @@ export class ExpertAvailabilityCommand implements Command {
   readonly description = '设置可用时间';
   readonly usage = 'expert-availability <日期模式> <时间范围>';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, args, userId } = context;
 
     if (!userId) {
@@ -242,8 +242,7 @@ export class ExpertAvailabilityCommand implements Command {
       };
     }
 
-    const days = args[0];
-    const timeRange = args[1];
+    const [days, timeRange] = args;
 
     // Validate time range format
     if (!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(timeRange)) {
@@ -282,13 +281,13 @@ export class ExpertListCommand implements Command {
   readonly description = '列出所有专家';
   readonly usage = 'expert-list [技能名]';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, args } = context;
 
     let experts: ExpertProfile[];
 
     if (args.length > 0) {
-      const skillName = args[0];
+      const [skillName] = args;
       experts = services.findExpertsBySkill(skillName);
       if (experts.length === 0) {
         return {
@@ -299,7 +298,7 @@ export class ExpertListCommand implements Command {
 
       const lines: string[] = [
         `📋 **专家搜索结果** (技能: ${skillName})`,
-        ``,
+        '',
         `找到 ${experts.length} 位专家:`,
       ];
 
@@ -324,7 +323,7 @@ export class ExpertListCommand implements Command {
 
     const lines: string[] = [
       `📋 **专家列表** (共 ${experts.length} 位)`,
-      ``,
+      '',
     ];
 
     for (const expert of experts) {
@@ -348,7 +347,7 @@ export class ExpertUnregisterCommand implements Command {
   readonly description = '注销专家身份';
   readonly usage = 'expert-unregister';
 
-  async execute(context: CommandContext): Promise<CommandResult> {
+  execute(context: CommandContext): CommandResult {
     const { services, userId } = context;
 
     if (!userId) {
@@ -366,7 +365,7 @@ export class ExpertUnregisterCommand implements Command {
 
     return {
       success: true,
-      message: `✅ **注销成功**\n\n您已成功注销专家身份`,
+      message: '✅ **注销成功**\n\n您已成功注销专家身份',
     };
   }
 }
