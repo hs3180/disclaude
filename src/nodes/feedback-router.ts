@@ -29,6 +29,12 @@ export interface FeedbackRouterConfig {
   fileStorageService?: FileStorageService;
   /** Function to send file to user */
   sendFileToUser: (chatId: string, filePath: string, threadId?: string) => Promise<void>;
+  /**
+   * Callback when task completes (done event).
+   * Used to trigger follow-up actions like next-step recommendations.
+   * Issue #657: Smart next-step recommendations
+   */
+  onTaskDone?: (chatId: string, threadId?: string) => Promise<void>;
 }
 
 /**
@@ -43,11 +49,13 @@ export interface FeedbackRouterConfig {
 export class FeedbackRouter {
   private readonly fileStorageService?: FileStorageService;
   private readonly sendFileToUser: (chatId: string, filePath: string, threadId?: string) => Promise<void>;
+  private readonly onTaskDone?: (chatId: string, threadId?: string) => Promise<void>;
   private readonly channels: Map<string, IChannel> = new Map();
 
   constructor(config: FeedbackRouterConfig) {
     this.fileStorageService = config.fileStorageService;
     this.sendFileToUser = config.sendFileToUser;
+    this.onTaskDone = config.onTaskDone;
   }
 
   /**
@@ -119,6 +127,13 @@ export class FeedbackRouter {
         case 'done':
           logger.info({ chatId }, 'Execution completed');
           await this.broadcastToChannels({ type: 'done', chatId, threadId });
+          // Issue #657: Trigger next-step recommendations after task completion
+          if (this.onTaskDone) {
+            // Fire and forget - don't block the done signal
+            void this.onTaskDone(chatId, threadId).catch((err) => {
+              logger.warn({ err, chatId }, 'Failed to trigger next-step recommendations');
+            });
+          }
           break;
         case 'error':
           logger.error({ chatId, error }, 'Execution error');

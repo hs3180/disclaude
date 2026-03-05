@@ -34,6 +34,7 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory } from '../agents/index.js';
+import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
@@ -160,6 +161,7 @@ export class PrimaryNode extends EventEmitter {
     // Initialize FeedbackRouter
     this.feedbackRouter = new FeedbackRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
+      onTaskDone: this.triggerNextStepRecommendation.bind(this),
     });
 
     // Issue #463: Initialize CommandRegistry with default commands
@@ -986,6 +988,57 @@ export class PrimaryNode extends EventEmitter {
     } catch (error) {
       logger.error({ err: error, taskId: task.id }, 'Failed to run schedule manually');
       return false;
+    }
+  }
+
+  // ============================================================================
+  // Next Step Recommendations (Issue #657)
+  // ============================================================================
+
+  /**
+   * Trigger next-step recommendations after task completion.
+   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
+   *
+   * @param chatId - Chat ID to get history from
+   * @param threadId - Optional thread ID for reply
+   */
+  private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
+    try {
+      logger.info({ chatId }, 'Triggering next-step recommendations');
+
+      // Get chat history for context
+      const chatHistory = await messageLogger.getChatHistory(chatId);
+
+      if (!chatHistory || chatHistory.trim().length === 0) {
+        logger.debug({ chatId }, 'No chat history available for recommendations');
+        return;
+      }
+
+      // Create SkillAgent for next-step recommendations using AgentFactory
+      const nextStepAgent = await AgentFactory.createSkillAgent('next-step');
+
+      // Build prompt with chat history
+      const prompt = `## Context
+
+**Chat ID for Feishu tools**: \`${chatId}\`
+${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
+
+## Chat History
+
+${chatHistory}`;
+
+      // Execute skill and handle responses
+      for await (const message of nextStepAgent.execute(prompt)) {
+        if (message.type === 'tool_use' || message.metadata?.toolName) {
+          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
+        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
+          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
+        }
+      }
+
+      logger.info({ chatId }, 'Next-step recommendations completed');
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
     }
   }
 }
