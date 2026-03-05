@@ -1,0 +1,217 @@
+/**
+ * Message Builder - Build enhanced content with context for Pilot agent.
+ *
+ * Issue #697: Extracted from pilot.ts for better modularity.
+ */
+
+import type { ChannelCapabilities } from '../../channels/types.js';
+import type { MessageData } from './types.js';
+
+/**
+ * Build enhanced content with Feishu context.
+ *
+ * @param msg - Message data containing text, IDs, and attachments
+ * @param chatId - The chat ID for context
+ * @param getCapabilities - Optional function to get channel capabilities
+ * @returns Enhanced content string with context
+ */
+export function buildEnhancedContent(
+  msg: MessageData,
+  chatId: string,
+  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined
+): string {
+  // Check if this is a skill command (starts with /)
+  const isSkillCommand = msg.text.trimStart().startsWith('/');
+
+  // Get channel capabilities (Issue #582)
+  const capabilities = getCapabilities?.(chatId);
+
+  // Build chat history section if available (Issue #517)
+  const chatHistorySection = msg.chatHistoryContext
+    ? `
+
+---
+
+## Recent Chat History
+
+You were @mentioned in a group chat. Here's the recent conversation context:
+
+${msg.chatHistoryContext}
+
+---
+`
+    : '';
+
+  if (isSkillCommand) {
+    // For skill commands: command first, then minimal context for skill to use
+    const contextInfo = msg.senderOpenId
+      ? `
+
+---
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
+**Sender Open ID:** ${msg.senderOpenId}${buildAttachmentsInfo(msg.attachments)}`
+      : `
+
+---
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}${buildAttachmentsInfo(msg.attachments)}`;
+
+    return `${msg.text}${contextInfo}`;
+  }
+
+  // Build capability-aware tools section (Issue #582)
+  const toolsSection = buildToolsSection(chatId, msg.messageId || '', capabilities);
+
+  // For regular messages: context FIRST, then user message
+  if (msg.senderOpenId) {
+    const mentionSection = capabilities?.supportsMention !== false
+      ? `
+
+## @ Mention the User
+
+To notify the user in your FINAL response, use:
+\`\`\`
+<at user_id="${msg.senderOpenId}">@用户</at>
+\`\`\`
+
+**Rules:**
+- Use @ ONLY in your **final/complete response**, NOT in intermediate messages
+- This triggers a Feishu notification to the user`
+      : '';
+
+    return `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
+**Sender Open ID:** ${msg.senderOpenId}
+${chatHistorySection}${mentionSection}
+
+---
+
+## Tools
+${toolsSection}
+
+--- User Message ---
+${msg.text}${buildAttachmentsInfo(msg.attachments)}`;
+  }
+
+  return `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}
+${chatHistorySection}
+## Tools
+${toolsSection}
+
+--- User Message ---
+${msg.text}${buildAttachmentsInfo(msg.attachments)}`;
+}
+
+/**
+ * Build capability-aware tools section for the prompt.
+ *
+ * @param chatId - The chat ID
+ * @param messageId - The message ID
+ * @param capabilities - Optional channel capabilities
+ * @returns Tools section string
+ */
+export function buildToolsSection(
+  chatId: string,
+  messageId: string,
+  capabilities?: ChannelCapabilities
+): string {
+  const parts: string[] = [];
+  const supportedTools = capabilities?.supportedMcpTools;
+
+  // If supportedMcpTools is defined, use it for dynamic tool filtering
+  const hasTool = (toolName: string): boolean => {
+    if (supportedTools === undefined) {
+      // Legacy behavior: check individual capability flags
+      if (toolName === 'send_file_to_feishu') {
+        return capabilities?.supportsFile !== false;
+      }
+      if (toolName === 'update_card' || toolName === 'wait_for_interaction') {
+        return capabilities?.supportsCard !== false;
+      }
+      return true; // send_user_feedback is always available
+    }
+    return supportedTools.includes(toolName);
+  };
+
+  // send_user_feedback tool
+  if (hasTool('send_user_feedback')) {
+    parts.push(`When using send_user_feedback, use:
+- Chat ID: \`${chatId}\`
+- parentMessageId: \`${messageId}\` (for thread replies)`);
+
+    // Include card support note if supported
+    if (hasTool('update_card') || hasTool('wait_for_interaction')) {
+      parts.push(`
+- For rich content, use format: "card" with a valid Feishu card structure`);
+    } else {
+      parts.push(`
+- Note: This channel does not support interactive cards. Use text format only.`);
+    }
+  }
+
+  // send_file_to_feishu tool
+  if (hasTool('send_file_to_feishu')) {
+    parts.push(`
+- send_file_to_feishu is available for sending files`);
+  } else if (supportedTools !== undefined) {
+    parts.push(`
+- Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
+  }
+
+  // update_card tool
+  if (hasTool('update_card')) {
+    parts.push(`
+- update_card is available for updating existing cards`);
+  }
+
+  // wait_for_interaction tool
+  if (hasTool('wait_for_interaction')) {
+    parts.push(`
+- wait_for_interaction is available for waiting for user card interactions`);
+  }
+
+  // Include thread support note
+  if (capabilities?.supportsThread === false) {
+    parts.push(`
+- Note: Thread replies are NOT supported on this channel.`);
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * Build attachments info string for the message content.
+ *
+ * @param attachments - Optional array of file attachments
+ * @returns Attachments info string or empty string
+ */
+export function buildAttachmentsInfo(attachments?: MessageData['attachments']): string {
+  if (!attachments || attachments.length === 0) {
+    return '';
+  }
+
+  const attachmentList = attachments
+    .map((att, index) => {
+      const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
+      return `${index + 1}. **${att.fileName}**${sizeInfo}
+   - File ID: \`${att.id}\`
+   - Local path: \`${att.localPath}\`
+   - MIME type: ${att.mimeType || 'unknown'}`;
+    })
+    .join('\n');
+
+  return `
+
+--- Attachments ---
+The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
+
+${attachmentList}
+
+You can read these files using the Read tool with the local paths above.`;
+}
