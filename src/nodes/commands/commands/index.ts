@@ -36,3 +36,6 @@ export { TaskCommand } from './task-command.js';
 
 // Topic Group command
 export { TopicGroupCommand } from './topic-group-command.js';
+
+// Skill command (Issue #455)
+export { SkillCommand } from './skill-command.js';

@@ -222,6 +222,26 @@ export interface CommandServices {
 
   /** List all topic groups */
   listTopicGroups: () => ManagedGroupInfo[];
+
+  // Skill Agent management (Issue #455)
+  /** Discover available skills */
+  discoverSkills: () => Promise<import('../../agents/skill-agent-manager.js').SkillInfo[]>;
+
+  /** Start a skill agent */
+  startSkillAgent: (skillName: string, options: {
+    chatId: string;
+    templateVars?: Record<string, string>;
+    input?: string;
+  }) => Promise<string>;
+
+  /** Stop a skill agent */
+  stopSkillAgent: (agentId: string) => Promise<boolean>;
+
+  /** Get skill agent status */
+  getSkillAgentStatus: (agentId: string) => import('../../agents/skill-agent-manager.js').RunningAgentInfo | undefined;
+
+  /** List running skill agents */
+  listSkillAgents: (includeCompleted?: boolean) => import('../../agents/skill-agent-manager.js').RunningAgentInfo[];
 }
 
 /**

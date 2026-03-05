@@ -88,3 +88,14 @@ export {
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
+
+// Skill Agent Manager (Issue #455)
+export {
+  SkillAgentManager,
+  getSkillAgentManager,
+  resetSkillAgentManager,
+  type SkillInfo,
+  type RunningAgentInfo,
+  type AgentStatus,
+  type StartSkillOptions,
+} from './skill-agent-manager.js';
