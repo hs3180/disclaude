@@ -1106,9 +1106,7 @@ When parentMessageId is provided, the message is sent as a reply to that message
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
     parameters: z.object({
       content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. MUST match format type: string for "text", object for "card" with {config, header, elements}.'),
-      format: z.enum(['text', 'card'], {
-        errorMap: () => ({ message: 'format is REQUIRED. Use "text" for plain text messages or "card" for interactive cards.' }),
-      }).describe('REQUIRED: "text" for plain text, "card" for interactive cards. This parameter is mandatory.'),
+      format: z.enum(['text', 'card'], 'format is REQUIRED. Use "text" for plain text messages or "card" for interactive cards.').describe('REQUIRED: "text" for plain text, "card" for interactive cards. This parameter is mandatory.'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread replies.'),
     }),

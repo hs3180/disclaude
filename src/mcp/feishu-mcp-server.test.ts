@@ -80,7 +80,7 @@ describe('Feishu MCP Server', () => {
       // Verify description mentions key features
       expect(sendFeedbackTool?.description).toContain('Send a message to a Feishu chat');
       expect(sendFeedbackTool?.description).toContain('Thread Support');
-      expect(sendFeedbackTool?.description).toContain('Card Format Requirements');
+      expect(sendFeedbackTool?.description).toContain('Card Structure Requirements');
     });
 
     it('should define send_file_to_feishu tool with correct schema', async () => {
