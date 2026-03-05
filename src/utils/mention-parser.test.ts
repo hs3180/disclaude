@@ -10,6 +10,7 @@ import {
   isUserMentioned,
   extractMentionedOpenIds,
   normalizeMentionPlaceholders,
+  stripLeadingMentions,
 } from './mention-parser.js';
 import type { FeishuMessageEvent } from '../types/platform.js';
 
@@ -204,5 +205,87 @@ describe('normalizeMentionPlaceholders', () => {
     const mentions = [createMockMention('@_user.test', 'ou_abc123', 'Alice')];
     const result = normalizeMentionPlaceholders(text, mentions);
     expect(result).toBe('Hello @Alice how are you?');
+  });
+});
+
+describe('stripLeadingMentions', () => {
+  it('should return original text for undefined mentions', () => {
+    const text = '/help';
+    expect(stripLeadingMentions(text, undefined)).toBe('/help');
+  });
+
+  it('should return original text when no mentions', () => {
+    const text = '/help';
+    expect(stripLeadingMentions(text, [])).toBe('/help');
+  });
+
+  it('should strip <at> tag format at the start', () => {
+    const text = '<at user_id="ou_bot">@Bot</at> /help';
+    const mentions = [createMockMention('@_bot', 'ou_bot', 'Bot')];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('/help');
+  });
+
+  it('should strip placeholder format at the start', () => {
+    const text = '${@_bot} /help';
+    const mentions = [createMockMention('@_bot', 'ou_bot', 'Bot')];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('/help');
+  });
+
+  it('should strip simple @mention format at the start', () => {
+    const text = '@Bot /help';
+    const mentions = [createMockMention('@_bot', 'ou_bot', 'Bot')];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('/help');
+  });
+
+  it('should strip multiple leading mentions', () => {
+    const text = '@Bot @User /help';
+    const mentions = [
+      createMockMention('@_bot', 'ou_bot', 'Bot'),
+      createMockMention('@_user', 'ou_user', 'User'),
+    ];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('/help');
+  });
+
+  it('should not strip mentions in the middle of text', () => {
+    const text = 'Hello @Bot how are you?';
+    const mentions = [createMockMention('@_bot', 'ou_bot', 'Bot')];
+    const result = stripLeadingMentions(text, mentions);
+    // Only strips leading mentions, not middle ones
+    expect(result).toBe('Hello @Bot how are you?');
+  });
+
+  it('should handle text without any mention', () => {
+    const text = 'This is a regular message';
+    const mentions: never[] = [];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('This is a regular message');
+  });
+
+  it('should handle empty text', () => {
+    expect(stripLeadingMentions('', undefined)).toBe('');
+  });
+
+  it('should handle text with only mentions', () => {
+    const text = '@Bot @User';
+    const mentions = [
+      createMockMention('@_bot', 'ou_bot', 'Bot'),
+      createMockMention('@_user', 'ou_user', 'User'),
+    ];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('');
+  });
+
+  it('should handle mixed mention formats in sequence', () => {
+    const text = '<at user_id="ou_bot">@Bot</at> @User /command arg1';
+    const mentions = [
+      createMockMention('@_bot', 'ou_bot', 'Bot'),
+      createMockMention('@_user', 'ou_user', 'User'),
+    ];
+    const result = stripLeadingMentions(text, mentions);
+    expect(result).toBe('/command arg1');
   });
 });
