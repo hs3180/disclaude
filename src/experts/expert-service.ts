@@ -4,6 +4,7 @@
  * Stores expert profiles in workspace/experts.json.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import * as fs from 'fs';
@@ -16,6 +17,8 @@ import type {
   AddSkillOptions,
   RemoveSkillOptions,
   SetAvailabilityOptions,
+  FindExpertsOptions,
+  ExpertMatch,
 } from './types.js';
 
 const logger = createLogger('ExpertService');
@@ -304,6 +307,109 @@ export class ExpertService {
         skill.tags.some(t => t.toLowerCase() === searchTag)
       )
     );
+  }
+
+  /**
+   * Check if an expert is currently available based on their schedule.
+   *
+   * @param profile - Expert profile to check
+   * @param now - Current time (default: Date.now())
+   * @returns Whether the expert is currently available
+   *
+   * @see Issue #536 - 专家查询与匹配
+   */
+  isAvailable(profile: ExpertProfile, now: Date = new Date()): boolean {
+    if (!profile.availability) {
+      // No availability set means always available
+      return true;
+    }
+
+    const { days, timeRange } = profile.availability;
+
+    // Check day pattern
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+    const daysLower = days.toLowerCase();
+    if (daysLower === 'weekdays' && !isWeekday) {
+      return false;
+    }
+    if (daysLower === 'weekends' && !isWeekend) {
+      return false;
+    }
+    // 'all' or any other value matches all days
+
+    // Check time range
+    const match = timeRange.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+    if (!match) {
+      // Invalid time range format, assume available
+      logger.warn({ timeRange, userId: profile.userId }, 'Invalid time range format');
+      return true;
+    }
+
+    const [, startHour, startMin, endHour, endMin] = match.map(Number);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const startMinutes = startHour * 60 + startMin;
+    const endMinutes = endHour * 60 + endMin;
+
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  }
+
+  /**
+   * Find experts with advanced filtering options.
+   *
+   * @param skillName - Skill name to search for (case-insensitive partial match)
+   * @param options - Search options
+   * @returns Array of expert matches with details
+   *
+   * @see Issue #536 - 专家查询与匹配
+   */
+  findExperts(skillName: string, options: FindExpertsOptions = {}): ExpertMatch[] {
+    const { minLevel, available, limit } = options;
+    const searchName = skillName.toLowerCase();
+    const now = new Date();
+
+    const matches: ExpertMatch[] = [];
+
+    for (const profile of Object.values(this.registry.experts)) {
+      // Find matching skills
+      const matchingSkills = profile.skills.filter(skill => {
+        const nameMatch = skill.name.toLowerCase().includes(searchName);
+        const levelMatch = minLevel === undefined || skill.level >= minLevel;
+        return nameMatch && levelMatch;
+      });
+
+      if (matchingSkills.length === 0) {
+        continue;
+      }
+
+      // Check availability if required
+      const isCurrentlyAvailable = this.isAvailable(profile, now);
+      if (available && !isCurrentlyAvailable) {
+        continue;
+      }
+
+      matches.push({
+        expert: profile,
+        matchingSkills,
+        isAvailable: isCurrentlyAvailable,
+      });
+    }
+
+    // Sort by skill level (highest first)
+    matches.sort((a, b) => {
+      const aMaxLevel = Math.max(...a.matchingSkills.map(s => s.level));
+      const bMaxLevel = Math.max(...b.matchingSkills.map(s => s.level));
+      return bMaxLevel - aMaxLevel;
+    });
+
+    // Apply limit
+    if (limit !== undefined && limit > 0) {
+      return matches.slice(0, limit);
+    }
+
+    return matches;
   }
 
   /**

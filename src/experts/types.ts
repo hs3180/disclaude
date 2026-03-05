@@ -4,6 +4,7 @@
  * Defines types for the human expert registration and skill declaration system.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 /**
@@ -93,4 +94,32 @@ export interface SetAvailabilityOptions {
   days: string;
   /** Time range */
   timeRange: string;
+}
+
+/**
+ * Options for finding experts.
+ *
+ * @see Issue #536 - 专家查询与匹配
+ */
+export interface FindExpertsOptions {
+  /** Minimum skill level required (1-5) */
+  minLevel?: SkillLevel;
+  /** Only return currently available experts */
+  available?: boolean;
+  /** Maximum number of results to return */
+  limit?: number;
+}
+
+/**
+ * Expert match result with matching skill details.
+ *
+ * @see Issue #536 - 专家查询与匹配
+ */
+export interface ExpertMatch {
+  /** Expert profile */
+  expert: ExpertProfile;
+  /** Matching skills */
+  matchingSkills: Skill[];
+  /** Whether the expert is currently available */
+  isAvailable: boolean;
 }

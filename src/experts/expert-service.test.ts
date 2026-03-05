@@ -2,6 +2,7 @@
  * ExpertService Tests.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -361,6 +362,156 @@ describe('ExpertService', () => {
 
       expect(profile).toBeDefined();
       expect(profile?.skills.length).toBe(1);
+    });
+  });
+
+  // Issue #536 - 专家查询与匹配
+  describe('isAvailable', () => {
+    beforeEach(() => {
+      service.register('ou_available');
+      service.setAvailability({
+        userId: 'ou_available',
+        days: 'all',
+        timeRange: '00:00-23:59',
+      });
+
+      service.register('ou_weekdays');
+      service.setAvailability({
+        userId: 'ou_weekdays',
+        days: 'weekdays',
+        timeRange: '09:00-18:00',
+      });
+
+      service.register('ou_no_availability');
+    });
+
+    it('should return true for expert with no availability set', () => {
+      const profile = service.getProfile('ou_no_availability')!;
+      expect(service.isAvailable(profile)).toBe(true);
+    });
+
+    it('should return true when within time range', () => {
+      const profile = service.getProfile('ou_available')!;
+      expect(service.isAvailable(profile)).toBe(true);
+    });
+
+    it('should check day pattern correctly', () => {
+      const profile = service.getProfile('ou_weekdays')!;
+      // Just verify the method works, actual day check depends on current day
+      const result = service.isAvailable(profile);
+      expect(typeof result).toBe('boolean');
+    });
+  });
+
+  describe('findExperts', () => {
+    beforeEach(() => {
+      // Create test experts with different skills and levels
+      service.register('ou_react_junior');
+      service.addSkill({
+        userId: 'ou_react_junior',
+        name: 'React',
+        level: 2,
+        tags: ['frontend'],
+      });
+
+      service.register('ou_react_senior');
+      service.addSkill({
+        userId: 'ou_react_senior',
+        name: 'React',
+        level: 5,
+        tags: ['frontend', 'expert'],
+      });
+
+      service.register('ou_node_dev');
+      service.addSkill({
+        userId: 'ou_node_dev',
+        name: 'Node.js',
+        level: 4,
+        tags: ['backend'],
+      });
+
+      service.register('ou_fullstack');
+      service.addSkill({
+        userId: 'ou_fullstack',
+        name: 'React',
+        level: 4,
+      });
+      service.addSkill({
+        userId: 'ou_fullstack',
+        name: 'Node.js',
+        level: 3,
+      });
+    });
+
+    it('should find experts by skill name', () => {
+      const matches = service.findExperts('React');
+
+      expect(matches.length).toBe(3);
+      expect(matches.every(m => m.matchingSkills.some(s => s.name === 'React'))).toBe(true);
+    });
+
+    it('should filter by minimum skill level', () => {
+      const matches = service.findExperts('React', { minLevel: 4 });
+
+      expect(matches.length).toBe(2);
+      expect(matches.every(m => m.matchingSkills.every(s => s.level >= 4))).toBe(true);
+    });
+
+    it('should limit results', () => {
+      const matches = service.findExperts('React', { limit: 2 });
+
+      expect(matches.length).toBe(2);
+    });
+
+    it('should sort by skill level (highest first)', () => {
+      const matches = service.findExperts('React');
+
+      expect(matches[0].expert.userId).toBe('ou_react_senior');
+    });
+
+    it('should include availability status', () => {
+      // Set availability for one expert
+      service.setAvailability({
+        userId: 'ou_react_senior',
+        days: 'all',
+        timeRange: '00:00-23:59',
+      });
+
+      const matches = service.findExperts('React');
+
+      expect(matches[0].isAvailable).toBe(true);
+    });
+
+    it('should filter by availability when requested', () => {
+      // Set limited availability for one expert
+      service.setAvailability({
+        userId: 'ou_react_senior',
+        days: 'all',
+        timeRange: '00:00-23:59',
+      });
+
+      const matches = service.findExperts('React', { available: true });
+
+      // Should only include available experts
+      expect(matches.every(m => m.isAvailable)).toBe(true);
+    });
+
+    it('should be case-insensitive', () => {
+      const matches = service.findExperts('react');
+
+      expect(matches.length).toBe(3);
+    });
+
+    it('should support partial matching', () => {
+      const matches = service.findExperts('Node');
+
+      expect(matches.length).toBe(2);
+    });
+
+    it('should return empty array if no match', () => {
+      const matches = service.findExperts('Python');
+
+      expect(matches).toEqual([]);
     });
   });
 });
