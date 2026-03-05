@@ -61,6 +61,15 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
+// Mock GroupService
+const mockGroupService = {
+  createGroup: vi.fn(),
+};
+
+vi.mock('../platforms/feishu/group-service.js', () => ({
+  getGroupService: vi.fn(() => mockGroupService),
+}));
+
 // Import after mocks
 import * as fs from 'fs/promises';
 import type * as fsStats from 'fs';
@@ -72,6 +81,7 @@ import {
   resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
+  create_group_chat,
 } from './feishu-context-mcp.js';
 import { uploadAndSendFile } from '../file-transfer/outbound/feishu-uploader.js';
 
@@ -755,6 +765,75 @@ describe('Feishu Context MCP Tools', () => {
       // Clean up first wait
       resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
       await firstWait;
+    });
+  });
+
+  describe('create_group_chat', () => {
+    it('should have create_group_chat tool definition', () => {
+      expect(feishuContextTools.create_group_chat).toBeDefined();
+      expect(feishuContextTools.create_group_chat.description).toContain('Create a new Feishu group chat');
+      expect(feishuContextTools.create_group_chat.handler).toBe(create_group_chat);
+    });
+
+    it('should require topic', async () => {
+      const result = await create_group_chat({
+        topic: '',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('topic is required');
+    });
+
+    it('should create group chat successfully', async () => {
+      mockGroupService.createGroup.mockResolvedValueOnce({
+        chatId: 'oc_new_chat_123',
+        name: 'Test Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = await create_group_chat({
+        topic: 'Test Group',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.chatId).toBe('oc_new_chat_123');
+      expect(result.message).toContain('Group chat created');
+    });
+
+    it('should create group chat with members', async () => {
+      mockGroupService.createGroup.mockResolvedValueOnce({
+        chatId: 'oc_new_chat_456',
+        name: 'PR #123 Discussion',
+        createdAt: Date.now(),
+        initialMembers: ['ou_user1', 'ou_user2'],
+      });
+
+      const result = await create_group_chat({
+        topic: 'PR #123 Discussion',
+        members: ['ou_user1', 'ou_user2'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.chatId).toBe('oc_new_chat_456');
+      expect(mockGroupService.createGroup).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          topic: 'PR #123 Discussion',
+          members: ['ou_user1', 'ou_user2'],
+        })
+      );
+    });
+
+    it('should handle creation failure', async () => {
+      mockGroupService.createGroup.mockRejectedValueOnce(new Error('API error'));
+
+      const result = await create_group_chat({
+        topic: 'Test Group',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('API error');
     });
   });
 });
