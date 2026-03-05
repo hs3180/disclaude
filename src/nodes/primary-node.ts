@@ -659,6 +659,16 @@ export class PrimaryNode extends EventEmitter {
           }
           return false; // Default: passive mode enabled (only @mention)
         },
+        // Topic group management (Issue #721)
+        markAsTopicGroup: (chatId: string, isTopic: boolean) => {
+          return this.groupService.markAsTopicGroup(chatId, isTopic);
+        },
+        isTopicGroup: (chatId: string) => {
+          return this.groupService.isTopicGroup(chatId);
+        },
+        listTopicGroups: () => {
+          return this.groupService.listTopicGroups();
+        },
       },
     };
 

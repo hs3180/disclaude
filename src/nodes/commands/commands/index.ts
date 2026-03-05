@@ -33,3 +33,6 @@ export { ScheduleCommand } from './schedule-command.js';
 
 // Task command
 export { TaskCommand } from './task-command.js';
+
+// Topic Group command
+export { TopicGroupCommand } from './topic-group-command.js';

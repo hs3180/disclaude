@@ -57,6 +57,11 @@ export interface ManagedGroupInfo {
   createdAt: number;
   createdBy?: string;
   initialMembers: string[];
+  /**
+   * Whether this is a topic group (BBS mode).
+   * @see Issue #721 - 话题群基础设施
+   */
+  isTopicGroup?: boolean;
 }
 
 /**
@@ -207,6 +212,16 @@ export interface CommandServices {
 
   /** Get passive mode status for a chat (true = respond to all, false = only @mention) */
   getPassiveMode: (chatId: string) => boolean;
+
+  // Topic group management (Issue #721)
+  /** Mark or unmark a group as a topic group */
+  markAsTopicGroup: (chatId: string, isTopic: boolean) => boolean;
+
+  /** Check if a group is a topic group */
+  isTopicGroup: (chatId: string) => boolean;
+
+  /** List all topic groups */
+  listTopicGroups: () => ManagedGroupInfo[];
 }
 
 /**

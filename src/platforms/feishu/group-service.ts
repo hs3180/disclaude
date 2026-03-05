@@ -30,6 +30,13 @@ export interface GroupInfo {
   createdBy?: string;
   /** Initial members */
   initialMembers: string[];
+  /**
+   * Whether this is a topic group (BBS mode).
+   * Topic groups support agent-initiated messages and don't expect user responses.
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  isTopicGroup?: boolean;
 }
 
 /**
@@ -167,6 +174,60 @@ export class GroupService {
    */
   listGroups(): GroupInfo[] {
     return Object.values(this.registry.groups);
+  }
+
+  /**
+   * Mark or unmark a group as a topic group (BBS mode).
+   *
+   * Topic groups support agent-initiated messages and don't expect user responses.
+   * This is useful for BBS-style discussions like daily questions or topic posts.
+   *
+   * @param chatId - Group chat ID
+   * @param isTopic - Whether to mark as topic group (default: true)
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  markAsTopicGroup(chatId: string, isTopic: boolean = true): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot mark as topic group: group not found');
+      return false;
+    }
+
+    if (isTopic) {
+      group.isTopicGroup = true;
+    } else {
+      delete group.isTopicGroup;
+    }
+    this.save();
+
+    logger.info({ chatId, name: group.name, isTopicGroup: isTopic }, 'Group topic status updated');
+    return true;
+  }
+
+  /**
+   * Check if a group is a topic group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group is a topic group
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  isTopicGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.isTopicGroup === true;
+  }
+
+  /**
+   * List all topic groups.
+   *
+   * @returns Array of topic group info
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  listTopicGroups(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
   }
 
   /**
