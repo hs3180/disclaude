@@ -12,8 +12,10 @@
  * - debug-commands.ts: SetDebugCommand, ShowDebugCommand, ClearDebugCommand
  * - schedule-command.ts: ScheduleCommand
  * - task-command.ts: TaskCommand
+ * - topic-group-command.ts: TopicGroupCommand
  *
  * Issue #696: 拆分 builtin-commands.ts
+ * Issue #721: 话题群基础设施 - BBS 模式支持
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
  * Issue #537: 完成所有指令的 DI 重构
  */
@@ -40,6 +42,7 @@ import {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  TopicGroupCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -62,6 +65,7 @@ export {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  TopicGroupCommand,
 };
 
 /**
@@ -91,4 +95,6 @@ export function registerDefaultCommands(
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
   registry.register(new TaskCommand());
+  // Issue #721: Topic group command for BBS mode
+  registry.register(new TopicGroupCommand());
 }
