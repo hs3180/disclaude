@@ -351,6 +351,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Check if a chat ID is a group chat based on ID prefix.
+   * In Feishu, group chat IDs start with 'oc_' and private chat IDs start with 'ou_'.
+   *
+   * Issue #676: Used in handleChatMemberAdded where chat_type is not available.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if it's a group chat ID
+   */
+  private isGroupChatId(chatId: string): boolean {
+    return chatId.startsWith('oc_');
+  }
+
+  /**
    * Fetch bot's open_id from Feishu API.
    * This is used to correctly identify when the bot is mentioned.
    *
@@ -978,7 +991,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   /**
    * Handle chat member added event.
    * Triggered when members are added to a chat.
-   * Issue #463: Send welcome message when new members join a group.
+   * Issue #463: Send welcome message when bot is added to a group.
+   * Issue #676: Send help message when users join a group that already has the bot.
    */
   private async handleChatMemberAdded(data: FeishuChatMemberAddedEventData): Promise<void> {
     if (!this.isRunning || !this.welcomeService) {
@@ -991,15 +1005,36 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    // Only send welcome to group chats
-    if (!this.isGroupChat(event.chat_id)) {
-      logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping welcome');
+    // Only send messages to group chats
+    if (!this.isGroupChatId(event.chat_id)) {
+      logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping');
       return;
     }
 
-    logger.info({ chatId: event.chat_id, memberCount: event.members.length }, 'New members joined group, sending welcome message');
+    // Check if the bot is among the added members
+    // Bot's member_id_type is "app_id" and member_id is the bot's app_id
+    const botMemberAdded = event.members.some(
+      (member) => member.member_id_type === 'app_id' && member.member_id === this.appId
+    );
 
-    await this.welcomeService.handleBotAddedToGroup(event.chat_id);
+    // Get non-bot members (users who joined)
+    const userMembers = event.members.filter(
+      (member) => !(member.member_id_type === 'app_id' && member.member_id === this.appId)
+    );
+
+    if (botMemberAdded) {
+      // Bot was added to the group -> send welcome message
+      logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
+      await this.welcomeService.handleBotAddedToGroup(event.chat_id);
+    } else if (userMembers.length > 0) {
+      // Users joined a group that already has the bot -> send help message
+      logger.info(
+        { chatId: event.chat_id, userCount: userMembers.length },
+        'New users joined group, sending help message'
+      );
+      const userIds = userMembers.map((m) => m.member_id);
+      await this.welcomeService.handleUserJoinedGroup(event.chat_id, userIds);
+    }
   }
 
   /**
