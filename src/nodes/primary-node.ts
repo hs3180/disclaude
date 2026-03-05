@@ -6,7 +6,7 @@
  * - Execute Agent tasks locally
  * - Accept connections from Worker Nodes for horizontal scaling
  *
- * Architecture (Refactored - Issue #435):
+ * Architecture (Refactored - Issue #435, #695):
  * ```
  * ┌─────────────────────────────────────────────────────────────┐
  *                      Primary Node                             │
@@ -30,20 +30,15 @@
  */
 
 import { EventEmitter } from 'events';
-import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
-import { AgentFactory, AgentPool } from '../agents/index.js';
-import { messageLogger } from '../feishu/message-logger.js';
+import { AgentPool } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
-import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { TaskTracker } from '../utils/task-tracker.js';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { UnifiedMessageRouter } from './unified-message-router.js';
@@ -71,22 +66,14 @@ import {
 import {
   initWelcomeService,
 } from '../platforms/feishu/welcome-service.js';
-// Schedule management (Issue #469)
-import { ScheduleManager } from '../schedule/schedule-manager.js';
-import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
-import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
+// Extracted modules (Issue #695)
+import { PrimaryNodeSchedule } from './primary-node-schedule.js';
+import { NextStepRecommender } from './primary-node-next-step.js';
+import { PrimaryNodeLocalExec, type FeedbackContext } from './primary-node-local-exec.js';
 
 const logger = createLogger('PrimaryNode');
-
-/**
- * Feedback context for execution.
- */
-interface FeedbackContext {
-  sendFeedback: (feedback: FeedbackMessage) => void;
-  threadId?: string;
-}
 
 /**
  * Primary Node - Self-contained node with both communication and execution capabilities.
@@ -102,6 +89,9 @@ interface FeedbackContext {
  * - FeedbackRouter: Feedback routing to channels
  * - WebSocketServerService: WebSocket/HTTP server management
  * - SchedulerService: Scheduler and file watcher management
+ * - PrimaryNodeSchedule: Schedule management (Issue #695)
+ * - NextStepRecommender: Next-step recommendations (Issue #695)
+ * - PrimaryNodeLocalExec: Local execution setup (Issue #695)
  */
 export class PrimaryNode extends EventEmitter {
   private port: number;
@@ -118,20 +108,20 @@ export class PrimaryNode extends EventEmitter {
   private messageRouter: UnifiedMessageRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
-  // Schedule management (Issue #469)
-  private scheduleManager?: ScheduleManager;
-  private scheduleFileScanner?: ScheduleFileScanner;
 
   // Local execution
   private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
-  private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   // Group management (Issue #486)
   private groupService: GroupService;
   private feishuClient?: lark.Client;
   private feishuAppId?: string;
   private feishuAppSecret?: string;
+
+  // Extracted modules (Issue #695)
+  private scheduleManager?: PrimaryNodeSchedule;
+  private nextStepRecommender: NextStepRecommender;
 
   constructor(config: PrimaryNodeConfig) {
     super();
@@ -158,10 +148,15 @@ export class PrimaryNode extends EventEmitter {
     this.execNodeRegistry.on('node:registered', (nodeId) => this.emit('worker:connected', nodeId));
     this.execNodeRegistry.on('node:unregistered', (nodeId) => this.emit('worker:disconnected', nodeId));
 
+    // Initialize NextStepRecommender (Issue #695)
+    this.nextStepRecommender = new NextStepRecommender();
+
     // Issue #659: Initialize UnifiedMessageRouter (replaces FeedbackRouter)
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
-      onTaskDone: this.triggerNextStepRecommendation.bind(this),
+      onTaskDone: async (chatId: string, threadId?: string) => {
+        await this.nextStepRecommender.trigger(chatId, threadId);
+      },
       // Admin chat can be configured via environment or config
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
     });
@@ -215,6 +210,9 @@ export class PrimaryNode extends EventEmitter {
       this.registerChannel(restChannel);
       logger.info({ port: config.restPort || 3000 }, 'REST channel registered');
     }
+
+    // Initialize PrimaryNodeSchedule (Issue #695)
+    this.scheduleManager = PrimaryNodeSchedule.createDefault();
 
     logger.info({
       port: this.port,
@@ -370,7 +368,7 @@ export class PrimaryNode extends EventEmitter {
   // ============================================================================
 
   /**
-   * Initialize local execution capability.
+   * Initialize local execution capability using extracted module (Issue #695).
    *
    * Issue #644: Uses AgentPool instead of sharedPilot.
    * Each chatId gets its own Pilot instance for complete isolation.
@@ -380,127 +378,32 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    console.log('Initializing local execution capability...');
+    const localExec = new PrimaryNodeLocalExec({
+      localExecEnabled: this.localExecEnabled,
+      activeFeedbackChannels: this.activeFeedbackChannels,
+      sendMessage: this.sendMessage.bind(this),
+      sendCard: this.sendCard.bind(this),
+      sendFileToUser: this.sendFileToUser.bind(this),
+      handleFeedback: this.handleFeedback.bind(this),
+      getChannelCapabilities: (chatId) => this.getChannelCapabilities(chatId),
+    });
 
-    // Issue #644: Create AgentPool with factory function
-    // Each chatId gets its own Pilot instance for complete isolation
-    this.agentPool = new AgentPool({
-      pilotFactory: (chatId: string) => {
-        return AgentFactory.createChatAgent('pilot', chatId, {
-          sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-            const ctx = this.activeFeedbackChannels.get(chatId);
-            if (ctx) {
-              ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
-            } else {
-              // Fallback for scheduled tasks: route directly through handleFeedback
-              void this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
-            }
-            return Promise.resolve();
-          },
-          sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-            const ctx = this.activeFeedbackChannels.get(chatId);
-            if (ctx) {
-              ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-            } else {
-              // Fallback for scheduled tasks: route directly through handleFeedback
-              void this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
-            }
-            return Promise.resolve();
-          },
-          sendFile: async (chatId: string, filePath: string) => {
-            const ctx = this.activeFeedbackChannels.get(chatId);
-            if (ctx) {
-              try {
-                await this.sendFileToUser(chatId, filePath, ctx.threadId);
-              } catch (error) {
-                logger.error({ err: error, chatId, filePath }, 'Failed to send file');
-                ctx.sendFeedback({
-                  type: 'error',
-                  chatId,
-                  error: `Failed to send file: ${(error as Error).message}`,
-                  threadId: ctx.threadId,
-                });
-              }
-            } else {
-              // Fallback for scheduled tasks: send file without threadId
-              try {
-                await this.sendFileToUser(chatId, filePath);
-              } catch (error) {
-                logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
-              }
-            }
-          },
-          onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
-            const ctx = this.activeFeedbackChannels.get(chatId);
-            if (ctx) {
-              ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
-              logger.info({ chatId }, 'Task completed, sent done signal');
-            } else {
-              // Fallback for scheduled tasks: route directly through handleFeedback
-              void this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
-              logger.info({ chatId }, 'Task completed (scheduled task)');
-            }
-            return Promise.resolve();
-          },
-          // Capability-aware prompt generation (Issue #582)
-          getCapabilities: (chatId: string) => {
-            return this.getChannelCapabilities(chatId);
-          },
+    const result = await localExec.init();
+    if (result) {
+      this.agentPool = result.agentPool;
+      this.schedulerService = result.schedulerService;
+
+      // Update schedule manager with scheduler service and agent pool
+      if (this.scheduleManager) {
+        this.scheduleManager.updateDeps({
+          schedulerService: this.schedulerService,
+          agentPool: this.agentPool,
+          sendMessage: this.sendMessage.bind(this),
         });
-      },
-    });
+      }
 
-    // Initialize SchedulerService
-    this.schedulerService = new SchedulerService({
-      agentPool: this.agentPool,
-      callbacks: {
-        sendMessage: async (chatId, text, threadId) => {
-          await this.sendMessage(chatId, text, threadId);
-        },
-        sendCard: async (chatId, card, description, threadId) => {
-          await this.sendCard(chatId, card, description, threadId);
-        },
-        sendFile: async (chatId, filePath) => {
-          await this.sendFileToUser(chatId, filePath);
-        },
-        handleFeedback: (feedback) => {
-          void this.handleFeedback(feedback);
-        },
-      },
-    });
-
-    await this.schedulerService.start();
-
-    // Initialize ScheduleManager and FileScanner for command access (Issue #469)
-    const workspaceDir = Config.getWorkspaceDir();
-    const schedulesDir = path.join(workspaceDir, 'schedules');
-    this.scheduleManager = new ScheduleManager({ schedulesDir });
-    this.scheduleFileScanner = new ScheduleFileScanner({ schedulesDir });
-
-    // Initialize TaskFlowOrchestrator
-    const taskTracker = new TaskTracker();
-    this.taskFlowOrchestrator = new TaskFlowOrchestrator(
-      taskTracker,
-      {
-        sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-          return this.sendMessage(chatId, text, threadMessageId);
-        },
-        sendCard: (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string): Promise<void> => {
-          return this.sendCard(chatId, card, undefined, threadMessageId);
-        },
-        sendFile: (chatId: string, filePath: string): Promise<void> => {
-          return this.sendFileToUser(chatId, filePath);
-        },
-      },
-      logger
-    );
-
-    await this.taskFlowOrchestrator.start();
-
-    console.log('✓ Local execution capability initialized');
-    console.log('✓ Scheduler started');
-    console.log('✓ Schedule file watcher started');
-    console.log('✓ TaskFlowOrchestrator started');
+      console.log('✓ Schedule file watcher started');
+    }
   }
 
   /**
@@ -553,7 +456,7 @@ export class PrimaryNode extends EventEmitter {
     );
 
     // Process attachments if present
-    let attachments: FileRef[] | undefined;
+    let attachments;
     const fileStorageService = this.wsServerService?.getFileStorageService();
     if (message.attachments && message.attachments.length > 0 && fileStorageService) {
       attachments = [];
@@ -628,13 +531,13 @@ export class PrimaryNode extends EventEmitter {
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),
         getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
-        // Schedule management (Issue #469)
-        listSchedules: () => this.listSchedules(),
-        getSchedule: (nameOrId: string) => this.getSchedule(nameOrId),
-        enableSchedule: (nameOrId: string) => this.enableSchedule(nameOrId),
-        disableSchedule: (nameOrId: string) => this.disableSchedule(nameOrId),
-        runSchedule: (nameOrId: string) => this.runSchedule(nameOrId),
-        isScheduleRunning: (taskId: string) => this.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false,
+        // Schedule management (Issue #469) - delegated to PrimaryNodeSchedule (Issue #695)
+        listSchedules: () => this.scheduleManager?.listSchedules() ?? Promise.resolve([]),
+        getSchedule: (nameOrId: string) => this.scheduleManager?.getSchedule(nameOrId) ?? Promise.resolve(undefined),
+        enableSchedule: (nameOrId: string) => this.scheduleManager?.enableSchedule(nameOrId) ?? Promise.resolve(false),
+        disableSchedule: (nameOrId: string) => this.scheduleManager?.disableSchedule(nameOrId) ?? Promise.resolve(false),
+        runSchedule: (nameOrId: string) => this.scheduleManager?.runSchedule(nameOrId) ?? Promise.resolve(false),
+        isScheduleRunning: (taskId: string) => this.scheduleManager?.isTaskRunning(taskId) ?? false,
         // Task management methods (Issue #468)
         startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
         getCurrentTask: () => taskStateManager.getCurrentTask(),
@@ -848,7 +751,6 @@ export class PrimaryNode extends EventEmitter {
 
     // Stop scheduler service
     this.schedulerService?.stop();
-    await this.taskFlowOrchestrator?.stop();
 
     // Stop WebSocket server
     await this.wsServerService?.stop();
@@ -875,220 +777,5 @@ export class PrimaryNode extends EventEmitter {
    */
   isRunning(): boolean {
     return this.running;
-  }
-
-  // ============================================================================
-  // Schedule Management (Issue #469)
-  // ============================================================================
-
-  /**
-   * List all scheduled tasks.
-   */
-  private async listSchedules(): Promise<ScheduleTaskInfo[]> {
-    if (!this.scheduleManager) {
-      return [];
-    }
-
-    const tasks = await this.scheduleManager.listAll();
-    const scheduler = this.schedulerService?.getScheduler();
-    const activeJobs = scheduler?.getActiveJobs() ?? [];
-
-    return tasks.map(task => {
-      const activeJob = activeJobs.find(j => j.taskId === task.id);
-      return {
-        id: task.id,
-        name: task.name,
-        cron: task.cron,
-        enabled: task.enabled,
-        isScheduled: !!activeJob,
-        isRunning: scheduler?.isTaskRunning(task.id) ?? false,
-        chatId: task.chatId,
-        createdAt: task.createdAt,
-      };
-    });
-  }
-
-  /**
-   * Get a schedule by name or ID.
-   */
-  private async getSchedule(nameOrId: string): Promise<ScheduleTaskInfo | undefined> {
-    const tasks = await this.listSchedules();
-
-    // Try to find by ID first, then by name
-    return tasks.find(t => t.id === nameOrId || t.id === `schedule-${nameOrId}` || t.name === nameOrId);
-  }
-
-  /**
-   * Enable a schedule.
-   */
-  private async enableSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // If already enabled, return false
-    if (task.enabled) {
-      return false;
-    }
-
-    // Update the task file
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    const updatedTask = { ...fullTask, enabled: true };
-    await this.scheduleFileScanner?.writeTask(updatedTask);
-
-    return true;
-  }
-
-  /**
-   * Disable a schedule.
-   */
-  private async disableSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // If already disabled, return false
-    if (!task.enabled) {
-      return false;
-    }
-
-    // Update the task file
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    const updatedTask = { ...fullTask, enabled: false };
-    await this.scheduleFileScanner?.writeTask(updatedTask);
-
-    return true;
-  }
-
-  /**
-   * Manually trigger a schedule.
-   */
-  private async runSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // Get the full task
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    // Execute the task directly
-    try {
-      // Send start notification
-      await this.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
-
-      // Execute task using Pilot
-      if (this.agentPool) {
-        // Issue #644: Get Pilot for this chatId from AgentPool
-        const pilot = this.agentPool.getOrCreate(fullTask.chatId);
-        await pilot.executeOnce(
-          fullTask.chatId,
-          fullTask.prompt,
-          undefined,
-          fullTask.createdBy
-        );
-      }
-
-      return true;
-    } catch (error) {
-      logger.error({ err: error, taskId: task.id }, 'Failed to run schedule manually');
-      return false;
-    }
-  }
-
-  // ============================================================================
-  // Next Step Recommendations (Issue #657)
-  // ============================================================================
-
-  /**
-   * Trigger next-step recommendations after task completion.
-   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
-   *
-   * Issue #716: SkillAgent should be disposed after execution, not stored.
-   * Context is limited to recent messages to avoid context overflow.
-   *
-   * @param chatId - Chat ID to get history from
-   * @param threadId - Optional thread ID for reply
-   */
-  private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
-    let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
-    try {
-      logger.info({ chatId }, 'Triggering next-step recommendations');
-
-      // Get chat history for context
-      const chatHistory = await messageLogger.getChatHistory(chatId);
-
-      if (!chatHistory || chatHistory.trim().length === 0) {
-        logger.debug({ chatId }, 'No chat history available for recommendations');
-        return;
-      }
-
-      // Create SkillAgent for next-step recommendations using AgentFactory
-      nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-      // Limit context to recent messages (Issue #716)
-      // Only use the last 10 messages to avoid context overflow
-      const recentHistory = this.extractRecentMessages(chatHistory, 10);
-
-      // Build prompt with chat history
-      const prompt = `## Context
-
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
-
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-      // Execute skill and handle responses
-      for await (const message of nextStepAgent.execute(prompt)) {
-        if (message.type === 'tool_use' || message.metadata?.toolName) {
-          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-        }
-      }
-
-      logger.info({ chatId }, 'Next-step recommendations completed');
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-    } finally {
-      // Issue #716: Dispose SkillAgent after execution (do not store)
-      if (nextStepAgent) {
-        nextStepAgent.dispose();
-        logger.debug({ chatId }, 'Next-step SkillAgent disposed');
-      }
-    }
-  }
-
-  /**
-   * Extract recent messages from chat history.
-   * Limits context size for SkillAgent execution.
-   *
-   * @param chatHistory - Full chat history
-   * @param count - Number of recent messages to extract (lines)
-   * @returns Recent messages as string
-   */
-  private extractRecentMessages(chatHistory: string, count: number): string {
-    const lines = chatHistory.split('\n');
-    if (lines.length <= count) {
-      return chatHistory;
-    }
-    // Take the last N lines
-    return lines.slice(-count).join('\n');
   }
 }
