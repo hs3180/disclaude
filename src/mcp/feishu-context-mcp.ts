@@ -952,7 +952,7 @@ export async function send_offline_message(params: {
 
     return {
       success: true,
-      message: `✅ Offline message sent and registered for reply tracking`,
+      message: '✅ Offline message sent and registered for reply tracking',
       entryId: entry.id,
       messageId: entryId,
     };

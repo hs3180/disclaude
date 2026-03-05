@@ -155,7 +155,7 @@ export class OfflineMessageManager {
     const chatEntries = this.findByChatId(chatId);
     if (chatEntries.length >= this.maxPerChat) {
       // Remove oldest entry for this chat
-      const oldest = chatEntries.sort((a, b) => a.createdAt - b.createdAt)[0];
+      const [oldest] = chatEntries.sort((a, b) => a.createdAt - b.createdAt);
       if (oldest) {
         this.unregister(oldest.id);
         logger.info({ chatId, removedId: oldest.id }, 'Removed oldest entry to make room');
