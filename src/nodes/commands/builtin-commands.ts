@@ -40,6 +40,10 @@ import {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  SkillRunCommand,
+  SkillListCommand,
+  SkillStopCommand,
+  SkillClearCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -62,6 +66,10 @@ export {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  SkillRunCommand,
+  SkillListCommand,
+  SkillStopCommand,
+  SkillClearCommand,
 };
 
 /**
@@ -91,4 +99,9 @@ export function registerDefaultCommands(
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
   registry.register(new TaskCommand());
+  // Issue #455: Skill agent commands
+  registry.register(new SkillRunCommand());
+  registry.register(new SkillListCommand());
+  registry.register(new SkillStopCommand());
+  registry.register(new SkillClearCommand());
 }
