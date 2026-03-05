@@ -91,15 +91,19 @@ export class AgentFactory {
   /**
    * Create a ChatAgent instance by name.
    *
+   * Issue #644: Pilot now requires chatId binding at creation time.
+   *
    * @param name - Agent name ('pilot')
    * @param args - Additional arguments:
-   *   - args[0]: PilotCallbacks - Platform-specific callbacks
-   *   - args[1]: AgentCreateOptions - Optional configuration overrides
+   *   - args[0]: chatId | PilotCallbacks - ChatId string OR callbacks object (legacy)
+   *   - args[1]: PilotCallbacks | AgentCreateOptions - Callbacks OR options
+   *   - args[2]: AgentCreateOptions - Optional configuration overrides (when chatId provided)
    * @returns ChatAgent instance
    *
    * @example
    * ```typescript
-   * const pilot = AgentFactory.createChatAgent('pilot', {
+   * // Issue #644: New pattern with chatId binding
+   * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', {
    *   sendMessage: async (chatId, text) => { ... },
    *   sendCard: async (chatId, card) => { ... },
    *   sendFile: async (chatId, filePath) => { ... },
@@ -108,12 +112,28 @@ export class AgentFactory {
    */
   static createChatAgent(name: string, ...args: unknown[]): ChatAgent {
     if (name === 'pilot') {
-      const callbacks = args[0] as PilotCallbacks;
-      const options = (args[1] as AgentCreateOptions) || {};
+      // Issue #644: Support both new (chatId, callbacks, options) and legacy (callbacks, options) patterns
+      let chatId: string;
+      let callbacks: PilotCallbacks;
+      let options: AgentCreateOptions;
+
+      if (typeof args[0] === 'string') {
+        // New pattern: createChatAgent('pilot', chatId, callbacks, options)
+        chatId = args[0];
+        callbacks = args[1] as PilotCallbacks;
+        options = (args[2] as AgentCreateOptions) || {};
+      } else {
+        // Legacy pattern: createChatAgent('pilot', callbacks, options)
+        // This is deprecated but kept for backward compatibility
+        chatId = 'default';
+        callbacks = args[0] as PilotCallbacks;
+        options = (args[1] as AgentCreateOptions) || {};
+      }
 
       const baseConfig = this.getBaseConfig(options);
       const config: PilotConfig = {
         ...baseConfig,
+        chatId,
         callbacks,
       };
 

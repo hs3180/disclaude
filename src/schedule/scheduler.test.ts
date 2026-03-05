@@ -15,15 +15,45 @@ import * as os from 'os';
 import { Scheduler } from './scheduler.js';
 import { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './index.js';
-import type { Pilot, PilotCallbacks } from '../agents/pilot.js';
+import type { PilotCallbacks } from '../agents/pilot.js';
+import type { AgentPool } from '../agents/agent-pool.js';
+import type { ChatAgent } from '../agents/types.js';
 
 // Mock Pilot
-const createMockPilot = (): Pilot => {
+const createMockPilot = (): ChatAgent => {
   return {
+    type: 'chat',
+    name: 'MockPilot',
+    start: vi.fn().mockResolvedValue(undefined),
     executeOnce: vi.fn().mockResolvedValue(undefined),
-    processMessage: vi.fn().mockResolvedValue(undefined),
+    processMessage: vi.fn(),
     reset: vi.fn(),
-  } as unknown as Pilot;
+    dispose: vi.fn(),
+    handleInput: vi.fn(),
+  } as unknown as ChatAgent;
+};
+
+// Mock AgentPool
+const createMockAgentPool = (): AgentPool => {
+  const pilots = new Map<string, ChatAgent>();
+  return {
+    getOrCreate: vi.fn((chatId: string) => {
+      if (!pilots.has(chatId)) {
+        pilots.set(chatId, createMockPilot());
+      }
+      return pilots.get(chatId)!;
+    }),
+    has: vi.fn((chatId: string) => pilots.has(chatId)),
+    get: vi.fn((chatId: string) => pilots.get(chatId)),
+    dispose: vi.fn((chatId: string) => {
+      pilots.delete(chatId);
+      return true;
+    }),
+    reset: vi.fn(),
+    size: vi.fn(() => pilots.size),
+    getActiveChatIds: vi.fn(() => Array.from(pilots.keys())),
+    disposeAll: vi.fn(() => pilots.clear()),
+  } as unknown as AgentPool;
 };
 
 // Mock callbacks
@@ -78,7 +108,7 @@ async function deleteScheduleFile(testDir: string, baseName: string): Promise<vo
 describe('Scheduler', () => {
   let scheduler: Scheduler;
   let manager: ScheduleManager;
-  let mockPilot: Pilot;
+  let mockAgentPool: AgentPool;
   let mockCallbacks: PilotCallbacks;
   let testDir: string;
 
@@ -86,12 +116,12 @@ describe('Scheduler', () => {
     testDir = path.join(os.tmpdir(), `scheduler-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.mkdir(testDir, { recursive: true });
 
-    mockPilot = createMockPilot();
+    mockAgentPool = createMockAgentPool();
     mockCallbacks = createMockCallbacks();
     manager = new ScheduleManager({ schedulesDir: testDir });
     scheduler = new Scheduler({
       scheduleManager: manager,
-      pilot: mockPilot,
+      agentPool: mockAgentPool,
       callbacks: mockCallbacks,
     });
   });
@@ -393,6 +423,8 @@ describe('Scheduler', () => {
       const executePromise = new Promise<void>((resolve) => {
         resolveExecute = resolve;
       });
+      const taskChatId = 'test-chat-blocking';
+      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -400,7 +432,7 @@ describe('Scheduler', () => {
         name: 'Blocking Task',
         cron: '0 9 * * *',
         prompt: 'Test',
-        chatId: 'test-chat',
+        chatId: taskChatId,
         enabled: true,
         blocking: true,
         createdAt: new Date().toISOString(),
@@ -437,6 +469,8 @@ describe('Scheduler', () => {
       const executePromise = new Promise<void>((resolve) => {
         resolveExecute = resolve;
       });
+      const taskChatId = 'test-chat-nonblocking';
+      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -444,7 +478,7 @@ describe('Scheduler', () => {
         name: 'Non-Blocking Task',
         cron: '0 9 * * *',
         prompt: 'Test',
-        chatId: 'test-chat',
+        chatId: taskChatId,
         enabled: true,
         blocking: false, // explicitly false
         createdAt: new Date().toISOString(),
@@ -486,6 +520,8 @@ describe('Scheduler', () => {
     });
 
     it('should default blocking to true when not specified', async () => {
+      const taskChatId = 'test-chat-default';
+      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -493,7 +529,7 @@ describe('Scheduler', () => {
         name: 'Default Blocking Task',
         cron: '0 9 * * *',
         prompt: 'Test',
-        chatId: 'test-chat',
+        chatId: taskChatId,
         enabled: true,
         // blocking not specified - defaults to true
         createdAt: new Date().toISOString(),
@@ -509,6 +545,8 @@ describe('Scheduler', () => {
     });
 
     it('should allow task to run after previous execution completes', async () => {
+      const taskChatId = 'test-chat-sequential';
+      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -516,7 +554,7 @@ describe('Scheduler', () => {
         name: 'Blocking Sequential Task',
         cron: '0 9 * * *',
         prompt: 'Test',
-        chatId: 'test-chat',
+        chatId: taskChatId,
         enabled: true,
         blocking: true,
         createdAt: new Date().toISOString(),
