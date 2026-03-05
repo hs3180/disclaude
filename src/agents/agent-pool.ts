@@ -56,15 +56,18 @@ export class AgentPool {
   }
 
   /**
-   * Get or create a Pilot instance for the given chatId.
+   * Get or create a ChatAgent instance for the given chatId.
    *
-   * If a Pilot already exists for this chatId, returns it.
-   * Otherwise, creates a new Pilot using the factory.
+   * If a ChatAgent already exists for this chatId, returns it.
+   * Otherwise, creates a new ChatAgent using the factory.
+   *
+   * ChatAgents are long-lived and bound to a specific chatId for
+   * conversation context persistence.
    *
    * @param chatId - The chat identifier
-   * @returns The Pilot instance for this chatId
+   * @returns The ChatAgent instance for this chatId
    */
-  getOrCreate(chatId: string): ChatAgent {
+  getOrCreateChatAgent(chatId: string): ChatAgent {
     let pilot = this.pilots.get(chatId);
     if (!pilot) {
       this.log.info({ chatId }, 'Creating new Pilot instance for chatId');
