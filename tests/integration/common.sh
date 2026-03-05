@@ -617,6 +617,24 @@ parse_common_args() {
 }
 
 # =============================================================================
+# Wait for Background Sessions (Issue #644)
+# =============================================================================
+
+# Wait for background agent sessions to complete.
+# This is needed after REST Channel Tests which use async mode.
+# The async tests leave agent sessions running in background, and
+# GLM SDK may route messages to wrong sessions if we don't wait.
+#
+# Usage: wait_for_background_sessions [seconds]
+# Default wait time: 5 seconds
+wait_for_background_sessions() {
+    local wait_seconds="${1:-5}"
+    log_info "Waiting ${wait_seconds}s for background agent sessions to complete (Issue #644)..."
+    sleep "$wait_seconds"
+    log_debug "Wait complete"
+}
+
+# =============================================================================
 # Test Summary
 # =============================================================================
 

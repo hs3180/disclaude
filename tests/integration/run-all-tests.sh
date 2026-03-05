@@ -142,6 +142,12 @@ main() {
         failed=$((failed + 1))
     fi
 
+    # Wait for background agent sessions to complete (Issue #644)
+    # REST Channel Tests use async mode, leaving agent sessions running in background.
+    # We need to wait for these sessions to complete before running sync tests
+    # to avoid SDK message routing issues.
+    wait_for_background_sessions 5
+
     # Run Use Case 1 Tests
     if ! run_test_script "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
         failed=$((failed + 1))
