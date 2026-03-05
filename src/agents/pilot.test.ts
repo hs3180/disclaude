@@ -165,4 +165,137 @@ describe('Pilot (Issue #644: ChatId-bound)', () => {
       expect(pilot.hasActiveSession()).toBe(false);
     });
   });
+
+  describe('buildAttachmentsInfo (Issue #808: Native Multimodal)', () => {
+    // Access private method for testing
+    const getAttachmentsInfo = (attachments: any[]) =>
+      (pilot as any).buildAttachmentsInfo(attachments);
+
+    it('should include image guidance for image attachments (native multimodal)', () => {
+      const imageAttachment = [{
+        id: 'test-id',
+        fileName: 'screenshot.png',
+        mimeType: 'image/png',
+        size: 1024,
+        source: 'user' as const,
+        localPath: '/tmp/screenshot.png',
+        createdAt: Date.now(),
+      }];
+
+      const result = getAttachmentsInfo(imageAttachment);
+
+      // Issue #808: Should provide native multimodal guidance
+      expect(result).toContain('Image attachments detected');
+      expect(result).toContain('Read tool');
+      expect(result).toContain('Native multimodal models');
+      expect(result).toContain('screenshot.png');
+      expect(result).toContain('image/png');
+    });
+
+    it('should include image guidance for multiple image attachments', () => {
+      const imageAttachments = [
+        {
+          id: 'test-id-1',
+          fileName: 'photo1.jpg',
+          mimeType: 'image/jpeg',
+          size: 2048,
+          source: 'user' as const,
+          localPath: '/tmp/photo1.jpg',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'test-id-2',
+          fileName: 'photo2.png',
+          mimeType: 'image/png',
+          size: 3072,
+          source: 'user' as const,
+          localPath: '/tmp/photo2.png',
+          createdAt: Date.now(),
+        },
+      ];
+
+      const result = getAttachmentsInfo(imageAttachments);
+
+      expect(result).toContain('Image attachments detected (2)');
+      expect(result).toContain('photo1.jpg');
+      expect(result).toContain('photo2.png');
+    });
+
+    it('should not include image guidance for non-image attachments', () => {
+      const textAttachment = [{
+        id: 'test-id',
+        fileName: 'document.pdf',
+        mimeType: 'application/pdf',
+        size: 10240,
+        source: 'user' as const,
+        localPath: '/tmp/document.pdf',
+        createdAt: Date.now(),
+      }];
+
+      const result = getAttachmentsInfo(textAttachment);
+
+      expect(result).not.toContain('Image attachments detected');
+      expect(result).toContain('document.pdf');
+      expect(result).toContain('application/pdf');
+    });
+
+    it('should handle mixed attachments (images and files)', () => {
+      const mixedAttachments = [
+        {
+          id: 'test-id-1',
+          fileName: 'image.png',
+          mimeType: 'image/png',
+          size: 1024,
+          source: 'user' as const,
+          localPath: '/tmp/image.png',
+          createdAt: Date.now(),
+        },
+        {
+          id: 'test-id-2',
+          fileName: 'data.csv',
+          mimeType: 'text/csv',
+          size: 512,
+          source: 'user' as const,
+          localPath: '/tmp/data.csv',
+          createdAt: Date.now(),
+        },
+      ];
+
+      const result = getAttachmentsInfo(mixedAttachments);
+
+      // Should still show image guidance since there's at least one image
+      expect(result).toContain('Image attachments detected (1)');
+      expect(result).toContain('image.png');
+      expect(result).toContain('data.csv');
+    });
+
+    it('should return empty string for no attachments', () => {
+      const result = getAttachmentsInfo([]);
+      expect(result).toBe('');
+    });
+
+    it('should return empty string for undefined attachments', () => {
+      const result = getAttachmentsInfo(undefined);
+      expect(result).toBe('');
+    });
+
+    it('should detect various image MIME types', () => {
+      const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+
+      for (const mimeType of imageTypes) {
+        const imageAttachment = [{
+          id: 'test-id',
+          fileName: 'test.image',
+          mimeType,
+          size: 1024,
+          source: 'user' as const,
+          localPath: '/tmp/test.image',
+          createdAt: Date.now(),
+        }];
+
+        const result = getAttachmentsInfo(imageAttachment);
+        expect(result).toContain('Image attachments detected');
+      }
+    });
+  });
 });

@@ -772,6 +772,10 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
   /**
    * Build attachments info string for the message content.
+   *
+   * Issue #808: Added native multimodal model support for image attachments.
+   * When images are attached, provides clear guidance for native multimodal models
+   * to use the Read tool directly for image understanding.
    */
   private buildAttachmentsInfo(attachments?: FileRef[]): string {
     if (!attachments || attachments.length === 0) {
@@ -788,12 +792,20 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
       })
       .join('\n');
 
+    // Issue #808: Check for image attachments and provide native multimodal guidance
+    const imageAttachments = attachments.filter(att => att.mimeType?.startsWith('image/'));
+    const imageGuidance = imageAttachments.length > 0
+      ? `
+
+**Image attachments detected (${imageAttachments.length}):** Use the Read tool with the local paths above to view and analyze the images. Native multimodal models can directly understand image content through the Read tool.`
+      : '';
+
     return `
 
 --- Attachments ---
 The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
 
-${attachmentList}
+${attachmentList}${imageGuidance}
 
 You can read these files using the Read tool with the local paths above.`;
   }
