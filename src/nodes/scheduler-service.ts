@@ -6,13 +6,14 @@
  * - Schedule file watching for hot reload
  * - Callbacks for schedule execution
  *
- * Issue #644: Uses AgentPool for per-chatId Pilot instances.
+ * Issue #711: Uses short-lived ScheduleAgents via AgentFactory.
+ * No longer requires AgentPool reference.
  *
  * Architecture:
  * ```
  * PrimaryNode → SchedulerService → { Scheduler, ScheduleFileWatcher }
  *                      ↓
- *              ScheduleManager → schedule execution
+ *              ScheduleManager → AgentFactory.createScheduleAgent
  * ```
  */
 
@@ -25,7 +26,6 @@ import {
   ScheduleFileWatcher,
 } from '../schedule/index.js';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
-import type { AgentPool } from '../agents/agent-pool.js';
 
 const logger = createLogger('SchedulerService');
 
@@ -46,13 +46,11 @@ export interface SchedulerCallbacks {
 /**
  * Configuration for SchedulerService.
  *
- * Issue #644: Uses AgentPool instead of single Pilot.
+ * Issue #711: No longer requires AgentPool.
  */
 export interface SchedulerServiceConfig {
   /** Callbacks for schedule execution */
   callbacks: SchedulerCallbacks;
-  /** AgentPool for getting Pilot per chatId (Issue #644) */
-  agentPool: AgentPool;
 }
 
 /**
@@ -65,14 +63,12 @@ export interface SchedulerServiceConfig {
  */
 export class SchedulerService {
   private readonly callbacks: SchedulerCallbacks;
-  private readonly agentPool: AgentPool;
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
   private schedulesDir: string;
 
   constructor(config: SchedulerServiceConfig) {
     this.callbacks = config.callbacks;
-    this.agentPool = config.agentPool;
 
     const workspaceDir = Config.getWorkspaceDir();
     this.schedulesDir = path.join(workspaceDir, 'schedules');
@@ -84,9 +80,10 @@ export class SchedulerService {
   async start(): Promise<void> {
     const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
 
+    // Issue #711: Scheduler now uses AgentFactory.createScheduleAgent
+    // instead of AgentPool for short-lived agents
     this.scheduler = new Scheduler({
       scheduleManager,
-      agentPool: this.agentPool,
       callbacks: {
         // Directly route messages through PrimaryNode's handleFeedback
         // This ensures scheduled task messages are delivered even though

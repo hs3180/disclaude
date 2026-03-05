@@ -3,9 +3,20 @@
  *
  * Implements AgentFactoryInterface from #282 Phase 3 for unified agent creation.
  * All agent creation goes through the type-specific methods:
- * - createChatAgent: Create chat agents (pilot)
- * - createSkillAgent: Create skill agents using skill files
- * - createSubagent: Create subagents (site-miner)
+ * - createChatAgent: Create chat agents (pilot) - long-lived, stored in AgentPool
+ * - createScheduleAgent: Create schedule agents - short-lived, max 24h lifetime
+ * - createTaskAgent: Create task agents - short-lived, disposed after task
+ * - createSkillAgent: Create skill agents using skill files - short-lived
+ * - createSubagent: Create subagents (site-miner) - short-lived
+ *
+ * Issue #711: Agent Lifecycle Management Strategy
+ *
+ * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
+ * |----------------|----------------|--------------|------------------|
+ * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
+ * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
+ * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
+ * | SkillAgent     | ❌ No          | Task finish  | None (temporary) |
  *
  * Uses unified configuration types from Issue #327.
  * Simplified with SkillAgent (Issue #413).
@@ -13,15 +24,19 @@
  *
  * @example
  * ```typescript
- * // Create a Pilot (ChatAgent)
- * const pilot = AgentFactory.createChatAgent('pilot', callbacks);
+ * // Create a Pilot (ChatAgent) - long-lived, store in AgentPool
+ * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', callbacks);
+ *
+ * // Create a ScheduleAgent - short-lived, dispose after execution
+ * const scheduleAgent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+ * try {
+ *   await scheduleAgent.executeOnce(chatId, prompt);
+ * } finally {
+ *   scheduleAgent.dispose();
+ * }
  *
  * // Create skill agents (built-in)
  * const evaluator = AgentFactory.createSkillAgent('evaluator');
- * const executor = AgentFactory.createSkillAgent('executor');
- *
- * // Create skill agents (custom skills)
- * const customAgent = AgentFactory.createSkillAgent('my-custom-skill');
  *
  * // Create a subagent
  * const siteMiner = AgentFactory.createSubagent('site-miner');
@@ -92,6 +107,7 @@ export class AgentFactory {
    * Create a ChatAgent instance by name.
    *
    * Issue #644: Pilot now requires chatId binding at creation time.
+   * Issue #711: ChatAgents are long-lived and should be stored in AgentPool.
    *
    * @param name - Agent name ('pilot')
    * @param args - Additional arguments:
@@ -142,6 +158,84 @@ export class AgentFactory {
       return new Pilot(config);
     }
     throw new Error(`Unknown ChatAgent: ${name}`);
+  }
+
+  // ============================================================================
+  // Issue #711: Short-lived Agent Creation Methods
+  // ============================================================================
+
+  /**
+   * Create a ScheduleAgent for executing scheduled tasks.
+   *
+   * Issue #711: ScheduleAgents are short-lived and should NOT be stored in AgentPool.
+   * - Maximum lifetime: 24 hours
+   * - Caller is responsible for disposing after execution
+   *
+   * @param chatId - Chat ID for message delivery
+   * @param callbacks - Callbacks for sending messages
+   * @param options - Optional configuration overrides
+   * @returns ChatAgent instance (caller must dispose)
+   *
+   * @example
+   * ```typescript
+   * const agent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+   * try {
+   *   await agent.executeOnce(chatId, prompt);
+   * } finally {
+   *   agent.dispose();
+   * }
+   * ```
+   */
+  static createScheduleAgent(
+    chatId: string,
+    callbacks: PilotCallbacks,
+    options: AgentCreateOptions = {}
+  ): ChatAgent {
+    const baseConfig = this.getBaseConfig(options);
+    const config: PilotConfig = {
+      ...baseConfig,
+      chatId,
+      callbacks,
+    };
+
+    return new Pilot(config);
+  }
+
+  /**
+   * Create a TaskAgent for executing one-time tasks.
+   *
+   * Issue #711: TaskAgents are short-lived and should NOT be stored in AgentPool.
+   * - Maximum lifetime: Until task completion
+   * - Caller is responsible for disposing after execution
+   *
+   * @param chatId - Chat ID for message delivery
+   * @param callbacks - Callbacks for sending messages
+   * @param options - Optional configuration overrides
+   * @returns ChatAgent instance (caller must dispose)
+   *
+   * @example
+   * ```typescript
+   * const agent = AgentFactory.createTaskAgent('chat-123', callbacks);
+   * try {
+   *   await agent.executeOnce(chatId, prompt);
+   * } finally {
+   *   agent.dispose();
+   * }
+   * ```
+   */
+  static createTaskAgent(
+    chatId: string,
+    callbacks: PilotCallbacks,
+    options: AgentCreateOptions = {}
+  ): ChatAgent {
+    const baseConfig = this.getBaseConfig(options);
+    const config: PilotConfig = {
+      ...baseConfig,
+      chatId,
+      callbacks,
+    };
+
+    return new Pilot(config);
   }
 
   /**
