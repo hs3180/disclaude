@@ -118,8 +118,8 @@ export type ControlCommandType =
   | 'switch-node'
   // Group management commands (Issue #486)
   | 'create-group'
-  | 'add-member'
-  | 'remove-member'
+  | 'add-group-member'
+  | 'remove-group-member'
   | 'list-group-members'
   | 'list-group'
   | 'dissolve-group'

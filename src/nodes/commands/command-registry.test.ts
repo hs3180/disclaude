@@ -338,8 +338,8 @@ describe('registerDefaultCommands', () => {
 
     // Group commands
     expect(registry.get('create-group')).toBeDefined();
-    expect(registry.get('add-member')).toBeDefined();
-    expect(registry.get('remove-member')).toBeDefined();
+    expect(registry.get('add-group-member')).toBeDefined();
+    expect(registry.get('remove-group-member')).toBeDefined();
     expect(registry.get('list-group-members')).toBeDefined();
     expect(registry.get('groups')).toBeDefined();  // Issue #648: renamed from list-group
     expect(registry.get('dissolve-group')).toBeDefined();
