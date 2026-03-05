@@ -158,6 +158,8 @@ export class RestartCommand implements Command {
  * Issue #599: 简化建群指令
  * - 无需 members 列表（自动拉入发起者）
  * - 群名可选（自动生成）
+ *
+ * Issue #692: 重构为使用 GroupService.createGroup()
  */
 export class CreateGroupCommand implements Command {
   readonly name = 'create-group';
@@ -180,28 +182,16 @@ export class CreateGroupCommand implements Command {
 
     try {
       const client = services.getFeishuClient();
-      // Pass creatorId to auto-add creator if no members specified
-      const chatId = await services.createDiscussionChat(
-        client,
-        { topic: name, members },
-        userId
-      );
-
-      // Determine actual members for registration
-      const actualMembers = members && members.length > 0 ? members : (userId ? [userId] : []);
-
-      // Register the group
-      services.registerGroup({
-        chatId,
-        name: name || '自动命名',  // Will be updated by createDiscussionChat
-        createdAt: Date.now(),
-        createdBy: userId,
-        initialMembers: actualMembers,
+      // Use GroupService.createGroup() for unified group creation (Issue #692)
+      const groupInfo = await services.createGroup(client, {
+        topic: name,
+        members,
+        creatorId: userId,
       });
 
       return {
         success: true,
-        message: `✅ **群创建成功**\n\n群 ID: \`${chatId}\`\n${name ? `群名称: ${name}\n` : ''}成员数: ${actualMembers.length}`,
+        message: `✅ **群创建成功**\n\n群 ID: \`${groupInfo.chatId}\`\n${name ? `群名称: ${name}\n` : ''}成员数: ${groupInfo.initialMembers.length}`,
       };
     } catch (error) {
       return { success: false, error: `创建群失败: ${(error as Error).message}` };

@@ -5,11 +5,14 @@
  * Stores group metadata in workspace/groups.json.
  *
  * @see Issue #486 - Group management commands
+ * @see Issue #692 - GroupService 支持创建群聊
  */
 
+import type * as lark from '@larksuiteoapi/node-sdk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../../utils/logger.js';
+import { createDiscussionChat } from './chat-ops.js';
 
 const logger = createLogger('GroupService');
 
@@ -27,6 +30,20 @@ export interface GroupInfo {
   createdBy?: string;
   /** Initial members */
   initialMembers: string[];
+}
+
+/**
+ * Options for creating a group.
+ *
+ * @see Issue #692 - GroupService 支持创建群聊
+ */
+export interface CreateGroupOptions {
+  /** Chat topic/name (optional, auto-generated if not provided) */
+  topic?: string;
+  /** Initial member open_ids (optional, creator will be auto-added) */
+  members?: string[];
+  /** Creator open_id (optional, used for auto-adding and tracking) */
+  creatorId?: string;
 }
 
 /**
@@ -157,6 +174,48 @@ export class GroupService {
    */
   getFilePath(): string {
     return this.filePath;
+  }
+
+  /**
+   * Create a new group chat and register it.
+   *
+   * This method combines the create and register operations into a single call,
+   * making it easier for agents to create groups without dealing with the
+   * command system.
+   *
+   * @param client - Feishu API client
+   * @param options - Group creation options
+   * @returns The created group info
+   * @throws Error if group creation fails
+   *
+   * @see Issue #692 - GroupService 支持创建群聊
+   */
+  async createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
+    const { topic, members, creatorId } = options;
+
+    // Create the chat via Feishu API
+    const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
+
+    // Determine actual members for registration
+    const actualMembers = members && members.length > 0
+      ? members
+      : (creatorId ? [creatorId] : []);
+
+    // Build group info
+    const groupInfo: GroupInfo = {
+      chatId,
+      name: topic || '自动命名',
+      createdAt: Date.now(),
+      createdBy: creatorId,
+      initialMembers: actualMembers,
+    };
+
+    // Register the group
+    this.registerGroup(groupInfo);
+
+    logger.info({ chatId, topic, memberCount: actualMembers.length }, 'Group created and registered via GroupService');
+
+    return groupInfo;
   }
 }
 
