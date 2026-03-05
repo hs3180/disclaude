@@ -522,12 +522,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+      logger.info(
+        { chatId: chat_id, messageType: message_type, messageId: message_id },
+        'Processing file/image message'
+      );
       const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
       if (!result.success) {
+        logger.error(
+          { chatId: chat_id, messageType: message_type, messageId: message_id, error: result.error },
+          'File/image processing failed - detailed error'
+        );
         await this.sendMessage({
           chatId: chat_id,
           type: 'text',
-          text: `❌ 处理${message_type === 'image' ? '图片' : '文件'}失败`,
+          text: `❌ 处理${message_type === 'image' ? '图片' : '文件'}失败: ${result.error || '未知错误'}`,
         });
         return;
       }

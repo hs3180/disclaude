@@ -141,7 +141,8 @@ describe('FeishuFileHandler', () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Download failed');
+      expect(result.error).toContain('Download failed');
+      expect(result.error).toContain('key_123');
     });
 
     it('should handle invalid JSON content', async () => {
