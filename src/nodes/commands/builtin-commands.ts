@@ -40,6 +40,13 @@ import {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  ExpertRegisterCommand,
+  ExpertProfileCommand,
+  ExpertSkillAddCommand,
+  ExpertSkillRemoveCommand,
+  ExpertAvailabilityCommand,
+  ExpertListCommand,
+  ExpertUnregisterCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -62,6 +69,13 @@ export {
   ClearDebugCommand,
   ScheduleCommand,
   TaskCommand,
+  ExpertRegisterCommand,
+  ExpertProfileCommand,
+  ExpertSkillAddCommand,
+  ExpertSkillRemoveCommand,
+  ExpertAvailabilityCommand,
+  ExpertListCommand,
+  ExpertUnregisterCommand,
 };
 
 /**
@@ -91,4 +105,12 @@ export function registerDefaultCommands(
   registry.register(new ScheduleCommand());
   // Issue #468: Task control command
   registry.register(new TaskCommand());
+  // Issue #535: Expert registration and skill declaration commands
+  registry.register(new ExpertRegisterCommand());
+  registry.register(new ExpertProfileCommand());
+  registry.register(new ExpertSkillAddCommand());
+  registry.register(new ExpertSkillRemoveCommand());
+  registry.register(new ExpertAvailabilityCommand());
+  registry.register(new ExpertListCommand());
+  registry.register(new ExpertUnregisterCommand());
 }

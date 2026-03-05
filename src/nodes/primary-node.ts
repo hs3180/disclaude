@@ -77,6 +77,9 @@ import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
 import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
+// Expert management (Issue #535)
+import { getExpertService } from '../experts/expert-service.js';
+import type { AddSkillOptions, RemoveSkillOptions, SetAvailabilityOptions } from '../experts/types.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -659,6 +662,15 @@ export class PrimaryNode extends EventEmitter {
           }
           return false; // Default: passive mode enabled (only @mention)
         },
+        // Expert management (Issue #535)
+        registerExpert: (userId: string) => getExpertService().register(userId),
+        unregisterExpert: (userId: string) => getExpertService().unregister(userId),
+        getExpertProfile: (userId: string) => getExpertService().getProfile(userId),
+        addExpertSkill: (options: AddSkillOptions) => getExpertService().addSkill(options),
+        removeExpertSkill: (options: RemoveSkillOptions) => getExpertService().removeSkill(options),
+        setExpertAvailability: (options: SetAvailabilityOptions) => getExpertService().setAvailability(options),
+        listExperts: () => getExpertService().listExperts(),
+        findExpertsBySkill: (skillName: string) => getExpertService().findBySkill(skillName),
       },
     };
 

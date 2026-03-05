@@ -12,7 +12,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 /**
  * Command category for grouping related commands.
  */
-export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
+export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill' | 'expert';
 
 /**
  * Schedule task info for display.
@@ -207,6 +207,31 @@ export interface CommandServices {
 
   /** Get passive mode status for a chat (true = respond to all, false = only @mention) */
   getPassiveMode: (chatId: string) => boolean;
+
+  // Expert management (Issue #535)
+  /** Register a user as an expert */
+  registerExpert: (userId: string) => import('../../experts/types.js').ExpertProfile;
+
+  /** Unregister an expert */
+  unregisterExpert: (userId: string) => boolean;
+
+  /** Get expert profile */
+  getExpertProfile: (userId: string) => import('../../experts/types.js').ExpertProfile | undefined;
+
+  /** Add a skill to expert profile */
+  addExpertSkill: (options: import('../../experts/types.js').AddSkillOptions) => import('../../experts/types.js').ExpertProfile | undefined;
+
+  /** Remove a skill from expert profile */
+  removeExpertSkill: (options: import('../../experts/types.js').RemoveSkillOptions) => import('../../experts/types.js').ExpertProfile | undefined;
+
+  /** Set expert availability */
+  setExpertAvailability: (options: import('../../experts/types.js').SetAvailabilityOptions) => import('../../experts/types.js').ExpertProfile | undefined;
+
+  /** List all experts */
+  listExperts: () => import('../../experts/types.js').ExpertProfile[];
+
+  /** Find experts by skill */
+  findExpertsBySkill: (skillName: string) => import('../../experts/types.js').ExpertProfile[];
 }
 
 /**
@@ -305,4 +330,5 @@ export const CATEGORY_CONFIG: Record<CommandCategory, CategoryInfo> = {
   task: { label: '任务', emoji: '📋', order: 5 },
   schedule: { label: '定时', emoji: '⏰', order: 6 },
   skill: { label: '技能', emoji: '🎯', order: 7 },
+  expert: { label: '专家', emoji: '👨‍💼', order: 8 },
 };

@@ -82,6 +82,15 @@ describe('ScheduleCommand', () => {
     // Passive mode management (Issue #601)
     setPassiveMode: () => {},
     getPassiveMode: () => false,
+    // Expert management (Issue #535)
+    registerExpert: () => ({ userId: 'ou_test', registeredAt: Date.now(), skills: [], updatedAt: Date.now() }),
+    unregisterExpert: () => false,
+    getExpertProfile: () => undefined,
+    addExpertSkill: () => undefined,
+    removeExpertSkill: () => undefined,
+    setExpertAvailability: () => undefined,
+    listExperts: () => [],
+    findExpertsBySkill: () => [],
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({

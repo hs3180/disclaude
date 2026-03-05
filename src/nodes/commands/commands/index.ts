@@ -33,3 +33,14 @@ export { ScheduleCommand } from './schedule-command.js';
 
 // Task command
 export { TaskCommand } from './task-command.js';
+
+// Expert commands (Issue #535)
+export {
+  ExpertRegisterCommand,
+  ExpertProfileCommand,
+  ExpertSkillAddCommand,
+  ExpertSkillRemoveCommand,
+  ExpertAvailabilityCommand,
+  ExpertListCommand,
+  ExpertUnregisterCommand,
+} from './expert-commands.js';
