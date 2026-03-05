@@ -31,6 +31,8 @@ function createMockServices(): CommandServices {
     registerGroup: () => {},
     unregisterGroup: () => false,
     listGroups: () => [],
+    // Group creation (Issue #692)
+    createGroup: () => Promise.resolve({ chatId: 'oc_test', name: 'Test Group', createdAt: Date.now(), initialMembers: [] }),
     getBotChats: () => Promise.resolve([]),
     setDebugGroup: () => null,
     getDebugGroup: () => null,

@@ -33,6 +33,20 @@ export interface GroupInfo {
 }
 
 /**
+ * Options for creating a group.
+ *
+ * @see Issue #692 - GroupService 支持创建群聊
+ */
+export interface CreateGroupOptions {
+  /** Chat topic/name (optional, auto-generated if not provided) */
+  topic?: string;
+  /** Initial member open_ids (optional, creator will be auto-added) */
+  members?: string[];
+  /** Creator open_id (optional, used for auto-adding and tracking) */
+  creatorId?: string;
+}
+
+/**
  * Group registry storage format.
  */
 interface GroupRegistry {
@@ -48,18 +62,6 @@ interface GroupRegistry {
 export interface GroupServiceConfig {
   /** Storage file path (default: workspace/groups.json) */
   filePath?: string;
-}
-
-/**
- * Options for creating a new group.
- */
-export interface CreateGroupOptions {
-  /** Group topic/name (optional, auto-generated if not provided) */
-  topic?: string;
-  /** Initial member open_ids */
-  members?: string[];
-  /** Creator open_id (will be auto-added if no members) */
-  creatorId?: string;
 }
 
 /**
@@ -168,41 +170,30 @@ export class GroupService {
   }
 
   /**
-   * Options for creating a group.
+   * Get the storage file path.
    */
-  createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
-    return this.createGroupWithClient(client, options);
+  getFilePath(): string {
+    return this.filePath;
   }
 
   /**
-   * Create a group with Feishu client and auto-register.
+   * Create a new group chat and register it.
    *
-   * This method combines group creation and registration in one operation,
-   * making it easier for agents to create groups without going through
-   * the command system.
+   * This method combines the create and register operations into a single call,
+   * making it easier for agents to create groups without dealing with the
+   * command system.
    *
    * @param client - Feishu API client
    * @param options - Group creation options
-   * @returns Created group info
+   * @returns The created group info
    * @throws Error if group creation fails
    *
-   * @example
-   * ```typescript
-   * const groupInfo = await groupService.createGroup(client, {
-   *   topic: '讨论组',
-   *   members: ['ou_user1', 'ou_user2'],
-   *   creatorId: 'ou_creator'
-   * });
-   * console.log(groupInfo.chatId); // New group chat ID
-   * ```
+   * @see Issue #692 - GroupService 支持创建群聊
    */
-  async createGroupWithClient(
-    client: lark.Client,
-    options: CreateGroupOptions = {}
-  ): Promise<GroupInfo> {
+  async createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
     const { topic, members, creatorId } = options;
 
-    // Create the chat using ChatOps
+    // Create the chat via Feishu API
     const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
 
     // Determine actual members for registration
@@ -219,19 +210,12 @@ export class GroupService {
       initialMembers: actualMembers,
     };
 
-    // Auto-register the group
+    // Register the group
     this.registerGroup(groupInfo);
 
-    logger.info({ chatId, topic, memberCount: actualMembers.length }, 'Group created and registered');
+    logger.info({ chatId, topic, memberCount: actualMembers.length }, 'Group created and registered via GroupService');
 
     return groupInfo;
-  }
-
-  /**
-   * Get the storage file path.
-   */
-  getFilePath(): string {
-    return this.filePath;
   }
 }
 
