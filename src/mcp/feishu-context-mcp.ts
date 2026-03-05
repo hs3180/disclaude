@@ -199,14 +199,44 @@ export async function send_user_feedback(params: {
   }, 'send_user_feedback called');
 
   try {
+    // Pre-validation with helpful error messages
     if (!content) {
-      throw new Error('content is required');
+      return {
+        success: false,
+        error: 'content is required',
+        message: '⚠️ Error: "content" parameter is required. Provide a string for text format or an object for card format.',
+      };
     }
     if (!format) {
-      throw new Error('format is required (must be "text" or "card")');
+      return {
+        success: false,
+        error: 'format is required',
+        message: '⚠️ Error: "format" parameter is REQUIRED. Use "text" for plain text or "card" for interactive cards.',
+      };
     }
     if (!chatId) {
-      throw new Error('chatId is required');
+      return {
+        success: false,
+        error: 'chatId is required',
+        message: '⚠️ Error: "chatId" parameter is required. Get this from task context/metadata.',
+      };
+    }
+
+    // Validate content type matches format
+    // Note: card format accepts both object and JSON string
+    if (format === 'text' && typeof content !== 'string') {
+      return {
+        success: false,
+        error: 'Invalid content type for text format',
+        message: '⚠️ Error: When format="text", content must be a string, not an object. Example: "Hello world"',
+      };
+    }
+    if (format === 'card' && typeof content !== 'string' && typeof content !== 'object') {
+      return {
+        success: false,
+        error: 'Invalid content type for card format',
+        message: '⚠️ Error: When format="card", content must be an object or JSON string. Example: { "config": {...}, "header": {...}, "elements": [...] }',
+      };
     }
 
     // CLI mode: Log the message instead of sending to Feishu
@@ -852,7 +882,57 @@ export async function wait_for_interaction(params: {
  */
 export const feishuContextTools = {
   send_user_feedback: {
-    description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card". Use this to report progress, provide updates, or send rich content to users.\n\n**Thread Support:**\nWhen parentMessageId is provided, the message is sent as a reply to that message, creating a thread in Feishu. This helps keep related messages together.\n\n**Format Guidelines:**\n- For "text" format: Send plain text as a string\n- For "card" format: Send a Feishu interactive card object following the structure below\n\n**Valid Card Structure:**\nA valid card must include:\n- config: Object with optional "wide_screen_mode"\n- header: Object with "title" (containing {"tag": "plain_text", "content": "..."}) and "template" color\n- elements: Array of element objects\n\n**Supported Element Types:**\n- Markdown content: {"tag": "markdown", "content": "**Your markdown text**"}\n- Divider: {"tag": "hr"}\n- Plain text in div: {"tag": "div", "text": {"tag": "plain_text", "content": "Your text"}}\n- Column set (for tables): {"tag": "column_set", "flex_mode": "none", "background_style": "grey", "columns": [...]}\n\n⚠️ **IMPORTANT: Markdown Tables NOT Supported**\nFeishu cards do NOT support Markdown table syntax (| col1 | col2 |). Tables will render as raw text.\n\n**Use column_set for Tables Instead:**\n```json\n{\n  "tag": "column_set",\n  "flex_mode": "none",\n  "background_style": "grey",\n  "columns": [\n    {\n      "tag": "column",\n      "width": "weighted",\n      "weight": 1,\n      "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "**Header 1**"}}]\n    },\n    {\n      "tag": "column",\n      "width": "weighted",\n      "weight": 1,\n      "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "**Header 2**"}}]\n    }\n  ]\n}\n```\nFor each data row, add another column_set with background_style alternating between "grey" and "" (empty) for readability.\n\n**Reference:**\n- Markdown: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags\n- Column Set: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/column-set',
+    description: `Send a message to a Feishu chat.
+
+⚠️ **IMPORTANT: "format" parameter is REQUIRED**
+
+**Usage Examples:**
+
+Text message:
+\`\`\`json
+{ "content": "Hello world", "format": "text", "chatId": "oc_xxx" }
+\`\`\`
+
+Card message:
+\`\`\`json
+{
+  "content": {
+    "config": { "wide_screen_mode": true },
+    "header": { "title": { "tag": "plain_text", "content": "Title" }, "template": "blue" },
+    "elements": [{ "tag": "div", "text": { "tag": "lark_md", "content": "**Bold** text" } }]
+  },
+  "format": "card",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+**Parameter Type Requirements:**
+| format | content type | Description |
+|--------|-------------|-------------|
+| \`"text"\` | \`string\` | Plain text or Markdown |
+| \`"card"\` | \`object\` or \`string\` | Feishu card object or JSON string |
+
+**Common Mistakes:**
+- ❌ Missing "format" parameter (REQUIRED!)
+- ❌ format="text" with object content (must be string)
+- ❌ format="card" with invalid card structure
+
+**Thread Support:**
+When parentMessageId is provided, the message is sent as a reply to that message, creating a thread in Feishu.
+
+**Valid Card Structure:**
+- config: Object with optional "wide_screen_mode"
+- header: Object with "title" (containing {"tag": "plain_text", "content": "..."}) and "template" color
+- elements: Array of element objects
+
+**Supported Element Types:**
+- Markdown content: {"tag": "markdown", "content": "**Your markdown text**"}
+- Divider: {"tag": "hr"}
+- Plain text in div: {"tag": "div", "text": {"tag": "plain_text", "content": "Your text"}}
+- Column set (for tables): {"tag": "column_set", "flex_mode": "none", "background_style": "grey", "columns": [...]}
+
+⚠️ **Markdown Tables NOT Supported in Cards**
+Use column_set instead. See: https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/column-set`,
     parameters: {
       type: 'object',
       properties: {
