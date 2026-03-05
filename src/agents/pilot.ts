@@ -217,7 +217,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
           content: enhancedContent,
         },
         parent_tool_use_id: null,
-        session_id: '',
+        session_id: chatId, // Session isolation (Issue #644): Use chatId as session identifier
       };
 
       // Push message to channel
@@ -369,7 +369,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
         content: enhancedContent,
       },
       parent_tool_use_id: null,
-      session_id: '',
+      session_id: chatId, // Session isolation (Issue #644): Use chatId as session identifier
     };
 
     // Push message to channel - generator will yield it to SDK
@@ -467,19 +467,44 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * - Limit consecutive restarts (max 3 by default)
    * - Apply exponential backoff between restarts
    * - Open circuit breaker after max restarts exceeded
+   *
+   * Session Isolation (Issue #644):
+   * - Validates that SDK messages have matching sessionId with chatId
+   * - Prevents message routing confusion in concurrent scenarios
+   * - Messages with mismatched sessionId are logged and discarded
    */
   private async processIterator(
     chatId: string,
-    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string; sessionId?: string } }>
   ): Promise<void> {
     let iteratorError: Error | null = null;
     let messageCount = 0;
+    let discardedCount = 0;
 
     try {
       for await (const { parsed } of iterator) {
         messageCount++;
+
+        // Session isolation check (Issue #644):
+        // Validate that SDK message belongs to this session.
+        // If sessionId is present and doesn't match chatId, discard the message
+        // to prevent routing confusion in concurrent scenarios.
+        if (parsed.sessionId && parsed.sessionId !== chatId) {
+          discardedCount++;
+          this.logger.warn(
+            {
+              expectedChatId: chatId,
+              receivedSessionId: parsed.sessionId,
+              messageType: parsed.type,
+              contentPreview: parsed.content?.substring(0, 100),
+            },
+            'SDK message sessionId mismatch - message discarded to prevent routing confusion'
+          );
+          continue; // Skip this message
+        }
+
         this.logger.debug(
-          { chatId, messageCount, type: parsed.type },
+          { chatId, messageCount, type: parsed.type, sessionId: parsed.sessionId },
           'SDK message received'
         );
 
