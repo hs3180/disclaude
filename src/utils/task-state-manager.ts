@@ -363,6 +363,8 @@ export class TaskStateManager {
       // Sort by completion time (newest first) and limit
       // Use updatedAt since it reflects when the task was completed/cancelled
       // Secondary sort by createdAt for stable ordering when updatedAt is equal
+      // Tertiary sort by id (descending) for stable ordering when all timestamps are equal
+      // Note: Task IDs contain timestamps, so higher ID = more recent
       return tasks
         .sort((a, b) => {
           const updatedAtDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
@@ -370,7 +372,12 @@ export class TaskStateManager {
             return updatedAtDiff;
           }
           // When updatedAt is equal, sort by createdAt (newest first)
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          const createdAtDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (createdAtDiff !== 0) {
+            return createdAtDiff;
+          }
+          // When all timestamps are equal, sort by id (higher ID = more recent)
+          return b.id.localeCompare(a.id);
         })
         .slice(0, limit);
     } catch {
