@@ -452,53 +452,107 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
 
-    // For sync mode, set up response handling
+    // For sync mode, set up response handling BEFORE calling messageHandler
+    // to avoid race condition where done signal arrives before waitForResponse is called
     if (syncMode) {
       this.responseBuffers.set(messageId, []);
       this.chatToMessage.set(chatId, messageId);
-    }
 
-    // Emit as incoming message
-    if (this.messageHandler) {
+      // Issue #732: Pre-register pending response to avoid race condition
+      // The pending response is set up here before messageHandler is called,
+      // ensuring that done signals arriving during messageHandler execution
+      // will find the pending response entry.
+      const timeoutMs = 240000; // 240 seconds (4 minutes)
+      const pendingPromise = this.createPendingResponse(chatId, messageId, timeoutMs);
+
+      // Emit as incoming message
+      if (this.messageHandler) {
+        try {
+          await this.messageHandler({
+            messageId,
+            chatId,
+            userId,
+            content: chatRequest.message,
+            messageType: 'text',
+            timestamp: Date.now(),
+            threadId: chatRequest.threadId,
+          });
+        } catch (error) {
+          logger.error({ err: error, messageId }, 'Failed to handle message');
+          // Reject and clean up pending response on error
+          this.rejectPendingResponse(chatId, new Error('Failed to process message'));
+          this.cleanupPendingResponse(chatId, messageId);
+          // The pendingPromise will reject, so we wait for it
+          try {
+            await pendingPromise;
+          } catch {
+            // Expected - the promise was rejected
+          }
+          this.sendError(res, 500, 'Failed to process message');
+          return;
+        }
+      } else {
+        logger.warn({ chatId, messageId }, 'No messageHandler registered');
+        // Reject the pending response so the promise settles
+        this.rejectPendingResponse(chatId, new Error('No messageHandler registered'));
+      }
+
+      // Prepare response
+      const response: ChatResponse = {
+        success: true,
+        messageId,
+        chatId,
+      };
+
+      // Wait for the pre-registered pending response
       try {
-        await this.messageHandler({
-          messageId,
-          chatId,
-          userId,
-          content: chatRequest.message,
-          messageType: 'text',
-          timestamp: Date.now(),
-          threadId: chatRequest.threadId,
-        });
+        const responseText = await pendingPromise;
+        response.response = responseText;
       } catch (error) {
-        logger.error({ err: error, messageId }, 'Failed to handle message');
-        this.sendError(res, 500, 'Failed to process message');
+        // Timeout, channel stopped, or no messageHandler
+        this.cleanupPendingResponse(chatId, messageId);
+        this.sendError(res, 500, (error as Error).message);
         return;
       }
-    } else {
-      logger.warn({ chatId, messageId }, 'No messageHandler registered');
-    }
-
-    // Prepare response
-    const response: ChatResponse = {
-      success: true,
-      messageId,
-      chatId,
-    };
-
-    if (syncMode) {
-      // Wait for response with timeout (4 minutes for AI processing)
-      const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
-      response.response = responseText;
 
       // Cleanup
-      this.responseBuffers.delete(messageId);
-      this.chatToMessage.delete(chatId);
-    }
+      this.cleanupPendingResponse(chatId, messageId);
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(response));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+    } else {
+      // Non-sync mode (fire and forget)
+      // Emit as incoming message
+      if (this.messageHandler) {
+        try {
+          await this.messageHandler({
+            messageId,
+            chatId,
+            userId,
+            content: chatRequest.message,
+            messageType: 'text',
+            timestamp: Date.now(),
+            threadId: chatRequest.threadId,
+          });
+        } catch (error) {
+          logger.error({ err: error, messageId }, 'Failed to handle message');
+          this.sendError(res, 500, 'Failed to process message');
+          return;
+        }
+      } else {
+        logger.warn({ chatId, messageId }, 'No messageHandler registered');
+      }
+
+      // Prepare response
+      const response: ChatResponse = {
+        success: true,
+        messageId,
+        chatId,
+      };
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+    }
   }
 
   /**
@@ -534,6 +588,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
   /**
    * Wait for response in sync mode.
+   * @deprecated Use createPendingResponse instead to avoid race conditions (Issue #732)
    */
   private waitForResponse(chatId: string, messageId: string, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -565,6 +620,76 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         timeout,
       });
     });
+  }
+
+  /**
+   * Create a pending response entry BEFORE calling messageHandler.
+   * This prevents race conditions where done signal arrives before waitForResponse is called.
+   *
+   * Issue #732: REST Channel sync response race condition fix
+   *
+   * @param chatId - Chat ID for the pending response
+   * @param messageId - Message ID for buffer lookup
+   * @param timeoutMs - Timeout in milliseconds
+   * @returns Promise that resolves with the response text
+   */
+  private createPendingResponse(chatId: string, messageId: string, timeoutMs: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        // Timeout - clean up and reject
+        this.pendingResponses.delete(chatId);
+        this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId);
+        reject(new Error('Response timeout'));
+      }, timeoutMs);
+
+      // Store pending response with wrapped resolve/reject
+      this.pendingResponses.set(chatId, {
+        resolve: (response: string) => {
+          clearTimeout(timeout);
+          resolve(response);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+        response: [],
+        timeout,
+      });
+
+      logger.debug({ chatId, messageId, timeoutMs }, 'Pending response registered');
+    });
+  }
+
+  /**
+   * Clean up pending response entries.
+   *
+   * @param chatId - Chat ID to clean up
+   * @param messageId - Message ID to clean up
+   */
+  private cleanupPendingResponse(chatId: string, messageId: string): void {
+    const pending = this.pendingResponses.get(chatId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      this.pendingResponses.delete(chatId);
+    }
+    this.responseBuffers.delete(messageId);
+    this.chatToMessage.delete(chatId);
+    logger.debug({ chatId, messageId }, 'Pending response cleaned up');
+  }
+
+  /**
+   * Reject a pending response without cleaning up.
+   * Used to signal that the response should fail (e.g., on error or no handler).
+   *
+   * @param chatId - Chat ID to reject
+   * @param error - Error to reject with
+   */
+  private rejectPendingResponse(chatId: string, error: Error): void {
+    const pending = this.pendingResponses.get(chatId);
+    if (pending) {
+      pending.reject(error);
+    }
   }
 
   /**
