@@ -28,6 +28,8 @@ vi.mock('fs/promises', () => ({
     writeFile: vi.fn().mockResolvedValue(undefined),
     appendFile: vi.fn().mockResolvedValue(undefined),
     access: vi.fn().mockRejectedValue(new Error('File not found')),
+    rename: vi.fn().mockResolvedValue(undefined),
+    unlink: vi.fn().mockResolvedValue(undefined),
   },
   mkdir: vi.fn().mockResolvedValue(undefined),
   readdir: vi.fn().mockResolvedValue([]),
@@ -35,6 +37,8 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   appendFile: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockRejectedValue(new Error('File not found')),
+  rename: vi.fn().mockResolvedValue(undefined),
+  unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe('MessageLogger', () => {
@@ -57,6 +61,8 @@ describe('MessageLogger', () => {
     vi.mocked(mockFs.writeFile).mockClear().mockResolvedValue(undefined);
     vi.mocked(mockFs.appendFile).mockClear().mockResolvedValue(undefined);
     vi.mocked(mockFs.access).mockClear().mockRejectedValue(new Error('File not found'));
+    vi.mocked(mockFs.rename).mockClear().mockResolvedValue(undefined);
+    vi.mocked(mockFs.unlink).mockClear().mockResolvedValue(undefined);
 
     // Also reset default exports if they exist
     if (mockFs.default) {
@@ -66,6 +72,8 @@ describe('MessageLogger', () => {
       vi.mocked(mockFs.default.writeFile).mockClear().mockResolvedValue(undefined);
       vi.mocked(mockFs.default.appendFile).mockClear().mockResolvedValue(undefined);
       vi.mocked(mockFs.default.access).mockClear().mockRejectedValue(new Error('File not found'));
+      vi.mocked(mockFs.default.rename).mockClear().mockResolvedValue(undefined);
+      vi.mocked(mockFs.default.unlink).mockClear().mockResolvedValue(undefined);
     }
 
     // Re-import to get fresh instance
@@ -326,6 +334,123 @@ describe('MessageLogger', () => {
 
       expect(messageLogger.isMessageProcessed('msg-a1')).toBe(true);
       expect(messageLogger.isMessageProcessed('msg-b1')).toBe(true);
+    });
+  });
+
+  describe('Date-based storage', () => {
+    it('should create log files in date-based directory', async () => {
+      await messageLogger.logIncomingMessage('msg-date', 'user-1', 'chat-date', 'Test', 'text');
+
+      // Check that mkdir was called with a date-based path
+      const mkdirCalls = vi.mocked(mockFs.mkdir).mock.calls;
+      const hasDateDir = mkdirCalls.some(call => {
+        const pathArg = String(call[0]);
+        return pathArg.includes('2026-') || /\d{4}-\d{2}-\d{2}/.test(pathArg);
+      });
+      expect(hasDateDir).toBe(true);
+    });
+
+    it('should use date directory in file path', async () => {
+      await messageLogger.logIncomingMessage('msg-path', 'user-1', 'chat-path', 'Test', 'text');
+
+      // writeFile should be called with a path containing date directory
+      const writeCalls = vi.mocked(mockFs.writeFile).mock.calls;
+      expect(writeCalls.length).toBeGreaterThan(0);
+
+      const filePath = String(writeCalls[0][0]);
+      // Path should match pattern: .../chat-logs/YYYY-MM-DD/chatId.md
+      expect(filePath).toMatch(/\d{4}-\d{2}-\d{2}/);
+    });
+  });
+
+  describe('Legacy file migration', () => {
+    it('should migrate legacy flat files on init', async () => {
+      // Mock readdir to return legacy files
+      const mockDirent = (name: string, isFile: boolean) => ({
+        name,
+        isFile: () => isFile,
+        isDirectory: () => !isFile,
+      });
+
+      const entries = [
+        mockDirent('chat-legacy.md', true),
+        mockDirent('2026-03-05', false), // existing date dir
+      ];
+      vi.mocked(mockFs.readdir).mockResolvedValueOnce(
+        // @ts-expect-error - Mock Dirent type mismatch is expected in tests
+        entries
+      );
+
+      await messageLogger.init();
+
+      // Should have called rename to move the file
+      expect(mockFs.rename).toHaveBeenCalled();
+    });
+
+    it('should handle no legacy files gracefully', async () => {
+      // Mock readdir to return only directories
+      const mockDirent = (name: string, isFile: boolean) => ({
+        name,
+        isFile: () => isFile,
+        isDirectory: () => !isFile,
+      });
+
+      const entries = [
+        mockDirent('2026-03-05', false),
+        mockDirent('2026-03-04', false),
+      ];
+      vi.mocked(mockFs.readdir).mockResolvedValueOnce(
+        // @ts-expect-error - Mock Dirent type mismatch is expected in tests
+        entries
+      );
+
+      await messageLogger.init();
+
+      // Should not have called rename
+      expect(mockFs.rename).not.toHaveBeenCalled();
+    });
+
+    it('should remove duplicate legacy files if migrated file exists', async () => {
+      const mockDirent = (name: string, isFile: boolean) => ({
+        name,
+        isFile: () => isFile,
+        isDirectory: () => !isFile,
+      });
+
+      const entries = [mockDirent('chat-dup.md', true)];
+      vi.mocked(mockFs.readdir).mockResolvedValueOnce(
+        // @ts-expect-error - Mock Dirent type mismatch is expected in tests
+        entries
+      );
+
+      // Mock access to succeed (file exists in new location)
+      vi.mocked(mockFs.access).mockResolvedValueOnce(undefined);
+
+      await messageLogger.init();
+
+      // Should have called unlink to remove duplicate
+      expect(mockFs.unlink).toHaveBeenCalled();
+    });
+  });
+
+  describe('In-memory deduplication only', () => {
+    it('should not load message IDs from files at startup', () => {
+      // This test verifies that we only use in-memory deduplication
+      // The logger should start with an empty cache
+
+      expect(messageLogger.isMessageProcessed('old-msg-id')).toBe(false);
+    });
+
+    it('should track messages in memory during session', async () => {
+      const messageId = 'session-msg';
+
+      await messageLogger.logIncomingMessage(messageId, 'user-1', 'chat-1', 'Test', 'text');
+
+      expect(messageLogger.isMessageProcessed(messageId)).toBe(true);
+
+      messageLogger.clearCache();
+
+      expect(messageLogger.isMessageProcessed(messageId)).toBe(false);
     });
   });
 });
