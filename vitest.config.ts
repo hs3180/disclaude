@@ -13,7 +13,14 @@ import { defineConfig } from 'vitest/config';
  *
  * @see https://vitest.dev/guide/cli.html#options
  * @see Issue #80 - OOM issue with child processes
+ * @see Issue #825 - vitest-worker timeout fix with increased timeouts
  */
+
+// CI environments need longer timeouts due to slower I/O and module loading
+const isCI = process.env.CI === 'true';
+const testTimeout = isCI ? 30000 : 10000;
+const hookTimeout = isCI ? 30000 : 10000;
+
 export default defineConfig({
   test: {
     globals: true,
@@ -38,6 +45,10 @@ export default defineConfig({
         singleFork: true,
       },
     },
+    // Increased timeouts for CI to prevent "Timeout calling fetch" errors
+    // during module loading (Issue #825)
+    testTimeout,
+    hookTimeout,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -67,6 +78,5 @@ export default defineConfig({
       include: ['src/**/*.ts'],
     },
     setupFiles: [],
-    testTimeout: 10000,
   },
 });
