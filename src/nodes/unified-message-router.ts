@@ -6,29 +6,31 @@
  * - Supports admin chat for debug/progress messages
  * - Handles feedback messages (text, card, file, done, error)
  *
- * Routing Rules (Issue #659):
+ * Routing Rules (Issue #675):
  * ```
  * Message Type          →    Target Channel
- * ────────────────────────────────────────────
- * text/result/complete  →    user chat
- * card/file             →    user chat
- * error/critical        →    admin + user chat
- * debug/progress        →    admin chat only
- * done                  →    user chat (triggers onTaskDone)
- * ```
+* ────────────────────────────────────────────
+* text/result/card/file  →    admin + user chat
+* error                 →    admin + user chat
+* debug/progress        →    admin chat only
+* done                  →    admin + user chat (triggers onTaskDone)
+* ```
+ *
+ * Admin chat receives ALL message types for complete monitoring (Issue #675).
  *
  * Architecture:
- * ```
- * ExecutionNode → UnifiedMessageRouter → Channels
- *                      ↓
- *             (level-based routing)
- *                      ↓
- *         ┌───────────┴───────────┐
- *         ↓                       ↓
- *    Admin Chat              User Chat
- * ```
+* ```
+* ExecutionNode → UnifiedMessageRouter → Channels
+*                      ↓
+*             (level-based routing)
+*                      ↓
+*         ┌───────────┴───────────┐
+*         ↓                       ↓
+*    Admin Chat              User Chat
+* ```
  *
  * @see Issue #659
+ * @see Issue #675
  * @module nodes/unified-message-router
  */
 
@@ -216,11 +218,16 @@ export class UnifiedMessageRouter {
 
   /**
    * Determine routing for a message based on type and level.
+   *
+   * Routing Rules (Issue #675):
+   * - Admin chat receives ALL message types for complete monitoring
+   * - User chat receives text/card/file/error/done messages
+   * - Debug/progress → admin chat only
    */
   private determineRouting(type: UnifiedMessageType, level?: MessageLevel): RoutingDecision {
-    // Default: send to user chat only
+    // Default: send to both admin and user chat (Issue #675)
     const decision: RoutingDecision = {
-      toAdmin: false,
+      toAdmin: !!this.adminChatId,
       toUser: true,
       level: level ?? MessageLevel.INFO,
     };
@@ -245,11 +252,12 @@ export class UnifiedMessageRouter {
       case 'card':
       case 'file':
       case 'done':
-        // User-facing messages → user chat only (unless level-based override)
+        // User-facing messages → admin + user chat (Issue #675)
+        // Admin chat receives all messages for monitoring
+        decision.toAdmin = !!this.adminChatId;
         decision.toUser = true;
         if (level && !this.userLevels.has(level)) {
           decision.toUser = false;
-          decision.toAdmin = !!this.adminChatId;
         }
         break;
     }
