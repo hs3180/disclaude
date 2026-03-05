@@ -456,7 +456,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     // Async mode: POST /api/chat/{chatId}
     const asyncChatMatch = url.match(new RegExp(`^${this.apiPrefix}/chat/([^/]+)$`));
     if (asyncChatMatch && req.method === 'POST') {
-      const chatId = asyncChatMatch[1];
+      const [, chatId] = asyncChatMatch;
       await this.handleAsyncChat(req, res, chatId);
       return;
     }
