@@ -934,6 +934,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * Handle chat member added event.
    * Triggered when members are added to a chat.
    * Issue #463: Send welcome message when new members join a group.
+   * Issue #676: Send help message when users join a group that already has the bot.
    */
   private async handleChatMemberAdded(data: FeishuChatMemberAddedEventData): Promise<void> {
     if (!this.isRunning || !this.welcomeService) {
@@ -947,7 +948,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     // Only send welcome to group chats
-    if (!this.isGroupChat(event.chat_id)) {
+    // Use welcomeService.isGroupChat() which checks chat_id prefix (oc_)
+    // Note: this.isGroupChat() expects chat_type string, not chat_id
+    if (!this.welcomeService.isGroupChat(event.chat_id)) {
       logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping welcome');
       return;
     }
