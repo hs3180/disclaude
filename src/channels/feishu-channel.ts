@@ -22,6 +22,7 @@ import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { filteredMessageForwarder } from '../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../config/types.js';
 import { TaskTracker } from '../utils/task-tracker.js';
+import { stripLeadingMentions } from '../utils/mention-parser.js';
 import { BaseChannel } from './base-channel.js';
 import type {
   FeishuEventData,
@@ -682,11 +683,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Check for control commands
     // Control commands should ALWAYS be handled through the control channel, regardless of mentions
     // This ensures /reset, /status, etc. work correctly even when bot is @mentioned
-    const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
     // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
     const commandRegistry = getCommandRegistry();
+
+    // Issue #698: Strip leading mentions to detect commands in messages like "@bot /help"
+    // After stripping, we can check if the remaining text starts with '/'
+    const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Issue #460 & #511: Group chat passive mode
     // In group chats, only respond when bot is mentioned (@bot)
@@ -695,7 +699,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #650: Move passive mode check BEFORE command processing
     // Issue #677: Allow /passive command to bypass passive mode check to avoid deadlock
     // (when mention detection fails, users still need a way to disable passive mode)
-    const isPassiveCommand = trimmedText.startsWith('/passive');
+    const isPassiveCommand = textWithoutMentions.startsWith('/passive');
     const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug(
@@ -707,8 +711,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    if (trimmedText.startsWith('/')) {
-      const [command, ...args] = trimmedText.slice(1).split(/\s+/);
+    if (textWithoutMentions.startsWith('/')) {
+      const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
 
       // Handle control commands through the control channel
@@ -721,7 +725,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           const response = await this.emitControl({
             type: cmd as any,
             chatId: chat_id,
-            data: { args, rawText: trimmedText, senderOpenId: this.extractOpenId(sender) },
+            data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
           });
 
           // Only return if command was successfully handled
@@ -779,8 +783,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     // Log if bot is mentioned with a non-control command (for debugging)
-    if (botMentioned && trimmedText.startsWith('/')) {
-      logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
+    if (botMentioned && textWithoutMentions.startsWith('/')) {
+      logger.debug({ messageId: message_id, chatId: chat_id, command: textWithoutMentions }, 'Bot mentioned with non-control command, passing to agent');
     }
 
     // Issue #514: Add typing reaction only for messages that will be processed

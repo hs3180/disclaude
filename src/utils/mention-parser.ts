@@ -161,3 +161,80 @@ export function normalizeMentionPlaceholders(
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/**
+ * Strip leading mentions from text.
+ *
+ * This is used to detect commands in messages that start with @mentions.
+ * For example: "@bot /help" should be recognized as a command "/help".
+ *
+ * Handles multiple mention formats:
+ * - `<at user_id="xxx">@Name</at>` - normalized format
+ * - `${key}` - placeholder format (key is from mentions array)
+ * - `@Name` - simple @mention format
+ *
+ * Issue #698: Commands should be detected after stripping leading mentions
+ *
+ * @param text - Text content with potential leading mentions
+ * @param mentions - Mentions array from Feishu message
+ * @returns Text with leading mentions stripped
+ */
+export function stripLeadingMentions(
+  text: string,
+  mentions: MentionsArray | undefined | null
+): string {
+  if (!text) {
+    return text;
+  }
+
+  let result = text.trim();
+
+  // Build a map of key -> name for placeholder replacement
+  const keyToName = new Map<string, string>();
+  if (mentions) {
+    for (const mention of mentions) {
+      if (mention.key && mention.name) {
+        keyToName.set(mention.key, mention.name);
+      }
+    }
+  }
+
+  // Keep stripping leading mentions until no more are found
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    // Pattern 1: <at user_id="xxx">@Name</at> at the start
+    const atTagMatch = result.match(/^<at[^>]*>@[^<]+<\/at>\s*/i);
+    if (atTagMatch) {
+      result = result.slice(atTagMatch[0].length).trim();
+      changed = true;
+      continue;
+    }
+
+    // Pattern 2: ${key} at the start (placeholder format)
+    if (keyToName.size > 0) {
+      for (const [key] of keyToName) {
+        const placeholderPattern = new RegExp(`^\\$\\{${escapeRegExp(key)}\\}\\s*`);
+        if (placeholderPattern.test(result)) {
+          result = result.replace(placeholderPattern, '').trim();
+          changed = true;
+          break;
+        }
+      }
+      if (changed) {
+        continue;
+      }
+    }
+
+    // Pattern 3: @Name at the start (simple format)
+    // Match @ followed by non-whitespace characters
+    const simpleMentionMatch = result.match(/^@[^\s]+\s*/);
+    if (simpleMentionMatch) {
+      result = result.slice(simpleMentionMatch[0].length).trim();
+      changed = true;
+    }
+  }
+
+  return result;
+}
