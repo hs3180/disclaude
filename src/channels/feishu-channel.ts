@@ -631,6 +631,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Non-control commands with @mention show error instead of passing to agent (Issue #595)
       const isControlCommand = commandRegistry.has(cmd);
 
+      // Issue #650: passive command should only respond when @mentioned in group chats
+      // This is a special case because passive controls the bot's response behavior
+      if (cmd === 'passive' && this.isGroupChat(chat_type) && !botMentioned) {
+        logger.debug(
+          { messageId: message_id, chatId: chat_id, chat_type },
+          'Passive command skipped without @mention in group chat'
+        );
+        // Forward to passive mode filter which will handle the message
+        await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+        return;
+      }
+
       if (isControlCommand || !botMentioned) {
         if (this.controlHandler) {
           const response = await this.emitControl({

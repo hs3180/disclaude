@@ -107,6 +107,17 @@ vi.mock('../utils/task-tracker.js', () => ({
   TaskTracker: vi.fn(),
 }));
 
+vi.mock('../nodes/commands/command-registry.js', () => ({
+  getCommandRegistry: vi.fn(() => ({
+    has: (name: string) => ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
+      'create-group', 'add-member', 'remove-member', 'list-group-members', 'groups', 'dissolve-group',
+      'passive'].includes(name),
+    getAll: () => [],
+    register: vi.fn(),
+  })),
+  resetCommandRegistry: vi.fn(),
+}));
+
 import { FeishuChannel } from './feishu-channel.js';
 
 describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
@@ -525,6 +536,106 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
 
       // Reaction SHOULD be added for private chat messages
       expect(senderInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
+    });
+  });
+
+  /**
+   * Issue #650: /passive command should only respond when @mentioned in group chats
+   */
+  describe('/passive command requires @mention (Issue #650)', () => {
+    it('should skip /passive command in group chat without @mention', async () => {
+      await simulateMessageReceive({
+        text: '/passive status',
+        chatId: 'oc_test_group', // Group chat ID
+        mentions: undefined, // No mentions
+      });
+
+      // Control handler should NOT be called - passive command requires @mention
+      expect(controlHandler).not.toHaveBeenCalled();
+
+      // Message should NOT be passed to agent (passive mode filter)
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /passive command in group chat WITH @mention', async () => {
+      await simulateMessageReceive({
+        text: '/passive status',
+        chatId: 'oc_test_group', // Group chat ID
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler SHOULD be called when @mentioned
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+          chatId: 'oc_test_group',
+        })
+      );
+
+      // Message should NOT be passed to agent (command handled)
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle /passive on/off in group chat WITH @mention', async () => {
+      await simulateMessageReceive({
+        text: '/passive off',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'cli_test_bot_id' },
+            name: 'Bot',
+          },
+        ],
+      });
+
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+          chatId: 'oc_test_group',
+          data: expect.objectContaining({
+            args: ['off'],
+          }),
+        })
+      );
+    });
+
+    it('should handle /passive command in private chat without @mention', async () => {
+      await simulateMessageReceive({
+        text: '/passive status',
+        chatId: 'ou_user_private', // Private chat ID
+        mentions: undefined,
+      });
+
+      // Control handler SHOULD be called in private chat without @mention
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'passive',
+        })
+      );
+    });
+
+    it('should skip /passive in group chat when bot is not the one mentioned', async () => {
+      await simulateMessageReceive({
+        text: '@user1 /passive status',
+        chatId: 'oc_test_group',
+        mentions: [
+          {
+            key: '@_user1',
+            id: { open_id: 'user1-open-id' }, // Another user, not bot
+            name: 'User1',
+          },
+        ],
+      });
+
+      // Control handler should NOT be called - bot is not mentioned
+      expect(controlHandler).not.toHaveBeenCalled();
     });
   });
 
