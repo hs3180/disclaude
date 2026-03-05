@@ -7,7 +7,7 @@
 
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
-import { DEDUPLICATION, REACTIONS, CHAT_HISTORY } from '../config/constants.js';
+import { DEDUPLICATION, REACTIONS } from '../config/constants.js';
 import { createLogger } from '../utils/logger.js';
 import { attachmentManager, downloadFile } from '../file-transfer/inbound/index.js';
 import { messageLogger } from '../feishu/message-logger.js';
@@ -24,6 +24,15 @@ import type { FilterReason } from '../config/types.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { stripLeadingMentions } from '../utils/mention-parser.js';
 import { BaseChannel } from './base-channel.js';
+import {
+  PassiveModeManager,
+  MentionDetector,
+  WelcomeHandler,
+  isGroupChat,
+  parseTextContent,
+  getChatHistoryContext,
+  parseMessageEvent,
+} from './feishu/index.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -33,22 +42,12 @@ import type {
   FeishuP2PChatEnteredEventData,
 } from '../types/platform.js';
 import type {
-  ChannelConfig,
   OutgoingMessage,
   ChannelCapabilities,
 } from './types.js';
+import type { FeishuChannelConfig } from './feishu/types.js';
 
 const logger = createLogger('FeishuChannel');
-
-/**
- * Feishu channel configuration.
- */
-export interface FeishuChannelConfig extends ChannelConfig {
-  /** Feishu App ID */
-  appId?: string;
-  /** Feishu App Secret */
-  appSecret?: string;
-}
 
 /**
  * Feishu Channel - Handles Feishu/Lark messaging via WebSocket.
@@ -73,36 +72,23 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private interactionManager: InteractionManager;
   private welcomeService?: WelcomeService;
 
+  // Modular components
+  private passiveModeManager: PassiveModeManager;
+  private mentionDetector: MentionDetector;
+  private welcomeHandler: WelcomeHandler;
+
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
-
-  /**
-   * Passive mode state storage.
-   * Key: chatId, Value: true if passive mode is disabled (bot responds to all messages)
-   * Issue #511: Group chat passive mode control
-   */
-  private passiveModeDisabled: Map<string, boolean> = new Map();
-
-  /**
-   * Bot info for mention detection.
-   * Issue #600: Correctly identify bot mentions in group chats
-   * Issue #681: 群聊被动模式 @机器人检测不可靠问题
-   *
-   * Based on Feishu official documentation:
-   * - bot/v3/info returns bot.open_id and bot.app_id
-   * - When bot is mentioned, mentions[].id.open_id may be bot's open_id or app_id
-   *
-   * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/bot-v3/bot_info/get
-   */
-  private botInfo?: {
-    open_id: string;
-    app_id: string;
-  };
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
     this.taskTracker = new TaskTracker();
+
+    // Initialize modular components
+    this.passiveModeManager = new PassiveModeManager();
+    this.mentionDetector = new MentionDetector(this.appId, this.appSecret);
+    this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
 
     // Initialize FileHandler
     this.fileHandler = new FeishuFileHandler({
@@ -133,7 +119,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     await messageLogger.init();
 
     // Get bot info for mention detection (Issue #600, #681)
-    await this.fetchBotInfo();
+    await this.mentionDetector.fetchBotInfo(this.getClient());
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -155,7 +141,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Issue #463: Handle P2P chat entered for welcome message
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
         try {
-          await this.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
+          await this.welcomeHandler.handleP2PChatEntered(
+            data as FeishuP2PChatEnteredEventData,
+            this.welcomeService
+          );
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle P2P chat entered');
         }
@@ -163,7 +152,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Issue #463: Handle bot added to group for welcome message
       'im.chat.member.added_v1': async (data: unknown) => {
         try {
-          await this.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
+          await this.welcomeHandler.handleChatMemberAdded(
+            data as FeishuChatMemberAddedEventData,
+            this.welcomeService
+          );
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle chat member added');
         }
@@ -294,6 +286,54 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     await this.taskFlowOrchestrator.start();
   }
 
+  // ============================================================
+  // Public API methods (for backward compatibility)
+  // ============================================================
+
+  /**
+   * Check if passive mode is disabled for a specific chat.
+   * @deprecated Use passiveModeManager.isDisabled() internally
+   */
+  isPassiveModeDisabled(chatId: string): boolean {
+    return this.passiveModeManager.isDisabled(chatId);
+  }
+
+  /**
+   * Set passive mode state for a specific chat.
+   * @deprecated Use passiveModeManager.setDisabled() internally
+   */
+  setPassiveModeDisabled(chatId: string, disabled: boolean): void {
+    this.passiveModeManager.setDisabled(chatId, disabled);
+  }
+
+  /**
+   * Get all chats with passive mode disabled.
+   * @deprecated Use passiveModeManager.getDisabledChats() internally
+   */
+  getPassiveModeDisabledChats(): string[] {
+    return this.passiveModeManager.getDisabledChats();
+  }
+
+  /**
+   * Get the InteractionManager for this channel.
+   * Used for registering custom interaction handlers.
+   */
+  getInteractionManager(): InteractionManager {
+    return this.interactionManager;
+  }
+
+  /**
+   * Set the WelcomeService for this channel.
+   * Used for sending welcome messages on bot added to group or first private chat.
+   */
+  setWelcomeService(service: WelcomeService): void {
+    this.welcomeService = service;
+  }
+
+  // ============================================================
+  // Private methods
+  // ============================================================
+
   /**
    * Get or create Lark HTTP client with timeout configuration.
    */
@@ -315,23 +355,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
-   * Extract open_id from sender object.
-   */
-  private extractOpenId(sender?: { sender_type?: string; sender_id?: unknown }): string | undefined {
-    if (!sender?.sender_id) {
-      return undefined;
-    }
-    if (typeof sender.sender_id === 'object' && sender.sender_id !== null) {
-      const senderId = sender.sender_id as { open_id?: string };
-      return senderId.open_id;
-    }
-    if (typeof sender.sender_id === 'string') {
-      return sender.sender_id;
-    }
-    return undefined;
-  }
-
-  /**
    * Add typing reaction to indicate processing started.
    */
   private async addTypingReaction(messageId: string): Promise<void> {
@@ -341,176 +364,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
-   * Check if the chat is a group chat.
-   * Uses chat_type field from message event.
-   *
-   * @param chatType - Chat type from message event ('p2p', 'group', 'topic')
-   * @returns true if it's a group chat
-   */
-  private isGroupChat(chatType?: string): boolean {
-    return chatType === 'group' || chatType === 'topic';
-  }
-
-  /**
-   * Check if a chat ID is a group chat based on ID prefix.
-   * In Feishu, group chat IDs start with 'oc_' and private chat IDs start with 'ou_'.
-   *
-   * Issue #676: Used in handleChatMemberAdded where chat_type is not available.
-   *
-   * @param chatId - Chat ID to check
-   * @returns true if it's a group chat ID
-   */
-  private isGroupChatId(chatId: string): boolean {
-    return chatId.startsWith('oc_');
-  }
-
-  /**
-   * Fetch bot's open_id from Feishu API.
-   * This is used to correctly identify when the bot is mentioned.
-   *
-   * Issue #600: Correctly identify bot mentions in group chats
-   */
-  /**
-   * Fetch bot's info from Feishu API.
-   * This is used to correctly identify when the bot is mentioned.
-   *
-   * Issue #600: Correctly identify bot mentions in group chats
-   * Issue #681: Improve bot mention detection reliability
-   *
-   * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/bot-v3/bot_info/get
-   */
-  private async fetchBotInfo(): Promise<void> {
-    try {
-      const client = this.getClient();
-      // Use bot info API to get bot's open_id and app_id
-      const response = await client.request({
-        method: 'GET',
-        url: '/open-apis/bot/v3/info',
-      });
-
-      const bot = response.data?.bot;
-      if (bot?.open_id) {
-        this.botInfo = {
-          open_id: bot.open_id,
-          app_id: bot.app_id,
-        };
-        logger.info(
-          { botOpenId: bot.open_id, botAppId: bot.app_id },
-          'Bot info fetched for mention detection'
-        );
-      } else {
-        logger.warn('Failed to fetch bot info, mention detection may be less accurate');
-      }
-    } catch (error) {
-      logger.warn({ err: error }, 'Failed to fetch bot info, mention detection may be less accurate');
-    }
-  }
-
-  /**
-   * Check if the bot is mentioned in the message.
-   * When bot is mentioned, commands should be passed through to the agent.
-   *
-   * Issue #600: Correctly identify bot mentions in group chats
-   * Issue #681: Improve bot mention detection reliability
-   *
-   * Based on Feishu official documentation:
-   * - When bot is mentioned, mentions[].id.open_id may be bot's open_id OR app_id
-   * - We need to check both to ensure reliable detection
-   *
-   * @param mentions - Mentions array from Feishu message
-   * @returns true if bot is mentioned
-   */
-  private isBotMentioned(mentions?: FeishuMessageEvent['message']['mentions']): boolean {
-    if (!mentions || mentions.length === 0) {
-      return false;
-    }
-
-    // Log mentions structure for debugging
-    logger.debug(
-      {
-        mentions: JSON.stringify(mentions),
-        botInfo: this.botInfo,
-      },
-      'Checking bot mention'
-    );
-
-    // If we have bot info, check if any mention matches bot's open_id OR app_id
-    if (this.botInfo) {
-      return mentions.some((mention) => {
-        const mentionOpenId = mention.id?.open_id || '';
-        // Check against both bot's open_id and app_id
-        // Feishu may use either when the bot is mentioned
-        return (
-          mentionOpenId === this.botInfo!.open_id ||
-          mentionOpenId === this.botInfo!.app_id
-        );
-      });
-    }
-
-    // Fallback: Check for bot mention patterns
-    // Bot mentions typically have open_id starting with 'cli_' (app ID format)
-    // or have key containing 'bot'
-    return mentions.some((mention) => {
-      const openId = mention.id?.open_id || '';
-      const key = mention.key || '';
-      // Bot's open_id typically starts with 'cli_' (app/bot ID format)
-      // or the key contains 'bot' (e.g., '@_bot')
-      return openId.startsWith('cli_') || key.toLowerCase().includes('bot');
-    });
-  }
-
-  /**
-   * Check if passive mode is disabled for a specific chat.
-   * When passive mode is disabled, the bot responds to all messages in group chats.
-   *
-   * Issue #511: Group chat passive mode control
-   *
-   * @param chatId - Chat ID to check
-   * @returns true if passive mode is disabled (bot responds to all messages)
-   */
-  isPassiveModeDisabled(chatId: string): boolean {
-    return this.passiveModeDisabled.get(chatId) === true;
-  }
-
-  /**
-   * Set passive mode state for a specific chat.
-   *
-   * Issue #511: Group chat passive mode control
-   *
-   * @param chatId - Chat ID to configure
-   * @param disabled - true to disable passive mode (respond to all messages)
-   */
-  setPassiveModeDisabled(chatId: string, disabled: boolean): void {
-    if (disabled) {
-      this.passiveModeDisabled.set(chatId, true);
-      logger.info({ chatId }, 'Passive mode disabled for chat');
-    } else {
-      this.passiveModeDisabled.delete(chatId);
-      logger.info({ chatId }, 'Passive mode enabled for chat');
-    }
-  }
-
-  /**
-   * Get all chats with passive mode disabled.
-   *
-   * Issue #511: Group chat passive mode control
-   *
-   * @returns Array of chat IDs with passive mode disabled
-   */
-  getPassiveModeDisabledChats(): string[] {
-    return Array.from(this.passiveModeDisabled.keys());
-  }
-
-  /**
    * Forward a filtered message to the debug chat.
    * @see Issue #597
-   *
-   * @param reason - The reason the message was filtered
-   * @param messageId - The message ID
-   * @param chatId - The chat ID
-   * @param content - The message content
-   * @param userId - The user ID (optional)
-   * @param metadata - Additional metadata (optional)
    */
   private async forwardFilteredMessage(
     reason: FilterReason,
@@ -540,317 +395,250 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.getClient();
 
     const event = (data.event || data) as FeishuMessageEvent;
-    const { message, sender } = event;
+    const parsed = parseMessageEvent(event);
 
-    if (!message) {return;}
-
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
-
-    // Bot replies to user message by setting parent_id = message_id
-    // Feishu automatically handles thread affiliation
-    const threadId = message_id;
-
-    if (!message_id || !chat_id || !content || !message_type) {
-      logger.warn('Missing required message fields');
+    if (!parsed) {
       return;
     }
 
+    const { messageId, chatId, chatType, content, messageType, createTime, threadId, mentions, userId } = parsed;
+
     // Deduplication
-    if (messageLogger.isMessageProcessed(message_id)) {
-      logger.debug({ messageId: message_id }, 'Skipped duplicate message');
-      await this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
+    if (messageLogger.isMessageProcessed(messageId)) {
+      logger.debug({ messageId }, 'Skipped duplicate message');
+      await this.forwardFilteredMessage('duplicate', messageId, chatId, content, userId);
       return;
     }
 
     // Ignore bot messages
+    const sender = event.sender;
     if (sender?.sender_type === 'app') {
       logger.debug('Skipped bot message');
-      await this.forwardFilteredMessage('bot', message_id, chat_id, content);
+      await this.forwardFilteredMessage('bot', messageId, chatId, content);
       return;
     }
 
     // Check message age
-    if (create_time) {
-      const messageAge = Date.now() - create_time;
+    if (createTime) {
+      const messageAge = Date.now() - createTime;
       if (messageAge > this.MAX_MESSAGE_AGE) {
-        logger.debug({ messageId: message_id }, 'Skipped old message');
-        await this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
+        logger.debug({ messageId }, 'Skipped old message');
+        await this.forwardFilteredMessage('old', messageId, chatId, content, userId, { age: messageAge });
         return;
       }
     }
 
     // Handle file/image messages
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
-      logger.info(
-        { chatId: chat_id, messageType: message_type, messageId: message_id },
-        'Processing file/image message'
-      );
-      const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
-      if (!result.success) {
-        logger.error(
-          { chatId: chat_id, messageType: message_type, messageId: message_id, error: result.error },
-          'File/image processing failed - detailed error'
-        );
-        await this.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: `❌ 处理${message_type === 'image' ? '图片' : '文件'}失败: ${result.error || '未知错误'}`,
-        });
-        return;
-      }
-
-      const attachments = attachmentManager.getAttachments(chat_id);
-      if (attachments.length > 0) {
-        const latestAttachment = attachments[attachments.length - 1];
-        const uploadPrompt = this.fileHandler.buildUploadPrompt(latestAttachment);
-
-        await messageLogger.logIncomingMessage(
-          message_id,
-          this.extractOpenId(sender) || 'unknown',
-          chat_id,
-          `[File uploaded: ${latestAttachment.fileName}]`,
-          message_type,
-          create_time
-        );
-
-        // Emit as incoming message
-        await this.emitMessage({
-          messageId: `${message_id}-file`,
-          chatId: chat_id,
-          userId: this.extractOpenId(sender),
-          content: uploadPrompt,
-          messageType: 'file',
-          timestamp: create_time,
-          threadId,
-          attachments: [{
-            fileName: latestAttachment.fileName || 'unknown',
-            filePath: latestAttachment.localPath || '',
-            mimeType: latestAttachment.mimeType,
-          }],
-        });
-      }
+    if (messageType === 'image' || messageType === 'file' || messageType === 'media') {
+      await this.handleFileMessage(messageId, chatId, messageType, content, threadId, createTime, userId);
       return;
     }
 
     // Handle text and post messages
-    if (message_type !== 'text' && message_type !== 'post') {
-      logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
-      await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+    if (messageType !== 'text' && messageType !== 'post') {
+      logger.debug({ messageType }, 'Skipped unsupported message type');
+      await this.forwardFilteredMessage('unsupported', messageId, chatId, content, userId, { messageType });
       return;
     }
 
     // Parse content
-    let text = '';
-    try {
-      const parsed = JSON.parse(content);
-      if (message_type === 'text') {
-        text = parsed.text?.trim() || '';
-      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        for (const row of parsed.content) {
-          if (Array.isArray(row)) {
-            for (const segment of row) {
-              if (segment?.tag === 'text' && segment.text) {
-                text += segment.text;
-              }
-            }
-          }
-        }
-        text = text.trim();
-      }
-    } catch {
-      logger.error('Failed to parse content');
-      return;
-    }
-
+    const text = parseTextContent(content, messageType);
     if (!text) {
       logger.debug('Skipped empty text');
-      await this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
+      await this.forwardFilteredMessage('empty', messageId, chatId, content, userId);
       return;
     }
 
-    logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
+    logger.info({ messageId, chatId }, 'Message received');
 
     // Log message
     await messageLogger.logIncomingMessage(
-      message_id,
-      this.extractOpenId(sender) || 'unknown',
-      chat_id,
+      messageId,
+      userId || 'unknown',
+      chatId,
       text,
-      message_type,
-      create_time
+      messageType,
+      createTime
     );
 
-    // Check for control commands
-    // Control commands should ALWAYS be handled through the control channel, regardless of mentions
-    // This ensures /reset, /status, etc. work correctly even when bot is @mentioned
-    const botMentioned = this.isBotMentioned(mentions);
-
-    // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
+    // Check for control commands and passive mode
+    const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const commandRegistry = getCommandRegistry();
-
-    // Issue #698: Strip leading mentions to detect commands in messages like "@bot /help"
-    // After stripping, we can check if the remaining text starts with '/'
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Issue #460 & #511: Group chat passive mode
-    // In group chats, only respond when bot is mentioned (@bot)
-    // This allows scheduled tasks to broadcast without triggering unwanted responses
-    // Issue #511: Passive mode can be disabled per chat via /passive command
-    // Issue #650: Move passive mode check BEFORE command processing
-    // Issue #677: Allow /passive command to bypass passive mode check to avoid deadlock
-    // (when mention detection fails, users still need a way to disable passive mode)
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
-      logger.debug(
-        { messageId: message_id, chatId: chat_id, chat_type },
-        'Skipped group chat message without @mention (passive mode)'
-      );
-      // Issue #597: Forward filtered message to debug chat
-      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+    const passiveModeDisabled = this.passiveModeManager.isDisabled(chatId);
+    if (isGroupChat(chatType) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
+      logger.debug({ messageId, chatId, chatType }, 'Skipped group chat message without @mention (passive mode)');
+      await this.forwardFilteredMessage('passive_mode', messageId, chatId, text, userId, { chatType });
       return;
     }
 
+    // Handle commands
     if (textWithoutMentions.startsWith('/')) {
-      const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
-      const cmd = command.toLowerCase();
-
-      // Handle control commands through the control channel
-      // Control commands are ALWAYS handled locally, regardless of @mentions
-      // Non-control commands with @mention show error instead of passing to agent (Issue #595)
-      const isControlCommand = commandRegistry.has(cmd);
-
-      if (isControlCommand || !botMentioned) {
-        if (this.controlHandler) {
-          const response = await this.emitControl({
-            type: cmd as any,
-            chatId: chat_id,
-            data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
-          });
-
-          // Only return if command was successfully handled
-          // Unknown commands (success: false) will fall through to normal message processing
-          if (response.success) {
-            if (response.message) {
-              await this.sendMessage({
-                chatId: chat_id,
-                type: 'text',
-                text: response.message,
-              });
-            }
-            return;
-          }
-          // Without @mention: unknown commands fall through to agent (original behavior)
-          // With @mention: show error instead of passing to agent (Issue #595)
-          if (botMentioned) {
-            await this.sendMessage({
-              chatId: chat_id,
-              type: 'text',
-              text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
-            });
-            return;
-          }
-        }
-
-        // Default command handling if no control handler registered
-        if (cmd === 'reset') {
-          await this.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
-          });
-          return;
-        }
-
-        if (cmd === 'status') {
-          await this.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
-          });
-          return;
-        }
-      } else {
-        // Unknown command with @mention: show error instead of passing to agent
-        // Issue #595: Control commands not parsed when bot is @mentioned in group chat
-        await this.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
-        });
+      const handled = await this.handleCommand(textWithoutMentions, chatId, botMentioned, commandRegistry, userId);
+      if (handled) {
         return;
       }
     }
 
     // Log if bot is mentioned with a non-control command (for debugging)
     if (botMentioned && textWithoutMentions.startsWith('/')) {
-      logger.debug({ messageId: message_id, chatId: chat_id, command: textWithoutMentions }, 'Bot mentioned with non-control command, passing to agent');
+      logger.debug({ messageId, chatId, command: textWithoutMentions }, 'Bot mentioned with non-control command, passing to agent');
     }
 
     // Issue #514: Add typing reaction only for messages that will be processed
-    // This is placed after passive mode check to avoid reacting to skipped messages
-    await this.addTypingReaction(message_id);
+    await this.addTypingReaction(messageId);
 
     // Issue #517: Get chat history for passive mode context
-    // When bot is mentioned in a group chat, include recent chat history as context
-    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
-
-    if (isPassiveModeTrigger) {
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
-      logger.debug(
-        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext?.length },
-        'Including chat history context for passive mode trigger'
-      );
+    if (isGroupChat(chatType) && botMentioned) {
+      chatHistoryContext = await getChatHistoryContext(chatId);
+      logger.debug({ messageId, chatId, historyLength: chatHistoryContext?.length }, 'Including chat history context for passive mode trigger');
     }
 
     // Emit as incoming message
     await this.emitMessage({
-      messageId: message_id,
-      chatId: chat_id,
-      userId: this.extractOpenId(sender),
+      messageId,
+      chatId,
+      userId,
       content: text,
-      messageType: message_type as any,
-      timestamp: create_time,
+      messageType: messageType as any,
+      timestamp: createTime,
       threadId,
       metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
     });
   }
 
   /**
-   * Get formatted chat history context for passive mode.
-   * Issue #517: Include recent chat history when bot is mentioned in group chats.
-   *
-   * @param chatId - Chat ID to get history for
-   * @returns Formatted chat history string, or undefined if no history
+   * Handle file/image message.
    */
-  private async getChatHistoryContext(chatId: string): Promise<string | undefined> {
-    try {
-      const rawHistory = await messageLogger.getChatHistory(chatId);
+  private async handleFileMessage(
+    messageId: string,
+    chatId: string,
+    messageType: 'image' | 'file' | 'media',
+    content: string,
+    threadId: string,
+    createTime?: number,
+    userId?: string
+  ): Promise<void> {
+    logger.info({ chatId, messageType, messageId }, 'Processing file/image message');
+    const result = await this.fileHandler.handleFileMessage(chatId, messageType, content, messageId);
+    if (!result.success) {
+      logger.error({ chatId, messageType, messageId, error: result.error }, 'File/image processing failed - detailed error');
+      await this.sendMessage({
+        chatId,
+        type: 'text',
+        text: `❌ 处理${messageType === 'image' ? '图片' : '文件'}失败: ${result.error || '未知错误'}`,
+      });
+      return;
+    }
 
-      if (!rawHistory || rawHistory.length === 0) {
-        return undefined;
-      }
+    const attachments = attachmentManager.getAttachments(chatId);
+    if (attachments.length > 0) {
+      const latestAttachment = attachments[attachments.length - 1];
+      const uploadPrompt = this.fileHandler.buildUploadPrompt(latestAttachment);
 
-      // Truncate if too long (keep the most recent content)
-      let history = rawHistory;
-      if (history.length > CHAT_HISTORY.MAX_CONTEXT_LENGTH) {
-        // Try to truncate at a reasonable point (e.g., at a message boundary)
-        const truncatePoint = history.lastIndexOf('## [', history.length - CHAT_HISTORY.MAX_CONTEXT_LENGTH);
-        if (truncatePoint > 0) {
-          history = `...(earlier messages truncated)...\n\n${history.slice(truncatePoint)}`;
-        } else {
-          // Fallback: just truncate from the end
-          history = history.slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH);
-          history = `...(earlier messages truncated)...\n\n${history.slice(history.indexOf('## ['))}`;
+      await messageLogger.logIncomingMessage(
+        messageId,
+        userId || 'unknown',
+        chatId,
+        `[File uploaded: ${latestAttachment.fileName}]`,
+        messageType,
+        createTime
+      );
+
+      await this.emitMessage({
+        messageId: `${messageId}-file`,
+        chatId,
+        userId,
+        content: uploadPrompt,
+        messageType: 'file',
+        timestamp: createTime,
+        threadId,
+        attachments: [{
+          fileName: latestAttachment.fileName || 'unknown',
+          filePath: latestAttachment.localPath || '',
+          mimeType: latestAttachment.mimeType,
+        }],
+      });
+    }
+  }
+
+  /**
+   * Handle command messages.
+   * @returns true if command was handled and should return early
+   */
+  private async handleCommand(
+    textWithoutMentions: string,
+    chatId: string,
+    botMentioned: boolean,
+    commandRegistry: ReturnType<typeof getCommandRegistry>,
+    userId?: string
+  ): Promise<boolean> {
+    const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
+    const cmd = command.toLowerCase();
+    const isControlCommand = commandRegistry.has(cmd);
+
+    if (isControlCommand || !botMentioned) {
+      if (this.controlHandler) {
+        const response = await this.emitControl({
+          type: cmd as any,
+          chatId,
+          data: { args, rawText: textWithoutMentions, senderOpenId: userId },
+        });
+
+        if (response.success) {
+          if (response.message) {
+            await this.sendMessage({
+              chatId,
+              type: 'text',
+              text: response.message,
+            });
+          }
+          return true;
+        }
+
+        if (botMentioned) {
+          await this.sendMessage({
+            chatId,
+            type: 'text',
+            text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+          });
+          return true;
         }
       }
 
-      return history;
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to get chat history context');
-      return undefined;
+      // Default command handling if no control handler registered
+      if (cmd === 'reset') {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
+        });
+        return true;
+      }
+
+      if (cmd === 'status') {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `📊 **状态**\n\nChannel: ${this.name}\nStatus: ${this.status}`,
+        });
+        return true;
+      }
+    } else {
+      // Unknown command with @mention: show error instead of passing to agent
+      await this.sendMessage({
+        chatId,
+        type: 'text',
+        text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+      });
+      return true;
     }
+
+    return false;
   }
 
   /**
@@ -892,14 +680,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (resolved) {
       logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
-      // Issue #657: Continue to emit message to agent instead of returning early
-      // This allows the agent to handle the interaction and decide what to do next
     }
 
     // Issue #657: Always emit card action as a message to the agent
-    // This enables the agent to handle user interactions and take appropriate actions
     try {
-      // Get button text for user-friendly message
       const buttonText = action.text || action.value;
       const messageContent = `User clicked '${buttonText}' button`;
 
@@ -917,24 +701,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         },
       });
 
-      logger.debug(
-        { messageId: message_id, chatId: chat_id, actionValue: action.value },
-        'Card action emitted as message to agent'
-      );
+      logger.debug({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action emitted as message to agent');
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
     }
 
-    // Return early if resolved - the wait_for_interaction tool already returned the result
+    // Return early if resolved
     if (resolved) {
       return;
     }
 
     try {
-      // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-        // Default handler: emit as interaction message
-        // Issue #525: Use button text to generate user-friendly prompt
         const buttonText = defaultEvent.action.text || defaultEvent.action.value;
         const messageContent = `The user clicked '${buttonText}' button`;
 
@@ -953,15 +731,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       });
 
       if (!handled) {
-        logger.debug(
-          { messageId: message_id, actionValue: action.value },
-          'Card action not handled'
-        );
+        logger.debug({ messageId: message_id, actionValue: action.value }, 'Card action not handled');
       }
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
 
-      // Notify user of the error
       await this.sendMessage({
         chatId: chat_id,
         type: 'text',
@@ -969,91 +743,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       });
     }
   }
-
-  /**
-   * Handle P2P chat entered event.
-   * Triggered when a user starts a private chat with the bot.
-   * Issue #463: Send welcome message on first private chat.
-   */
-  private async handleP2PChatEntered(data: FeishuP2PChatEnteredEventData): Promise<void> {
-    if (!this.isRunning || !this.welcomeService) {
-      return;
-    }
-
-    const { event } = data;
-    if (!event?.user?.open_id) {
-      logger.debug('P2P chat entered event missing user info');
-      return;
-    }
-
-    const userId = event.user.open_id;
-    logger.info({ userId }, 'P2P chat entered, sending welcome message');
-
-    await this.welcomeService.handleP2PChatEntered(userId);
-  }
-
-  /**
-   * Handle chat member added event.
-   * Triggered when members are added to a chat.
-   * Issue #463: Send welcome message when bot is added to a group.
-   * Issue #676: Send help message when users join a group that already has the bot.
-   */
-  private async handleChatMemberAdded(data: FeishuChatMemberAddedEventData): Promise<void> {
-    if (!this.isRunning || !this.welcomeService) {
-      return;
-    }
-
-    const { event } = data;
-    if (!event?.chat_id || !event?.members || event.members.length === 0) {
-      logger.debug('Chat member added event missing required fields');
-      return;
-    }
-
-    // Only send messages to group chats
-    if (!this.isGroupChatId(event.chat_id)) {
-      logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping');
-      return;
-    }
-
-    // Check if the bot is among the added members
-    // Bot's member_id_type is "app_id" and member_id is the bot's app_id
-    const botMemberAdded = event.members.some(
-      (member) => member.member_id_type === 'app_id' && member.member_id === this.appId
-    );
-
-    // Get non-bot members (users who joined)
-    const userMembers = event.members.filter(
-      (member) => !(member.member_id_type === 'app_id' && member.member_id === this.appId)
-    );
-
-    if (botMemberAdded) {
-      // Bot was added to the group -> send welcome message
-      logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
-      await this.welcomeService.handleBotAddedToGroup(event.chat_id);
-    } else if (userMembers.length > 0) {
-      // Users joined a group that already has the bot -> send help message
-      logger.info(
-        { chatId: event.chat_id, userCount: userMembers.length },
-        'New users joined group, sending help message'
-      );
-      const userIds = userMembers.map((m) => m.member_id);
-      await this.welcomeService.handleUserJoinedGroup(event.chat_id, userIds);
-    }
-  }
-
-  /**
-   * Get the InteractionManager for this channel.
-   * Used for registering custom interaction handlers.
-   */
-  getInteractionManager(): InteractionManager {
-    return this.interactionManager;
-  }
-
-  /**
-   * Set the WelcomeService for this channel.
-   * Used for sending welcome messages on bot added to group or first private chat.
-   */
-  setWelcomeService(service: WelcomeService): void {
-    this.welcomeService = service;
-  }
 }
+
+// Re-export config type for backward compatibility
+export type { FeishuChannelConfig } from './feishu/types.js';
