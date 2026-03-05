@@ -122,16 +122,18 @@ export class WorkerNode {
   }
 
   /**
-   * Initialize the AgentPool for per-chatId Pilot instances.
+   * Initialize the AgentPool for per-chatId ChatAgent instances.
    *
-   * Issue #644: Each chatId gets its own Pilot instance.
+   * Issue #644: Each chatId gets its own ChatAgent instance.
+   * Issue #711: Use new chatAgentFactory property name.
    */
   private async initPilot(): Promise<void> {
     console.log('Initializing execution capability...');
 
     // Issue #644: Create AgentPool with factory function
+    // Issue #711: Use new chatAgentFactory property name
     this.agentPool = new AgentPool({
-      pilotFactory: (chatId: string) => {
+      chatAgentFactory: (chatId: string) => {
         return AgentFactory.createChatAgent('pilot', chatId, {
           sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
             const ctx = this.activeFeedbackChannels.get(chatId);
@@ -197,12 +199,12 @@ export class WorkerNode {
     });
 
     // Initialize Schedule Manager and Scheduler
+    // Issue #711: Scheduler no longer requires agentPool
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const scheduleManager = new ScheduleManager({ schedulesDir });
     this.scheduler = new Scheduler({
       scheduleManager,
-      agentPool: this.agentPool,
       callbacks: {
         sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
           const ctx = this.activeFeedbackChannels.get(chatId);
