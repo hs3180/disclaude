@@ -2,9 +2,10 @@
  * Tests for TaskStateManager.
  *
  * Issue #468: 任务控制指令 - deep task 执行管理
+ * Issue #734: 使用 vi.useFakeTimers() 消除时间依赖，避免 flaky test
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -18,6 +19,10 @@ describe('TaskStateManager', () => {
     // Reset singleton for each test
     resetTaskStateManager();
 
+    // Use fake timers to ensure deterministic time-based behavior
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+
     // Create a temporary directory for each test
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-test-'));
     manager = new TaskStateManager(tempDir);
@@ -27,6 +32,9 @@ describe('TaskStateManager', () => {
     // Clean up the temporary directory
     await fs.rm(tempDir, { recursive: true, force: true });
     resetTaskStateManager();
+
+    // Restore real timers
+    vi.useRealTimers();
   });
 
   describe('startTask', () => {
@@ -232,9 +240,14 @@ describe('TaskStateManager', () => {
       const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-list-'));
       const listManager = new TaskStateManager(testDir);
 
+      // Task 1: Create at time T
       await listManager.startTask('Task 1', 'oc_chat');
       await listManager.completeTask();
 
+      // Advance time by 1 second to ensure different timestamps
+      vi.advanceTimersByTime(1000);
+
+      // Task 2: Create at time T+1s
       await listManager.startTask('Task 2', 'oc_chat');
       await listManager.cancelTask();
 
@@ -251,10 +264,12 @@ describe('TaskStateManager', () => {
       const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-limit-'));
       const limitManager = new TaskStateManager(testDir);
 
-      // Create 5 tasks
+      // Create 5 tasks with time advancement to ensure stable ordering
       for (let i = 0; i < 5; i++) {
         await limitManager.startTask(`Task ${i}`, 'oc_chat');
         await limitManager.completeTask();
+        // Advance time by 100ms between tasks
+        vi.advanceTimersByTime(100);
       }
 
       const history = await limitManager.listTaskHistory(3);
