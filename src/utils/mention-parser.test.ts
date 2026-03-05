@@ -18,7 +18,7 @@ function createMockMention(
   key: string,
   openId: string,
   name?: string
-): NonNullable<FeishuMessageEvent['message']['mentions']>[0] {
+): NonNullable<FeishuMessageEvent['message']['mentions']>[number] {
   return {
     key,
     id: {

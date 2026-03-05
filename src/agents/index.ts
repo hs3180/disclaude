@@ -5,8 +5,7 @@
  * - BaseAgent: Abstract base class for all agents
  * - SkillAgent: Generic agent that executes skills from markdown files (Issue #413)
  * - Pilot: Platform-agnostic direct chat with streaming input
- * - SessionManager: Pilot session lifecycle management
- * - ConversationContext: Pilot conversation context tracking
+ * - AgentPool: Manages Pilot instances per chatId (Issue #644)
  *
  * Agent Type Classification (Issue #282):
  * - ChatAgent: Continuous conversation agents (Pilot)
@@ -22,6 +21,11 @@
  * Simplified Architecture (Issue #413):
  * - Use SkillAgent with skill files (skills/evaluator/SKILL.md, executor/SKILL.md)
  * - Legacy Evaluator/Executor classes removed
+ *
+ * Issue #644: Session Isolation
+ * - Each Pilot is bound to a single chatId
+ * - AgentPool manages chatId → Pilot mapping
+ * - SessionManager is kept for backward compatibility but no longer used by Pilot
  */
 
 // Type definitions
@@ -66,8 +70,12 @@ export {
 export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
 
 // Pilot support classes (extracted from Pilot for separation of concerns)
+// Note: SessionManager is deprecated for Pilot (Issue #644) but kept for backward compatibility
 export { SessionManager, type PilotSession, type SessionManagerConfig } from './session-manager.js';
 export { ConversationContext, type ConversationContextConfig } from './conversation-context.js';
+
+// AgentPool - Manages Pilot instances per chatId (Issue #644)
+export { AgentPool, type AgentPoolConfig, type PilotFactory } from './agent-pool.js';
 
 // Site mining subagent
 export {
