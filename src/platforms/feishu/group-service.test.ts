@@ -237,6 +237,9 @@ describe('GroupService', () => {
         createdAt: expect.any(Number),
         createdBy: 'ou_creator',
         initialMembers: ['ou_user1', 'ou_user2'],
+        isTopic: false,
+        topicTitle: undefined,
+        topicTags: undefined,
       });
 
       // Verify group is registered
@@ -246,6 +249,9 @@ describe('GroupService', () => {
         createdAt: expect.any(Number),
         createdBy: 'ou_creator',
         initialMembers: ['ou_user1', 'ou_user2'],
+        isTopic: false,
+        topicTitle: undefined,
+        topicTags: undefined,
       });
     });
 

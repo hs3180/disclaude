@@ -34,6 +34,9 @@ import {
   ListGroupMembersCommand,
   ListGroupCommand,
   DissolveGroupCommand,
+  CreateTopicCommand,
+  ListTopicsCommand,
+  MarkTopicCommand,
   PassiveCommand,
   SetDebugCommand,
   ShowDebugCommand,
@@ -56,6 +59,9 @@ export {
   ListGroupMembersCommand,
   ListGroupCommand,
   DissolveGroupCommand,
+  CreateTopicCommand,
+  ListTopicsCommand,
+  MarkTopicCommand,
   PassiveCommand,
   SetDebugCommand,
   ShowDebugCommand,
@@ -83,6 +89,10 @@ export function registerDefaultCommands(
   registry.register(new ListGroupMembersCommand());
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());
+  // Issue #721: Topic group commands
+  registry.register(new CreateTopicCommand());
+  registry.register(new ListTopicsCommand());
+  registry.register(new MarkTopicCommand());
   registry.register(new PassiveCommand());
   registry.register(new SetDebugCommand());
   registry.register(new ShowDebugCommand());

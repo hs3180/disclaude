@@ -256,3 +256,178 @@ export class DissolveGroupCommand implements Command {
     }
   }
 }
+
+/**
+ * Create Topic Command - Create a new topic group (BBS mode).
+ *
+ * Topic groups are designed for one-way push communication,
+ * similar to BBS/forum mode, where immediate response is not expected.
+ *
+ * @see Issue #721 - 话题群基础设施
+ */
+export class CreateTopicCommand implements Command {
+  readonly name = 'create-topic';
+  readonly category = 'group' as const;
+  readonly description = '创建话题群';
+  readonly usage = 'create-topic <话题标题> [--members ou_xxx,ou_yyy] [--tags tag1,tag2]';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args, userId } = context;
+
+    if (args.length === 0) {
+      return {
+        success: false,
+        error: '用法: `/create-topic <话题标题> [--members ou_xxx,ou_yyy] [--tags tag1,tag2]`\n\n示例: `/create-topic 每日技术讨论 --tags 技术,分享`',
+      };
+    }
+
+    // Parse arguments
+    let topicName = '';
+    let members: string[] | undefined;
+    let tags: string[] | undefined;
+
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--members' && args[i + 1]) {
+        members = args[i + 1].split(',').map(m => m.trim()).filter(m => m);
+        i++; // Skip next arg
+      } else if (arg === '--tags' && args[i + 1]) {
+        tags = args[i + 1].split(',').map(t => t.trim()).filter(t => t);
+        i++; // Skip next arg
+      } else if (!arg.startsWith('--')) {
+        topicName = topicName ? `${topicName} ${arg}` : arg;
+      }
+    }
+
+    if (!topicName) {
+      return {
+        success: false,
+        error: '请提供话题标题',
+      };
+    }
+
+    try {
+      const client = services.getFeishuClient();
+      const groupInfo = await services.createGroup(client, {
+        topic: topicName,
+        members,
+        creatorId: userId,
+        isTopic: true,
+        topicTags: tags,
+      });
+
+      const tagsStr = tags && tags.length > 0 ? `\n标签: ${tags.map(t => `#${t}`).join(' ')}` : '';
+
+      return {
+        success: true,
+        message: `✅ **话题群创建成功**\n\n群 ID: \`${groupInfo.chatId}\`\n话题: ${topicName}${tagsStr}\n成员数: ${groupInfo.initialMembers.length}\n\n💡 话题群采用 BBS 模式，适合单向推送内容，不预期即时响应`,
+      };
+    } catch (error) {
+      return { success: false, error: `创建话题群失败: ${(error as Error).message}` };
+    }
+  }
+}
+
+/**
+ * List Topics Command - List all topic groups.
+ *
+ * @see Issue #721 - 话题群基础设施
+ */
+export class ListTopicsCommand implements Command {
+  readonly name = 'topics';
+  readonly category = 'group' as const;
+  readonly description = '列出话题群';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services } = context;
+
+    try {
+      const topicGroups = services.listTopicGroups();
+
+      if (topicGroups.length === 0) {
+        return {
+          success: true,
+          message: '📋 **话题群列表**\n\n暂无话题群\n\n💡 使用 `/create-topic <标题>` 创建话题群',
+        };
+      }
+
+      const lines: string[] = [`📋 **话题群列表** (共 ${topicGroups.length} 个)\n`];
+
+      for (const g of topicGroups) {
+        const tagsStr = g.topicTags && g.topicTags.length > 0
+          ? ` [${g.topicTags.map(t => `#${t}`).join(' ')}]`
+          : '';
+        lines.push(`• **${g.topicTitle || g.name}**${tagsStr}`);
+        lines.push(`  └ \`${g.chatId}\``);
+      }
+
+      return {
+        success: true,
+        message: lines.join('\n'),
+      };
+    } catch (error) {
+      return { success: false, error: `获取话题群列表失败: ${(error as Error).message}` };
+    }
+  }
+}
+
+/**
+ * Mark Topic Command - Mark an existing group as a topic group.
+ *
+ * @see Issue #721 - 话题群基础设施
+ */
+export class MarkTopicCommand implements Command {
+  readonly name = 'mark-topic';
+  readonly category = 'group' as const;
+  readonly description = '将群标记为话题群';
+  readonly usage = 'mark-topic <groupId> [话题标题] [--tags tag1,tag2]';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args } = context;
+
+    if (args.length === 0) {
+      return {
+        success: false,
+        error: '用法: `/mark-topic <群ID> [话题标题] [--tags tag1,tag2]`\n\n示例: `/mark-topic oc_xxx 每日分享 --tags 分享,技术`',
+      };
+    }
+
+    // Parse arguments
+    const groupId = args[0];
+    let topicTitle = '';
+    let tags: string[] | undefined;
+
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--tags' && args[i + 1]) {
+        tags = args[i + 1].split(',').map(t => t.trim()).filter(t => t);
+        i++; // Skip next arg
+      } else if (!arg.startsWith('--')) {
+        topicTitle = topicTitle ? `${topicTitle} ${arg}` : arg;
+      }
+    }
+
+    // Check if group exists
+    const group = services.getGroup(groupId);
+    if (!group) {
+      return {
+        success: false,
+        error: `群 \`${groupId}\` 不在托管列表中\n\n💡 使用 /groups 查看所有群列表`,
+      };
+    }
+
+    // Mark as topic group
+    const success = services.setAsTopicGroup(groupId, topicTitle || undefined, tags);
+
+    if (!success) {
+      return { success: false, error: '标记失败' };
+    }
+
+    const tagsStr = tags && tags.length > 0 ? `\n标签: ${tags.map(t => `#${t}`).join(' ')}` : '';
+
+    return {
+      success: true,
+      message: `✅ **已标记为话题群**\n\n群 ID: \`${groupId}\`\n话题: ${topicTitle || group.name}${tagsStr}`,
+    };
+  }
+}

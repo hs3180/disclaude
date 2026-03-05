@@ -30,6 +30,12 @@ export interface GroupInfo {
   createdBy?: string;
   /** Initial members */
   initialMembers: string[];
+  /** Whether this is a topic group (BBS mode) */
+  isTopic?: boolean;
+  /** Topic title for topic groups */
+  topicTitle?: string;
+  /** Topic tags/categories */
+  topicTags?: string[];
 }
 
 /**
@@ -44,6 +50,10 @@ export interface CreateGroupOptions {
   members?: string[];
   /** Creator open_id (optional, used for auto-adding and tracking) */
   creatorId?: string;
+  /** Whether to create as a topic group (BBS mode) */
+  isTopic?: boolean;
+  /** Topic tags/categories (only for topic groups) */
+  topicTags?: string[];
 }
 
 /**
@@ -170,6 +180,57 @@ export class GroupService {
   }
 
   /**
+   * List all topic groups.
+   *
+   * @returns Array of topic group info
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  listTopicGroups(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.isTopic);
+  }
+
+  /**
+   * Check if a group is a topic group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group is a topic group
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  isTopicGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.isTopic === true;
+  }
+
+  /**
+   * Mark a group as a topic group.
+   *
+   * @param chatId - Group chat ID
+   * @param topicTitle - Optional topic title
+   * @param topicTags - Optional topic tags
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  setAsTopicGroup(chatId: string, topicTitle?: string, topicTags?: string[]): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      return false;
+    }
+    group.isTopic = true;
+    if (topicTitle) {
+      group.topicTitle = topicTitle;
+    }
+    if (topicTags) {
+      group.topicTags = topicTags;
+    }
+    this.save();
+    logger.info({ chatId, topicTitle, topicTags }, 'Group marked as topic group');
+    return true;
+  }
+
+  /**
    * Get the storage file path.
    */
   getFilePath(): string {
@@ -191,7 +252,7 @@ export class GroupService {
    * @see Issue #692 - GroupService 支持创建群聊
    */
   async createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
-    const { topic, members, creatorId } = options;
+    const { topic, members, creatorId, isTopic, topicTags } = options;
 
     // Create the chat via Feishu API
     const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
@@ -208,12 +269,15 @@ export class GroupService {
       createdAt: Date.now(),
       createdBy: creatorId,
       initialMembers: actualMembers,
+      isTopic: isTopic || false,
+      topicTitle: isTopic ? topic : undefined,
+      topicTags: isTopic ? topicTags : undefined,
     };
 
     // Register the group
     this.registerGroup(groupInfo);
 
-    logger.info({ chatId, topic, memberCount: actualMembers.length }, 'Group created and registered via GroupService');
+    logger.info({ chatId, topic, memberCount: actualMembers.length, isTopic }, 'Group created and registered via GroupService');
 
     return groupInfo;
   }

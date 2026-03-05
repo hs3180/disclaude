@@ -57,6 +57,12 @@ export interface ManagedGroupInfo {
   createdAt: number;
   createdBy?: string;
   initialMembers: string[];
+  /** Whether this is a topic group (BBS mode) */
+  isTopic?: boolean;
+  /** Topic title for topic groups */
+  topicTitle?: string;
+  /** Topic tags/categories */
+  topicTags?: string[];
 }
 
 /**
@@ -114,8 +120,15 @@ export interface CommandServices {
   /**
    * Create a group and register it automatically.
    * @see Issue #692 - GroupService 支持创建群聊
+   * @see Issue #721 - 话题群基础设施
    */
-  createGroup: (client: lark.Client, options: { topic?: string; members?: string[]; creatorId?: string }) => Promise<ManagedGroupInfo>;
+  createGroup: (client: lark.Client, options: {
+    topic?: string;
+    members?: string[];
+    creatorId?: string;
+    isTopic?: boolean;
+    topicTags?: string[];
+  }) => Promise<ManagedGroupInfo>;
 
   /** Add members to a chat */
   addMembers: (client: lark.Client, chatId: string, members: string[]) => Promise<void>;
@@ -137,6 +150,15 @@ export interface CommandServices {
 
   /** List all managed groups */
   listGroups: () => ManagedGroupInfo[];
+
+  /** Get a specific group by chatId */
+  getGroup: (chatId: string) => ManagedGroupInfo | undefined;
+
+  /** List all topic groups */
+  listTopicGroups: () => ManagedGroupInfo[];
+
+  /** Mark a group as a topic group */
+  setAsTopicGroup: (chatId: string, topicTitle?: string, topicTags?: string[]) => boolean;
 
   /** Get all chats the bot is in (from Feishu API) */
   getBotChats: (client: lark.Client) => Promise<BotChatInfo[]>;
