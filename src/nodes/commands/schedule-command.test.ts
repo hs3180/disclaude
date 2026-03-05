@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ScheduleCommand } from './builtin-commands.js';
+import { ScheduleCommand } from './schedule-command.js';
 import type { CommandContext, CommandServices, ScheduleTaskInfo } from './types.js';
 
 describe('ScheduleCommand', () => {

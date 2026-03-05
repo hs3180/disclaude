@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CommandRegistry, getCommandRegistry, resetCommandRegistry } from './command-registry.js';
-import { registerDefaultCommands } from './builtin-commands.js';
+import { registerDefaultCommands } from './index.js';
 import type { Command, CommandContext, CommandServices } from './types.js';
 
 /**
