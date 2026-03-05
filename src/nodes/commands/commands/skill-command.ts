@@ -127,7 +127,7 @@ ${skillList}`,
 
   private async handleRun(context: CommandContext): Promise<CommandResult> {
     const { services, chatId } = context;
-    const skillName = context.args[1];
+    const [, skillName] = context.args;
 
     if (!skillName) {
       return {
@@ -182,10 +182,10 @@ ${skillList}`,
     }
   }
 
-  private async handleStatus(
+  private handleStatus(
     services: CommandContext['services'],
     agentId?: string
-  ): Promise<CommandResult> {
+  ): CommandResult {
     if (!agentId) {
       return {
         success: false,
@@ -285,7 +285,7 @@ ${skillList}`,
     };
   }
 
-  private async handleAgents(services: CommandContext['services']): Promise<CommandResult> {
+  private handleAgents(services: CommandContext['services']): CommandResult {
     const agents = services.listSkillAgents(false);
 
     if (agents.length === 0) {

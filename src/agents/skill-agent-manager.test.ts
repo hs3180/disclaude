@@ -66,7 +66,9 @@ describe('SkillAgentManager', () => {
         const entries = await fs.readdir(skillsDirPath, { withFileTypes: true });
 
         for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
+          if (!entry.isDirectory()) {
+            continue;
+          }
 
           const skillPath = path.join(skillsDirPath, entry.name, 'SKILL.md');
 
@@ -96,7 +98,7 @@ describe('SkillAgentManager', () => {
         }
 
         (this as any).cacheTimestamp = now;
-      } catch (error) {
+      } catch {
         // Directory not found or other error
       }
 
