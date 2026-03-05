@@ -4,11 +4,14 @@
  * Issue #468: 任务控制指令 - deep task 执行管理
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { TaskStateManager, resetTaskStateManager } from './task-state-manager.js';
+
+// Fixed timestamp for deterministic testing
+const MOCK_TIME = 1709667600000; // 2024-03-05T15:00:00.000Z
 
 describe('TaskStateManager', () => {
   let tempDir: string;
@@ -17,6 +20,10 @@ describe('TaskStateManager', () => {
   beforeEach(async () => {
     // Reset singleton for each test
     resetTaskStateManager();
+
+    // Use fake timers for deterministic time-based testing
+    vi.useFakeTimers();
+    vi.setSystemTime(MOCK_TIME);
 
     // Create a temporary directory for each test
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-test-'));
@@ -27,6 +34,9 @@ describe('TaskStateManager', () => {
     // Clean up the temporary directory
     await fs.rm(tempDir, { recursive: true, force: true });
     resetTaskStateManager();
+
+    // Restore real timers
+    vi.useRealTimers();
   });
 
   describe('startTask', () => {
@@ -232,15 +242,20 @@ describe('TaskStateManager', () => {
       const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-list-'));
       const listManager = new TaskStateManager(testDir);
 
+      // Task 1: Start and complete at MOCK_TIME
       await listManager.startTask('Task 1', 'oc_chat');
       await listManager.completeTask();
 
+      // Advance time by 1 second to ensure different timestamps
+      vi.advanceTimersByTime(1000);
+
+      // Task 2: Start and cancel at MOCK_TIME + 1000ms
       await listManager.startTask('Task 2', 'oc_chat');
       await listManager.cancelTask();
 
       const history = await listManager.listTaskHistory();
       expect(history.length).toBe(2);
-      expect(history[0].prompt).toBe('Task 2'); // Most recent first
+      expect(history[0].prompt).toBe('Task 2'); // Most recent first (completed at later time)
       expect(history[1].prompt).toBe('Task 1');
 
       await fs.rm(testDir, { recursive: true, force: true });
@@ -251,14 +266,19 @@ describe('TaskStateManager', () => {
       const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-limit-'));
       const limitManager = new TaskStateManager(testDir);
 
-      // Create 5 tasks
+      // Create 5 tasks with 1 second intervals for deterministic ordering
       for (let i = 0; i < 5; i++) {
         await limitManager.startTask(`Task ${i}`, 'oc_chat');
         await limitManager.completeTask();
+        vi.advanceTimersByTime(1000);
       }
 
       const history = await limitManager.listTaskHistory(3);
       expect(history.length).toBe(3);
+      // Most recent tasks first (Task 4, Task 3, Task 2)
+      expect(history[0].prompt).toBe('Task 4');
+      expect(history[1].prompt).toBe('Task 3');
+      expect(history[2].prompt).toBe('Task 2');
 
       await fs.rm(testDir, { recursive: true, force: true });
     });
