@@ -222,54 +222,43 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       );
     });
 
-    it('should always handle control commands in group chat even without @mention', async () => {
+    it('should NOT handle control commands in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/status',
         chatId: 'oc_test_group', // Group chat ID
         mentions: undefined, // No mentions
       });
 
-      // Control handler SHOULD be called - control commands always handled
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'status',
-          chatId: 'oc_test_group',
-        })
-      );
+      // Issue #650: Control commands should NOT be handled without @mention in group chats
+      // Control handler should NOT be called
+      expect(controlHandler).not.toHaveBeenCalled();
 
       // Message should NOT be passed to agent
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should handle /reset in group chat without @mention', async () => {
+    it('should NOT handle /reset in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/reset',
         chatId: 'oc_test_group',
         mentions: undefined,
       });
 
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'reset',
-        })
-      );
+      // Issue #650: Control commands should NOT be handled without @mention in group chats
+      expect(controlHandler).not.toHaveBeenCalled();
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should skip non-control command in group chat without @mention', async () => {
+    it('should skip any command in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/custom-command',
         chatId: 'oc_test_group',
         mentions: undefined,
       });
 
-      // Control handler returns success: false for unknown commands
-      // But passive mode should still skip the message
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'custom-command',
-        })
-      );
+      // Issue #650: ALL commands should be skipped without @mention in group chats
+      // Control handler should NOT be called
+      expect(controlHandler).not.toHaveBeenCalled();
 
       // Message should NOT be passed to agent (passive mode)
       expect(messageHandler).not.toHaveBeenCalled();
