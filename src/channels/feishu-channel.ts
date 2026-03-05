@@ -627,6 +627,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
+    // Issue #460 & #511: Group chat passive mode
+    // In group chats, only respond when bot is mentioned (@bot)
+    // This allows scheduled tasks to broadcast without triggering unwanted responses
+    // Issue #511: Passive mode can be disabled per chat via /passive command
+    // Issue #650: Move passive mode check BEFORE command processing
+    const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
+    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled) {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, chat_type },
+        'Skipped group chat message without @mention (passive mode)'
+      );
+      // Issue #597: Forward filtered message to debug chat
+      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      return;
+    }
+
     // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
     const commandRegistry = getCommandRegistry();
 
@@ -704,21 +720,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Log if bot is mentioned with a non-control command (for debugging)
     if (botMentioned && trimmedText.startsWith('/')) {
       logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
-    }
-
-    // Issue #460 & #511: Group chat passive mode
-    // In group chats, only respond when bot is mentioned (@bot)
-    // This allows scheduled tasks to broadcast without triggering unwanted responses
-    // Issue #511: Passive mode can be disabled per chat via /passive command
-    const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled) {
-      logger.debug(
-        { messageId: message_id, chatId: chat_id, chat_type },
-        'Skipped group chat message without @mention (passive mode)'
-      );
-      // Issue #597: Forward filtered message to debug chat
-      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
-      return;
     }
 
     // Issue #514: Add typing reaction only for messages that will be processed
