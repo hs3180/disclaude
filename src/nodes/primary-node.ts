@@ -529,7 +529,8 @@ export class PrimaryNode extends EventEmitter {
 
     try {
       // Issue #644: Get Pilot for this chatId from AgentPool
-      const pilot = this.agentPool.getOrCreate(chatId);
+      // Issue #711: Use getOrCreateChatAgent() for ChatAgent lifecycle management
+      const pilot = this.agentPool.getOrCreateChatAgent(chatId);
       pilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
@@ -993,7 +994,8 @@ export class PrimaryNode extends EventEmitter {
       // Execute task using Pilot
       if (this.agentPool) {
         // Issue #644: Get Pilot for this chatId from AgentPool
-        const pilot = this.agentPool.getOrCreate(fullTask.chatId);
+        // Issue #711: Use getOrCreateChatAgent() for ChatAgent lifecycle management
+        const pilot = this.agentPool.getOrCreateChatAgent(fullTask.chatId);
         await pilot.executeOnce(
           fullTask.chatId,
           fullTask.prompt,

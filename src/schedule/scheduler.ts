@@ -220,8 +220,9 @@ ${task.prompt}`;
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Issue #644: Get Pilot for this chatId from AgentPool
+      // Issue #711: Use getOrCreateChatAgent() for ChatAgent lifecycle management
       // Each chatId gets its own Pilot instance for complete isolation
-      const pilot = this.agentPool.getOrCreate(task.chatId);
+      const pilot = this.agentPool.getOrCreateChatAgent(task.chatId);
 
       // Execute task using Pilot's executeOnce method
       // messageId is undefined - scheduled tasks send new messages, not replies
