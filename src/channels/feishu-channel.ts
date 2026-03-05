@@ -636,7 +636,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           const response = await this.emitControl({
             type: cmd as any,
             chatId: chat_id,
-            data: { args, rawText: trimmedText },
+            data: { args, rawText: trimmedText, senderOpenId: this.extractOpenId(sender) },
           });
 
           // Only return if command was successfully handled
