@@ -217,7 +217,7 @@ export class RuliuMessageSender implements IMessageSender {
 
     // Fallback to JSON if no markdown extracted
     if (!markdown.trim()) {
-      markdown = '```json\n' + JSON.stringify(card, null, 2) + '\n```';
+      markdown = `\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``;
     }
 
     const body: RuliuMessageBodyItem[] = [
@@ -251,8 +251,8 @@ export class RuliuMessageSender implements IMessageSender {
    * Add a reaction to a message.
    * Ruliu may not support reactions - this is a no-op.
    */
-  async addReaction(_messageId: string, _emoji: string): Promise<boolean> {
+  addReaction(_messageId: string, _emoji: string): Promise<boolean> {
     this.logger.debug('Reactions not supported in Ruliu');
-    return false;
+    return Promise.resolve(false);
   }
 }
