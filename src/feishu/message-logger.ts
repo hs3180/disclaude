@@ -2,8 +2,8 @@
  * Message logger for persistent message history.
  *
  * Logs all user and bot messages to chat-specific MD files.
- * Provides message ID-based deduplication by parsing MD files.
- * Replaces in-memory MessageHistoryManager and task directory deduplication.
+ * Uses date-based directory structure: {chatId}/{YYYY-MM-DD}.md
+ * Provides message ID-based deduplication via in-memory cache only.
  */
 
 import fs from 'fs/promises';
@@ -21,11 +21,18 @@ interface LogEntry {
   direction: 'incoming' | 'outgoing';
 }
 
+/**
+ * Get today's date string in YYYY-MM-DD format
+ */
+function getDateString(date: Date = new Date()): string {
+  return date.toISOString().split('T')[0];
+}
+
 export class MessageLogger {
   private chatDir: string;
 
   // In-memory cache for immediate deduplication (no size limit)
-  // Loaded at startup from all existing MD files
+  // Only tracks message IDs seen in current session
   private processedMessageIds = new Set<string>();
   private initialized = false;
 
@@ -37,7 +44,7 @@ export class MessageLogger {
 
   /**
    * Explicit initialization method that must be called and awaited before using the logger.
-   * This ensures the chat directory exists and message IDs are loaded.
+   * This ensures the chat directory exists and migrates legacy files.
    */
   async init(): Promise<void> {
     if (this.initialized) {
@@ -56,44 +63,51 @@ export class MessageLogger {
       // Then create chat subdirectory
       await fs.mkdir(this.chatDir, { recursive: true });
 
-      // Load all existing message IDs from MD files at startup
-      await this.loadAllMessageIds();
+      // Migrate legacy flat files to date-based structure
+      await this.migrateLegacyFiles();
     } catch (error) {
       console.error('[MessageLogger] Failed to initialize:', error);
     }
   }
 
   /**
-   * Load all message IDs from existing MD files at startup.
-   * One-time operation to populate the in-memory cache.
+   * Migrate legacy flat files ({chatId}.md) to date-based structure.
+   * Moves old files to today's directory.
    */
-  private async loadAllMessageIds(): Promise<void> {
+  private async migrateLegacyFiles(): Promise<void> {
     try {
-      const files = await fs.readdir(this.chatDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      console.log(`[MessageLogger] Loading message IDs from ${mdFiles.length} chat files...`);
+      // Find legacy flat .md files (not in subdirectories)
+      const legacyFiles = entries.filter(
+        entry => entry.isFile() && entry.name.endsWith('.md')
+      );
 
-      for (const file of mdFiles) {
-        const filePath = path.join(this.chatDir, file);
-        try {
-          const content = await fs.readFile(filePath, 'utf-8');
-          const regex = MESSAGE_LOGGING.MD_PARSE_REGEX;
-
-          let match;
-          regex.lastIndex = 0;
-          while ((match = regex.exec(content)) !== null) {
-            this.processedMessageIds.add(match[1].trim());
-          }
-        } catch (_error) {
-          console.error(`[MessageLogger] Failed to read ${file}:`, _error);
-        }
+      if (legacyFiles.length === 0) {
+        return;
       }
 
-      console.log(`[MessageLogger] Loaded ${this.processedMessageIds.size} message IDs into memory`);
+      console.log(`[MessageLogger] Migrating ${legacyFiles.length} legacy chat files...`);
+
+      const today = getDateString();
+
+      for (const file of legacyFiles) {
+        const legacyPath = path.join(this.chatDir, file.name);
+        const chatId = file.name.replace('.md', '');
+
+        // Create chat directory
+        const chatDir = path.join(this.chatDir, chatId);
+        await fs.mkdir(chatDir, { recursive: true });
+
+        // Move to new location
+        const newPath = path.join(chatDir, `${today}.md`);
+        await fs.rename(legacyPath, newPath);
+
+        console.log(`[MessageLogger] Migrated ${file.name} -> ${chatId}/${today}.md`);
+      }
     } catch (_error) {
-      // Directory doesn't exist yet, that's fine
-      console.log('[MessageLogger] No existing chat files found, starting fresh');
+      // Directory doesn't exist or migration failed, that's fine
+      console.log('[MessageLogger] No legacy files to migrate');
     }
   }
 
@@ -151,18 +165,20 @@ export class MessageLogger {
 
   /**
    * Check if message was already processed.
-   * All message IDs are loaded at startup, so this is just an in-memory lookup.
+   * Uses in-memory cache only (no file reading).
    */
   isMessageProcessed(messageId: string): boolean {
     return this.processedMessageIds.has(messageId);
   }
 
   /**
-   * Get chat log file path.
+   * Get chat log file path for a specific date.
+   * Structure: {chatDir}/{chatId}/{YYYY-MM-DD}.md
    */
-  private getChatLogPath(chatId: string): string {
+  private getChatLogPath(chatId: string, date: Date = new Date()): string {
     const sanitizedId = this.sanitizeId(chatId);
-    return path.join(this.chatDir, `${sanitizedId}.md`);
+    const dateStr = getDateString(date);
+    return path.join(this.chatDir, sanitizedId, `${dateStr}.md`);
   }
 
   /**
@@ -267,13 +283,32 @@ ${entry.content}
   }
 
   /**
-   * Get message history for a chat.
+   * Get message history for a chat, reading from the last N days.
+   * @param chatId Chat ID
+   * @param days Number of days to look back (default: 7)
    */
-  async getChatHistory(chatId: string): Promise<string> {
-    const logPath = this.getChatLogPath(chatId);
+  async getChatHistory(chatId: string, days: number = 7): Promise<string> {
+    const contents: string[] = [];
 
     try {
-      return await fs.readFile(logPath, 'utf-8');
+      // Read logs from the last N days
+      for (let i = 0; i < days; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const logPath = this.getChatLogPath(chatId, date);
+
+        try {
+          const content = await fs.readFile(logPath, 'utf-8');
+          if (content.trim()) {
+            contents.push(content);
+          }
+        } catch {
+          // File doesn't exist for this day, continue
+        }
+      }
+
+      // Reverse to get chronological order (oldest first)
+      return contents.reverse().join('\n\n');
     } catch (_error) {
       return '';
     }
@@ -281,7 +316,6 @@ ${entry.content}
 
   /**
    * Clear in-memory cache (useful for testing).
-   * Note: This will require a restart to reload message IDs from MD files.
    */
   clearCache(): void {
     this.processedMessageIds.clear();
