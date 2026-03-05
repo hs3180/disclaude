@@ -45,3 +45,14 @@ export {
 
 // Internal components (for PrimaryNode internal use)
 export { ChannelManager } from './channel-manager.js';
+
+// Message routing (Issue #659: Unified message routing architecture)
+export {
+  UnifiedMessageRouter,
+  type UnifiedMessageRouterConfig,
+  type UnifiedMessageType,
+  createDefaultUnifiedRouterConfig,
+} from './unified-message-router.js';
+
+// Legacy (deprecated, use UnifiedMessageRouter instead)
+export { FeedbackRouter, type FeedbackRouterConfig } from './feedback-router.js';
