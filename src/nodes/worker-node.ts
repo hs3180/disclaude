@@ -413,7 +413,8 @@ export class WorkerNode {
 
           try {
             // Issue #644: Get Pilot for this chatId from AgentPool
-            const pilot = this.agentPool?.getOrCreate(chatId);
+            // Issue #711: Use getOrCreateChatAgent() for ChatAgent management
+            const pilot = this.agentPool?.getOrCreateChatAgent(chatId);
             pilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;

@@ -4,18 +4,31 @@
  * This class solves the concurrency issue (Issue #644) where messages
  * were being routed to the wrong agent instance.
  *
+ * Issue #711: Distinguishes ChatAgent from other Agent types:
+ * - ChatAgent (Pilot): Long-lived, bound to chatId, stored in AgentPool
+ * - SkillAgent/ScheduleAgent/TaskAgent: Short-lived, not stored
+ *
  * Key Design:
  * - Each chatId gets its own Pilot instance
  * - Pilot instances are created with chatId bound at construction time
  * - No session management needed inside Pilot (each Pilot = one chatId)
+ * - Other agent types are created on-demand and NOT stored
  *
  * Architecture:
  * ```
  * PrimaryNode
  *     └── AgentPool
- *             └── Map<chatId, Pilot>
+ *             └── Map<chatId, Pilot>  (ChatAgent only)
  *                     └── Each Pilot handles ONE chatId only
  * ```
+ *
+ * Lifecycle Management (Issue #711):
+ * | Agent Type     | chatId Binding | Max Lifetime | Storage Location          |
+ * |----------------|----------------|--------------|---------------------------|
+ * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool (Map<chatId, Pilot>) |
+ * | SkillAgent     | ❌ No          | Task done    | Not stored (caller manages) |
+ * | ScheduleAgent  | ❌ No          | 24 hours     | Not stored                |
+ * | TaskAgent      | ❌ No          | Task done    | Not stored                |
  */
 
 import type pino from 'pino';
@@ -44,6 +57,10 @@ export interface AgentPoolConfig {
  *
  * Ensures complete isolation between different chat sessions by
  * giving each chatId its own Pilot instance.
+ *
+ * Issue #711: Distinguishes ChatAgent from other Agent types.
+ * - ChatAgent: Long-lived, stored in pool
+ * - SkillAgent/ScheduleAgent/TaskAgent: Short-lived, not stored
  */
 export class AgentPool {
   private readonly pilotFactory: PilotFactory;
@@ -56,18 +73,21 @@ export class AgentPool {
   }
 
   /**
-   * Get or create a Pilot instance for the given chatId.
+   * Get or create a ChatAgent (Pilot) instance for the given chatId.
+   *
+   * Issue #711: This is the primary method for ChatAgent management.
+   * ChatAgents are long-lived and stored in the pool.
    *
    * If a Pilot already exists for this chatId, returns it.
    * Otherwise, creates a new Pilot using the factory.
    *
    * @param chatId - The chat identifier
-   * @returns The Pilot instance for this chatId
+   * @returns The ChatAgent instance for this chatId
    */
-  getOrCreate(chatId: string): ChatAgent {
+  getOrCreateChatAgent(chatId: string): ChatAgent {
     let pilot = this.pilots.get(chatId);
     if (!pilot) {
-      this.log.info({ chatId }, 'Creating new Pilot instance for chatId');
+      this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
       pilot = this.pilotFactory(chatId);
       this.pilots.set(chatId, pilot);
     }
