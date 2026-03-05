@@ -5,11 +5,14 @@
  * Stores group metadata in workspace/groups.json.
  *
  * @see Issue #486 - Group management commands
+ * @see Issue #692 - GroupService.createGroup() method
  */
 
+import type * as lark from '@larksuiteoapi/node-sdk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../../utils/logger.js';
+import { createDiscussionChat } from './chat-ops.js';
 
 const logger = createLogger('GroupService');
 
@@ -45,6 +48,18 @@ interface GroupRegistry {
 export interface GroupServiceConfig {
   /** Storage file path (default: workspace/groups.json) */
   filePath?: string;
+}
+
+/**
+ * Options for creating a new group.
+ */
+export interface CreateGroupOptions {
+  /** Group topic/name (optional, auto-generated if not provided) */
+  topic?: string;
+  /** Initial member open_ids */
+  members?: string[];
+  /** Creator open_id (will be auto-added if no members) */
+  creatorId?: string;
 }
 
 /**
@@ -150,6 +165,66 @@ export class GroupService {
    */
   listGroups(): GroupInfo[] {
     return Object.values(this.registry.groups);
+  }
+
+  /**
+   * Options for creating a group.
+   */
+  createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
+    return this.createGroupWithClient(client, options);
+  }
+
+  /**
+   * Create a group with Feishu client and auto-register.
+   *
+   * This method combines group creation and registration in one operation,
+   * making it easier for agents to create groups without going through
+   * the command system.
+   *
+   * @param client - Feishu API client
+   * @param options - Group creation options
+   * @returns Created group info
+   * @throws Error if group creation fails
+   *
+   * @example
+   * ```typescript
+   * const groupInfo = await groupService.createGroup(client, {
+   *   topic: '讨论组',
+   *   members: ['ou_user1', 'ou_user2'],
+   *   creatorId: 'ou_creator'
+   * });
+   * console.log(groupInfo.chatId); // New group chat ID
+   * ```
+   */
+  async createGroupWithClient(
+    client: lark.Client,
+    options: CreateGroupOptions = {}
+  ): Promise<GroupInfo> {
+    const { topic, members, creatorId } = options;
+
+    // Create the chat using ChatOps
+    const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
+
+    // Determine actual members for registration
+    const actualMembers = members && members.length > 0
+      ? members
+      : (creatorId ? [creatorId] : []);
+
+    // Build group info
+    const groupInfo: GroupInfo = {
+      chatId,
+      name: topic || '自动命名',
+      createdAt: Date.now(),
+      createdBy: creatorId,
+      initialMembers: actualMembers,
+    };
+
+    // Auto-register the group
+    this.registerGroup(groupInfo);
+
+    logger.info({ chatId, topic, memberCount: actualMembers.length }, 'Group created and registered');
+
+    return groupInfo;
   }
 
   /**
