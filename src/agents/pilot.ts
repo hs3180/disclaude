@@ -649,7 +649,7 @@ ${msg.chatHistoryContext}
 
     // If we have images and vision is enabled, build multimodal content
     if (imageAttachments.length > 0 && Config.isVisionEnabled()) {
-      return this.buildMultimodalContent(msg, imageAttachments, chatId, capabilities, chatHistorySection);
+      return await this.buildMultimodalContent(msg, imageAttachments, chatId, capabilities, chatHistorySection);
     }
 
     // Build text-only content (original behavior)
@@ -795,7 +795,9 @@ ${msg.text}`;
 
     // Encode and add image blocks
     for (const image of imageAttachments) {
-      if (!image.localPath) continue;
+      if (!image.localPath) {
+        continue;
+      }
 
       try {
         const encoded = await encodeImageToBase64(image.localPath);

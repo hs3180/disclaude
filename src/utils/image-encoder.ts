@@ -74,7 +74,9 @@ function getMimeTypeFromExtension(filePath: string): SupportedImageFormat | null
  * Check if a MIME type is supported for multimodal input.
  */
 export function isSupportedImageFormat(mimeType: string | undefined): mimeType is SupportedImageFormat {
-  if (!mimeType) return false;
+  if (!mimeType) {
+    return false;
+  }
   return SUPPORTED_IMAGE_FORMATS.includes(mimeType as SupportedImageFormat);
 }
 
