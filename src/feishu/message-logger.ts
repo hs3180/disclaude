@@ -2,7 +2,7 @@
  * Message logger for persistent message history.
  *
  * Logs all user and bot messages to chat-specific MD files.
- * Uses date-based directory structure: {chatId}/{YYYY-MM-DD}.md
+ * Uses date-based directory structure: {YYYY-MM-DD}/{chatId}.md
  * Provides message ID-based deduplication via in-memory cache only.
  */
 
@@ -71,39 +71,90 @@ export class MessageLogger {
   }
 
   /**
-   * Migrate legacy flat files ({chatId}.md) to date-based structure.
-   * Moves old files to today's directory.
+   * Migrate legacy file structures to date-based structure.
+   * Handles two legacy formats:
+   * 1. Flat files: {chatId}.md -> {YYYY-MM-DD}/{chatId}.md
+   * 2. Old structure: {chatId}/{YYYY-MM-DD}.md -> {YYYY-MM-DD}/{chatId}.md
    */
   private async migrateLegacyFiles(): Promise<void> {
     try {
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Find legacy flat .md files (not in subdirectories)
-      const legacyFiles = entries.filter(
+      // Migrate legacy flat .md files (not in subdirectories)
+      const legacyFlatFiles = entries.filter(
         entry => entry.isFile() && entry.name.endsWith('.md')
       );
 
-      if (legacyFiles.length === 0) {
+      // Migrate old chatId directories (contain date files)
+      const legacyChatDirs = entries.filter(
+        entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name) === false
+      );
+
+      if (legacyFlatFiles.length === 0 && legacyChatDirs.length === 0) {
         return;
       }
 
-      console.log(`[MessageLogger] Migrating ${legacyFiles.length} legacy chat files...`);
+      console.log(`[MessageLogger] Migrating ${legacyFlatFiles.length} flat files and ${legacyChatDirs.length} old directories...`);
 
       const today = getDateString();
 
-      for (const file of legacyFiles) {
+      // Migrate flat files to today's date directory
+      for (const file of legacyFlatFiles) {
         const legacyPath = path.join(this.chatDir, file.name);
         const chatId = file.name.replace('.md', '');
 
-        // Create chat directory
-        const chatDir = path.join(this.chatDir, chatId);
-        await fs.mkdir(chatDir, { recursive: true });
+        // Create date directory
+        const dateDir = path.join(this.chatDir, today);
+        await fs.mkdir(dateDir, { recursive: true });
 
         // Move to new location
-        const newPath = path.join(chatDir, `${today}.md`);
+        const newPath = path.join(dateDir, `${chatId}.md`);
         await fs.rename(legacyPath, newPath);
 
-        console.log(`[MessageLogger] Migrated ${file.name} -> ${chatId}/${today}.md`);
+        console.log(`[MessageLogger] Migrated ${file.name} -> ${today}/${chatId}.md`);
+      }
+
+      // Migrate old chatId/date.md structure to date/chatId.md structure
+      for (const chatDir of legacyChatDirs) {
+        const chatId = chatDir.name;
+        const oldChatDirPath = path.join(this.chatDir, chatId);
+
+        try {
+          const dateFiles = await fs.readdir(oldChatDirPath, { withFileTypes: true });
+          const mdFiles = dateFiles.filter(
+            entry => entry.isFile() && entry.name.endsWith('.md')
+          );
+
+          for (const dateFile of mdFiles) {
+            const dateStr = dateFile.name.replace('.md', '');
+
+            // Skip if not a valid date format
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+              continue;
+            }
+
+            const oldPath = path.join(oldChatDirPath, dateFile.name);
+
+            // Create date directory
+            const newDateDir = path.join(this.chatDir, dateStr);
+            await fs.mkdir(newDateDir, { recursive: true });
+
+            // Move to new location
+            const newPath = path.join(newDateDir, `${chatId}.md`);
+            await fs.rename(oldPath, newPath);
+
+            console.log(`[MessageLogger] Migrated ${chatId}/${dateStr}.md -> ${dateStr}/${chatId}.md`);
+          }
+
+          // Remove empty old chat directory
+          const remainingFiles = await fs.readdir(oldChatDirPath);
+          if (remainingFiles.length === 0) {
+            await fs.rmdir(oldChatDirPath);
+            console.log(`[MessageLogger] Removed empty directory: ${chatId}`);
+          }
+        } catch (dirError) {
+          console.log(`[MessageLogger] Could not migrate directory ${chatId}:`, (dirError as Error).message);
+        }
       }
     } catch (_error) {
       // Directory doesn't exist or migration failed, that's fine
@@ -173,12 +224,12 @@ export class MessageLogger {
 
   /**
    * Get chat log file path for a specific date.
-   * Structure: {chatDir}/{chatId}/{YYYY-MM-DD}.md
+   * Structure: {chatDir}/{YYYY-MM-DD}/{chatId}.md
    */
   private getChatLogPath(chatId: string, date: Date = new Date()): string {
     const sanitizedId = this.sanitizeId(chatId);
     const dateStr = getDateString(date);
-    return path.join(this.chatDir, sanitizedId, `${dateStr}.md`);
+    return path.join(this.chatDir, dateStr, `${sanitizedId}.md`);
   }
 
   /**
