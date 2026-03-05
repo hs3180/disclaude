@@ -156,6 +156,58 @@ export function normalizeMentionPlaceholders(
 }
 
 /**
+ * Strip all @mentions from text to get the actual content.
+ *
+ * Issue #698: 正确识别 @消息中的系统指令
+ *
+ * This function removes all mention patterns from text:
+ * - `${key}` - placeholder format (e.g., `${@_user}`)
+ * - `<at user_id="xxx">@Name</at>` - normalized format
+ * - `@Name` - simple mention format
+ *
+ * @param text - Text content with mentions
+ * @param mentions - Mentions array from Feishu message
+ * @returns Text with all mentions stripped and trimmed
+ */
+export function stripMentions(
+  text: string,
+  mentions: MentionsArray | undefined | null
+): string {
+  let result = text;
+
+  // First, handle placeholder format: ${key}
+  if (mentions && mentions.length > 0) {
+    for (const mention of mentions) {
+      if (mention.key) {
+        const placeholderPattern = new RegExp(`\\$\\{${escapeRegExp(mention.key)}\\}`, 'g');
+        result = result.replace(placeholderPattern, '');
+      }
+    }
+  }
+
+  // Remove <at user_id="xxx">@Name</at> format
+  result = result.replace(/<at[^>]*>@[^<]*<\/at>/gi, '');
+
+  // Remove @Name format (simple mention at start of line or after whitespace)
+  // This handles cases like "@Bot /command" -> "/command"
+  if (mentions && mentions.length > 0) {
+    for (const mention of mentions) {
+      if (mention.name) {
+        // Match @Name at start of line or after whitespace
+        const mentionPattern = new RegExp(`(^|\\s)@${escapeRegExp(mention.name)}(\\s|$)`, 'g');
+        result = result.replace(mentionPattern, '$1$2');
+        // Also match @Name at the very start
+        const startPattern = new RegExp(`^@${escapeRegExp(mention.name)}\\s*`, 'g');
+        result = result.replace(startPattern, '');
+      }
+    }
+  }
+
+  // Clean up multiple spaces and trim
+  return result.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Escape special regex characters in a string.
  */
 function escapeRegExp(string: string): string {

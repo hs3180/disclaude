@@ -10,6 +10,7 @@ import {
   isUserMentioned,
   extractMentionedOpenIds,
   normalizeMentionPlaceholders,
+  stripMentions,
 } from './mention-parser.js';
 import type { FeishuMessageEvent } from '../types/platform.js';
 
@@ -204,5 +205,76 @@ describe('normalizeMentionPlaceholders', () => {
     const mentions = [createMockMention('@_user.test', 'ou_abc123', 'Alice')];
     const result = normalizeMentionPlaceholders(text, mentions);
     expect(result).toBe('Hello @Alice how are you?');
+  });
+});
+
+describe('stripMentions', () => {
+  it('should return original text for undefined mentions', () => {
+    const text = '/list-nodes';
+    expect(stripMentions(text, undefined)).toBe('/list-nodes');
+  });
+
+  it('should return original text when no mentions', () => {
+    const text = '/list-nodes';
+    expect(stripMentions(text, [])).toBe('/list-nodes');
+  });
+
+  it('should strip placeholder format and reveal command (Issue #698)', () => {
+    const text = '${@_bot} /list-nodes';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/list-nodes');
+  });
+
+  it('should strip @Name format and reveal command (Issue #698)', () => {
+    const text = '@Bot /list-nodes';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/list-nodes');
+  });
+
+  it('should strip <at> format and reveal command (Issue #698)', () => {
+    const text = '<at user_id="cli_bot_id">@Bot</at> /list-nodes';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/list-nodes');
+  });
+
+  it('should handle multiple mentions', () => {
+    const text = '@User1 @Bot /list-nodes';
+    const mentions = [
+      createMockMention('@_user1', 'ou_user1', 'User1'),
+      createMockMention('@_bot', 'cli_bot_id', 'Bot'),
+    ];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/list-nodes');
+  });
+
+  it('should handle text without mentions', () => {
+    const text = 'Hello world';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('Hello world');
+  });
+
+  it('should handle empty text with mentions', () => {
+    const text = '@Bot';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('');
+  });
+
+  it('should handle command with arguments after mention', () => {
+    const text = '@Bot /reset force';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/reset force');
+  });
+
+  it('should preserve command when bot is not mentioned', () => {
+    const text = '/list-nodes';
+    const mentions = [createMockMention('@_bot', 'cli_bot_id', 'Bot')];
+    const result = stripMentions(text, mentions);
+    expect(result).toBe('/list-nodes');
   });
 });

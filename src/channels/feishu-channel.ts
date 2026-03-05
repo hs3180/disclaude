@@ -22,6 +22,7 @@ import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { filteredMessageForwarder } from '../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../config/types.js';
 import { TaskTracker } from '../utils/task-tracker.js';
+import { stripMentions } from '../utils/mention-parser.js';
 import { BaseChannel } from './base-channel.js';
 import type {
   FeishuEventData,
@@ -685,6 +686,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
+    // Issue #698: Strip @mentions to detect commands in mentioned messages
+    // e.g., "@bot /list-nodes" should be treated as "/list-nodes" for command detection
+    const strippedText = botMentioned ? stripMentions(trimmedText, mentions) : trimmedText;
+
     // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
     const commandRegistry = getCommandRegistry();
 
@@ -695,7 +700,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #650: Move passive mode check BEFORE command processing
     // Issue #677: Allow /passive command to bypass passive mode check to avoid deadlock
     // (when mention detection fails, users still need a way to disable passive mode)
-    const isPassiveCommand = trimmedText.startsWith('/passive');
+    // Issue #698: Use strippedText to detect commands in @mentioned messages
+    const isPassiveCommand = strippedText.startsWith('/passive');
     const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug(
@@ -707,8 +713,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    if (trimmedText.startsWith('/')) {
-      const [command, ...args] = trimmedText.slice(1).split(/\s+/);
+    // Issue #698: Use strippedText to detect commands in @mentioned messages
+    if (strippedText.startsWith('/')) {
+      const [command, ...args] = strippedText.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
 
       // Handle control commands through the control channel
@@ -779,8 +786,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     // Log if bot is mentioned with a non-control command (for debugging)
-    if (botMentioned && trimmedText.startsWith('/')) {
-      logger.debug({ messageId: message_id, chatId: chat_id, command: trimmedText }, 'Bot mentioned with non-control command, passing to agent');
+    // Issue #698: Use strippedText for consistent logging
+    if (botMentioned && strippedText.startsWith('/')) {
+      logger.debug({ messageId: message_id, chatId: chat_id, command: strippedText }, 'Bot mentioned with non-control command, passing to agent');
     }
 
     // Issue #514: Add typing reaction only for messages that will be processed
