@@ -1,25 +1,8 @@
 /**
- * AgentPool - Manages ChatAgent (Pilot) instances per chatId.
+ * AgentPool - Manages ChatAgent instances per chatId.
  *
  * This class solves the concurrency issue (Issue #644) where messages
  * were being routed to the wrong agent instance.
- *
- * Issue #711: Agent Lifecycle Management Strategy
- *
- * AgentPool ONLY manages ChatAgent (Pilot) instances because they require:
- * - Long-term binding to specific chatId
- * - Persistent conversation context across sessions
- * - Cross-session state management
- *
- * Other agent types (ScheduleAgent, TaskAgent, SkillAgent) should NOT be
- * stored in AgentPool. They are created on-demand and disposed after use:
- *
- * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
- * |----------------|----------------|--------------|------------------|
- * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
- * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
- * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
- * | SkillAgent     | ❌ No          | Task finish  | None (temporary) |
  *
  * Key Design:
  * - Each chatId gets its own ChatAgent instance
@@ -33,6 +16,10 @@
  *             └── Map<chatId, ChatAgent>
  *                     └── Each ChatAgent handles ONE chatId only
  * ```
+ *
+ * Lifecycle Strategy (Issue #711):
+ * - ChatAgent: Long-lived, bound to chatId, stored in AgentPool
+ * - ScheduleAgent/TaskAgent/SkillAgent: Short-lived, not stored here
  */
 
 import type pino from 'pino';
@@ -47,20 +34,11 @@ const logger = createLogger('AgentPool');
 export type ChatAgentFactory = (chatId: string) => ChatAgent;
 
 /**
- * @deprecated Use ChatAgentFactory instead. Kept for backward compatibility.
- */
-export type PilotFactory = ChatAgentFactory;
-
-/**
  * Configuration for AgentPool.
  */
 export interface AgentPoolConfig {
   /** Factory function to create ChatAgent instances */
   chatAgentFactory: ChatAgentFactory;
-  /**
-   * @deprecated Use chatAgentFactory instead. Kept for backward compatibility.
-   */
-  pilotFactory?: ChatAgentFactory;
   /** Optional logger */
   logger?: pino.Logger;
 }
@@ -71,9 +49,9 @@ export interface AgentPoolConfig {
  * Ensures complete isolation between different chat sessions by
  * giving each chatId its own ChatAgent instance.
  *
- * Issue #711: This pool ONLY manages ChatAgent instances.
- * For ScheduleAgent/TaskAgent/SkillAgent, use AgentFactory directly
- * and dispose after use.
+ * Lifecycle: ChatAgents are long-lived and persist across sessions.
+ * Other agent types (ScheduleAgent, TaskAgent, SkillAgent) are not
+ * managed here - they should be created and disposed as needed.
  */
 export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
@@ -81,8 +59,7 @@ export class AgentPool {
   private readonly log: pino.Logger;
 
   constructor(config: AgentPoolConfig) {
-    // Support both new and legacy config property names
-    this.chatAgentFactory = config.chatAgentFactory ?? config.pilotFactory!;
+    this.chatAgentFactory = config.chatAgentFactory;
     this.log = config.logger ?? logger;
   }
 
@@ -91,9 +68,6 @@ export class AgentPool {
    *
    * If a ChatAgent already exists for this chatId, returns it.
    * Otherwise, creates a new ChatAgent using the factory.
-   *
-   * Issue #711: ChatAgents are long-lived and persist in the pool.
-   * For short-lived agents (ScheduleAgent/TaskAgent), use AgentFactory directly.
    *
    * @param chatId - The chat identifier
    * @returns The ChatAgent instance for this chatId
@@ -106,18 +80,6 @@ export class AgentPool {
       this.chatAgents.set(chatId, agent);
     }
     return agent;
-  }
-
-  /**
-   * Get or create a ChatAgent instance for the given chatId.
-   *
-   * @deprecated Use getOrCreateChatAgent instead. Kept for backward compatibility.
-   *
-   * @param chatId - The chat identifier
-   * @returns The ChatAgent instance for this chatId
-   */
-  getOrCreate(chatId: string): ChatAgent {
-    return this.getOrCreateChatAgent(chatId);
   }
 
   /**
@@ -178,7 +140,7 @@ export class AgentPool {
   /**
    * Get the number of active ChatAgent instances.
    *
-   * @returns Number of agents
+   * @returns Number of chat agents
    */
   size(): number {
     return this.chatAgents.size;

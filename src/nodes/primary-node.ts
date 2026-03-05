@@ -383,7 +383,6 @@ export class PrimaryNode extends EventEmitter {
     console.log('Initializing local execution capability...');
 
     // Issue #644: Create AgentPool with factory function
-    // Issue #711: Use new chatAgentFactory property name
     // Each chatId gets its own ChatAgent instance for complete isolation
     this.agentPool = new AgentPool({
       chatAgentFactory: (chatId: string) => {
@@ -452,7 +451,8 @@ export class PrimaryNode extends EventEmitter {
     });
 
     // Initialize SchedulerService
-    // Issue #711: No longer requires agentPool parameter
+    // Issue #711: SchedulerService no longer needs AgentPool
+    // Scheduler uses AgentFactory.createScheduleAgent directly
     this.schedulerService = new SchedulerService({
       callbacks: {
         sendMessage: async (chatId, text, threadId) => {
@@ -529,9 +529,9 @@ export class PrimaryNode extends EventEmitter {
     this.activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
 
     try {
-      // Issue #644: Get Pilot for this chatId from AgentPool
-      const pilot = this.agentPool.getOrCreate(chatId);
-      pilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+      // Issue #644: Get ChatAgent for this chatId from AgentPool
+      const agent = this.agentPool.getOrCreateChatAgent(chatId);
+      agent.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
       logger.error({ err, chatId }, 'Local execution failed');
@@ -1001,11 +1001,11 @@ export class PrimaryNode extends EventEmitter {
       // Send start notification
       await this.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
 
-      // Execute task using Pilot
+      // Execute task using ChatAgent
       if (this.agentPool) {
-        // Issue #644: Get Pilot for this chatId from AgentPool
-        const pilot = this.agentPool.getOrCreate(fullTask.chatId);
-        await pilot.executeOnce(
+        // Issue #644: Get ChatAgent for this chatId from AgentPool
+        const agent = this.agentPool.getOrCreateChatAgent(fullTask.chatId);
+        await agent.executeOnce(
           fullTask.chatId,
           fullTask.prompt,
           undefined,

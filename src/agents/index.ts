@@ -74,8 +74,8 @@ export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
 export { SessionManager, type PilotSession, type SessionManagerConfig } from './session-manager.js';
 export { ConversationContext, type ConversationContextConfig } from './conversation-context.js';
 
-// AgentPool - Manages Pilot instances per chatId (Issue #644)
-export { AgentPool, type AgentPoolConfig, type PilotFactory } from './agent-pool.js';
+// AgentPool - Manages ChatAgent instances per chatId (Issue #644, Issue #711)
+export { AgentPool, type AgentPoolConfig, type ChatAgentFactory } from './agent-pool.js';
 
 // Site mining subagent
 export {
