@@ -4,17 +4,23 @@
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
  *
+ * Issue #711: Uses short-lived ScheduleAgents instead of AgentPool.
+ * - Each task execution creates a new ScheduleAgent
+ * - Agent is disposed after execution completes
+ * - No persistent agent state between executions
+ *
  * Features:
  * - Dynamic task scheduling
- * - Integration with Pilot for task execution
+ * - Integration with AgentFactory for task execution
  * - Automatic reload of tasks on schedule changes
  */
 
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
+import { AgentFactory } from '../agents/index.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
 import type { PilotCallbacks } from '../agents/pilot.js';
-import type { AgentPool } from '../agents/agent-pool.js';
+import type { ChatAgent } from '../agents/types.js';
 
 const logger = createLogger('Scheduler');
 
@@ -30,13 +36,12 @@ interface ActiveJob {
 /**
  * Scheduler options.
  *
- * Issue #644: Uses AgentPool instead of single Pilot.
+ * Issue #711: No longer requires AgentPool.
+ * Uses AgentFactory.createScheduleAgent for short-lived agents.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
-  /** AgentPool for getting Pilot per chatId (Issue #644) */
-  agentPool: AgentPool;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
 }
@@ -44,13 +49,13 @@ export interface SchedulerOptions {
 /**
  * Scheduler - Manages cron-based task execution.
  *
- * Issue #644: Uses AgentPool for per-chatId Pilot instances.
+ * Issue #711: Uses short-lived ScheduleAgents (max 24h lifetime).
+ * Each execution creates a fresh agent, ensuring isolation.
  *
  * Usage:
  * ```typescript
  * const scheduler = new Scheduler({
  *   scheduleManager,
- *   agentPool,
  *   callbacks,
  * });
  *
@@ -66,7 +71,6 @@ export interface SchedulerOptions {
  */
 export class Scheduler {
   private scheduleManager: ScheduleManager;
-  private agentPool: AgentPool;
   private callbacks: PilotCallbacks;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
@@ -75,7 +79,6 @@ export class Scheduler {
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
-    this.agentPool = options.agentPool;
     this.callbacks = options.callbacks;
     logger.info('Scheduler created');
   }
@@ -192,6 +195,9 @@ ${task.prompt}`;
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
+   * Issue #711: Creates a short-lived ScheduleAgent for each execution.
+   * Agent is disposed after execution to free resources.
+   *
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
@@ -209,6 +215,10 @@ ${task.prompt}`;
     // Mark task as running
     this.runningTasks.add(task.id);
 
+    // Issue #711: Create a short-lived ScheduleAgent
+    // Not stored in AgentPool - disposed after execution
+    let agent: ChatAgent | undefined;
+
     try {
       // Send start notification
       await this.callbacks.sendMessage(
@@ -219,11 +229,10 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #644: Get ChatAgent for this chatId from AgentPool
-      // Each chatId gets its own ChatAgent instance for complete isolation
-      const agent = this.agentPool.getOrCreateChatAgent(task.chatId);
+      // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+      agent = AgentFactory.createScheduleAgent(task.chatId, this.callbacks);
 
-      // Execute task using ChatAgent's executeOnce method
+      // Execute task using agent's executeOnce method
       // messageId is undefined - scheduled tasks send new messages, not replies
       await agent.executeOnce(
         task.chatId,
@@ -246,6 +255,16 @@ ${task.prompt}`;
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);
+
+      // Issue #711: Always dispose the agent after execution
+      if (agent) {
+        try {
+          agent.dispose();
+          logger.debug({ taskId: task.id }, 'ScheduleAgent disposed');
+        } catch (err) {
+          logger.error({ err, taskId: task.id }, 'Error disposing ScheduleAgent');
+        }
+      }
     }
   }
 

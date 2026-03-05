@@ -451,8 +451,9 @@ export class PrimaryNode extends EventEmitter {
     });
 
     // Initialize SchedulerService
+    // Issue #711: SchedulerService no longer needs AgentPool
+    // Scheduler uses AgentFactory.createScheduleAgent directly
     this.schedulerService = new SchedulerService({
-      agentPool: this.agentPool,
       callbacks: {
         sendMessage: async (chatId, text, threadId) => {
           await this.sendMessage(chatId, text, threadId);

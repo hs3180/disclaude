@@ -200,9 +200,10 @@ export class WorkerNode {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const scheduleManager = new ScheduleManager({ schedulesDir });
+    // Issue #711: Scheduler no longer needs AgentPool
+    // Uses AgentFactory.createScheduleAgent directly
     this.scheduler = new Scheduler({
       scheduleManager,
-      agentPool: this.agentPool,
       callbacks: {
         sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
           const ctx = this.activeFeedbackChannels.get(chatId);
