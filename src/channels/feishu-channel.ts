@@ -826,6 +826,41 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     if (resolved) {
       logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
+      // Issue #657: Continue to emit message to agent instead of returning early
+      // This allows the agent to handle the interaction and decide what to do next
+    }
+
+    // Issue #657: Always emit card action as a message to the agent
+    // This enables the agent to handle user interactions and take appropriate actions
+    try {
+      // Get button text for user-friendly message
+      const buttonText = action.text || action.value;
+      const messageContent = `User clicked '${buttonText}' button`;
+
+      await this.emitMessage({
+        messageId: `${message_id}-${action.value}`,
+        chatId: chat_id,
+        userId: user?.sender_id?.open_id,
+        content: messageContent,
+        messageType: 'card',
+        timestamp: Date.now(),
+        metadata: {
+          cardAction: action,
+          cardMessageId: message_id,
+          wasPendingInteraction: resolved,
+        },
+      });
+
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, actionValue: action.value },
+        'Card action emitted as message to agent'
+      );
+    } catch (error) {
+      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
+    }
+
+    // Return early if resolved - the wait_for_interaction tool already returned the result
+    if (resolved) {
       return;
     }
 
