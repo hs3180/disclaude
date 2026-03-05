@@ -84,6 +84,10 @@ vi.mock('../config/constants.js', () => ({
   DIALOGUE: {
     MAX_ITERATIONS: 10,
   },
+  MESSAGE_LOGGING: {
+    LOGS_DIR: 'chat',
+    MD_PARSE_REGEX: /message_id:\s*([^\]]+)/g,
+  },
 }));
 
 // Mock Config
@@ -139,6 +143,14 @@ vi.mock('../utils/task-tracker.js', () => ({
   TaskTracker: vi.fn().mockImplementation(() => ({
     getDialogueTaskPath: vi.fn(() => '/test/workspace/tasks/test-task.md'),
   })),
+}));
+
+// Mock messageLogger
+vi.mock('./message-logger.js', () => ({
+  messageLogger: {
+    getChatHistory: vi.fn().mockResolvedValue('## Test chat history'),
+    init: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 describe('TaskFlowOrchestrator', () => {

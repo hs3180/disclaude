@@ -38,6 +38,7 @@ import type { ReflectionContext } from '../task/reflection.js';
 import { SkillAgent } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
+import { messageLogger } from './message-logger.js';
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -328,6 +329,104 @@ export class TaskFlowOrchestrator {
         this.logger.info({ chatId, completionReason }, 'Sending no-message warning to user');
         await this.messageCallbacks.sendMessage(chatId, warning, messageId);
       }
+
+      // Run next-step skill when task is complete (Issue #680)
+      if (completionReason === 'task_done') {
+        await this.runNextStep(chatId, messageId, agentConfig);
+      }
     }
+  }
+
+  /**
+   * Run next-step skill to recommend follow-up actions after task completion.
+   *
+   * This method executes the next-step skill agent with recent chat history
+   * to suggest relevant follow-up actions to the user.
+   *
+   * @param chatId - Feishu chat ID
+   * @param messageId - Parent message ID for thread replies
+   * @param agentConfig - Agent configuration
+   */
+  private async runNextStep(
+    chatId: string,
+    messageId: string,
+    agentConfig: { apiKey: string; model: string; apiBaseUrl?: string }
+  ): Promise<void> {
+    this.logger.info({ chatId }, 'Running next-step skill after task completion');
+
+    try {
+      // Get recent chat history (limited to avoid context overflow)
+      const fullHistory = await messageLogger.getChatHistory(chatId);
+      const recentHistory = this.extractRecentMessages(fullHistory, 10);
+
+      // Build input context for next-step skill
+      const inputContext = `## Chat History (Recent Messages)
+
+${recentHistory}
+
+---
+
+**Chat ID for Feishu tools**: \`${chatId}\`
+`;
+
+      // Create and execute next-step skill agent
+      const nextStepAgent = new SkillAgent(
+        {
+          apiKey: agentConfig.apiKey,
+          model: agentConfig.model,
+          apiBaseUrl: agentConfig.apiBaseUrl,
+          permissionMode: 'bypassPermissions',
+        },
+        'skills/next-step/SKILL.md'
+      );
+
+      try {
+        for await (const message of nextStepAgent.execute(inputContext)) {
+          const content = typeof message.content === 'string' ? message.content : '';
+          if (content) {
+            // Send as card if it looks like JSON, otherwise as text
+            if (content.includes('"config"') && content.includes('"elements"')) {
+              try {
+                const card = JSON.parse(content);
+                await this.messageCallbacks.sendCard(chatId, card, undefined, messageId);
+              } catch {
+                // Not valid JSON, send as text
+                await this.messageCallbacks.sendMessage(chatId, content, messageId);
+              }
+            } else {
+              await this.messageCallbacks.sendMessage(chatId, content, messageId);
+            }
+          }
+        }
+      } finally {
+        nextStepAgent.dispose();
+      }
+
+      this.logger.info({ chatId }, 'Next-step skill completed');
+    } catch (error) {
+      // Log error but don't throw - next-step is a nice-to-have feature
+      this.logger.error({ err: error, chatId }, 'Next-step skill failed');
+    }
+  }
+
+  /**
+   * Extract recent messages from chat history.
+   *
+   * @param history - Full chat history
+   * @param maxMessages - Maximum number of message blocks to extract
+   * @returns Truncated chat history
+   */
+  private extractRecentMessages(history: string, maxMessages: number): string {
+    if (!history) {
+      return '(No chat history available)';
+    }
+
+    // Split by message blocks (## [timestamp] pattern)
+    const messageBlocks = history.split(/(?=## \[)/);
+
+    // Take the last N message blocks
+    const recentBlocks = messageBlocks.slice(-maxMessages);
+
+    return recentBlocks.join('').trim() || '(No recent messages)';
   }
 }
