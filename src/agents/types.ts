@@ -508,12 +508,29 @@ export interface AgentConfig {
 /**
  * Factory for creating Agent instances.
  *
+ * Issue #711: Agent Lifecycle Management Strategy
+ *
+ * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
+ * |----------------|----------------|--------------|------------------|
+ * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
+ * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
+ * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
+ * | SkillAgent     | ❌ No          | Task finish  | None (temporary) |
+ *
  * @example
  * ```typescript
  * const factory = new AgentFactory(config);
  *
- * // Create ChatAgent
+ * // Create ChatAgent (long-lived, store in AgentPool)
  * const pilot = factory.createChatAgent('pilot', callbacks);
+ *
+ * // Create ScheduleAgent (short-lived, dispose after execution)
+ * const scheduleAgent = factory.createScheduleAgent(chatId, callbacks);
+ * try {
+ *   await scheduleAgent.executeOnce(chatId, prompt);
+ * } finally {
+ *   scheduleAgent.dispose();
+ * }
  *
  * // Create SkillAgent
  * const evaluator = factory.createSkillAgent('evaluator');
@@ -525,16 +542,32 @@ export interface AgentConfig {
 export interface AgentFactoryInterface {
   /**
    * Create a ChatAgent instance.
+   * Long-lived, should be stored in AgentPool.
    */
   createChatAgent(name: string, ...args: unknown[]): ChatAgent;
 
   /**
+   * Create a ScheduleAgent instance.
+   * Short-lived, caller must dispose after execution.
+   * Maximum lifetime: 24 hours.
+   */
+  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+
+  /**
+   * Create a TaskAgent instance.
+   * Short-lived, caller must dispose after task completion.
+   */
+  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+
+  /**
    * Create a SkillAgent instance.
+   * Short-lived, caller must dispose after execution.
    */
   createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgent>;
 
   /**
    * Create a Subagent instance.
+   * Short-lived, caller must dispose after execution.
    */
   createSubagent(name: string, ...args: unknown[]): Subagent;
 }
