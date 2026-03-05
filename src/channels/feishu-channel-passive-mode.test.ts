@@ -107,6 +107,16 @@ vi.mock('../utils/task-tracker.js', () => ({
   TaskTracker: vi.fn(),
 }));
 
+vi.mock('../nodes/commands/command-registry.js', () => ({
+  getCommandRegistry: vi.fn(() => ({
+    register: vi.fn(),
+    // Only recognize known control commands (status, reset, help, passive, etc.)
+    // Unknown commands like 'custom-command' will return false
+    has: vi.fn((name: string) => ['status', 'reset', 'help', 'passive', 'groups', 'debug', 'schedule', 'task', 'expert', 'budget'].includes(name)),
+    get: vi.fn(),
+  })),
+}));
+
 import { FeishuChannel } from './feishu-channel.js';
 
 describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
@@ -222,14 +232,34 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       );
     });
 
-    it('should always handle control commands in group chat even without @mention', async () => {
+    it('should skip control commands in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/status',
         chatId: 'oc_test_group', // Group chat ID
         mentions: undefined, // No mentions
       });
 
-      // Control handler SHOULD be called - control commands always handled
+      // Control handler should NOT be called - passive mode applies to all messages (Issue #650)
+      expect(controlHandler).not.toHaveBeenCalled();
+
+      // Message should NOT be passed to agent
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
+
+    it('should handle control commands in group chat WITH @mention', async () => {
+      await simulateMessageReceive({
+        text: '/status',
+        chatId: 'oc_test_group', // Group chat ID
+        mentions: [
+          {
+            key: '@_bot',
+            id: { open_id: 'cli_test_bot_id' }, // Bot's open_id from mock
+            name: 'Bot',
+          },
+        ],
+      });
+
+      // Control handler SHOULD be called when bot is mentioned
       expect(controlHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'status',
@@ -241,35 +271,27 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should handle /reset in group chat without @mention', async () => {
+    it('should skip /reset in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/reset',
         chatId: 'oc_test_group',
         mentions: undefined,
       });
 
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'reset',
-        })
-      );
+      // Control handler should NOT be called - passive mode applies to all messages (Issue #650)
+      expect(controlHandler).not.toHaveBeenCalled();
       expect(messageHandler).not.toHaveBeenCalled();
     });
 
-    it('should skip non-control command in group chat without @mention', async () => {
+    it('should skip non-control command in group chat without @mention (Issue #650)', async () => {
       await simulateMessageReceive({
         text: '/custom-command',
         chatId: 'oc_test_group',
         mentions: undefined,
       });
 
-      // Control handler returns success: false for unknown commands
-      // But passive mode should still skip the message
-      expect(controlHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'custom-command',
-        })
-      );
+      // Control handler should NOT be called - passive mode applies to all messages (Issue #650)
+      expect(controlHandler).not.toHaveBeenCalled();
 
       // Message should NOT be passed to agent (passive mode)
       expect(messageHandler).not.toHaveBeenCalled();
