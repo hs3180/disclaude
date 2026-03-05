@@ -2,12 +2,13 @@
  * Tests for GroupService.
  *
  * @see Issue #486 - Group management commands
+ * @see Issue #692 - GroupService.createGroup() method
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GroupService, type GroupInfo } from './group-service.js';
 import * as chatOps from './chat-ops.js';
 

@@ -5,7 +5,7 @@
  * Stores group metadata in workspace/groups.json.
  *
  * @see Issue #486 - Group management commands
- * @see Issue #692 - GroupService 支持创建群聊
+ * @see Issue #692 - GroupService.createGroup() method
  */
 
 import type * as lark from '@larksuiteoapi/node-sdk';
