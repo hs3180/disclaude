@@ -296,7 +296,7 @@ describe('Config', () => {
     });
 
     it('should have default LOG_LEVEL', () => {
-      expect(['debug', 'info', 'warn', 'error']).toContain(Config.LOG_LEVEL);
+      expect(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).toContain(Config.LOG_LEVEL);
     });
 
     it('should have default LOG_PRETTY as true', () => {
