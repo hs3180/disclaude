@@ -56,18 +56,23 @@ export class AgentPool {
   }
 
   /**
-   * Get or create a Pilot instance for the given chatId.
+   * Get or create a ChatAgent (Pilot) instance for the given chatId.
    *
-   * If a Pilot already exists for this chatId, returns it.
-   * Otherwise, creates a new Pilot using the factory.
+   * ChatAgents are long-lived and bound to a specific chatId for conversation context.
+   * If a ChatAgent already exists for this chatId, returns it.
+   * Otherwise, creates a new ChatAgent using the factory.
+   *
+   * Note: This method is specifically for ChatAgent (Pilot) lifecycle management.
+   * Other agent types (ScheduleAgent, TaskAgent, SkillAgent) should be created
+   * directly via their factories and have short lifecycles (max 24 hours).
    *
    * @param chatId - The chat identifier
-   * @returns The Pilot instance for this chatId
+   * @returns The ChatAgent instance for this chatId
    */
-  getOrCreate(chatId: string): ChatAgent {
+  getOrCreateChatAgent(chatId: string): ChatAgent {
     let pilot = this.pilots.get(chatId);
     if (!pilot) {
-      this.log.info({ chatId }, 'Creating new Pilot instance for chatId');
+      this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
       pilot = this.pilotFactory(chatId);
       this.pilots.set(chatId, pilot);
     }
