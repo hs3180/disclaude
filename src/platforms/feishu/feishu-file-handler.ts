@@ -80,10 +80,15 @@ export class FeishuFileHandler implements IFileHandler {
       }
 
       // Download file to local storage
+      logger.debug({ fileKey, messageType, fileName, messageId }, 'Starting file download');
       const downloadResult = await this.downloadFile(fileKey, messageType, fileName, messageId);
       if (!downloadResult.success || !downloadResult.filePath) {
-        logger.error({ fileKey }, 'Failed to download file');
-        return { success: false, error: 'Download failed' };
+        const errorDetail = downloadResult.filePath ? 'Download returned success but no path' : 'Download failed';
+        logger.error(
+          { fileKey, messageType, fileName, downloadResult, errorDetail },
+          'Failed to download file - detailed error'
+        );
+        return { success: false, error: `${errorDetail} (fileKey: ${fileKey})` };
       }
 
       logger.info({ fileKey, filePath: downloadResult.filePath }, 'File downloaded successfully');
