@@ -4,23 +4,37 @@
  * This class solves the concurrency issue (Issue #644) where messages
  * were being routed to the wrong agent instance.
  *
+ * Issue #711: Distinguishes ChatAgent from other Agent types:
+ * - ChatAgent (Pilot): Long-lived, bound to chatId, stored in AgentPool
+ * - SkillAgent/ScheduleAgent/TaskAgent: Short-lived, not stored
+ *
  * Key Design:
  * - Each chatId gets its own Pilot instance
  * - Pilot instances are created with chatId bound at construction time
  * - No session management needed inside Pilot (each Pilot = one chatId)
+ * - Other agent types are created on-demand and NOT stored
  *
  * Architecture:
  * ```
  * PrimaryNode
  *     └── AgentPool
- *             └── Map<chatId, Pilot>
+ *             └── Map<chatId, Pilot>  (ChatAgent only)
  *                     └── Each Pilot handles ONE chatId only
  * ```
+ *
+ * Lifecycle Management (Issue #711):
+ * | Agent Type     | chatId Binding | Max Lifetime | Storage Location          |
+ * |----------------|----------------|--------------|---------------------------|
+ * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool (Map<chatId, Pilot>) |
+ * | SkillAgent     | ❌ No          | Task done    | Not stored (caller manages) |
+ * | ScheduleAgent  | ❌ No          | 24 hours     | Not stored                |
+ * | TaskAgent      | ❌ No          | Task done    | Not stored                |
  */
 
 import type pino from 'pino';
 import { createLogger } from '../utils/logger.js';
-import type { ChatAgent } from './types.js';
+import type { ChatAgent, SkillAgent } from './types.js';
+import { AgentFactory } from './factory.js';
 
 const logger = createLogger('AgentPool');
 
@@ -30,11 +44,18 @@ const logger = createLogger('AgentPool');
 export type PilotFactory = (chatId: string) => ChatAgent;
 
 /**
+ * Factory function type for creating SkillAgent instances.
+ */
+export type SkillAgentFactory = (skillName: string) => Promise<SkillAgent>;
+
+/**
  * Configuration for AgentPool.
  */
 export interface AgentPoolConfig {
   /** Factory function to create Pilot instances */
   pilotFactory: PilotFactory;
+  /** Optional factory function to create SkillAgent instances (defaults to AgentFactory) */
+  skillAgentFactory?: SkillAgentFactory;
   /** Optional logger */
   logger?: pino.Logger;
 }
@@ -44,35 +65,89 @@ export interface AgentPoolConfig {
  *
  * Ensures complete isolation between different chat sessions by
  * giving each chatId its own Pilot instance.
+ *
+ * Issue #711: Distinguishes ChatAgent from other Agent types.
+ * - ChatAgent: Long-lived, stored in pool
+ * - SkillAgent/ScheduleAgent/TaskAgent: Short-lived, not stored
  */
 export class AgentPool {
   private readonly pilotFactory: PilotFactory;
+  private readonly skillAgentFactory: SkillAgentFactory;
   private readonly pilots = new Map<string, ChatAgent>();
   private readonly log: pino.Logger;
 
   constructor(config: AgentPoolConfig) {
     this.pilotFactory = config.pilotFactory;
+    this.skillAgentFactory = config.skillAgentFactory ?? this.defaultSkillAgentFactory;
     this.log = config.logger ?? logger;
   }
 
   /**
-   * Get or create a Pilot instance for the given chatId.
+   * Default SkillAgent factory using AgentFactory.
+   */
+  private async defaultSkillAgentFactory(skillName: string): Promise<SkillAgent> {
+    return AgentFactory.createSkillAgent(skillName);
+  }
+
+  // ============================================================================
+  // ChatAgent Management (Issue #711)
+  // ============================================================================
+
+  /**
+   * Get or create a ChatAgent (Pilot) instance for the given chatId.
+   *
+   * Issue #711: This is the primary method for ChatAgent management.
+   * ChatAgents are long-lived and stored in the pool.
    *
    * If a Pilot already exists for this chatId, returns it.
    * Otherwise, creates a new Pilot using the factory.
    *
    * @param chatId - The chat identifier
-   * @returns The Pilot instance for this chatId
+   * @returns The ChatAgent instance for this chatId
    */
-  getOrCreate(chatId: string): ChatAgent {
+  getOrCreateChatAgent(chatId: string): ChatAgent {
     let pilot = this.pilots.get(chatId);
     if (!pilot) {
-      this.log.info({ chatId }, 'Creating new Pilot instance for chatId');
+      this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
       pilot = this.pilotFactory(chatId);
       this.pilots.set(chatId, pilot);
     }
     return pilot;
   }
+
+  /**
+   * Get or create a Pilot instance for the given chatId.
+   *
+   * @deprecated Use getOrCreateChatAgent() instead. This method will be removed in v0.5.0.
+   * @param chatId - The chat identifier
+   * @returns The Pilot instance for this chatId
+   */
+  getOrCreate(chatId: string): ChatAgent {
+    return this.getOrCreateChatAgent(chatId);
+  }
+
+  // ============================================================================
+  // SkillAgent Management (Issue #711)
+  // ============================================================================
+
+  /**
+   * Create a SkillAgent for a specific skill.
+   *
+   * Issue #711: SkillAgents are short-lived and NOT stored in the pool.
+   * The caller is responsible for disposing the agent after use.
+   * Recommended to dispose within 24 hours.
+   *
+   * @param skillName - The skill name (e.g., 'next-step', 'evaluator')
+   * @returns The SkillAgent instance (NOT stored in pool)
+   */
+  async createSkillAgent(skillName: string): Promise<SkillAgent> {
+    this.log.debug({ skillName }, 'Creating SkillAgent (not stored in pool)');
+    return this.skillAgentFactory(skillName);
+  }
+
+  // ============================================================================
+  // Legacy Methods (backward compatibility)
+  // ============================================================================
 
   /**
    * Check if a Pilot exists for the given chatId.
