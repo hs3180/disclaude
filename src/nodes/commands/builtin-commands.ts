@@ -210,13 +210,13 @@ export class CreateGroupCommand implements Command {
 }
 
 /**
- * Add Member Command - Add a member to a group.
+ * Add Group Member Command - Add a member to a group.
  */
-export class AddMemberCommand implements Command {
-  readonly name = 'add-member';
+export class AddGroupMemberCommand implements Command {
+  readonly name = 'add-group-member';
   readonly category = 'group' as const;
-  readonly description = '添加成员';
-  readonly usage = 'add-member <groupId> <member>';
+  readonly description = '添加群成员';
+  readonly usage = 'add-group-member <groupId> <member>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const { services, args } = context;
@@ -224,7 +224,7 @@ export class AddMemberCommand implements Command {
     if (args.length < 2) {
       return {
         success: false,
-        error: '用法: `/add-member <群ID> <成员ID>`\n\n示例: `/add-member oc_xxx ou_yyy`',
+        error: '用法: `/add-group-member <群ID> <成员ID>`\n\n示例: `/add-group-member oc_xxx ou_yyy`',
       };
     }
 
@@ -241,13 +241,13 @@ export class AddMemberCommand implements Command {
 }
 
 /**
- * Remove Member Command - Remove a member from a group.
+ * Remove Group Member Command - Remove a member from a group.
  */
-export class RemoveMemberCommand implements Command {
-  readonly name = 'remove-member';
+export class RemoveGroupMemberCommand implements Command {
+  readonly name = 'remove-group-member';
   readonly category = 'group' as const;
-  readonly description = '移除成员';
-  readonly usage = 'remove-member <groupId> <member>';
+  readonly description = '移除群成员';
+  readonly usage = 'remove-group-member <groupId> <member>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const { services, args } = context;
@@ -255,7 +255,7 @@ export class RemoveMemberCommand implements Command {
     if (args.length < 2) {
       return {
         success: false,
-        error: '用法: `/remove-member <群ID> <成员ID>`\n\n示例: `/remove-member oc_xxx ou_yyy`',
+        error: '用法: `/remove-group-member <群ID> <成员ID>`\n\n示例: `/remove-group-member oc_xxx ou_yyy`',
       };
     }
 
@@ -939,8 +939,8 @@ export function registerDefaultCommands(
   registry.register(new SwitchNodeCommand());
   registry.register(new RestartCommand());
   registry.register(new CreateGroupCommand());
-  registry.register(new AddMemberCommand());
-  registry.register(new RemoveMemberCommand());
+  registry.register(new AddGroupMemberCommand());
+  registry.register(new RemoveGroupMemberCommand());
   registry.register(new ListGroupMembersCommand());
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());

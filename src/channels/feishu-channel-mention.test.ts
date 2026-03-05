@@ -99,7 +99,7 @@ vi.mock('../utils/task-tracker.js', () => ({
 vi.mock('../nodes/commands/command-registry.js', () => ({
   getCommandRegistry: vi.fn(() => ({
     has: (name: string) => ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',
-      'create-group', 'add-member', 'remove-member', 'list-group-members', 'list-group', 'dissolve-group'].includes(name),
+      'create-group', 'add-group-member', 'remove-group-member', 'list-group-members', 'list-group', 'dissolve-group'].includes(name),
     getAll: () => [],
     register: vi.fn(),
   })),
