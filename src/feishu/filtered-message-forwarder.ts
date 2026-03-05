@@ -5,10 +5,11 @@
  * Useful for diagnosing why messages are being filtered in passive mode.
  *
  * @see Issue #597
+ * @see Issue #652 - Uses DebugGroupService for memory-based debug group management
  */
 
-import { Config } from '../config/index.js';
-import type { FilterReason, DebugConfig } from '../config/types.js';
+import type { FilterReason } from '../config/types.js';
+import { getDebugGroupService, type DebugGroupInfo } from '../nodes/debug-group-service.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('FilteredMessageForwarder');
@@ -43,77 +44,44 @@ export interface MessageSender {
 /**
  * FilteredMessageForwarder handles forwarding filtered messages to a debug chat.
  *
- * Configuration (in disclaude.config.yaml):
- * ```yaml
- * messaging:
- *   debug:
- *     enabled: true
- *     filterForwardChatId: "oc_xxx"  # Chat to forward filtered messages to
- *     includeReasons:                # Only forward these reasons (empty = all)
- *       - passive_mode
- *       - duplicate
- * ```
+ * Uses DebugGroupService for memory-based debug group management.
+ * The debug group is set via the `/set-debug` command in a chat.
+ *
+ * @see Issue #652 - Changed from config-based to memory-based debug group
+ * @see Issue #597 - Original filtered message forwarding feature
  */
 export class FilteredMessageForwarder {
-  private enabled: boolean;
-  private forwardChatId?: string;
-  private includeReasons: Set<FilterReason>;
   private messageSender?: MessageSender;
-
-  /**
-   * Create a new FilteredMessageForwarder.
-   * @param debugConfig - Optional debug config for testing (uses Config.getDebugConfig() by default)
-   */
-  constructor(debugConfig?: DebugConfig) {
-    const config = debugConfig ?? Config.getDebugConfig() ?? {};
-    this.enabled = config.enabled ?? false;
-    this.forwardChatId = config.filterForwardChatId;
-    this.includeReasons = new Set(config.includeReasons || []);
-
-    if (this.enabled && this.forwardChatId) {
-      logger.info(
-        { forwardChatId: this.forwardChatId, includeReasons: [...this.includeReasons] },
-        'FilteredMessageForwarder initialized'
-      );
-    } else {
-      // Issue #652: Output WARN log when not configured
-      logger.warn(
-        {
-          enabled: this.enabled,
-          hasForwardChatId: !!this.forwardChatId,
-          hint: 'Add messaging.debug section to disclaude.config.yaml to enable filtered message forwarding'
-        },
-        'FilteredMessageForwarder is not configured. Filtered messages will not be forwarded.'
-      );
-    }
-  }
 
   /**
    * Set the message sender for forwarding messages.
    */
   setMessageSender(sender: MessageSender): void {
     this.messageSender = sender;
+    logger.info('MessageSender configured for FilteredMessageForwarder');
   }
 
   /**
-   * Check if forwarding is enabled and configured.
+   * Get the current debug group from DebugGroupService.
+   * @returns The current debug group info, or null if not set
+   */
+  private getDebugGroup(): DebugGroupInfo | null {
+    return getDebugGroupService().getDebugGroup();
+  }
+
+  /**
+   * Check if forwarding is enabled (debug group is set).
    */
   isConfigured(): boolean {
-    return this.enabled && !!this.forwardChatId;
+    return this.getDebugGroup() !== null;
   }
 
   /**
    * Check if a specific filter reason should be forwarded.
+   * Always returns true if debug group is set (forwards all reasons).
    */
   shouldForward(reason: FilterReason): boolean {
-    if (!this.isConfigured()) {
-      return false;
-    }
-    // If includeReasons is empty, forward all reasons
-    if (this.includeReasons.size === 0) {
-      return true;
-    }
-    return this.includeReasons.has(reason);
+    return this.isConfigured();
   }
 
   /**
@@ -122,19 +90,25 @@ export class FilteredMessageForwarder {
    * @param message - The filtered message data
    */
   async forward(message: FilteredMessage): Promise<void> {
-    if (!this.shouldForward(message.reason)) {
+    const debugGroup = this.getDebugGroup();
+
+    if (!debugGroup) {
+      // Debug group not set, silently skip
       return;
     }
 
-    if (!this.messageSender || !this.forwardChatId) {
-      logger.warn('MessageSender or forwardChatId not configured');
+    if (!this.messageSender) {
+      logger.warn('MessageSender not configured, cannot forward filtered message');
       return;
     }
 
     try {
-      const formattedMessage = this.formatMessage(message);
-      await this.messageSender.sendText(this.forwardChatId, formattedMessage);
-      logger.debug({ messageId: message.messageId, reason: message.reason }, 'Forwarded filtered message');
+      const formattedMessage = this.formatMessage(message, debugGroup);
+      await this.messageSender.sendText(debugGroup.chatId, formattedMessage);
+      logger.debug(
+        { messageId: message.messageId, reason: message.reason, debugChatId: debugGroup.chatId },
+        'Forwarded filtered message to debug group'
+      );
     } catch (error) {
       logger.error({ err: error, messageId: message.messageId }, 'Failed to forward filtered message');
     }
@@ -142,8 +116,10 @@ export class FilteredMessageForwarder {
 
   /**
    * Format a filtered message for display.
+   * @param message - The filtered message data
+   * @param debugGroup - The debug group info (optional, for context)
    */
-  private formatMessage(message: FilteredMessage): string {
+  private formatMessage(message: FilteredMessage, debugGroup: DebugGroupInfo): string {
     const reasonEmoji: Record<FilterReason, string> = {
       duplicate: '🔄',
       bot: '🤖',
@@ -159,6 +135,8 @@ export class FilteredMessageForwarder {
       ? `${message.content.slice(0, 200)}...`
       : message.content;
 
+    const debugGroupName = debugGroup.name ? ` (${debugGroup.name})` : '';
+
     return `${emoji} **被过滤消息**
 
 | 字段 | 值 |
@@ -168,6 +146,7 @@ export class FilteredMessageForwarder {
 | 消息ID | \`${message.messageId}\` |
 | 聊天ID | \`${message.chatId}\` |
 | 用户ID | \`${message.userId || 'unknown'}\` |
+| 调试群 | \`${debugGroup.chatId}\`${debugGroupName} |
 
 **内容**:
 \`\`\`
