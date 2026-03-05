@@ -165,21 +165,25 @@ export class ScheduleCommandService {
       return false;
     }
 
+    // Check if agentPool is available for execution
+    if (!this.agentPool) {
+      logger.warn({ taskId: task.id }, 'Cannot run schedule: agentPool not available');
+      return false;
+    }
+
     // Execute the task directly
     try {
       // Send start notification
       await this.callbacks.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
 
       // Execute task using Pilot
-      if (this.agentPool) {
-        const pilot = this.agentPool.getOrCreate(fullTask.chatId);
-        await pilot.executeOnce(
-          fullTask.chatId,
-          fullTask.prompt,
-          undefined,
-          fullTask.createdBy
-        );
-      }
+      const pilot = this.agentPool.getOrCreate(fullTask.chatId);
+      await pilot.executeOnce(
+        fullTask.chatId,
+        fullTask.prompt,
+        undefined,
+        fullTask.createdBy
+      );
 
       return true;
     } catch (error) {

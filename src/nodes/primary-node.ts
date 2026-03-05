@@ -76,7 +76,6 @@ import {
 // Schedule management (Issue #469)
 import { ScheduleManager } from '../schedule/schedule-manager.js';
 import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
-import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
 
