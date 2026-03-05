@@ -452,10 +452,26 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
 
-    // For sync mode, set up response handling
+    // For sync mode, set up response handling BEFORE emitting message
+    // to avoid race condition where done signal arrives before pendingResponse is set
     if (syncMode) {
       this.responseBuffers.set(messageId, []);
       this.chatToMessage.set(chatId, messageId);
+      // Pre-set pendingResponse to avoid race condition (Issue #732)
+      // This ensures done signal can be handled even if it arrives during messageHandler execution
+      const timeoutMs = 240000; // 4 minutes
+      this.pendingResponses.set(chatId, {
+        resolve: () => {
+          // Placeholder - will be replaced by waitForResponse
+        },
+        reject: () => {
+          // Placeholder - will be replaced by waitForResponse
+        },
+        response: [],
+        timeout: setTimeout(() => {
+          // Timeout placeholder - will be replaced by waitForResponse
+        }, timeoutMs),
+      });
     }
 
     // Emit as incoming message
@@ -472,6 +488,10 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         });
       } catch (error) {
         logger.error({ err: error, messageId }, 'Failed to handle message');
+        // Cleanup on error
+        if (syncMode) {
+          this.cleanupSyncState(chatId, messageId);
+        }
         this.sendError(res, 500, 'Failed to process message');
         return;
       }
@@ -492,9 +512,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
       response.response = responseText;
 
-      // Cleanup
-      this.responseBuffers.delete(messageId);
-      this.chatToMessage.delete(chatId);
+      // Cleanup is handled by waitForResponse or doSendMessage
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -534,37 +552,58 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
   /**
    * Wait for response in sync mode.
+   * Issue #732: Handles pre-set pendingResponse to avoid race condition.
    */
   private waitForResponse(chatId: string, messageId: string, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(chatId);
         this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId);
         reject(new Error('Response timeout'));
       }, timeoutMs);
 
-      // Check if response is already available
+      // Check if response is already available (done signal arrived during messageHandler)
       const buffer = this.responseBuffers.get(messageId);
       if (buffer && buffer.length > 0) {
-        clearTimeout(timeout);
-        resolve(buffer.join('\n'));
-        return;
+        // Check if done was already received (pendingResponse was triggered)
+        const existingPending = this.pendingResponses.get(chatId);
+        if (!existingPending || buffer.length > 0) {
+          // Response ready or no pending (already resolved)
+          clearTimeout(timeout);
+          this.cleanupSyncState(chatId, messageId);
+          resolve(buffer.join('\n'));
+          return;
+        }
       }
 
-      // Store pending response
+      // Update or set pending response with actual resolve/reject
+      // Issue #732: pendingResponse may already exist from handleChat
       this.pendingResponses.set(chatId, {
         resolve: (response) => {
           clearTimeout(timeout);
+          this.cleanupSyncState(chatId, messageId);
           resolve(response);
         },
         reject: (error) => {
           clearTimeout(timeout);
+          this.cleanupSyncState(chatId, messageId);
           reject(error);
         },
         response: [],
         timeout,
       });
     });
+  }
+
+  /**
+   * Cleanup sync mode state for a chat.
+   * Issue #732: Centralized cleanup to avoid state leaks.
+   */
+  private cleanupSyncState(chatId: string, messageId: string): void {
+    this.pendingResponses.delete(chatId);
+    this.responseBuffers.delete(messageId);
+    this.chatToMessage.delete(chatId);
   }
 
   /**
