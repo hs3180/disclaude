@@ -4,6 +4,9 @@
  * Logs all user and bot messages to chat-specific MD files.
  * Provides message ID-based deduplication by parsing MD files.
  * Replaces in-memory MessageHistoryManager and task directory deduplication.
+ *
+ * Storage structure (Issue #691):
+ * workspace/chat/{YYYY-MM-DD}/{chatId}.md
  */
 
 import fs from 'fs/promises';
@@ -66,34 +69,63 @@ export class MessageLogger {
   /**
    * Load all message IDs from existing MD files at startup.
    * One-time operation to populate the in-memory cache.
+   * Supports both new date-based structure and legacy flat structure.
    */
   private async loadAllMessageIds(): Promise<void> {
     try {
-      const files = await fs.readdir(this.chatDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
+      let totalFiles = 0;
 
-      console.log(`[MessageLogger] Loading message IDs from ${mdFiles.length} chat files...`);
+      // Process date directories (YYYY-MM-DD format)
+      const dateDirs = entries.filter(
+        entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name)
+      );
 
-      for (const file of mdFiles) {
-        const filePath = path.join(this.chatDir, file);
-        try {
-          const content = await fs.readFile(filePath, 'utf-8');
-          const regex = MESSAGE_LOGGING.MD_PARSE_REGEX;
+      for (const dateDir of dateDirs) {
+        const datePath = path.join(this.chatDir, dateDir.name);
+        const files = await fs.readdir(datePath);
+        const mdFiles = files.filter(f => f.endsWith('.md'));
+        totalFiles += mdFiles.length;
 
-          let match;
-          regex.lastIndex = 0;
-          while ((match = regex.exec(content)) !== null) {
-            this.processedMessageIds.add(match[1].trim());
-          }
-        } catch (_error) {
-          console.error(`[MessageLogger] Failed to read ${file}:`, _error);
+        for (const file of mdFiles) {
+          const filePath = path.join(datePath, file);
+          await this.loadMessageIdsFromFile(filePath);
         }
       }
 
-      console.log(`[MessageLogger] Loaded ${this.processedMessageIds.size} message IDs into memory`);
+      // Also check for legacy flat files (backward compatibility)
+      const legacyMdFiles = entries.filter(
+        entry => entry.isFile() && entry.name.endsWith('.md')
+      );
+      totalFiles += legacyMdFiles.length;
+
+      for (const file of legacyMdFiles) {
+        const filePath = path.join(this.chatDir, file.name);
+        await this.loadMessageIdsFromFile(filePath);
+      }
+
+      console.log(`[MessageLogger] Loaded ${this.processedMessageIds.size} message IDs from ${totalFiles} files`);
     } catch (_error) {
       // Directory doesn't exist yet, that's fine
       console.log('[MessageLogger] No existing chat files found, starting fresh');
+    }
+  }
+
+  /**
+   * Load message IDs from a single file.
+   */
+  private async loadMessageIdsFromFile(filePath: string): Promise<void> {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const regex = MESSAGE_LOGGING.MD_PARSE_REGEX;
+
+      let match;
+      regex.lastIndex = 0;
+      while ((match = regex.exec(content)) !== null) {
+        this.processedMessageIds.add(match[1].trim());
+      }
+    } catch (_error) {
+      console.error(`[MessageLogger] Failed to read ${filePath}:`, _error);
     }
   }
 
@@ -158,11 +190,29 @@ export class MessageLogger {
   }
 
   /**
-   * Get chat log file path.
+   * Get chat log file path for a specific date.
+   * Structure: workspace/chat/{YYYY-MM-DD}/{chatId}.md
    */
-  private getChatLogPath(chatId: string): string {
+  private getChatLogPath(chatId: string, timestamp?: string | number): string {
     const sanitizedId = this.sanitizeId(chatId);
-    return path.join(this.chatDir, `${sanitizedId}.md`);
+    const dateDir = this.getDateDir(timestamp);
+    return path.join(this.chatDir, dateDir, `${sanitizedId}.md`);
+  }
+
+  /**
+   * Get date directory name from timestamp.
+   * Format: YYYY-MM-DD
+   */
+  private getDateDir(timestamp?: string | number): string {
+    const date = timestamp
+      ? new Date(typeof timestamp === 'number' ? timestamp : timestamp)
+      : new Date();
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
   }
 
   /**
@@ -204,7 +254,7 @@ ${entry.content}
    * Append message to chat log file.
    */
   private async appendToLog(entry: LogEntry): Promise<void> {
-    const logPath = this.getChatLogPath(entry.chatId);
+    const logPath = this.getChatLogPath(entry.chatId, entry.timestamp);
 
     try {
       // Ensure directory exists (defensive check in case it was deleted)
@@ -268,15 +318,43 @@ ${entry.content}
 
   /**
    * Get message history for a chat.
+   * Reads from the last N days of logs (default 7 days).
+   * Supports both new date-based structure and legacy flat structure.
    */
-  async getChatHistory(chatId: string): Promise<string> {
-    const logPath = this.getChatLogPath(chatId);
+  async getChatHistory(chatId: string, days: number = 7): Promise<string> {
+    const sanitizedId = this.sanitizeId(chatId);
+    const contents: string[] = [];
 
-    try {
-      return await fs.readFile(logPath, 'utf-8');
-    } catch (_error) {
-      return '';
+    // Collect logs from the last N days
+    for (let i = 0; i < days; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateDir = this.getDateDir(date.getTime());
+      const logPath = path.join(this.chatDir, dateDir, `${sanitizedId}.md`);
+
+      try {
+        const content = await fs.readFile(logPath, 'utf-8');
+        if (content) {
+          contents.push(content);
+        }
+      } catch {
+        // File doesn't exist for this day, skip
+      }
     }
+
+    // Also check legacy flat file (backward compatibility)
+    const legacyPath = path.join(this.chatDir, `${sanitizedId}.md`);
+    try {
+      const content = await fs.readFile(legacyPath, 'utf-8');
+      if (content) {
+        contents.push(content);
+      }
+    } catch {
+      // Legacy file doesn't exist, skip
+    }
+
+    // Join all contents (newest first)
+    return contents.join('\n\n');
   }
 
   /**

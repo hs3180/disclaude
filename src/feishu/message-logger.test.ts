@@ -213,9 +213,8 @@ describe('MessageLogger', () => {
   });
 
   describe('getChatHistory', () => {
-    it('should return empty string when file not found', async () => {
-      vi.mocked(mockFs.readFile).mockRejectedValueOnce(new Error('File not found'));
-
+    it('should return empty string when no files found', async () => {
+      // All readFile calls will reject (default mock behavior)
       const history = await messageLogger.getChatHistory('nonexistent');
 
       expect(history).toBe('');
@@ -223,11 +222,45 @@ describe('MessageLogger', () => {
 
     it('should return file content when file exists', async () => {
       const mockContent = '# Chat Log\nContent here';
+      // First call is for today's file
       vi.mocked(mockFs.readFile).mockResolvedValueOnce(mockContent);
+      // Subsequent calls reject (no older files)
+      vi.mocked(mockFs.readFile).mockRejectedValue(new Error('File not found'));
 
       const history = await messageLogger.getChatHistory('chat-1');
 
       expect(history).toBe(mockContent);
+    });
+
+    it('should merge content from multiple days', async () => {
+      const day1Content = '# Day 1\nContent from day 1';
+      const day2Content = '# Day 2\nContent from day 2';
+
+      // First call returns today's content
+      vi.mocked(mockFs.readFile).mockResolvedValueOnce(day1Content);
+      // Second call returns yesterday's content
+      vi.mocked(mockFs.readFile).mockResolvedValueOnce(day2Content);
+      // Rest reject (no more files)
+      vi.mocked(mockFs.readFile).mockRejectedValue(new Error('File not found'));
+
+      const history = await messageLogger.getChatHistory('chat-1', 2);
+
+      expect(history).toContain(day1Content);
+      expect(history).toContain(day2Content);
+    });
+
+    it('should support legacy flat file structure', async () => {
+      const mockContent = '# Legacy Log\nContent here';
+
+      // All date-based files reject
+      vi.mocked(mockFs.readFile).mockRejectedValue(new Error('File not found'));
+      // Legacy file exists (last call in the sequence)
+      vi.mocked(mockFs.readFile).mockResolvedValue(mockContent);
+
+      const history = await messageLogger.getChatHistory('chat-1');
+
+      // Should return content from legacy file
+      expect(history).toContain(mockContent);
     });
   });
 
@@ -326,6 +359,41 @@ describe('MessageLogger', () => {
 
       expect(messageLogger.isMessageProcessed('msg-a1')).toBe(true);
       expect(messageLogger.isMessageProcessed('msg-b1')).toBe(true);
+    });
+  });
+
+  describe('Date-based storage (Issue #691)', () => {
+    it('should create date directory when logging message', async () => {
+      await messageLogger.logIncomingMessage(
+        'msg-date',
+        'user-1',
+        'chat-date',
+        'Test',
+        'text'
+      );
+
+      // Verify mkdir was called (directory should be created)
+      expect(mockFs.mkdir).toHaveBeenCalled();
+    });
+
+    it('should use date-based path for log files', async () => {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const expectedDateDir = `${year}-${month}-${day}`;
+
+      await messageLogger.logIncomingMessage(
+        'msg-date-path',
+        'user-1',
+        'chat-date-path',
+        'Test',
+        'text'
+      );
+
+      // Verify writeFile was called with a path containing the date directory
+      const writeCall = vi.mocked(mockFs.writeFile).mock.calls[0];
+      expect(writeCall[0]).toContain(expectedDateDir);
     });
   });
 });
