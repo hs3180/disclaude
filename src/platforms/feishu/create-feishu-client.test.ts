@@ -50,6 +50,8 @@ describe('createFeishuClient', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Ensure fake timers are always restored to prevent flaky tests
+    vi.useRealTimers();
   });
 
   it('should create client with correct timeout configuration', () => {

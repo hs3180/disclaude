@@ -7,12 +7,16 @@
  * API Endpoints:
  * - POST /api/chat - Send a message and receive response (streaming)
  * - POST /api/chat/sync - Send a message and wait for complete response
+ * - POST /api/chat/{chatId} - Async mode: send message or poll for response
+ *   - With message body: returns 202 Accepted (message received)
+ *   - Without body (poll): 200 OK (completed), 202 Accepted (processing), 204 No Content (no session)
  * - GET /api/health - Health check
  * - POST /api/files/upload - Upload a file (base64 encoded)
  * - GET /api/files/:fileId - Get file metadata
  * - GET /api/files/:fileId/download - Download a file (base64 encoded)
  *
  * @see Issue #583 - REST Channel file transfer
+ * @see Issue #738 - REST async mode
  */
 
 import http from 'node:http';
@@ -147,11 +151,39 @@ interface PendingResponse {
 }
 
 /**
+ * Session status for async mode.
+ */
+type SessionStatus = 'pending' | 'processing' | 'completed' | 'error';
+
+/**
+ * Stored message in session.
+ */
+interface SessionMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
+/**
+ * Session state for async mode.
+ */
+interface SessionState {
+  chatId: string;
+  status: SessionStatus;
+  messages: SessionMessage[];
+  lastMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * REST Channel - Provides RESTful API for agent interaction.
  *
  * Features:
  * - POST /api/chat - Send message (streaming response)
  * - POST /api/chat/sync - Send message (synchronous response)
+ * - POST /api/chat/{chatId} - Async mode: send message or poll for response
  * - GET /api/health - Health check
  * - POST /api/files/upload - Upload a file
  * - GET /api/files/:fileId - Get file metadata
@@ -179,6 +211,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private chatToMessage = new Map<string, string>();
   // File ID to Chat ID mapping (for file uploads)
   private fileToChat = new Map<string, string>();
+  // Session states for async mode (chatId -> SessionState)
+  private sessionStates = new Map<string, SessionState>();
 
   constructor(config: RestChannelConfig = {}) {
     super(config, 'rest', 'REST');
@@ -232,6 +266,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.responseBuffers.clear();
     this.chatToMessage.clear();
     this.fileToChat.clear();
+    this.sessionStates.clear();
 
     // Shutdown file storage
     if (this.fileStorage) {
@@ -255,8 +290,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   protected doSendMessage(message: OutgoingMessage): Promise<void> {
     const messageId = this.chatToMessage.get(message.chatId);
 
-    // Handle 'done' type - task completion signal for sync mode
+    // Handle 'done' type - task completion signal
     if (message.type === 'done') {
+      // Sync mode: resolve pending response
       const pending = this.pendingResponses.get(message.chatId);
       if (pending) {
         // Get buffered response
@@ -278,24 +314,65 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
           this.responseBuffers.delete(messageId);
         }
         this.chatToMessage.delete(message.chatId);
-      } else {
+      }
+
+      // Async mode: update session status
+      const session = this.sessionStates.get(message.chatId);
+      if (session) {
+        session.status = 'completed';
+        session.updatedAt = Date.now();
+        logger.info(
+          { chatId: message.chatId, messageId },
+          'Task completed, async session updated'
+        );
+
+        // Cleanup response buffers for async mode
+        if (messageId) {
+          this.responseBuffers.delete(messageId);
+        }
+        this.chatToMessage.delete(message.chatId);
+      }
+
+      if (!pending && !session) {
         logger.warn(
           { chatId: message.chatId, messageId },
-          'Received done but no pending response found'
+          'Received done but no pending response or session found'
         );
       }
       return Promise.resolve();
     }
 
-    // For sync mode: buffer text responses
-    if (messageId && message.type === 'text') {
-      const buffer = this.responseBuffers.get(messageId);
-      if (buffer) {
-        buffer.push(message.text || '');
-      } else {
-        logger.warn(
-          { chatId: message.chatId, messageId },
-          'No buffer found for text message'
+    // For text responses
+    if (message.type === 'text' && message.text) {
+      // Sync mode: buffer text responses
+      if (messageId) {
+        const buffer = this.responseBuffers.get(messageId);
+        if (buffer) {
+          buffer.push(message.text);
+        } else {
+          logger.warn(
+            { chatId: message.chatId, messageId },
+            'No buffer found for text message'
+          );
+        }
+      }
+
+      // Async mode: add to session messages
+      const session = this.sessionStates.get(message.chatId);
+      if (session) {
+        const now = Date.now();
+        const assistantMessageId = `resp_${now}_${Math.random().toString(36).slice(2, 8)}`;
+        session.messages.push({
+          id: assistantMessageId,
+          role: 'assistant',
+          content: message.text,
+          timestamp: now,
+        });
+        session.lastMessageId = assistantMessageId;
+        session.updatedAt = now;
+        logger.debug(
+          { chatId: message.chatId, messageId: assistantMessageId },
+          'Async session: added assistant message'
         );
       }
     }
@@ -373,6 +450,14 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     if (url === `${this.apiPrefix}/chat/sync` && req.method === 'POST') {
       await this.handleChat(req, res, true);
+      return;
+    }
+
+    // Async mode: POST /api/chat/{chatId}
+    const asyncChatMatch = url.match(new RegExp(`^${this.apiPrefix}/chat/([^/]+)$`));
+    if (asyncChatMatch && req.method === 'POST') {
+      const [, chatId] = asyncChatMatch;
+      await this.handleAsyncChat(req, res, chatId);
       return;
     }
 
@@ -499,6 +584,148 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));
+  }
+
+  /**
+   * Handle async chat request (non-blocking mode).
+   *
+   * POST /api/chat/{chatId}
+   *
+   * Behavior:
+   * - With message body: Create/update session, return 202 Accepted
+   * - Without message body (poll):
+   *   - Session completed: 200 OK + response content
+   *   - Session processing: 202 Accepted
+   *   - No session: 204 No Content
+   *
+   * @see Issue #738 - REST async mode
+   */
+  private async handleAsyncChat(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    chatId: string
+  ): Promise<void> {
+    // Read request body
+    const body = await this.readBody(req);
+
+    // Parse request if body exists
+    let chatRequest: { message?: string; userId?: string } | null = null;
+    if (body) {
+      try {
+        chatRequest = JSON.parse(body) as { message?: string; userId?: string };
+      } catch {
+        this.sendError(res, 400, 'Invalid JSON');
+        return;
+      }
+    }
+
+    // Get or create session state
+    let session = this.sessionStates.get(chatId);
+
+    // Poll mode: no message in request
+    if (!chatRequest?.message) {
+      if (!session) {
+        // No session exists
+        logger.info({ chatId }, 'Async poll: no session');
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // Session exists, check status
+      if (session.status === 'completed') {
+        // Get assistant messages as response
+        const assistantMessages = session.messages.filter(m => m.role === 'assistant');
+        const responseText = assistantMessages.map(m => m.content).join('\n');
+
+        logger.info({ chatId, responseLength: responseText.length }, 'Async poll: completed');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          chatId,
+          status: session.status,
+          response: responseText,
+          messageId: session.lastMessageId,
+        }));
+        return;
+      }
+
+      // Still processing
+      logger.info({ chatId, status: session.status }, 'Async poll: processing');
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        chatId,
+        status: session.status,
+        messageId: session.lastMessageId,
+      }));
+      return;
+    }
+
+    // Send message mode: has message in request
+    const messageId = uuidv4();
+    const { userId } = chatRequest;
+    const now = Date.now();
+
+    // Create new session or update existing
+    if (!session) {
+      session = {
+        chatId,
+        status: 'pending',
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.sessionStates.set(chatId, session);
+    }
+
+    // Add user message
+    session.messages.push({
+      id: messageId,
+      role: 'user',
+      content: chatRequest.message,
+      timestamp: now,
+    });
+    session.lastMessageId = messageId;
+    session.status = 'processing';
+    session.updatedAt = now;
+
+    // Set up response buffer for this message
+    this.responseBuffers.set(messageId, []);
+    this.chatToMessage.set(chatId, messageId);
+
+    logger.info({ chatId, messageId, userId }, 'Async chat: message received');
+
+    // Emit as incoming message
+    if (this.messageHandler) {
+      try {
+        await this.messageHandler({
+          messageId,
+          chatId,
+          userId,
+          content: chatRequest.message,
+          messageType: 'text',
+          timestamp: now,
+        });
+      } catch (error) {
+        logger.error({ err: error, messageId }, 'Failed to handle async message');
+        session.status = 'error';
+        session.updatedAt = Date.now();
+        this.sendError(res, 500, 'Failed to process message');
+        return;
+      }
+    } else {
+      logger.warn({ chatId, messageId }, 'No messageHandler registered');
+    }
+
+    // Return 202 Accepted immediately
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      messageId,
+      chatId,
+      status: 'processing',
+    }));
   }
 
   /**
