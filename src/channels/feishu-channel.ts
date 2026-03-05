@@ -627,13 +627,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const trimmedText = text.trim();
     const botMentioned = this.isBotMentioned(mentions);
 
+    // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
+    const commandRegistry = getCommandRegistry();
+
     // Issue #460 & #511: Group chat passive mode
     // In group chats, only respond when bot is mentioned (@bot)
     // This allows scheduled tasks to broadcast without triggering unwanted responses
     // Issue #511: Passive mode can be disabled per chat via /passive command
     // Issue #650: Move passive mode check BEFORE command processing
+    // Issue #677: Allow /passive command to bypass passive mode check to avoid deadlock
+    // (when mention detection fails, users still need a way to disable passive mode)
+    const isPassiveCommand = trimmedText.startsWith('/passive');
     const passiveModeDisabled = this.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled) {
+    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug(
         { messageId: message_id, chatId: chat_id, chat_type },
         'Skipped group chat message without @mention (passive mode)'
@@ -642,9 +648,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;
     }
-
-    // Get control commands from CommandRegistry (Issue #463: removed hardcoded list)
-    const commandRegistry = getCommandRegistry();
 
     if (trimmedText.startsWith('/')) {
       const [command, ...args] = trimmedText.slice(1).split(/\s+/);
