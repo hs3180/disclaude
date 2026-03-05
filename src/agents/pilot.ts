@@ -385,12 +385,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Start the Agent loop for a chatId.
    *
    * Creates a MessageChannel and Query, using the channel's generator for streaming input.
+   * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    */
   private startAgentLoop(chatId: string): void {
+    // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
+    const supportedMcpTools = capabilities?.supportedMcpTools;
+
+    // Determine if we should include Feishu MCP server
+    // Include if: supportedMcpTools is undefined (legacy behavior) or includes any feishu tool
+    const feishuTools = ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction'];
+    const shouldIncludeFeishuMcp = supportedMcpTools === undefined ||
+      feishuTools.some(tool => supportedMcpTools.includes(tool));
+
     // Add MCP servers
-    const mcpServers: Record<string, unknown> = {
-      'feishu-context': createFeishuSdkMcpServer(),
-    };
+    const mcpServers: Record<string, unknown> = {};
+
+    // Only add Feishu MCP server if channel supports any Feishu tools
+    if (shouldIncludeFeishuMcp) {
+      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
+    }
 
     // Merge configured external MCP servers from config file
     const configuredMcpServers = Config.getMcpServersConfig();
@@ -414,7 +428,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
       'Starting SDK query with message channel'
     );
 
@@ -667,6 +681,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
   /**
    * Build capability-aware tools section for the prompt.
    * Adjusts available tools based on channel capabilities (Issue #582).
+   * Issue #590 Phase 3: Uses supportedMcpTools for dynamic tool filtering.
    *
    * @param chatId - Chat ID for tool usage
    * @param messageId - Message ID for thread replies
@@ -681,28 +696,60 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     _senderOpenId?: string
   ): string {
     const parts: string[] = [];
+    const supportedTools = capabilities?.supportedMcpTools;
 
-    // Always include send_user_feedback (text format)
-    parts.push(`When using send_user_feedback, use:
+    // If supportedMcpTools is defined, use it for dynamic tool filtering
+    // Otherwise, fall back to legacy behavior (assume all tools available)
+    const hasTool = (toolName: string): boolean => {
+      if (supportedTools === undefined) {
+        // Legacy behavior: check individual capability flags
+        if (toolName === 'send_file_to_feishu') {
+          return capabilities?.supportsFile !== false;
+        }
+        if (toolName === 'update_card' || toolName === 'wait_for_interaction') {
+          return capabilities?.supportsCard !== false;
+        }
+        return true; // send_user_feedback is always available
+      }
+      return supportedTools.includes(toolName);
+    };
+
+    // send_user_feedback tool
+    if (hasTool('send_user_feedback')) {
+      parts.push(`When using send_user_feedback, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${messageId}\` (for thread replies)`);
 
-    // Include card support note if supported
-    if (capabilities?.supportsCard !== false) {
-      parts.push(`
+      // Include card support note if supported
+      if (hasTool('update_card') || hasTool('wait_for_interaction')) {
+        parts.push(`
 - For rich content, use format: "card" with a valid Feishu card structure`);
-    } else {
-      parts.push(`
+      } else {
+        parts.push(`
 - Note: This channel does not support interactive cards. Use text format only.`);
+      }
     }
 
-    // Include file support if supported
-    if (capabilities?.supportsFile !== false) {
+    // send_file_to_feishu tool
+    if (hasTool('send_file_to_feishu')) {
       parts.push(`
 - send_file_to_feishu is available for sending files`);
-    } else {
+    } else if (supportedTools !== undefined) {
+      // Only show the note if we're using the new capability system
       parts.push(`
 - Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
+    }
+
+    // update_card tool
+    if (hasTool('update_card')) {
+      parts.push(`
+- update_card is available for updating existing cards`);
+    }
+
+    // wait_for_interaction tool
+    if (hasTool('wait_for_interaction')) {
+      parts.push(`
+- wait_for_interaction is available for waiting for user card interactions`);
     }
 
     // Include thread support note
