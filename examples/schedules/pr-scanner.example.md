@@ -93,7 +93,114 @@ PR #{number}: {title}
 3. 设置 `enabled: true`
 4. 调度器将自动加载并执行
 
-## 未来扩展 (Phase 2 & 3)
+## Phase 2: 交互式操作 (可选)
 
-- **Phase 2**: 为每个 PR 创建独立群聊（需要 PR #423 ChatOps）
-- **Phase 3**: 支持交互式操作按钮（需要 PR #412 FeedbackController）
+如果需要在通知后等待用户决策，可以使用交互式卡片：
+
+### 交互式卡片模板
+
+```json
+{
+  "config": { "wide_screen_mode": true },
+  "header": {
+    "title": { "tag": "plain_text", content": "🔔 新 PR 检测到" },
+    "template": "blue"
+  },
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "**PR #{number}: {title}**\n\n👤 作者: {author}\n📊 状态: {status}\n🔗 [查看详情]({link})"
+    },
+    {
+      "tag": "action",
+      "actions": [
+        {
+          "tag": "button",
+          "text": { "tag": "plain_text", "content": "合并" },
+          "type": "primary",
+          "value": "merge_{number}"
+        },
+        {
+          "tag": "button",
+          "text": { "tag": "plain_text", "content": "关闭" },
+          "type": "danger",
+          "value": "close_{number}"
+        },
+        {
+          "tag": "button",
+          "text": { "tag": "plain_text", "content": "请求修改" },
+          "type": "default",
+          "value": "request_changes_{number}"
+        },
+        {
+          "tag": "button",
+          "text": { "tag": "plain_text", "content": "稍后处理" },
+          "type": "default",
+          "value": "later_{number}"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 等待用户交互
+
+发送卡片后，使用 `wait_for_interaction` 等待用户选择：
+
+```typescript
+// 1. 发送交互式卡片，记录 messageId
+const sendResult = await send_user_feedback({
+  content: cardContent,
+  chatId: "oc_xxx",
+  format: "card"
+})
+
+// 2. 等待用户交互（最长 5 分钟）
+const interaction = await wait_for_interaction({
+  messageId: sendResult.messageId,
+  chatId: "oc_xxx",
+  timeoutSeconds: 300
+})
+
+// 3. 根据用户选择执行操作
+if (interaction.success) {
+  const [action, prNumber] = interaction.actionValue.split('_')
+
+  switch (action) {
+    case 'merge':
+      await execute_command(`gh pr merge ${prNumber} --squash`)
+      break
+    case 'close':
+      await execute_command(`gh pr close ${prNumber}`)
+      break
+    case 'request_changes':
+      // 添加评论请求修改
+      break
+    case 'later':
+      // 记录到待处理列表
+      break
+  }
+
+  // 4. 更新卡片显示结果
+  await update_card({
+    messageId: sendResult.messageId,
+    chatId: "oc_xxx",
+    card: { /* 结果卡片 */ }
+  })
+}
+```
+
+## 实现状态
+
+| Phase | 功能 | 状态 |
+|-------|------|------|
+| Phase 1 | 基本扫描 + 通知 | ✅ 可用 |
+| Phase 2 | 交互式操作按钮 | ✅ 可用 (使用 wait_for_interaction) |
+
+## 相关 Issue
+
+- Issue #393: 定时扫描 PR 并创建讨论群聊
+- Issue #532: Human-in-the-Loop 交互系统
+- PR #423: ChatOps 工具函数（已合并）
+- PR #350: wait_for_interaction 工具（已合并）
