@@ -66,7 +66,9 @@ describe('SkillAgentManager', () => {
         const entries = await fs.readdir(skillsDirPath, { withFileTypes: true });
 
         for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
+          if (!entry.isDirectory()) {
+            continue;
+          }
 
           const skillPath = path.join(skillsDirPath, entry.name, 'SKILL.md');
 
@@ -96,7 +98,7 @@ describe('SkillAgentManager', () => {
         }
 
         (this as any).cacheTimestamp = now;
-      } catch (error) {
+      } catch {
         // Directory not found or other error
       }
 
@@ -196,8 +198,8 @@ describe('SkillAgentManager', () => {
   });
 
   describe('stop', () => {
-    it('should return false for non-existent agent', async () => {
-      const stopped = await manager.stop('non-existent');
+    it('should return false for non-existent agent', () => {
+      const stopped = manager.stop('non-existent');
 
       expect(stopped).toBe(false);
     });
@@ -208,7 +210,7 @@ describe('SkillAgentManager', () => {
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), TEST_SKILL_CONTENT);
 
       const agentId = await manager.start('stoppable-skill', { chatId: 'test-chat' });
-      const stopped = await manager.stop(agentId);
+      const stopped = manager.stop(agentId);
 
       expect(stopped).toBe(true);
 
@@ -269,7 +271,7 @@ describe('SkillAgentManager', () => {
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), TEST_SKILL_CONTENT);
 
       const agentId = await manager.start('cleanup-skill', { chatId: 'test-chat' });
-      await manager.stop(agentId);
+      manager.stop(agentId);
 
       // Wait a bit to ensure time difference
       await new Promise(resolve => setTimeout(resolve, 10));

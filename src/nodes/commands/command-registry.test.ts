@@ -65,7 +65,7 @@ function createMockServices(): CommandServices {
     // Skill Agent management (Issue #455)
     discoverSkills: () => Promise.resolve([]),
     startSkillAgent: () => Promise.resolve('agent_test'),
-    stopSkillAgent: () => Promise.resolve(true),
+    stopSkillAgent: () => true,
     getSkillAgentStatus: () => undefined,
     listSkillAgents: () => [],
   };

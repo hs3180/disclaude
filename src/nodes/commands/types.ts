@@ -235,7 +235,7 @@ export interface CommandServices {
   }) => Promise<string>;
 
   /** Stop a skill agent */
-  stopSkillAgent: (agentId: string) => Promise<boolean>;
+  stopSkillAgent: (agentId: string) => boolean;
 
   /** Get skill agent status */
   getSkillAgentStatus: (agentId: string) => import('../../agents/skill-agent-manager.js').RunningAgentInfo | undefined;

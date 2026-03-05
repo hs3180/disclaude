@@ -134,7 +134,7 @@ export interface StartSkillOptions {
  * const running = manager.list();
  *
  * // Stop an agent
- * await manager.stop(agentId);
+ * manager.stop(agentId);
  * ```
  */
 export class SkillAgentManager {
@@ -187,7 +187,9 @@ export class SkillAgentManager {
       const entries = await fs.readdir(skillsDir, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+        if (!entry.isDirectory()) {
+          continue;
+        }
 
         const skillPath = path.join(skillsDir, entry.name, 'SKILL.md');
 
@@ -295,7 +297,7 @@ export class SkillAgentManager {
    * @param agentId - Agent instance ID
    * @returns true if stopped, false if not found
    */
-  async stop(agentId: string): Promise<boolean> {
+  stop(agentId: string): boolean {
     const agentInfo = this.runningAgents.get(agentId);
 
     if (!agentInfo) {
@@ -469,7 +471,7 @@ export class SkillAgentManager {
   ): Promise<void> {
     const duration = Math.round((agentInfo.completedAt! - agentInfo.startedAt) / 1000);
 
-    let message = `✅ **Skill Agent 完成**\n\n`;
+    let message = '✅ **Skill Agent 完成**\n\n';
     message += `技能: **${agentInfo.skillName}**\n`;
     message += `耗时: ${duration}秒\n`;
     message += `ID: \`${agentInfo.id}\`\n`;

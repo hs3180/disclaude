@@ -61,11 +61,11 @@ export class SkillCommand implements Command {
       case 'run':
         return await this.handleRun(context);
       case 'status':
-        return await this.handleStatus(services, context.args[1]);
+        return this.handleStatus(services, context.args[1]);
       case 'stop':
-        return await this.handleStop(services, context.args[1]);
+        return this.handleStop(services, context.args[1]);
       case 'agents':
-        return await this.handleAgents(services);
+        return this.handleAgents(services);
       default:
         return { success: false, error: `未知子命令: ${subCommand}` };
     }
@@ -127,7 +127,7 @@ ${skillList}`,
 
   private async handleRun(context: CommandContext): Promise<CommandResult> {
     const { services, chatId } = context;
-    const skillName = context.args[1];
+    const [, skillName] = context.args;
 
     if (!skillName) {
       return {
@@ -182,10 +182,10 @@ ${skillList}`,
     }
   }
 
-  private async handleStatus(
+  private handleStatus(
     services: CommandContext['services'],
     agentId?: string
-  ): Promise<CommandResult> {
+  ): CommandResult {
     if (!agentId) {
       return {
         success: false,
@@ -236,10 +236,10 @@ ${skillList}`,
     };
   }
 
-  private async handleStop(
+  private handleStop(
     services: CommandContext['services'],
     agentId?: string
-  ): Promise<CommandResult> {
+  ): CommandResult {
     if (!agentId) {
       return {
         success: false,
@@ -267,7 +267,7 @@ ${skillList}`,
       };
     }
 
-    const stopped = await services.stopSkillAgent(agentId);
+    const stopped = services.stopSkillAgent(agentId);
 
     if (!stopped) {
       return {
@@ -285,7 +285,7 @@ ${skillList}`,
     };
   }
 
-  private async handleAgents(services: CommandContext['services']): Promise<CommandResult> {
+  private handleAgents(services: CommandContext['services']): CommandResult {
     const agents = services.listSkillAgents(false);
 
     if (agents.length === 0) {

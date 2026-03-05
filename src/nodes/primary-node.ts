@@ -671,11 +671,11 @@ export class PrimaryNode extends EventEmitter {
           return this.groupService.listTopicGroups();
         },
         // Skill Agent management (Issue #455)
-        discoverSkills: async () => {
+        discoverSkills: () => {
           const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
           return manager.discoverSkills();
         },
-        startSkillAgent: async (skillName: string, options: {
+        startSkillAgent: (skillName: string, options: {
           chatId: string;
           templateVars?: Record<string, string>;
           input?: string;
@@ -688,7 +688,7 @@ export class PrimaryNode extends EventEmitter {
             },
           });
         },
-        stopSkillAgent: async (agentId: string) => {
+        stopSkillAgent: (agentId: string) => {
           const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
           return manager.stop(agentId);
         },
