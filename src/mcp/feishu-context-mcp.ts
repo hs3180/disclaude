@@ -1107,7 +1107,7 @@ When parentMessageId is provided, the message is sent as a reply to that message
     parameters: z.object({
       content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. MUST match format type: string for "text", object for "card" with {config, header, elements}.'),
       format: z.enum(['text', 'card'], {
-        errorMap: () => ({ message: 'format is REQUIRED. Use "text" for plain text messages or "card" for interactive cards.' }),
+        message: 'format is REQUIRED. Use "text" for plain text messages or "card" for interactive cards.',
       }).describe('REQUIRED: "text" for plain text, "card" for interactive cards. This parameter is mandatory.'),
       chatId: z.string().describe('Feishu chat ID (get this from the task context/metadata)'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread replies.'),
@@ -1124,9 +1124,9 @@ When parentMessageId is provided, the message is sent as a reply to that message
       if (format === 'card' && typeof content === 'object' && content !== null) {
         const obj = content as Record<string, unknown>;
         const missing: string[] = [];
-        if (!('config' in obj)) missing.push('config');
-        if (!('header' in obj)) missing.push('header');
-        if (!('elements' in obj)) missing.push('elements');
+        if (!('config' in obj)) { missing.push('config'); }
+        if (!('header' in obj)) { missing.push('header'); }
+        if (!('elements' in obj)) { missing.push('elements'); }
         if (missing.length > 0) {
           return toolSuccess(`❌ Card validation failed: missing required fields: ${missing.join(', ')}.\n\nRequired structure:\n{"config": {...}, "header": {"title": {...}, ...}, "elements": [...]}`);
         }
