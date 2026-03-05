@@ -346,4 +346,26 @@ export class Config {
   static getDebugConfig(): import('./types.js').DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
   }
+
+  /**
+   * Check if vision/multimodal support is enabled.
+   * @see Issue #656
+   *
+   * Vision is enabled by default. Set agent.vision.enabled: false to disable.
+   *
+   * @returns true if vision is enabled
+   */
+  static isVisionEnabled(): boolean {
+    return fileConfigOnly.agent?.vision?.enabled !== false;
+  }
+
+  /**
+   * Get maximum image size for multimodal input.
+   * @see Issue #656
+   *
+   * @returns Maximum image size in bytes (default: 10MB)
+   */
+  static getMaxImageSize(): number {
+    return fileConfigOnly.agent?.vision?.maxImageSize || 10 * 1024 * 1024;
+  }
 }

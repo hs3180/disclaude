@@ -215,7 +215,17 @@ export abstract class BaseAgent implements Disposable {
     options: AgentQueryOptions
   ): AsyncGenerator<IteratorYieldResult> {
     // Convert input to SDK format
-    const sdkInput = typeof input === 'string' ? input : this.convertInputToUserInput(input);
+    // Issue #656: Support UserInput[] for multimodal content
+    let sdkInput: string | UserInput[];
+    if (typeof input === 'string') {
+      sdkInput = input;
+    } else if (Array.isArray(input)) {
+      // UserInput[] - pass directly to SDK
+      sdkInput = input;
+    } else {
+      // AsyncIterable - convert to UserInput[]
+      sdkInput = this.convertInputToUserInput(input);
+    }
 
     // Use SDK provider
     const iterator = this.sdkProvider.queryOnce(sdkInput, options);

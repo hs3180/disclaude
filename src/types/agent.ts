@@ -1,8 +1,8 @@
-import type { StreamingUserMessage } from '../sdk/index.js';
+import type { StreamingUserMessage, UserInput } from '../sdk/index.js';
 import type { MessageLevel } from '../messaging/types.js';
 
 // Re-export for backward compatibility
-export type { StreamingUserMessage };
+export type { StreamingUserMessage, UserInput };
 
 // Agent message type enum
 export type AgentMessageType =
@@ -77,5 +77,7 @@ export interface AgentOptions {
 /**
  * Union type for agent input supporting both string prompts and streaming message arrays.
  * This enables Streaming Input Mode for multi-turn conversation support.
+ *
+ * Issue #656: Added UserInput[] support for multimodal content.
  */
-export type AgentInput = string | AsyncIterable<StreamingUserMessage>;
+export type AgentInput = string | UserInput[] | AsyncIterable<StreamingUserMessage>;

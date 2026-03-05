@@ -414,7 +414,7 @@ export class WorkerNode {
           try {
             // Issue #644: Get Pilot for this chatId from AgentPool
             const pilot = this.agentPool?.getOrCreate(chatId);
-            pilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+            await pilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');

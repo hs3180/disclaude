@@ -171,7 +171,7 @@ export interface ChatAgent extends Disposable {
     senderOpenId?: string,
     attachments?: FileRef[],
     chatHistoryContext?: string
-  ): void;
+  ): Promise<void>;
 
   /**
    * Execute a one-shot query (for CLI and scheduled tasks).

@@ -29,7 +29,7 @@
  * - Error handling
  */
 
-import type { StreamingUserMessage, QueryHandle } from '../sdk/index.js';
+import type { StreamingUserMessage, QueryHandle, ContentBlock } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
@@ -40,6 +40,7 @@ import type { ChannelCapabilities } from '../channels/types.js';
 import { MessageChannel } from './message-channel.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
+import { encodeImageToBase64, isImageFile } from '../utils/image-encoder.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -219,7 +220,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       }
 
       // Build the user message
-      const enhancedContent = this.buildEnhancedContent({
+      const enhancedContent = await this.buildEnhancedContent({
         text: userInput.content,
         messageId,
         senderOpenId,
@@ -301,17 +302,24 @@ export class Pilot extends BaseAgent implements ChatAgent {
     });
 
     // Build enhanced content with context
-    const enhancedContent = this.buildEnhancedContent({
+    const enhancedContent = await this.buildEnhancedContent({
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
     });
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
+    // Convert to SDK input format
+    // If enhancedContent is a string, use it directly
+    // If it's ContentBlock[], wrap it in UserInput format
+    const sdkInput = typeof enhancedContent === 'string'
+      ? enhancedContent
+      : [{ role: 'user' as const, content: enhancedContent }];
+
+    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), isMultimodal: typeof enhancedContent !== 'string' }, 'Starting CLI query with direct prompt');
 
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
-      for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
+      for await (const { parsed } of this.queryOnce(sdkInput, sdkOptions)) {
         // Check for completion - result type means query is done
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
@@ -356,14 +364,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
    */
-  processMessage(
+  async processMessage(
     chatId: string,
     text: string,
     messageId: string,
     senderOpenId?: string,
     attachments?: FileRef[],
     chatHistoryContext?: string
-  ): void {
+  ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
       this.logger.error(
@@ -387,8 +395,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.startAgentLoop();
     }
 
-    // Build the user message
-    const enhancedContent = this.buildEnhancedContent({ text, messageId, senderOpenId, attachments, chatHistoryContext });
+    // Build the user message (may include multimodal content)
+    const enhancedContent = await this.buildEnhancedContent({ text, messageId, senderOpenId, attachments, chatHistoryContext });
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
@@ -605,8 +613,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Build enhanced content with Feishu context.
    *
    * Uses boundChatId for context (Issue #644).
+   * Issue #656: Supports multimodal content with image attachments.
+   *
+   * @returns String content or array of ContentBlocks for multimodal messages
    */
-  private buildEnhancedContent(msg: MessageData): string {
+  private async buildEnhancedContent(msg: MessageData): Promise<string | ContentBlock[]> {
     const chatId = this.boundChatId;
 
     // Check if this is a skill command (starts with /)
@@ -631,6 +642,17 @@ ${msg.chatHistoryContext}
 `
       : '';
 
+    // Issue #656: Check if we have image attachments for multimodal content
+    const imageAttachments = (msg.attachments || []).filter(att =>
+      att.localPath && isImageFile(att.localPath, att.mimeType)
+    );
+
+    // If we have images and vision is enabled, build multimodal content
+    if (imageAttachments.length > 0 && Config.isVisionEnabled()) {
+      return this.buildMultimodalContent(msg, imageAttachments, chatId, capabilities, chatHistorySection);
+    }
+
+    // Build text-only content (original behavior)
     if (isSkillCommand) {
       // For skill commands: command first, then minimal context for skill to use
       const contextInfo = msg.senderOpenId
@@ -682,7 +704,7 @@ ${chatHistorySection}${mentionSection}
 ${toolsSection}
 
 --- User Message ---
-${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+${msg.text}${this.buildAttachmentsInfo(msg.attachments, true)}`;
     }
 
     return `You are responding in a Feishu chat.
@@ -694,7 +716,111 @@ ${chatHistorySection}
 ${toolsSection}
 
 --- User Message ---
-${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+${msg.text}${this.buildAttachmentsInfo(msg.attachments, true)}`;
+  }
+
+  /**
+   * Build multimodal content with text and images.
+   *
+   * Issue #656: Constructs ContentBlock array with text and encoded images.
+   *
+   * @param msg - Message data
+   * @param imageAttachments - Filtered list of image attachments
+   * @param chatId - Chat ID
+   * @param capabilities - Channel capabilities
+   * @param chatHistorySection - Chat history section text
+   * @returns Array of ContentBlocks
+   */
+  private async buildMultimodalContent(
+    msg: MessageData,
+    imageAttachments: FileRef[],
+    chatId: string,
+    capabilities: ChannelCapabilities | undefined,
+    chatHistorySection: string
+  ): Promise<ContentBlock[]> {
+    const contentBlocks: ContentBlock[] = [];
+
+    // Build the text context (same as before but without image attachment info)
+    const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
+
+    let textContext = `You are responding in a Feishu chat.
+
+**Chat ID:** ${chatId}
+**Message ID:** ${msg.messageId}`;
+
+    if (msg.senderOpenId) {
+      const mentionSection = capabilities?.supportsMention !== false
+        ? `
+
+## @ Mention the User
+
+To notify the user in your FINAL response, use:
+\`\`\`
+<at user_id="${msg.senderOpenId}">@用户</at>
+\`\`\`
+
+**Rules:**
+- Use @ ONLY in your **final/complete response**, NOT in intermediate messages
+- This triggers a Feishu notification to the user`
+        : '';
+
+      textContext += `
+**Sender Open ID:** ${msg.senderOpenId}
+${chatHistorySection}${mentionSection}`;
+    } else {
+      textContext += `
+${chatHistorySection}`;
+    }
+
+    textContext += `
+
+---
+
+## Tools
+${toolsSection}
+
+--- User Message ---
+${msg.text}`;
+
+    // Add non-image attachments info to text
+    const nonImageAttachments = (msg.attachments || []).filter(att =>
+      !att.localPath || !isImageFile(att.localPath, att.mimeType)
+    );
+    if (nonImageAttachments.length > 0) {
+      textContext += this.buildAttachmentsInfo(nonImageAttachments, false);
+    }
+
+    // Add text block first
+    contentBlocks.push({ type: 'text', text: textContext });
+
+    // Encode and add image blocks
+    for (const image of imageAttachments) {
+      if (!image.localPath) continue;
+
+      try {
+        const encoded = await encodeImageToBase64(image.localPath);
+        contentBlocks.push({
+          type: 'image',
+          data: encoded.data,
+          mimeType: encoded.mimeType,
+        });
+        this.logger.info({
+          chatId,
+          imageFile: image.fileName,
+          originalSize: encoded.originalSize,
+          encodedSize: encoded.encodedSize,
+        }, 'Image encoded for multimodal message');
+      } catch (error) {
+        this.logger.warn({ err: error, imageFile: image.fileName }, 'Failed to encode image, skipping');
+        // Add error message to text instead
+        contentBlocks.push({
+          type: 'text',
+          text: `\n\n⚠️ Failed to process image: ${image.fileName}`,
+        });
+      }
+    }
+
+    return contentBlocks;
   }
 
   /**
@@ -772,13 +898,31 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
   /**
    * Build attachments info string for the message content.
+   *
+   * Issue #656: Added excludeImages parameter for multimodal mode.
+   * When excludeImages is true, image attachments are noted as being sent as visual content.
+   *
+   * @param attachments - File attachments
+   * @param excludeImages - If true, exclude image files (they're sent as multimodal content)
    */
-  private buildAttachmentsInfo(attachments?: FileRef[]): string {
+  private buildAttachmentsInfo(attachments?: FileRef[], excludeImages = false): string {
     if (!attachments || attachments.length === 0) {
       return '';
     }
 
-    const attachmentList = attachments
+    // Filter out images if excludeImages is true
+    const filteredAttachments = excludeImages
+      ? attachments.filter(att => !att.localPath || !isImageFile(att.localPath, att.mimeType))
+      : attachments;
+
+    // Check for images that were excluded
+    const imageCount = attachments.length - filteredAttachments.length;
+
+    if (filteredAttachments.length === 0 && imageCount === 0) {
+      return '';
+    }
+
+    const attachmentList = filteredAttachments
       .map((att, index) => {
         const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
         return `${index + 1}. **${att.fileName}**${sizeInfo}
@@ -788,14 +932,29 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
       })
       .join('\n');
 
-    return `
+    // Build the output
+    let output = '';
+
+    if (filteredAttachments.length > 0) {
+      output = `
 
 --- Attachments ---
-The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
+The user has attached ${filteredAttachments.length} file(s). These files have been downloaded to local storage:
 
 ${attachmentList}
 
 You can read these files using the Read tool with the local paths above.`;
+    }
+
+    // Add note about images being sent as visual content
+    if (imageCount > 0) {
+      output += `
+
+--- Images ---
+The user has attached ${imageCount} image(s), which are displayed below as visual content. You can analyze these images directly.`;
+    }
+
+    return output;
   }
 
   /**

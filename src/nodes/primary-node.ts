@@ -508,7 +508,7 @@ export class PrimaryNode extends EventEmitter {
    *
    * Issue #644: Uses AgentPool to get Pilot for this chatId.
    */
-  private executeLocally(message: PromptMessage): void {
+  private async executeLocally(message: PromptMessage): Promise<void> {
     if (!this.agentPool) {
       throw new Error('Local execution not initialized');
     }
@@ -530,7 +530,7 @@ export class PrimaryNode extends EventEmitter {
     try {
       // Issue #644: Get Pilot for this chatId from AgentPool
       const pilot = this.agentPool.getOrCreate(chatId);
-      pilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+      await pilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
       logger.error({ err, chatId }, 'Local execution failed');

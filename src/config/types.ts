@@ -44,6 +44,22 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** Vision/multimodal configuration */
+  vision?: VisionConfig;
+}
+
+/**
+ * Vision/multimodal configuration.
+ *
+ * Issue #656: Configuration for image processing and multimodal support.
+ */
+export interface VisionConfig {
+  /** Enable vision/multimodal support (default: true) */
+  enabled?: boolean;
+  /** Maximum image size in bytes (default: 10MB) */
+  maxImageSize?: number;
+  /** Supported image formats (default: png, jpeg, gif, webp) */
+  supportedFormats?: string[];
 }
 
 /**
