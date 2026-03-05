@@ -19,6 +19,7 @@ import type {
   SetAvailabilityOptions,
   FindExpertsOptions,
   ExpertMatch,
+  SetPriceOptions,
 } from './types.js';
 
 const logger = createLogger('ExpertService');
@@ -410,6 +411,36 @@ export class ExpertService {
     }
 
     return matches;
+  }
+
+  /**
+   * Set consultation price for an expert.
+   *
+   * @param options - Set price options
+   * @returns Updated profile or undefined if not registered
+   *
+   * @see Issue #538 - 积分系统 - 身价与消费
+   */
+  setPrice(options: SetPriceOptions): ExpertProfile | undefined {
+    const { userId, price } = options;
+    const profile = this.registry.experts[userId];
+
+    if (!profile) {
+      logger.warn({ userId }, 'Cannot set price: user not registered');
+      return undefined;
+    }
+
+    if (price < 0) {
+      logger.warn({ userId, price }, 'Invalid price: must be non-negative');
+      return undefined;
+    }
+
+    profile.price = price;
+    profile.updatedAt = Date.now();
+    this.save();
+
+    logger.info({ userId, price }, 'Expert price set');
+    return profile;
   }
 
   /**

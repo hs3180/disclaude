@@ -232,6 +232,32 @@ export interface CommandServices {
 
   /** Find experts by skill */
   findExpertsBySkill: (skillName: string) => import('../../experts/types.js').ExpertProfile[];
+
+  // Expert price management (Issue #538)
+  /** Set expert consultation price */
+  setExpertPrice: (options: import('../../experts/types.js').SetPriceOptions) => import('../../experts/types.js').ExpertProfile | undefined;
+
+  // Budget management (Issue #538)
+  /** Get or create a budget account */
+  createBudgetAccount: (agentId: string, initialBalance?: number, dailyLimit?: number) => import('../../experts/types.js').AgentAccount;
+
+  /** Get a budget account */
+  getBudgetAccount: (agentId: string) => import('../../experts/types.js').AgentAccount | undefined;
+
+  /** Recharge a budget account */
+  rechargeBudget: (options: import('../../experts/types.js').RechargeOptions) => import('../../experts/types.js').AgentAccount | undefined;
+
+  /** Set budget daily limit */
+  setBudgetDailyLimit: (options: import('../../experts/types.js').SetDailyLimitOptions) => import('../../experts/types.js').AgentAccount | undefined;
+
+  /** Deduct credits from a budget account */
+  deductBudgetCredits: (options: import('../../experts/types.js').DeductCreditsOptions) => import('../../experts/types.js').DeductResult;
+
+  /** Check if agent can afford credits */
+  canAffordCredits: (agentId: string, credits: number) => boolean;
+
+  /** List all budget accounts */
+  listBudgetAccounts: () => import('../../experts/types.js').AgentAccount[];
 }
 
 /**

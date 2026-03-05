@@ -67,6 +67,16 @@ function createMockServices(): CommandServices {
     setExpertAvailability: () => undefined,
     listExperts: () => [],
     findExpertsBySkill: () => [],
+    // Expert price management (Issue #538)
+    setExpertPrice: () => undefined,
+    // Budget management (Issue #538)
+    createBudgetAccount: () => ({ agentId: 'test', balance: 0, dailyLimit: 100, usedToday: 0, lastResetDate: '2024-01-01', createdAt: Date.now(), updatedAt: Date.now() }),
+    getBudgetAccount: () => undefined,
+    rechargeBudget: () => undefined,
+    setBudgetDailyLimit: () => undefined,
+    deductBudgetCredits: () => ({ success: true, newBalance: 0 }),
+    canAffordCredits: () => false,
+    listBudgetAccounts: () => [],
   };
 }
 

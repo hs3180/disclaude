@@ -79,7 +79,9 @@ import type { ScheduleTaskInfo } from './commands/types.js';
 import { getTaskStateManager } from '../utils/task-state-manager.js';
 // Expert management (Issue #535)
 import { getExpertService } from '../experts/expert-service.js';
-import type { AddSkillOptions, RemoveSkillOptions, SetAvailabilityOptions } from '../experts/types.js';
+import type { AddSkillOptions, RemoveSkillOptions, SetAvailabilityOptions, RechargeOptions, SetDailyLimitOptions, DeductCreditsOptions, SetPriceOptions } from '../experts/types.js';
+// Budget management (Issue #538)
+import { getBudgetService } from '../experts/budget-service.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -671,6 +673,17 @@ export class PrimaryNode extends EventEmitter {
         setExpertAvailability: (options: SetAvailabilityOptions) => getExpertService().setAvailability(options),
         listExperts: () => getExpertService().listExperts(),
         findExpertsBySkill: (skillName: string) => getExpertService().findBySkill(skillName),
+        // Expert price management (Issue #538)
+        setExpertPrice: (options: SetPriceOptions) => getExpertService().setPrice(options),
+        // Budget management (Issue #538)
+        createBudgetAccount: (agentId: string, initialBalance?: number, dailyLimit?: number) =>
+          getBudgetService().getOrCreateAccount(agentId, initialBalance, dailyLimit),
+        getBudgetAccount: (agentId: string) => getBudgetService().getAccount(agentId),
+        rechargeBudget: (options: RechargeOptions) => getBudgetService().recharge(options),
+        setBudgetDailyLimit: (options: SetDailyLimitOptions) => getBudgetService().setDailyLimit(options),
+        deductBudgetCredits: (options: DeductCreditsOptions) => getBudgetService().deduct(options),
+        canAffordCredits: (agentId: string, credits: number) => getBudgetService().canAfford(agentId, credits),
+        listBudgetAccounts: () => getBudgetService().listAccounts(),
       },
     };
 

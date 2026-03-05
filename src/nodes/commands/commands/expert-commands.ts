@@ -369,3 +369,60 @@ export class ExpertUnregisterCommand implements Command {
     };
   }
 }
+
+/**
+ * Expert Price Command - Set consultation price.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export class ExpertPriceCommand implements Command {
+  readonly name = 'expert-price';
+  readonly category = 'expert' as const;
+  readonly description = '设置咨询身价（积分）';
+  readonly usage = 'expert-price <积分>';
+
+  execute(context: CommandContext): CommandResult {
+    const { services, args, userId } = context;
+
+    if (!userId) {
+      return { success: false, error: '无法获取用户 ID' };
+    }
+
+    if (args.length < 1) {
+      return {
+        success: false,
+        error: '用法: `/expert-price <积分>`\n\n示例:\n• `/expert-price 10` - 每次咨询消耗 10 积分\n• `/expert-price 0` - 免费咨询',
+      };
+    }
+
+    const price = parseInt(args[0], 10);
+
+    if (isNaN(price) || price < 0) {
+      return { success: false, error: '积分必须是非负整数' };
+    }
+
+    const profile = services.setExpertPrice({
+      userId,
+      price,
+    });
+
+    if (!profile) {
+      return {
+        success: false,
+        error: '您尚未注册为专家。使用 `/expert-register` 注册。',
+      };
+    }
+
+    if (price === 0) {
+      return {
+        success: true,
+        message: '✅ **身价设置成功**\n\n您的咨询服务现在免费提供',
+      };
+    }
+
+    return {
+      success: true,
+      message: `✅ **身价设置成功**\n\n每次咨询消耗: ${price} 积分`,
+    };
+  }
+}

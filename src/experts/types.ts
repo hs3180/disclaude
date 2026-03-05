@@ -5,6 +5,7 @@
  *
  * @see Issue #535 - 人类专家注册与技能声明
  * @see Issue #536 - 专家查询与匹配
+ * @see Issue #538 - 积分系统 - 身价与消费
  */
 
 /**
@@ -46,6 +47,8 @@ export interface ExpertProfile {
   skills: Skill[];
   /** Availability schedule (optional) */
   availability?: Availability;
+  /** Price per consultation in credits (Issue #538) */
+  price?: number;
   /** Last updated timestamp */
   updatedAt: number;
 }
@@ -122,4 +125,106 @@ export interface ExpertMatch {
   matchingSkills: Skill[];
   /** Whether the expert is currently available */
   isAvailable: boolean;
+}
+
+// ============================================================================
+// Budget System Types (Issue #538 - 积分系统)
+// ============================================================================
+
+/**
+ * Agent budget account for credit management.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface AgentAccount {
+  /** Agent identifier */
+  agentId: string;
+  /** Current credit balance */
+  balance: number;
+  /** Daily spending limit */
+  dailyLimit: number;
+  /** Amount spent today */
+  usedToday: number;
+  /** Last reset date (for daily usage tracking) */
+  lastResetDate: string;
+  /** Account creation timestamp */
+  createdAt: number;
+  /** Last updated timestamp */
+  updatedAt: number;
+}
+
+/**
+ * Budget registry storage format.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface BudgetRegistry {
+  /** Version for future migrations */
+  version: number;
+  /** Accounts indexed by agentId */
+  accounts: Record<string, AgentAccount>;
+}
+
+/**
+ * Options for recharging an agent account.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface RechargeOptions {
+  /** Agent identifier */
+  agentId: string;
+  /** Amount to add */
+  credits: number;
+}
+
+/**
+ * Options for setting daily limit.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface SetDailyLimitOptions {
+  /** Agent identifier */
+  agentId: string;
+  /** New daily limit */
+  dailyLimit: number;
+}
+
+/**
+ * Options for deducting credits.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface DeductCreditsOptions {
+  /** Agent identifier */
+  agentId: string;
+  /** Amount to deduct */
+  credits: number;
+  /** Description for the transaction */
+  description?: string;
+}
+
+/**
+ * Result of a credit deduction attempt.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface DeductResult {
+  /** Whether the deduction was successful */
+  success: boolean;
+  /** Remaining balance after deduction (if successful) */
+  newBalance?: number;
+  /** Error reason (if failed) */
+  error?: 'insufficient_balance' | 'daily_limit_exceeded' | 'account_not_found';
+}
+
+/**
+ * Options for setting expert price.
+ *
+ * @see Issue #538 - 积分系统 - 身价与消费
+ */
+export interface SetPriceOptions {
+  /** User's open_id */
+  userId: string;
+  /** Price per consultation in credits */
+  price: number;
 }

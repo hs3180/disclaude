@@ -43,4 +43,14 @@ export {
   ExpertAvailabilityCommand,
   ExpertListCommand,
   ExpertUnregisterCommand,
+  ExpertPriceCommand,
 } from './expert-commands.js';
+
+// Budget commands (Issue #538)
+export {
+  BudgetBalanceCommand,
+  BudgetRechargeCommand,
+  BudgetLimitCommand,
+  BudgetListCommand,
+  BudgetCreateCommand,
+} from './budget-commands.js';

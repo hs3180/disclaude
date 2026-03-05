@@ -47,6 +47,12 @@ import {
   ExpertAvailabilityCommand,
   ExpertListCommand,
   ExpertUnregisterCommand,
+  ExpertPriceCommand,
+  BudgetBalanceCommand,
+  BudgetRechargeCommand,
+  BudgetLimitCommand,
+  BudgetListCommand,
+  BudgetCreateCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -76,6 +82,12 @@ export {
   ExpertAvailabilityCommand,
   ExpertListCommand,
   ExpertUnregisterCommand,
+  ExpertPriceCommand,
+  BudgetBalanceCommand,
+  BudgetRechargeCommand,
+  BudgetLimitCommand,
+  BudgetListCommand,
+  BudgetCreateCommand,
 };
 
 /**
@@ -113,4 +125,11 @@ export function registerDefaultCommands(
   registry.register(new ExpertAvailabilityCommand());
   registry.register(new ExpertListCommand());
   registry.register(new ExpertUnregisterCommand());
+  // Issue #538: Expert price and budget commands
+  registry.register(new ExpertPriceCommand());
+  registry.register(new BudgetBalanceCommand());
+  registry.register(new BudgetRechargeCommand());
+  registry.register(new BudgetLimitCommand());
+  registry.register(new BudgetListCommand());
+  registry.register(new BudgetCreateCommand());
 }
