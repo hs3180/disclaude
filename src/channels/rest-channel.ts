@@ -5,14 +5,16 @@
  * Users can make HTTP POST requests to interact with the agent.
  *
  * API Endpoints:
- * - POST /api/chat - Send a message and receive response (streaming)
- * - POST /api/chat/sync - Send a message and wait for complete response
+ * - POST /api/chat - Send a message (non-blocking, returns messageId)
+ * - GET /api/chat/{chatId}/status - Get session status
+ * - GET /api/chat/{chatId}/messages - Get session messages
  * - GET /api/health - Health check
  * - POST /api/files/upload - Upload a file (base64 encoded)
  * - GET /api/files/:fileId - Get file metadata
  * - GET /api/files/:fileId/download - Download a file (base64 encoded)
  *
  * @see Issue #583 - REST Channel file transfer
+ * @see Issue #738 - Refactor to non-blocking async mode
  */
 
 import http from 'node:http';
@@ -78,9 +80,78 @@ interface ChatResponse {
   messageId: string;
   /** Chat ID */
   chatId: string;
-  /** Response text (sync mode only) */
-  response?: string;
+  /** Session status */
+  status?: SessionStatus;
   /** Error message (if failed) */
+  error?: string;
+}
+
+/**
+ * Session status type.
+ */
+type SessionStatus = 'pending' | 'processing' | 'completed' | 'error';
+
+/**
+ * Stored message in a session.
+ */
+interface StoredMessage {
+  /** Message ID */
+  id: string;
+  /** Role: user or assistant */
+  role: 'user' | 'assistant';
+  /** Message content */
+  content: string;
+  /** Timestamp */
+  timestamp: string;
+}
+
+/**
+ * Session state for tracking chat sessions.
+ */
+interface SessionState {
+  /** Chat ID */
+  chatId: string;
+  /** Current status */
+  status: SessionStatus;
+  /** Last message ID */
+  lastMessageId?: string;
+  /** Last updated timestamp */
+  updatedAt: string;
+  /** Error message (if status is error) */
+  error?: string;
+  /** Messages in this session */
+  messages: StoredMessage[];
+}
+
+/**
+ * Session status response.
+ */
+interface SessionStatusResponse {
+  /** Success status */
+  success: boolean;
+  /** Chat ID */
+  chatId?: string;
+  /** Session status */
+  status?: SessionStatus;
+  /** Last message ID */
+  lastMessageId?: string;
+  /** Last updated timestamp */
+  updatedAt?: string;
+  /** Error message */
+  error?: string;
+}
+
+/**
+ * Session messages response.
+ */
+interface SessionMessagesResponse {
+  /** Success status */
+  success: boolean;
+  /** Chat ID */
+  chatId?: string;
+  /** Messages */
+  messages?: StoredMessage[];
+  /** Error message */
   error?: string;
 }
 
@@ -137,21 +208,12 @@ interface FileDownloadResponse {
 }
 
 /**
- * Pending response for sync mode.
- */
-interface PendingResponse {
-  resolve: (response: string) => void;
-  reject: (error: Error) => void;
-  response: string[];
-  timeout: NodeJS.Timeout;
-}
-
-/**
  * REST Channel - Provides RESTful API for agent interaction.
  *
  * Features:
- * - POST /api/chat - Send message (streaming response)
- * - POST /api/chat/sync - Send message (synchronous response)
+ * - POST /api/chat - Send message (non-blocking, returns messageId)
+ * - GET /api/chat/{chatId}/status - Get session status
+ * - GET /api/chat/{chatId}/messages - Get session messages
  * - GET /api/health - Health check
  * - POST /api/files/upload - Upload a file
  * - GET /api/files/:fileId - Get file metadata
@@ -171,12 +233,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private server?: http.Server;
   private fileStorage?: FileStorageService;
 
-  // Pending responses for sync mode (chatId -> PendingResponse)
-  private pendingResponses = new Map<string, PendingResponse>();
-  // Response buffers for sync mode (messageId -> response text)
-  private responseBuffers = new Map<string, string[]>();
-  // Chat ID to message ID mapping
-  private chatToMessage = new Map<string, string>();
+  // Session storage (chatId -> SessionState)
+  private sessions = new Map<string, SessionState>();
   // File ID to Chat ID mapping (for file uploads)
   private fileToChat = new Map<string, string>();
 
@@ -223,14 +281,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   protected doStop(): Promise<void> {
-    // Clear all pending responses
-    for (const [_chatId, pending] of this.pendingResponses) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Channel stopped'));
-    }
-    this.pendingResponses.clear();
-    this.responseBuffers.clear();
-    this.chatToMessage.clear();
+    // Clear all sessions
+    this.sessions.clear();
     this.fileToChat.clear();
 
     // Shutdown file storage
@@ -253,51 +305,36 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   protected doSendMessage(message: OutgoingMessage): Promise<void> {
-    const messageId = this.chatToMessage.get(message.chatId);
-
-    // Handle 'done' type - task completion signal for sync mode
-    if (message.type === 'done') {
-      const pending = this.pendingResponses.get(message.chatId);
-      if (pending) {
-        // Get buffered response
-        const buffer = messageId ? this.responseBuffers.get(messageId) : undefined;
-        const responseText = buffer ? buffer.join('\n') : '';
-
-        logger.info(
-          { chatId: message.chatId, messageId, responseLength: responseText.length },
-          'Task completed, resolving sync response'
-        );
-
-        // Clear timeout and resolve
-        clearTimeout(pending.timeout);
-        pending.resolve(responseText);
-
-        // Cleanup maps
-        this.pendingResponses.delete(message.chatId);
-        if (messageId) {
-          this.responseBuffers.delete(messageId);
-        }
-        this.chatToMessage.delete(message.chatId);
-      } else {
-        logger.warn(
-          { chatId: message.chatId, messageId },
-          'Received done but no pending response found'
-        );
-      }
+    const session = this.sessions.get(message.chatId);
+    if (!session) {
+      logger.warn({ chatId: message.chatId }, 'No session found for outgoing message');
       return Promise.resolve();
     }
 
-    // For sync mode: buffer text responses
-    if (messageId && message.type === 'text') {
-      const buffer = this.responseBuffers.get(messageId);
-      if (buffer) {
-        buffer.push(message.text || '');
+    // Handle 'done' type - task completion signal
+    if (message.type === 'done') {
+      if (message.success === false || message.error) {
+        session.status = 'error';
+        session.error = message.error || 'Task failed';
       } else {
-        logger.warn(
-          { chatId: message.chatId, messageId },
-          'No buffer found for text message'
-        );
+        session.status = 'completed';
       }
+      session.updatedAt = new Date().toISOString();
+      logger.info({ chatId: message.chatId }, 'Session completed');
+      return Promise.resolve();
+    }
+
+    // Handle 'text' type - store assistant response
+    if (message.type === 'text' && message.text) {
+      const assistantMessage: StoredMessage = {
+        id: uuidv4(),
+        role: 'assistant',
+        content: message.text,
+        timestamp: new Date().toISOString(),
+      };
+      session.messages.push(assistantMessage);
+      session.lastMessageId = assistantMessage.id;
+      session.updatedAt = new Date().toISOString();
     }
 
     return Promise.resolve();
@@ -367,12 +404,21 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     }
 
     if (url === `${this.apiPrefix}/chat` && req.method === 'POST') {
-      await this.handleChat(req, res, false);
+      await this.handleChat(req, res);
       return;
     }
 
-    if (url === `${this.apiPrefix}/chat/sync` && req.method === 'POST') {
-      await this.handleChat(req, res, true);
+    // Chat session status endpoint
+    const statusMatch = url.match(new RegExp(`^${this.apiPrefix}/chat/([^/]+)/status$`));
+    if (statusMatch && req.method === 'GET') {
+      await this.handleSessionStatus(req, res, statusMatch[1]);
+      return;
+    }
+
+    // Chat session messages endpoint
+    const messagesMatch = url.match(new RegExp(`^${this.apiPrefix}/chat/([^/]+)/messages$`));
+    if (messagesMatch && req.method === 'GET') {
+      await this.handleSessionMessages(req, res, messagesMatch[1]);
       return;
     }
 
@@ -417,12 +463,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   /**
-   * Handle chat request.
+   * Handle chat request (non-blocking).
    */
   private async handleChat(
     req: http.IncomingMessage,
-    res: http.ServerResponse,
-    syncMode: boolean
+    res: http.ServerResponse
   ): Promise<void> {
     // Read request body
     const body = await this.readBody(req);
@@ -448,15 +493,33 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     const chatId = chatRequest.chatId || uuidv4();
     const messageId = uuidv4();
-    const {userId} = chatRequest;
+    const { userId } = chatRequest;
 
-    logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
+    logger.info({ chatId, messageId, userId }, 'Received chat request');
 
-    // For sync mode, set up response handling
-    if (syncMode) {
-      this.responseBuffers.set(messageId, []);
-      this.chatToMessage.set(chatId, messageId);
+    // Create or update session
+    let session = this.sessions.get(chatId);
+    if (!session) {
+      session = {
+        chatId,
+        status: 'pending',
+        messages: [],
+        updatedAt: new Date().toISOString(),
+      };
+      this.sessions.set(chatId, session);
     }
+
+    // Store user message
+    const userMessage: StoredMessage = {
+      id: messageId,
+      role: 'user',
+      content: chatRequest.message,
+      timestamp: new Date().toISOString(),
+    };
+    session.messages.push(userMessage);
+    session.lastMessageId = messageId;
+    session.status = 'processing';
+    session.updatedAt = new Date().toISOString();
 
     // Emit as incoming message
     if (this.messageHandler) {
@@ -472,6 +535,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         });
       } catch (error) {
         logger.error({ err: error, messageId }, 'Failed to handle message');
+        session.status = 'error';
+        session.error = 'Failed to process message';
+        session.updatedAt = new Date().toISOString();
         this.sendError(res, 500, 'Failed to process message');
         return;
       }
@@ -479,23 +545,75 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       logger.warn({ chatId, messageId }, 'No messageHandler registered');
     }
 
-    // Prepare response
+    // Prepare non-blocking response
     const response: ChatResponse = {
       success: true,
       messageId,
       chatId,
+      status: session.status,
     };
 
-    if (syncMode) {
-      // Wait for response with timeout (4 minutes for AI processing)
-      const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
-      response.response = responseText;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(response));
+  }
 
-      // Cleanup
-      this.responseBuffers.delete(messageId);
-      this.chatToMessage.delete(chatId);
+  /**
+   * Handle session status request.
+   */
+  private async handleSessionStatus(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    chatId: string
+  ): Promise<void> {
+    const session = this.sessions.get(chatId);
+
+    if (!session) {
+      const response: SessionStatusResponse = {
+        success: false,
+        error: 'Session not found',
+      };
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+      return;
     }
+
+    const response: SessionStatusResponse = {
+      success: true,
+      chatId: session.chatId,
+      status: session.status,
+      lastMessageId: session.lastMessageId,
+      updatedAt: session.updatedAt,
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(response));
+  }
+
+  /**
+   * Handle session messages request.
+   */
+  private async handleSessionMessages(
+    _req: http.IncomingMessage,
+    res: http.ServerResponse,
+    chatId: string
+  ): Promise<void> {
+    const session = this.sessions.get(chatId);
+
+    if (!session) {
+      const response: SessionMessagesResponse = {
+        success: false,
+        error: 'Session not found',
+      };
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+      return;
+    }
+
+    const response: SessionMessagesResponse = {
+      success: true,
+      chatId: session.chatId,
+      messages: session.messages,
+    };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));
@@ -530,41 +648,6 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));
-  }
-
-  /**
-   * Wait for response in sync mode.
-   */
-  private waitForResponse(chatId: string, messageId: string, timeoutMs: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingResponses.delete(chatId);
-        this.responseBuffers.delete(messageId);
-        reject(new Error('Response timeout'));
-      }, timeoutMs);
-
-      // Check if response is already available
-      const buffer = this.responseBuffers.get(messageId);
-      if (buffer && buffer.length > 0) {
-        clearTimeout(timeout);
-        resolve(buffer.join('\n'));
-        return;
-      }
-
-      // Store pending response
-      this.pendingResponses.set(chatId, {
-        resolve: (response) => {
-          clearTimeout(timeout);
-          resolve(response);
-        },
-        reject: (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        },
-        response: [],
-        timeout,
-      });
-    });
   }
 
   /**

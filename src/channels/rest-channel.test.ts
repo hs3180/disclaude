@@ -36,6 +36,15 @@ interface ApiResponseBody {
   response?: string;
   channel?: string;
   id?: string;
+  status?: string;
+  lastMessageId?: string;
+  updatedAt?: string;
+  messages?: Array<{
+    id?: string;
+    role?: string;
+    content?: string;
+    timestamp?: string;
+  }>;
   file?: {
     id?: string;
     fileName?: string;
@@ -289,40 +298,165 @@ describe('RestChannel', () => {
     });
   });
 
-  describe('Chat Endpoint (sync mode)', () => {
+  describe('Session Status Endpoint', () => {
     beforeEach(async () => {
       channel = new RestChannel({ port });
       await channel.start();
     });
 
-    it('should wait for done message in sync mode', async () => {
-      channel.onMessage((msg) => {
-        // Simulate async processing and response
-        setTimeout(() => {
-          void channel.sendMessage({
-            chatId: msg.chatId,
-            type: 'text',
-            text: 'Response from agent',
-          });
-          void channel.sendMessage({
-            chatId: msg.chatId,
-            type: 'done',
-          });
-        }, 100);
-        return Promise.resolve();
-      });
+    it('should return session status after sending message', async () => {
+      channel.onMessage(() => Promise.resolve());
 
-      const response = await makeRequest(port, {
+      // First, send a message to create a session
+      const chatResponse = await makeRequest(port, {
         method: 'POST',
-        path: '/api/chat/sync',
+        path: '/api/chat',
         body: {
           message: 'Hello',
+          chatId: 'test-chat-status',
         },
+      });
+
+      expect(chatResponse.status).toBe(200);
+      expect(chatResponse.body.chatId).toBe('test-chat-status');
+
+      // Then, get the session status
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/test-chat-status/status',
       });
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(response.body.response).toBe('Response from agent');
+      expect(response.body.chatId).toBe('test-chat-status');
+      expect(response.body.status).toBe('processing');
+    });
+
+    it('should return 404 for non-existing session', async () => {
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/non-existing-chat/status',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error).toBe('Session not found');
+    });
+
+    it('should update status to completed when done message is sent', async () => {
+      channel.onMessage((msg) => {
+        // Simulate agent completing the task
+        setTimeout(() => {
+          void channel.sendMessage({
+            chatId: msg.chatId,
+            type: 'done',
+          });
+        }, 50);
+        return Promise.resolve();
+      });
+
+      await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat',
+        body: {
+          message: 'Hello',
+          chatId: 'test-chat-done',
+        },
+      });
+
+      // Wait for done message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/test-chat-done/status',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('completed');
+    });
+  });
+
+  describe('Session Messages Endpoint', () => {
+    beforeEach(async () => {
+      channel = new RestChannel({ port });
+      await channel.start();
+    });
+
+    it('should return session messages', async () => {
+      channel.onMessage(() => Promise.resolve());
+
+      // First, send a message to create a session
+      await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat',
+        body: {
+          message: 'Hello',
+          chatId: 'test-chat-messages',
+        },
+      });
+
+      // Then, get the session messages
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/test-chat-messages/messages',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.chatId).toBe('test-chat-messages');
+      expect(response.body.messages).toBeDefined();
+      expect(response.body.messages!.length).toBe(1);
+      expect(response.body.messages![0].role).toBe('user');
+      expect(response.body.messages![0].content).toBe('Hello');
+    });
+
+    it('should return 404 for non-existing session', async () => {
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/non-existing-chat/messages',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error).toBe('Session not found');
+    });
+
+    it('should include assistant responses in messages', async () => {
+      channel.onMessage((msg) => {
+        // Simulate agent responding
+        setTimeout(() => {
+          void channel.sendMessage({
+            chatId: msg.chatId,
+            type: 'text',
+            text: 'Hello back!',
+          });
+        }, 50);
+        return Promise.resolve();
+      });
+
+      await makeRequest(port, {
+        method: 'POST',
+        path: '/api/chat',
+        body: {
+          message: 'Hello',
+          chatId: 'test-chat-response',
+        },
+      });
+
+      // Wait for response to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/test-chat-response/messages',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.messages!.length).toBe(2);
+      expect(response.body.messages![0].role).toBe('user');
+      expect(response.body.messages![1].role).toBe('assistant');
+      expect(response.body.messages![1].content).toBe('Hello back!');
     });
   });
 
@@ -571,30 +705,33 @@ describe('RestChannel', () => {
   });
 
   describe('Stop Cleanup', () => {
-    it('should clear pending responses on stop', async () => {
+    it('should clear sessions on stop', async () => {
       channel = new RestChannel({ port });
       await channel.start();
 
-      // Start a sync request that will be pending
-      const requestPromise = makeRequest(port, {
+      channel.onMessage(() => Promise.resolve());
+
+      // Create a session
+      await makeRequest(port, {
         method: 'POST',
-        path: '/api/chat/sync',
-        body: { message: 'Hello' },
+        path: '/api/chat',
+        body: { message: 'Hello', chatId: 'test-session' },
       });
 
-      // Wait a bit for the request to be received
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Stop the channel while request is pending
+      // Stop the channel
       await channel.stop();
 
-      // The request should fail
-      try {
-        await requestPromise;
-        // If it succeeded, it should have an error
-      } catch (error) {
-        expect(error).toBeDefined();
-      }
+      // Start again
+      await channel.start();
+
+      // Session should be cleared
+      const response = await makeRequest(port, {
+        method: 'GET',
+        path: '/api/chat/test-session/status',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toBe('Session not found');
     });
   });
 
