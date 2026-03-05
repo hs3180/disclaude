@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers } from './chat-ops.js';
+import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers, getBotChats } from './chat-ops.js';
 
 // Mock lark client
 const mockClient = {
@@ -15,6 +15,7 @@ const mockClient = {
     chat: {
       create: vi.fn(),
       delete: vi.fn(),
+      list: vi.fn(),
     },
     chatMembers: {
       create: vi.fn(),
@@ -258,6 +259,73 @@ describe('ChatOps', () => {
       mockGet.mockRejectedValue(new Error('Chat not found'));
 
       await expect(getMembers(mockClient, 'oc_invalid_chat')).rejects.toThrow('Chat not found');
+    });
+  });
+
+  describe('getBotChats', () => {
+    it('should get all bot chats successfully', async () => {
+      const mockList = mockClient.im.chat.list as ReturnType<typeof vi.fn>;
+      mockList.mockResolvedValue({
+        data: {
+          items: [
+            { chat_id: 'oc_chat_1', name: 'Group 1' },
+            { chat_id: 'oc_chat_2', name: 'Group 2' },
+          ],
+        },
+      });
+
+      const chats = await getBotChats(mockClient);
+
+      expect(mockList).toHaveBeenCalledWith({
+        params: {
+          page_size: 50,
+          page_token: undefined,
+        },
+      });
+      expect(chats).toHaveLength(2);
+      expect(chats[0]).toEqual({ chatId: 'oc_chat_1', name: 'Group 1' });
+      expect(chats[1]).toEqual({ chatId: 'oc_chat_2', name: 'Group 2' });
+    });
+
+    it('should handle pagination', async () => {
+      const mockList = mockClient.im.chat.list as ReturnType<typeof vi.fn>;
+      mockList
+        .mockResolvedValueOnce({
+          data: {
+            items: [{ chat_id: 'oc_chat_1', name: 'Group 1' }],
+            page_token: 'next_page',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            items: [{ chat_id: 'oc_chat_2', name: 'Group 2' }],
+          },
+        });
+
+      const chats = await getBotChats(mockClient);
+
+      expect(mockList).toHaveBeenCalledTimes(2);
+      expect(chats).toHaveLength(2);
+    });
+
+    it('should return empty array when no chats', async () => {
+      const mockList = mockClient.im.chat.list as ReturnType<typeof vi.fn>;
+      mockList.mockResolvedValue({
+        data: {
+          items: [],
+        },
+      });
+
+      const chats = await getBotChats(mockClient);
+
+      expect(chats).toEqual([]);
+    });
+
+    it('should throw on API error', async () => {
+      const mockList = mockClient.im.chat.list as ReturnType<typeof vi.fn>;
+      mockList.mockRejectedValue(new Error('API error'));
+
+      await expect(getBotChats(mockClient)).rejects.toThrow('API error');
     });
   });
 });

@@ -31,6 +31,7 @@ function createMockServices(): CommandServices {
     registerGroup: () => {},
     unregisterGroup: () => false,
     listGroups: () => [],
+    getBotChats: () => Promise.resolve([]),
     setDebugGroup: () => null,
     getDebugGroup: () => null,
     clearDebugGroup: () => null,
@@ -340,7 +341,7 @@ describe('registerDefaultCommands', () => {
     expect(registry.get('add-member')).toBeDefined();
     expect(registry.get('remove-member')).toBeDefined();
     expect(registry.get('list-group-members')).toBeDefined();
-    expect(registry.get('list-group')).toBeDefined();
+    expect(registry.get('groups')).toBeDefined();  // Issue #648: renamed from list-group
     expect(registry.get('dissolve-group')).toBeDefined();
     expect(registry.get('passive')).toBeDefined();
 

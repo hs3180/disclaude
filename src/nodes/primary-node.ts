@@ -55,6 +55,7 @@ import {
   addMembers,
   removeMembers,
   getMembers,
+  getBotChats,
 } from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
@@ -605,6 +606,7 @@ export class PrimaryNode extends EventEmitter {
         registerGroup: (group: Parameters<typeof this.groupService.registerGroup>[0]) => this.groupService.registerGroup(group),
         unregisterGroup: (chatId: string) => this.groupService.unregisterGroup(chatId),
         listGroups: () => this.groupService.listGroups(),
+        getBotChats,
         setDebugGroup: (chatId: string, name?: string) => debugGroupService.setDebugGroup(chatId, name),
         getDebugGroup: () => debugGroupService.getDebugGroup(),
         clearDebugGroup: () => debugGroupService.clearDebugGroup(),

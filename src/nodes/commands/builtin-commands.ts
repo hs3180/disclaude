@@ -312,29 +312,62 @@ export class ListGroupMembersCommand implements Command {
 }
 
 /**
- * List Group Command - List all managed groups.
+ * List Group Command - List all groups the bot is in.
+ * Issue #648: 改进群列表命令 - 更名 + API获取 + 分类展示
  */
 export class ListGroupCommand implements Command {
-  readonly name = 'list-group';
+  readonly name = 'groups';
   readonly category = 'group' as const;
   readonly description = '列出群';
 
-  execute(context: CommandContext): CommandResult {
-    const groups = context.services.listGroups();
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services } = context;
 
-    if (groups.length === 0) {
-      return { success: true, message: '📋 **管理的群列表**\n\n暂无管理的群' };
+    try {
+      const client = services.getFeishuClient();
+
+      // Get all chats from Feishu API
+      const allChats = await services.getBotChats(client);
+
+      // Get managed groups from local registry
+      const managedGroups = services.listGroups();
+      const managedChatIds = new Set(managedGroups.map(g => g.chatId));
+
+      // Categorize chats
+      const botCreatedGroups = allChats.filter(c => managedChatIds.has(c.chatId));
+      const invitedGroups = allChats.filter(c => !managedChatIds.has(c.chatId));
+
+      // Build output
+      if (allChats.length === 0) {
+        return { success: true, message: '📋 **群列表**\n\n暂无群聊' };
+      }
+
+      const lines: string[] = [`📋 **群列表** (共 ${allChats.length} 个)\n`];
+
+      // Bot created groups
+      if (botCreatedGroups.length > 0) {
+        lines.push(`🤖 **机器人创建的群** (${botCreatedGroups.length})`);
+        for (const g of botCreatedGroups) {
+          lines.push(`• ${g.name} - \`${g.chatId}\``);
+        }
+        lines.push('');
+      }
+
+      // Invited groups
+      if (invitedGroups.length > 0) {
+        lines.push(`👥 **被邀请加入的群** (${invitedGroups.length})`);
+        for (const g of invitedGroups) {
+          lines.push(`• ${g.name} - \`${g.chatId}\``);
+        }
+      }
+
+      return {
+        success: true,
+        message: lines.join('\n'),
+      };
+    } catch (error) {
+      return { success: false, error: `获取群列表失败: ${(error as Error).message}` };
     }
-
-    const groupList = groups.map(g => {
-      const createdAt = new Date(g.createdAt).toLocaleString('zh-CN');
-      return `- **${g.name}** \`${g.chatId}\`\n  创建时间: ${createdAt}\n  初始成员: ${g.initialMembers.length}`;
-    }).join('\n\n');
-
-    return {
-      success: true,
-      message: `📋 **管理的群列表**\n\n群数量: ${groups.length}\n\n${groupList}`,
-    };
   }
 }
 

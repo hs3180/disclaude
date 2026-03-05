@@ -53,6 +53,7 @@ describe('ScheduleCommand', () => {
     registerGroup: () => {},
     unregisterGroup: () => false,
     listGroups: () => [],
+    getBotChats: () => Promise.resolve([]),
     setDebugGroup: () => null,
     getDebugGroup: () => null,
     clearDebugGroup: () => null,

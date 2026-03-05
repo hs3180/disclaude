@@ -199,3 +199,59 @@ export async function getMembers(
     throw error;
   }
 }
+
+/**
+ * Chat info from Feishu API.
+ */
+export interface BotChatInfo {
+  /** Chat ID */
+  chatId: string;
+  /** Chat name */
+  name: string;
+}
+
+/**
+ * Get all chats the bot is in.
+ *
+ * Uses Feishu API to get all groups where the bot is a member.
+ * This provides accurate data compared to local registry.
+ *
+ * @param client - Feishu API client
+ * @returns Array of chat info
+ */
+export async function getBotChats(
+  client: lark.Client
+): Promise<BotChatInfo[]> {
+  const chats: BotChatInfo[] = [];
+  let pageToken: string | undefined;
+
+  try {
+    // Paginate through all chats
+    do {
+      const response = await client.im.chat.list({
+        params: {
+          page_size: 50,
+          page_token: pageToken,
+        },
+      });
+
+      const items = response?.data?.items || [];
+      for (const item of items) {
+        if (item.chat_id && item.name) {
+          chats.push({
+            chatId: item.chat_id,
+            name: item.name,
+          });
+        }
+      }
+
+      pageToken = response?.data?.page_token;
+    } while (pageToken);
+
+    logger.info({ chatCount: chats.length }, 'Bot chats retrieved');
+    return chats;
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to get bot chats');
+    throw error;
+  }
+}
