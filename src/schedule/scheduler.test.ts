@@ -9,7 +9,7 @@
  * - Issue #711: Short-lived ScheduleAgent creation and disposal
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -89,7 +89,7 @@ describe('Scheduler', () => {
   let mockCallbacks: PilotCallbacks;
   let testDir: string;
   let mockAgent: ChatAgent;
-  let createScheduleAgentSpy: ReturnType<typeof vi.spyOn>;
+  let createScheduleAgentSpy: MockInstance<(...args: unknown[]) => ChatAgent>;
 
   beforeEach(async () => {
     testDir = path.join(os.tmpdir(), `scheduler-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);

@@ -46,10 +46,6 @@ const logger = createLogger('AgentPool');
  */
 export type ChatAgentFactory = (chatId: string) => ChatAgent;
 
-/**
- * @deprecated Use ChatAgentFactory instead. Kept for backward compatibility.
- */
-export type PilotFactory = ChatAgentFactory;
 
 /**
  * Configuration for AgentPool.
@@ -57,10 +53,6 @@ export type PilotFactory = ChatAgentFactory;
 export interface AgentPoolConfig {
   /** Factory function to create ChatAgent instances */
   chatAgentFactory: ChatAgentFactory;
-  /**
-   * @deprecated Use chatAgentFactory instead. Kept for backward compatibility.
-   */
-  pilotFactory?: ChatAgentFactory;
   /** Optional logger */
   logger?: pino.Logger;
 }
@@ -81,8 +73,7 @@ export class AgentPool {
   private readonly log: pino.Logger;
 
   constructor(config: AgentPoolConfig) {
-    // Support both new and legacy config property names
-    this.chatAgentFactory = config.chatAgentFactory ?? config.pilotFactory!;
+    this.chatAgentFactory = config.chatAgentFactory;
     this.log = config.logger ?? logger;
   }
 
@@ -106,18 +97,6 @@ export class AgentPool {
       this.chatAgents.set(chatId, agent);
     }
     return agent;
-  }
-
-  /**
-   * Get or create a ChatAgent instance for the given chatId.
-   *
-   * @deprecated Use getOrCreateChatAgent instead. Kept for backward compatibility.
-   *
-   * @param chatId - The chat identifier
-   * @returns The ChatAgent instance for this chatId
-   */
-  getOrCreate(chatId: string): ChatAgent {
-    return this.getOrCreateChatAgent(chatId);
   }
 
   /**
