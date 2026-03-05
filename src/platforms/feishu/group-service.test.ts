@@ -290,4 +290,152 @@ describe('GroupService', () => {
       })).rejects.toThrow('API Error');
     });
   });
+
+  // Issue #721: Topic group tests
+  describe('markAsTopicGroup', () => {
+    it('should mark a group as topic group', () => {
+      const info: GroupInfo = {
+        chatId: 'oc_topic_test',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      };
+
+      service.registerGroup(info);
+      const result = service.markAsTopicGroup('oc_topic_test', true);
+
+      expect(result).toBe(true);
+      expect(service.getGroup('oc_topic_test')?.isTopicGroup).toBe(true);
+    });
+
+    it('should unmark a topic group', () => {
+      const info: GroupInfo = {
+        chatId: 'oc_topic_test',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      };
+
+      service.registerGroup(info);
+      const result = service.markAsTopicGroup('oc_topic_test', false);
+
+      expect(result).toBe(true);
+      expect(service.getGroup('oc_topic_test')?.isTopicGroup).toBeUndefined();
+    });
+
+    it('should return false for non-existent group', () => {
+      const result = service.markAsTopicGroup('oc_nonexistent', true);
+      expect(result).toBe(false);
+    });
+
+    it('should default to marking as topic group', () => {
+      const info: GroupInfo = {
+        chatId: 'oc_topic_default',
+        name: 'Topic Group Default',
+        createdAt: Date.now(),
+        initialMembers: [],
+      };
+
+      service.registerGroup(info);
+      const result = service.markAsTopicGroup('oc_topic_default');
+
+      expect(result).toBe(true);
+      expect(service.getGroup('oc_topic_default')?.isTopicGroup).toBe(true);
+    });
+
+    it('should persist topic group status', () => {
+      const info: GroupInfo = {
+        chatId: 'oc_topic_persist',
+        name: 'Topic Group Persist',
+        createdAt: Date.now(),
+        initialMembers: [],
+      };
+
+      service.registerGroup(info);
+      service.markAsTopicGroup('oc_topic_persist', true);
+
+      // Create a new service instance to verify persistence
+      const newService = new GroupService({ filePath: testFilePath });
+      expect(newService.getGroup('oc_topic_persist')?.isTopicGroup).toBe(true);
+    });
+  });
+
+  describe('isTopicGroup', () => {
+    it('should return true for topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_topic_true',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      expect(service.isTopicGroup('oc_topic_true')).toBe(true);
+    });
+
+    it('should return false for non-topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_topic_false',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.isTopicGroup('oc_topic_false')).toBe(false);
+    });
+
+    it('should return false for non-existent group', () => {
+      expect(service.isTopicGroup('oc_nonexistent')).toBe(false);
+    });
+  });
+
+  describe('listTopicGroups', () => {
+    it('should return empty array when no topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_regular',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.listTopicGroups()).toEqual([]);
+    });
+
+    it('should return only topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_regular1',
+        name: 'Regular Group 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.registerGroup({
+        chatId: 'oc_topic1',
+        name: 'Topic Group 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      service.registerGroup({
+        chatId: 'oc_regular2',
+        name: 'Regular Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.registerGroup({
+        chatId: 'oc_topic2',
+        name: 'Topic Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      const topicGroups = service.listTopicGroups();
+      expect(topicGroups.length).toBe(2);
+      expect(topicGroups.map(g => g.chatId).sort()).toEqual(['oc_topic1', 'oc_topic2']);
+    });
+  });
 });

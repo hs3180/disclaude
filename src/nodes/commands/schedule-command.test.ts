@@ -82,6 +82,10 @@ describe('ScheduleCommand', () => {
     // Passive mode management (Issue #601)
     setPassiveMode: () => {},
     getPassiveMode: () => false,
+    // Topic group management (Issue #721)
+    markAsTopicGroup: () => false,
+    isTopicGroup: () => false,
+    listTopicGroups: () => [],
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({
