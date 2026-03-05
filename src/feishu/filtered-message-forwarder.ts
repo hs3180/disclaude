@@ -80,7 +80,7 @@ export class FilteredMessageForwarder {
    * Check if a specific filter reason should be forwarded.
    * Always returns true if debug group is set (forwards all reasons).
    */
-  shouldForward(reason: FilterReason): boolean {
+  shouldForward(_reason: FilterReason): boolean {
     return this.isConfigured();
   }
 
