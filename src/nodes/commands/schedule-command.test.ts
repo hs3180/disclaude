@@ -86,6 +86,12 @@ describe('ScheduleCommand', () => {
     markAsTopicGroup: () => false,
     isTopicGroup: () => false,
     listTopicGroups: () => [],
+    // Skill Agent management (Issue #455)
+    discoverSkills: () => Promise.resolve([]),
+    startSkillAgent: () => Promise.resolve('agent_test'),
+    stopSkillAgent: () => Promise.resolve(true),
+    getSkillAgentStatus: () => undefined,
+    listSkillAgents: () => [],
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({

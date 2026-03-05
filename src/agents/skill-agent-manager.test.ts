@@ -51,7 +51,6 @@ describe('SkillAgentManager', () => {
     manager = new SkillAgentManager(mockConfig);
 
     // Override discoverSkills to use tempDir and update internal cache
-    const originalDiscoverSkills = manager.discoverSkills.bind(manager);
     (manager as any).discoverSkills = async function(forceRefresh = false) {
       // Use tempDir instead of Config.getWorkspaceDir()
       const skillsDirPath = path.join(tempDir, 'skills');

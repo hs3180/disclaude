@@ -420,7 +420,10 @@ export class SkillAgentManager {
       // Extract result summary
       const lastMessage = results[results.length - 1];
       if (lastMessage) {
-        agentInfo.result = lastMessage.content.slice(0, 500);
+        const content = typeof lastMessage.content === 'string'
+          ? lastMessage.content
+          : JSON.stringify(lastMessage.content);
+        agentInfo.result = content.slice(0, 500);
       }
 
       logger.info({ agentId, resultCount: results.length }, 'Skill agent completed');

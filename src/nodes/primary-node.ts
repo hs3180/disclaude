@@ -33,7 +33,7 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
-import { AgentFactory, AgentPool } from '../agents/index.js';
+import { AgentFactory, AgentPool, getSkillAgentManager } from '../agents/index.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
@@ -669,6 +669,36 @@ export class PrimaryNode extends EventEmitter {
         },
         listTopicGroups: () => {
           return this.groupService.listTopicGroups();
+        },
+        // Skill Agent management (Issue #455)
+        discoverSkills: async () => {
+          const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
+          return manager.discoverSkills();
+        },
+        startSkillAgent: async (skillName: string, options: {
+          chatId: string;
+          templateVars?: Record<string, string>;
+          input?: string;
+        }) => {
+          const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
+          return manager.start(skillName, {
+            ...options,
+            sendMessage: async (message: string) => {
+              await this.sendMessage(options.chatId, message);
+            },
+          });
+        },
+        stopSkillAgent: async (agentId: string) => {
+          const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
+          return manager.stop(agentId);
+        },
+        getSkillAgentStatus: (agentId: string) => {
+          const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
+          return manager.getStatus(agentId);
+        },
+        listSkillAgents: (includeCompleted?: boolean) => {
+          const manager = getSkillAgentManager({ ...Config.getAgentConfig(), permissionMode: 'bypassPermissions' });
+          return manager.list(includeCompleted);
         },
       },
     };
