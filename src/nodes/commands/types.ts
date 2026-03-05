@@ -57,6 +57,10 @@ export interface ManagedGroupInfo {
   createdAt: number;
   createdBy?: string;
   initialMembers: string[];
+  /** Whether this is a topic group (BBS mode) */
+  isTopicGroup?: boolean;
+  /** Topic tags for categorization */
+  topicTags?: string[];
 }
 
 /**
@@ -137,6 +141,21 @@ export interface CommandServices {
 
   /** List all managed groups */
   listGroups: () => ManagedGroupInfo[];
+
+  /** Get a specific group by chatId */
+  getGroup: (chatId: string) => ManagedGroupInfo | undefined;
+
+  /** Mark a group as topic group */
+  markAsTopicGroup: (chatId: string, tags?: string[]) => boolean;
+
+  /** Remove topic group mark */
+  unmarkAsTopicGroup: (chatId: string) => boolean;
+
+  /** List all topic groups */
+  listTopicGroups: () => ManagedGroupInfo[];
+
+  /** Register an existing chat as a topic group */
+  registerAsTopicGroup: (chatId: string, name: string, tags?: string[]) => ManagedGroupInfo;
 
   /** Get all chats the bot is in (from Feishu API) */
   getBotChats: (client: lark.Client) => Promise<BotChatInfo[]>;

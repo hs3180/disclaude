@@ -621,6 +621,12 @@ export class PrimaryNode extends EventEmitter {
         registerGroup: (group: Parameters<typeof this.groupService.registerGroup>[0]) => this.groupService.registerGroup(group),
         unregisterGroup: (chatId: string) => this.groupService.unregisterGroup(chatId),
         listGroups: () => this.groupService.listGroups(),
+        // Topic group management (Issue #721)
+        getGroup: (chatId: string) => this.groupService.getGroup(chatId),
+        markAsTopicGroup: (chatId: string, tags?: string[]) => this.groupService.markAsTopicGroup(chatId, tags),
+        unmarkAsTopicGroup: (chatId: string) => this.groupService.unmarkAsTopicGroup(chatId),
+        listTopicGroups: () => this.groupService.listTopicGroups(),
+        registerAsTopicGroup: (chatId: string, name: string, tags?: string[]) => this.groupService.registerAsTopicGroup(chatId, name, tags),
         // Group creation (Issue #692)
         createGroup: (client: lark.Client, options: { topic?: string; members?: string[]; creatorId?: string }) => this.groupService.createGroup(client, options),
         getBotChats,

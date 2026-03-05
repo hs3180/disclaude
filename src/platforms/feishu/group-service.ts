@@ -30,6 +30,10 @@ export interface GroupInfo {
   createdBy?: string;
   /** Initial members */
   initialMembers: string[];
+  /** Whether this is a topic group (BBS mode) */
+  isTopicGroup?: boolean;
+  /** Topic tags for categorization */
+  topicTags?: string[];
 }
 
 /**
@@ -174,6 +178,101 @@ export class GroupService {
    */
   getFilePath(): string {
     return this.filePath;
+  }
+
+  /**
+   * Mark a group as a topic group (BBS mode).
+   *
+   * @param chatId - Group chat ID
+   * @param tags - Optional topic tags
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  markAsTopicGroup(chatId: string, tags?: string[]): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot mark unmanaged group as topic group');
+      return false;
+    }
+
+    group.isTopicGroup = true;
+    if (tags && tags.length > 0) {
+      group.topicTags = tags;
+    }
+    this.save();
+    logger.info({ chatId, tags }, 'Group marked as topic group');
+    return true;
+  }
+
+  /**
+   * Remove topic group mark from a group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  unmarkAsTopicGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot unmark unmanaged group');
+      return false;
+    }
+
+    delete group.isTopicGroup;
+    delete group.topicTags;
+    this.save();
+    logger.info({ chatId }, 'Group unmarked as topic group');
+    return true;
+  }
+
+  /**
+   * Check if a group is a topic group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group is a topic group
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  isTopicGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.isTopicGroup === true;
+  }
+
+  /**
+   * List all topic groups.
+   *
+   * @returns Array of topic group info
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  listTopicGroups(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
+  }
+
+  /**
+   * Register an existing chat as a topic group.
+   * This is useful for marking invited groups as topic groups.
+   *
+   * @param chatId - Group chat ID
+   * @param name - Group name
+   * @param tags - Optional topic tags
+   * @returns The registered group info
+   *
+   * @see Issue #721 - 话题群基础设施
+   */
+  registerAsTopicGroup(chatId: string, name: string, tags?: string[]): GroupInfo {
+    const groupInfo: GroupInfo = {
+      chatId,
+      name,
+      createdAt: Date.now(),
+      initialMembers: [],
+      isTopicGroup: true,
+      topicTags: tags,
+    };
+    this.registerGroup(groupInfo);
+    return groupInfo;
   }
 
   /**

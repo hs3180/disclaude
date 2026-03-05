@@ -20,6 +20,9 @@ export {
   ListGroupMembersCommand,
   ListGroupCommand,
   DissolveGroupCommand,
+  TopicGroupCommand,
+  UntopicGroupCommand,
+  ListTopicGroupsCommand,
 } from './group-commands.js';
 
 // Passive command

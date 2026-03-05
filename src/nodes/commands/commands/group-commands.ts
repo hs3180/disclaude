@@ -6,6 +6,7 @@
  * Issue #696: 拆分 builtin-commands.ts
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
  * Issue #537: 完成所有指令的 DI 重构
+ * Issue #721: 话题群基础设施 - BBS 模式支持
  */
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
@@ -254,5 +255,156 @@ export class DissolveGroupCommand implements Command {
     } catch (error) {
       return { success: false, error: `解散群失败: ${(error as Error).message}` };
     }
+  }
+}
+
+/**
+ * Topic Group Command - Mark a group as a topic group (BBS mode).
+ *
+ * Issue #721: 话题群基础设施 - BBS 模式支持
+ */
+export class TopicGroupCommand implements Command {
+  readonly name = 'topic-group';
+  readonly category = 'group' as const;
+  readonly description = '标记群为话题群';
+  readonly usage = 'topic-group <groupId> [tag1,tag2,...]';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args, chatId } = context;
+
+    // Support both explicit chatId and current chat
+    let groupId: string;
+    let tags: string[] | undefined;
+
+    if (args.length === 0) {
+      // Mark current chat as topic group
+      groupId = chatId;
+    } else {
+      [groupId] = args;
+      // Parse tags if provided
+      if (args.length > 1) {
+        tags = args.slice(1).join(' ').split(',').map(t => t.trim()).filter(t => t);
+      }
+    }
+
+    // Check if group is managed
+    const group = services.getGroup(groupId);
+    if (!group) {
+      // For invited groups, we can still mark them as topic groups
+      // by registering them first
+      try {
+        const client = services.getFeishuClient();
+        const chats = await services.getBotChats(client);
+        const chatInfo = chats.find(c => c.chatId === groupId);
+
+        if (!chatInfo) {
+          return {
+            success: false,
+            error: `群 \`${groupId}\` 不存在或机器人不在该群中`,
+          };
+        }
+
+        // Register as topic group
+        services.registerAsTopicGroup(groupId, chatInfo.name, tags);
+        return {
+          success: true,
+          message: `✅ **话题群标记成功**\n\n群: ${chatInfo.name}\nID: \`${groupId}\`${tags ? `\n标签: ${tags.map(t => `\`${t}\``).join(', ')}` : ''}`,
+        };
+      } catch (error) {
+        return { success: false, error: `标记话题群失败: ${(error as Error).message}` };
+      }
+    }
+
+    // Group is managed, just mark it
+    const success = services.markAsTopicGroup(groupId, tags);
+    if (!success) {
+      return { success: false, error: '标记话题群失败' };
+    }
+
+    return {
+      success: true,
+      message: `✅ **话题群标记成功**\n\n群: ${group.name}\nID: \`${groupId}\`${tags ? `\n标签: ${tags.map(t => `\`${t}\``).join(', ')}` : ''}`,
+    };
+  }
+}
+
+/**
+ * Untopic Group Command - Remove topic group mark.
+ *
+ * Issue #721: 话题群基础设施 - BBS 模式支持
+ */
+export class UntopicGroupCommand implements Command {
+  readonly name = 'untopic-group';
+  readonly category = 'group' as const;
+  readonly description = '取消话题群标记';
+  readonly usage = 'untopic-group <groupId>';
+
+  execute(context: CommandContext): CommandResult {
+    const { services, args, chatId } = context;
+
+    const groupId = args.length > 0 ? args[0] : chatId;
+
+    const group = services.getGroup(groupId);
+    if (!group) {
+      return {
+        success: false,
+        error: `群 \`${groupId}\` 不在托管列表中`,
+      };
+    }
+
+    if (!group.isTopicGroup) {
+      return {
+        success: true,
+        message: `ℹ️ 群 \`${groupId}\` 本身不是话题群`,
+      };
+    }
+
+    const success = services.unmarkAsTopicGroup(groupId);
+    if (!success) {
+      return { success: false, error: '取消话题群标记失败' };
+    }
+
+    return {
+      success: true,
+      message: `✅ **话题群标记已移除**\n\n群: ${group.name}\nID: \`${groupId}\``,
+    };
+  }
+}
+
+/**
+ * List Topic Groups Command - List all topic groups.
+ *
+ * Issue #721: 话题群基础设施 - BBS 模式支持
+ */
+export class ListTopicGroupsCommand implements Command {
+  readonly name = 'topic-groups';
+  readonly category = 'group' as const;
+  readonly description = '列出所有话题群';
+
+  execute(context: CommandContext): CommandResult {
+    const { services } = context;
+
+    const topicGroups = services.listTopicGroups();
+
+    if (topicGroups.length === 0) {
+      return {
+        success: true,
+        message: '📋 **话题群列表**\n\n暂无话题群\n\n使用 `/topic-group <群ID>` 标记群为话题群',
+      };
+    }
+
+    const lines: string[] = [`📋 **话题群列表** (共 ${topicGroups.length} 个)\n`];
+
+    for (const g of topicGroups) {
+      const tags = g.topicTags && g.topicTags.length > 0
+        ? ` [${g.topicTags.map(t => `\`${t}\``).join(', ')}]`
+        : '';
+      lines.push(`• ${g.name}${tags} - \`${g.chatId}\``);
+    }
+
+    return {
+      success: true,
+      message: lines.join('\n'),
+    };
   }
 }
