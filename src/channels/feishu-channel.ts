@@ -82,10 +82,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private passiveModeDisabled: Map<string, boolean> = new Map();
 
   /**
-   * Bot's open_id for mention detection.
+   * Bot's information for mention detection.
    * Issue #600: Correctly identify bot mentions in group chats
+   * Issue #681: Store complete bot info for reliable mention detection
    */
-  private botOpenId?: string;
+  private botInfo?: {
+    open_id?: string;
+    app_id?: string;
+    union_id?: string;
+  };
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
@@ -121,8 +126,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize message logger
     await messageLogger.init();
 
-    // Get bot's open_id for mention detection (Issue #600)
-    await this.fetchBotOpenId();
+    // Get bot's info for mention detection (Issue #600, #681)
+    await this.fetchBotInfo();
 
     // Create event dispatcher
     this.eventDispatcher = new lark.EventDispatcher({}).register({
@@ -341,28 +346,37 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
-   * Fetch bot's open_id from Feishu API.
+   * Fetch bot's information from Feishu API.
    * This is used to correctly identify when the bot is mentioned.
    *
    * Issue #600: Correctly identify bot mentions in group chats
+   * Issue #681: Store complete bot info (open_id, app_id, union_id) for reliable detection
    */
-  private async fetchBotOpenId(): Promise<void> {
+  private async fetchBotInfo(): Promise<void> {
     try {
       const client = this.getClient();
-      // Use bot info API to get bot's open_id
+      // Use bot info API to get bot's information
       const response = await client.request({
         method: 'GET',
         url: '/open-apis/bot/v3/info',
       });
 
-      if (response.data?.bot?.open_id) {
-        this.botOpenId = response.data.bot.open_id;
-        logger.info({ botOpenId: this.botOpenId }, 'Bot open_id fetched for mention detection');
+      const bot = response.data?.bot;
+      if (bot) {
+        this.botInfo = {
+          open_id: bot.open_id,
+          app_id: bot.app_id,
+          union_id: bot.union_id,
+        };
+        logger.info(
+          { botOpenId: this.botInfo.open_id, botAppId: this.botInfo.app_id },
+          'Bot info fetched for mention detection'
+        );
       } else {
-        logger.warn('Failed to fetch bot open_id, mention detection may be less accurate');
+        logger.warn('Failed to fetch bot info, mention detection may be less accurate');
       }
     } catch (error) {
-      logger.warn({ err: error }, 'Failed to fetch bot open_id, mention detection may be less accurate');
+      logger.warn({ err: error }, 'Failed to fetch bot info, mention detection may be less accurate');
     }
   }
 
@@ -371,6 +385,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * When bot is mentioned, commands should be passed through to the agent.
    *
    * Issue #600: Correctly identify bot mentions in group chats
+   * Issue #681: Use multiple identifiers for reliable bot mention detection
    *
    * @param mentions - Mentions array from Feishu message
    * @returns true if bot is mentioned
@@ -380,24 +395,85 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return false;
     }
 
-    // If we have bot's open_id, check if any mention matches
-    if (this.botOpenId) {
-      return mentions.some((mention) => {
-        // Check if the mention's open_id matches bot's open_id
-        return mention.id?.open_id === this.botOpenId;
+    // Log mentions structure for debugging (Issue #681)
+    logger.debug(
+      {
+        mentions: mentions.map(m => ({
+          open_id: m.id?.open_id,
+          union_id: m.id?.union_id,
+          user_id: m.id?.user_id,
+          key: m.key,
+          name: m.name,
+        })),
+        botInfo: this.botInfo,
+      },
+      'Checking bot mention'
+    );
+
+    // If we have bot's info, check if any mention matches using multiple identifiers
+    if (this.botInfo) {
+      const isMentioned = mentions.some((mention) => {
+        const id = mention.id;
+        if (!id) return false;
+
+        // Check multiple possible identifiers for bot mention
+        // Issue #681: Bot mentions may use different identifiers than regular users
+        const matches =
+          // Primary: Check open_id match
+          (this.botInfo!.open_id && id.open_id === this.botInfo!.open_id) ||
+          // Secondary: Check if open_id matches app_id (bot's open_id may be app_id format)
+          (this.botInfo!.app_id && id.open_id === this.botInfo!.app_id) ||
+          // Tertiary: Check union_id match
+          (this.botInfo!.union_id && id.union_id === this.botInfo!.union_id) ||
+          // Check user_id against app_id (some scenarios use this)
+          (this.botInfo!.app_id && id.user_id === this.botInfo!.app_id);
+
+        if (matches) {
+          logger.debug(
+            { mentionId: id, matchedField: this.getMatchedField(id) },
+            'Bot mention detected'
+          );
+        }
+        return matches;
       });
+
+      // Issue #681: When botInfo is available, only use exact matching
+      // Do NOT fall back to pattern matching which could cause false positives
+      return isMentioned;
     }
 
     // Fallback: Check for bot mention patterns
     // Bot mentions typically have open_id starting with 'cli_' (app ID format)
     // or have key containing 'bot'
-    return mentions.some((mention) => {
+    // This fallback is less reliable but helps when botInfo is not available
+    const fallbackMatch = mentions.some((mention) => {
       const openId = mention.id?.open_id || '';
       const key = mention.key || '';
       // Bot's open_id typically starts with 'cli_' (app/bot ID format)
       // or the key contains 'bot' (e.g., '@_bot')
       return openId.startsWith('cli_') || key.toLowerCase().includes('bot');
     });
+
+    if (fallbackMatch) {
+      logger.debug('Bot mention detected via fallback pattern matching');
+    }
+
+    return fallbackMatch;
+  }
+
+  /**
+   * Get the field that matched for bot mention detection.
+   * Helper for debugging.
+   *
+   * Issue #681: Debugging support
+   */
+  private getMatchedField(id: { open_id?: string; union_id?: string; user_id?: string }): string {
+    if (!this.botInfo) return 'none';
+    if (this.botInfo.open_id && id.open_id === this.botInfo.open_id) return 'open_id';
+    if (this.botInfo.app_id && id.open_id === this.botInfo.app_id) return 'open_id (app_id)';
+    if (this.botInfo.union_id && id.union_id === this.botInfo.union_id) return 'union_id';
+    if (this.botInfo.app_id && id.user_id === this.botInfo.app_id) return 'user_id (app_id)';
+    return 'unknown';
   }
 
   /**
