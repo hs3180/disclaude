@@ -65,28 +65,48 @@ export class MessageLogger {
 
   /**
    * Load all message IDs from existing MD files at startup.
-   * One-time operation to populate the in-memory cache.
+   * Only loads from recent days (configurable via MESSAGE_LOGGING.DEDUP_DAYS).
+   * Structure: {chatDir}/{date}/{chatId}.md
    */
   private async loadAllMessageIds(): Promise<void> {
     try {
-      const files = await fs.readdir(this.chatDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      // Get list of date directories
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
+      const dateDirs = entries.filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name));
 
-      console.log(`[MessageLogger] Loading message IDs from ${mdFiles.length} chat files...`);
+      // Calculate cutoff date for deduplication
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - MESSAGE_LOGGING.DEDUP_DAYS);
+      const cutoffStr = this.formatDate(cutoffDate);
 
-      for (const file of mdFiles) {
-        const filePath = path.join(this.chatDir, file);
+      // Filter to only recent directories
+      const recentDirs = dateDirs.filter(d => d.name >= cutoffStr).map(d => d.name);
+
+      console.log(`[MessageLogger] Loading message IDs from ${recentDirs.length} recent date directories...`);
+
+      for (const dateDir of recentDirs) {
+        const datePath = path.join(this.chatDir, dateDir);
         try {
-          const content = await fs.readFile(filePath, 'utf-8');
-          const regex = MESSAGE_LOGGING.MD_PARSE_REGEX;
+          const files = await fs.readdir(datePath);
+          const mdFiles = files.filter(f => f.endsWith('.md'));
 
-          let match;
-          regex.lastIndex = 0;
-          while ((match = regex.exec(content)) !== null) {
-            this.processedMessageIds.add(match[1].trim());
+          for (const file of mdFiles) {
+            const filePath = path.join(datePath, file);
+            try {
+              const content = await fs.readFile(filePath, 'utf-8');
+              const regex = MESSAGE_LOGGING.MD_PARSE_REGEX;
+
+              let match;
+              regex.lastIndex = 0;
+              while ((match = regex.exec(content)) !== null) {
+                this.processedMessageIds.add(match[1].trim());
+              }
+            } catch (_error) {
+              console.error(`[MessageLogger] Failed to read ${dateDir}/${file}:`, _error);
+            }
           }
         } catch (_error) {
-          console.error(`[MessageLogger] Failed to read ${file}:`, _error);
+          console.error(`[MessageLogger] Failed to read directory ${dateDir}:`, _error);
         }
       }
 
@@ -159,10 +179,20 @@ export class MessageLogger {
 
   /**
    * Get chat log file path.
+   * Structure: {chatDir}/{date}/{chatId}.md
+   * Example: workspace/chat/2026-03-05/oc_abc123.md
    */
-  private getChatLogPath(chatId: string): string {
+  private getChatLogPath(chatId: string, date?: Date): string {
     const sanitizedId = this.sanitizeId(chatId);
-    return path.join(this.chatDir, `${sanitizedId}.md`);
+    const dateStr = this.formatDate(date || new Date());
+    return path.join(this.chatDir, dateStr, `${sanitizedId}.md`);
+  }
+
+  /**
+   * Format date as YYYY-MM-DD string.
+   */
+  private formatDate(date: Date): string {
+    return date.toISOString().split('T')[0];
   }
 
   /**
@@ -255,9 +285,11 @@ ${entry.content}
    */
   private createFileHeader(chatId: string): string {
     const now = new Date().toISOString();
+    const dateStr = this.formatDate(new Date());
     return `# Chat Message Log: ${chatId}
 
 **Chat ID**: ${chatId}
+**Date**: ${dateStr}
 **Created**: ${now}
 **Last Updated**: ${now}
 
@@ -267,16 +299,35 @@ ${entry.content}
   }
 
   /**
-   * Get message history for a chat.
+   * Get message history for a chat from recent days.
+   * Reads from multiple date directories and combines them.
+   * @param chatId The chat ID to get history for
+   * @param days Number of days to look back (default: MESSAGE_LOGGING.HISTORY_DAYS)
    */
-  async getChatHistory(chatId: string): Promise<string> {
-    const logPath = this.getChatLogPath(chatId);
+  async getChatHistory(chatId: string, days?: number): Promise<string> {
+    const lookbackDays = days ?? MESSAGE_LOGGING.HISTORY_DAYS;
+    const sanitizedId = this.sanitizeId(chatId);
+    const historyParts: string[] = [];
 
-    try {
-      return await fs.readFile(logPath, 'utf-8');
-    } catch (_error) {
-      return '';
+    // Collect history from most recent to oldest
+    for (let i = 0; i < lookbackDays; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = this.formatDate(date);
+      const logPath = path.join(this.chatDir, dateStr, `${sanitizedId}.md`);
+
+      try {
+        const content = await fs.readFile(logPath, 'utf-8');
+        if (content.trim()) {
+          historyParts.push(`\n\n## [${dateStr}]\n\n${content}`);
+        }
+      } catch {
+        // File doesn't exist for this date, skip
+      }
     }
+
+    // Reverse to get chronological order (oldest first)
+    return historyParts.reverse().join('\n');
   }
 
   /**

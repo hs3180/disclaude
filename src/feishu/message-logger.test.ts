@@ -16,6 +16,8 @@ vi.mock('../config/constants.js', () => ({
   MESSAGE_LOGGING: {
     LOGS_DIR: 'chat-logs',
     MD_PARSE_REGEX: /message_id:\s*([^\n\]]+)/g,
+    DEDUP_DAYS: 7,
+    HISTORY_DAYS: 3,
   },
 }));
 
@@ -213,21 +215,61 @@ describe('MessageLogger', () => {
   });
 
   describe('getChatHistory', () => {
-    it('should return empty string when file not found', async () => {
-      vi.mocked(mockFs.readFile).mockRejectedValueOnce(new Error('File not found'));
+    it('should return empty string when all files not found', async () => {
+      const impl = async () => {
+        throw new Error('File not found');
+      };
+      vi.mocked(mockFs.readFile).mockImplementation(impl);
+      if (mockFs.default) {
+        vi.mocked(mockFs.default.readFile).mockImplementation(impl);
+      }
 
       const history = await messageLogger.getChatHistory('nonexistent');
 
       expect(history).toBe('');
     });
 
-    it('should return file content when file exists', async () => {
+    it('should return file content when today\'s file exists', async () => {
       const mockContent = '# Chat Log\nContent here';
-      vi.mocked(mockFs.readFile).mockResolvedValueOnce(mockContent);
+      let callCount = 0;
+
+      const impl = async () => {
+        callCount++;
+        if (callCount === 1) return mockContent; // Today
+        throw new Error('Not found'); // Other days
+      };
+      vi.mocked(mockFs.readFile).mockImplementation(impl);
+      if (mockFs.default) {
+        vi.mocked(mockFs.default.readFile).mockImplementation(impl);
+      }
 
       const history = await messageLogger.getChatHistory('chat-1');
 
-      expect(history).toBe(mockContent);
+      // History should contain the content
+      expect(history).toContain(mockContent);
+    });
+
+    it('should combine history from multiple days', async () => {
+      const todayContent = '# Chat Log Today';
+      const yesterdayContent = '# Chat Log Yesterday';
+      let callCount = 0;
+
+      const impl = async () => {
+        callCount++;
+        if (callCount === 1) return todayContent; // Today
+        if (callCount === 2) return yesterdayContent; // Yesterday
+        throw new Error('Not found'); // Other days
+      };
+      vi.mocked(mockFs.readFile).mockImplementation(impl);
+      if (mockFs.default) {
+        vi.mocked(mockFs.default.readFile).mockImplementation(impl);
+      }
+
+      const history = await messageLogger.getChatHistory('chat-1');
+
+      // Both contents should be present (reversed to chronological order)
+      expect(history).toContain(todayContent);
+      expect(history).toContain(yesterdayContent);
     });
   });
 

@@ -33,6 +33,12 @@ export const MESSAGE_LOGGING = {
 
   /** Regex to extract message IDs from MD files */
   MD_PARSE_REGEX: /message_id:\s*([^\)]+)/g,
+
+  /** Number of days to keep in memory for deduplication (default: 7) */
+  DEDUP_DAYS: 7,
+
+  /** Number of days of history to return by default in getChatHistory (default: 3) */
+  HISTORY_DAYS: 3,
 } as const;
 
 /**
