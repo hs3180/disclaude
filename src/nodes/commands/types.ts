@@ -60,6 +60,15 @@ export interface ManagedGroupInfo {
 }
 
 /**
+ * Bot chat info from Feishu API.
+ * Issue #648: 改进群列表命令
+ */
+export interface BotChatInfo {
+  chatId: string;
+  name: string;
+}
+
+/**
  * Debug group info.
  */
 export interface DebugGroupInfo {
@@ -122,6 +131,9 @@ export interface CommandServices {
 
   /** List all managed groups */
   listGroups: () => ManagedGroupInfo[];
+
+  /** Get all chats the bot is in (from Feishu API) */
+  getBotChats: (client: lark.Client) => Promise<BotChatInfo[]>;
 
   /** Set debug group */
   setDebugGroup: (chatId: string, name?: string) => DebugGroupInfo | null;
