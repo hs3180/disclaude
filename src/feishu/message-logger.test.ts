@@ -15,7 +15,7 @@ vi.mock('../config/index.js', () => ({
 vi.mock('../config/constants.js', () => ({
   MESSAGE_LOGGING: {
     LOGS_DIR: 'chat-logs',
-    MD_PARSE_REGEX: /message_id:\s*([^\n\]]+)/g,
+    MD_PARSE_REGEX: /message_id:\s*([^\)]+)/g,
   },
 }));
 
@@ -28,6 +28,7 @@ vi.mock('fs/promises', () => ({
     writeFile: vi.fn().mockResolvedValue(undefined),
     appendFile: vi.fn().mockResolvedValue(undefined),
     access: vi.fn().mockRejectedValue(new Error('File not found')),
+    rename: vi.fn().mockResolvedValue(undefined),
   },
   mkdir: vi.fn().mockResolvedValue(undefined),
   readdir: vi.fn().mockResolvedValue([]),
@@ -35,6 +36,7 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   appendFile: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockRejectedValue(new Error('File not found')),
+  rename: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe('MessageLogger', () => {
@@ -57,6 +59,7 @@ describe('MessageLogger', () => {
     vi.mocked(mockFs.writeFile).mockClear().mockResolvedValue(undefined);
     vi.mocked(mockFs.appendFile).mockClear().mockResolvedValue(undefined);
     vi.mocked(mockFs.access).mockClear().mockRejectedValue(new Error('File not found'));
+    vi.mocked(mockFs.rename).mockClear().mockResolvedValue(undefined);
 
     // Also reset default exports if they exist
     if (mockFs.default) {
@@ -66,6 +69,7 @@ describe('MessageLogger', () => {
       vi.mocked(mockFs.default.writeFile).mockClear().mockResolvedValue(undefined);
       vi.mocked(mockFs.default.appendFile).mockClear().mockResolvedValue(undefined);
       vi.mocked(mockFs.default.access).mockClear().mockRejectedValue(new Error('File not found'));
+      vi.mocked(mockFs.default.rename).mockClear().mockResolvedValue(undefined);
     }
 
     // Re-import to get fresh instance
@@ -213,8 +217,8 @@ describe('MessageLogger', () => {
   });
 
   describe('getChatHistory', () => {
-    it('should return empty string when file not found', async () => {
-      vi.mocked(mockFs.readFile).mockRejectedValueOnce(new Error('File not found'));
+    it('should return empty string when no files exist', async () => {
+      vi.mocked(mockFs.readFile).mockRejectedValue(new Error('File not found'));
 
       const history = await messageLogger.getChatHistory('nonexistent');
 
@@ -225,9 +229,23 @@ describe('MessageLogger', () => {
       const mockContent = '# Chat Log\nContent here';
       vi.mocked(mockFs.readFile).mockResolvedValueOnce(mockContent);
 
-      const history = await messageLogger.getChatHistory('chat-1');
+      const history = await messageLogger.getChatHistory('chat-1', 1);
 
       expect(history).toBe(mockContent);
+    });
+
+    it('should read multiple days of logs', async () => {
+      const day1Content = '# Day 1';
+      const day2Content = '# Day 2';
+
+      vi.mocked(mockFs.readFile)
+        .mockResolvedValueOnce(day1Content) // Today
+        .mockResolvedValueOnce(day2Content); // Yesterday
+
+      const history = await messageLogger.getChatHistory('chat-1', 2);
+
+      // Should be in chronological order (oldest first)
+      expect(history).toBe(`${day2Content}\n\n${day1Content}`);
     });
   });
 
@@ -326,6 +344,21 @@ describe('MessageLogger', () => {
 
       expect(messageLogger.isMessageProcessed('msg-a1')).toBe(true);
       expect(messageLogger.isMessageProcessed('msg-b1')).toBe(true);
+    });
+  });
+
+  describe('Date-based structure', () => {
+    it('should create date-based directory structure', async () => {
+      await messageLogger.logIncomingMessage(
+        'msg-date',
+        'user-1',
+        'chat-date',
+        'Test',
+        'text'
+      );
+
+      // Verify mkdir was called for the chat directory
+      expect(mockFs.mkdir).toHaveBeenCalled();
     });
   });
 });
