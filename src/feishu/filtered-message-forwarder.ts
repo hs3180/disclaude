@@ -75,6 +75,16 @@ export class FilteredMessageForwarder {
         { forwardChatId: this.forwardChatId, includeReasons: [...this.includeReasons] },
         'FilteredMessageForwarder initialized'
       );
+    } else {
+      // Issue #652: Output WARN log when not configured
+      logger.warn(
+        {
+          enabled: this.enabled,
+          hasForwardChatId: !!this.forwardChatId,
+          hint: 'Add messaging.debug section to disclaude.config.yaml to enable filtered message forwarding'
+        },
+        'FilteredMessageForwarder is not configured. Filtered messages will not be forwarded.'
+      );
     }
   }
 
