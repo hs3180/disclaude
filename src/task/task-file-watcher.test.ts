@@ -23,12 +23,12 @@ interface MockFile {
 let mockFiles: Map<string, MockFile>;
 let watchCallback: ((eventType: string, filename: string) => void) | null = null;
 let watcherErrorCallback: ((error: Error) => void) | null = null;
-let watchClosed = false;
+let _watchClosed = false;
 
 // Mock FSWatcher class
 class MockFSWatcher extends EventEmitter {
   close() {
-    watchClosed = true;
+    _watchClosed = true;
     watchCallback = null;
     watcherErrorCallback = null;
   }
@@ -49,13 +49,13 @@ vi.mock('../utils/logger.js', () => ({
 // Mock fs module
 vi.mock('fs', () => ({
   promises: {
-    mkdir: vi.fn(async (dir: string) => {
+    mkdir: vi.fn((dir: string) => {
       if (!mockFiles.has(dir)) {
         mockFiles.set(dir, { content: '', isDirectory: true });
       }
-      return undefined;
+      return Promise.resolve(undefined);
     }),
-    readdir: vi.fn(async (dir: string, options?: { withFileTypes?: boolean }) => {
+    readdir: vi.fn((dir: string, _options?: { withFileTypes?: boolean }) => {
       if (dir === '/mock-tasks') {
         const entries: { name: string; isDirectory(): boolean }[] = [];
         for (const [path, info] of mockFiles.entries()) {
@@ -68,30 +68,30 @@ vi.mock('fs', () => ({
             }
           }
         }
-        return entries;
+        return Promise.resolve(entries);
       }
-      return [];
+      return Promise.resolve([]);
     }),
-    access: vi.fn(async (filePath: string) => {
+    access: vi.fn((filePath: string) => {
       if (mockFiles.has(filePath)) {
-        return undefined;
+        return Promise.resolve(undefined);
       }
       const error = new Error('ENOENT') as NodeJS.ErrnoException;
       error.code = 'ENOENT';
-      throw error;
+      return Promise.reject(error);
     }),
-    readFile: vi.fn(async (filePath: string) => {
+    readFile: vi.fn((filePath: string) => {
       const file = mockFiles.get(filePath);
       if (file && !file.isDirectory) {
-        return file.content;
+        return Promise.resolve(file.content);
       }
       const error = new Error('ENOENT') as NodeJS.ErrnoException;
       error.code = 'ENOENT';
-      throw error;
+      return Promise.reject(error);
     }),
   },
   watch: vi.fn((_dir: string, _options: unknown, callback: (eventType: string, filename: string) => void) => {
-    watchClosed = false;
+    _watchClosed = false;
     watchCallback = callback;
     currentWatcher = new MockFSWatcher();
     currentWatcher.on('error', (error: Error) => {
@@ -138,7 +138,7 @@ describe('TaskFileWatcher', () => {
   let watcher: TaskFileWatcher;
   let onTaskCreated: OnTaskCreated;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
 
     // Reset mock file system
@@ -146,13 +146,16 @@ describe('TaskFileWatcher', () => {
     mockFiles.set('/mock-tasks', { content: '', isDirectory: true });
     watchCallback = null;
     watcherErrorCallback = null;
-    watchClosed = false;
+    _watchClosed = false;
     currentWatcher = null;
+
+    // Mark _watchClosed as used (it's tracked by MockFSWatcher.close())
+    void _watchClosed;
 
     onTaskCreated = vi.fn().mockResolvedValue(undefined);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     if (watcher) {
       watcher.stop();
     }
@@ -242,9 +245,9 @@ Test task description.
 
       simulateFileCreation('msg_test123', taskContent);
 
-      await waitForCallback(onTaskCreated);
+      await waitForCallback(vi.mocked(onTaskCreated));
 
-      expect(onTaskCreated).toHaveBeenCalledWith(
+      expect(vi.mocked(onTaskCreated)).toHaveBeenCalledWith(
         '/mock-tasks/msg_test123/task.md',
         'msg_test123',
         'chat_abc123'
@@ -291,7 +294,7 @@ Test task description.
       // Wait for a short period - invalid task should not trigger callback
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      expect(onTaskCreated).not.toHaveBeenCalled();
+      expect(vi.mocked(onTaskCreated)).not.toHaveBeenCalled();
     });
 
     it('should not process the same file twice', async () => {
@@ -303,7 +306,7 @@ Test task description.
 
       simulateFileCreation('msg_duplicate', taskContent);
 
-      await waitForCallback(onTaskCreated);
+      await waitForCallback(vi.mocked(onTaskCreated));
 
       // Modify the file (update content)
       mockFiles.set('/mock-tasks/msg_duplicate/task.md', {
@@ -320,7 +323,7 @@ Test task description.
       await new Promise(resolve => setTimeout(resolve, 200));
 
       // Should only be called once
-      expect(onTaskCreated).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(onTaskCreated)).toHaveBeenCalledTimes(1);
     });
   });
 
