@@ -6,12 +6,35 @@
  * - Task metadata parsing
  * - Callback triggering
  * - Serial execution
+ *
+ * Uses mocked file system to avoid real FS dependencies and timing issues.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
+import { EventEmitter } from 'events';
 import { TaskFileWatcher, type OnTaskCreated } from './task-file-watcher.js';
+
+// Mock file system state
+interface MockFile {
+  content: string;
+  isDirectory: boolean;
+}
+
+let mockFiles: Map<string, MockFile>;
+let watchCallback: ((eventType: string, filename: string) => void) | null = null;
+let watcherErrorCallback: ((error: Error) => void) | null = null;
+let watchClosed = false;
+
+// Mock FSWatcher class
+class MockFSWatcher extends EventEmitter {
+  close() {
+    watchClosed = true;
+    watchCallback = null;
+    watcherErrorCallback = null;
+  }
+}
+
+let currentWatcher: MockFSWatcher | null = null;
 
 // Mock logger
 vi.mock('../utils/logger.js', () => ({
@@ -23,17 +46,108 @@ vi.mock('../utils/logger.js', () => ({
   })),
 }));
 
+// Mock fs module
+vi.mock('fs', () => ({
+  promises: {
+    mkdir: vi.fn(async (dir: string) => {
+      if (!mockFiles.has(dir)) {
+        mockFiles.set(dir, { content: '', isDirectory: true });
+      }
+      return undefined;
+    }),
+    readdir: vi.fn(async (dir: string, options?: { withFileTypes?: boolean }) => {
+      if (dir === '/mock-tasks') {
+        const entries: { name: string; isDirectory(): boolean }[] = [];
+        for (const [path, info] of mockFiles.entries()) {
+          if (path.startsWith('/mock-tasks/') && !path.slice('/mock-tasks/'.length).includes('/')) {
+            if (info.isDirectory) {
+              entries.push({
+                name: path.split('/').pop()!,
+                isDirectory: () => true,
+              });
+            }
+          }
+        }
+        return entries;
+      }
+      return [];
+    }),
+    access: vi.fn(async (filePath: string) => {
+      if (mockFiles.has(filePath)) {
+        return undefined;
+      }
+      const error = new Error('ENOENT') as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      throw error;
+    }),
+    readFile: vi.fn(async (filePath: string) => {
+      const file = mockFiles.get(filePath);
+      if (file && !file.isDirectory) {
+        return file.content;
+      }
+      const error = new Error('ENOENT') as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      throw error;
+    }),
+  },
+  watch: vi.fn((_dir: string, _options: unknown, callback: (eventType: string, filename: string) => void) => {
+    watchClosed = false;
+    watchCallback = callback;
+    currentWatcher = new MockFSWatcher();
+    currentWatcher.on('error', (error: Error) => {
+      watcherErrorCallback?.(error);
+    });
+    return currentWatcher;
+  }),
+}));
+
+// Helper to simulate file creation
+const simulateFileCreation = (dirName: string, content: string) => {
+  const taskDir = `/mock-tasks/${dirName}`;
+  const taskFile = `${taskDir}/task.md`;
+
+  // Add directory
+  mockFiles.set(taskDir, { content: '', isDirectory: true });
+  // Add task.md file
+  mockFiles.set(taskFile, { content, isDirectory: false });
+
+  // Trigger fs.watch callback if active
+  if (watchCallback) {
+    watchCallback('rename', `${dirName}/task.md`);
+  }
+};
+
+// Helper to wait for callback to be called
+const waitForCallback = (fn: ReturnType<typeof vi.fn>, timeout = 3000) => {
+  return new Promise<void>((resolve, reject) => {
+    const startTime = Date.now();
+    const check = () => {
+      if (fn.mock.calls.length > 0) {
+        resolve();
+      } else if (Date.now() - startTime > timeout) {
+        reject(new Error('Timeout waiting for callback'));
+      } else {
+        setTimeout(check, 50);
+      }
+    };
+    check();
+  });
+};
+
 describe('TaskFileWatcher', () => {
   let watcher: TaskFileWatcher;
-  let tempDir: string;
   let onTaskCreated: OnTaskCreated;
 
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Create temp directory for tests
-    tempDir = path.join('/tmp', `task-watcher-test-${Date.now()}`);
-    await fs.promises.mkdir(tempDir, { recursive: true });
+    // Reset mock file system
+    mockFiles = new Map();
+    mockFiles.set('/mock-tasks', { content: '', isDirectory: true });
+    watchCallback = null;
+    watcherErrorCallback = null;
+    watchClosed = false;
+    currentWatcher = null;
 
     onTaskCreated = vi.fn().mockResolvedValue(undefined);
   });
@@ -42,21 +156,13 @@ describe('TaskFileWatcher', () => {
     if (watcher) {
       watcher.stop();
     }
-
-    // Clean up temp directory
-    try {
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-
     vi.clearAllMocks();
   });
 
   describe('Constructor', () => {
     it('should create instance with options', () => {
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated,
       });
 
@@ -67,7 +173,7 @@ describe('TaskFileWatcher', () => {
   describe('start/stop', () => {
     it('should start and stop watching', async () => {
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated,
       });
 
@@ -80,7 +186,7 @@ describe('TaskFileWatcher', () => {
 
     it('should not start twice', async () => {
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated,
       });
 
@@ -93,19 +199,14 @@ describe('TaskFileWatcher', () => {
     });
 
     it('should create tasks directory if not exists', async () => {
-      const nonExistentDir = path.join(tempDir, 'non-existent');
       watcher = new TaskFileWatcher({
-        tasksDir: nonExistentDir,
+        tasksDir: '/mock-tasks-new',
         onTaskCreated,
       });
 
       await watcher.start();
 
-      const exists = await fs.promises.access(nonExistentDir)
-        .then(() => true)
-        .catch(() => false);
-
-      expect(exists).toBe(true);
+      expect(mockFiles.has('/mock-tasks-new')).toBe(true);
 
       watcher.stop();
     });
@@ -114,11 +215,13 @@ describe('TaskFileWatcher', () => {
   describe('Task Detection', () => {
     beforeEach(async () => {
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated,
       });
 
       await watcher.start();
+      // Wait for initial scan to complete
+      await new Promise(resolve => setTimeout(resolve, 50));
     });
 
     afterEach(() => {
@@ -126,11 +229,6 @@ describe('TaskFileWatcher', () => {
     });
 
     it('should detect new task.md files', async () => {
-      // Create a task directory and file
-      const taskDir = path.join(tempDir, 'msg_test123');
-      await fs.promises.mkdir(taskDir, { recursive: true });
-
-      const taskFile = path.join(taskDir, 'task.md');
       const taskContent = `# Task: Test Task
 
 **Task ID**: msg_test123
@@ -142,43 +240,36 @@ describe('TaskFileWatcher', () => {
 Test task description.
 `;
 
-      await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
+      simulateFileCreation('msg_test123', taskContent);
 
-      // Wait for detection via fs.watch
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await waitForCallback(onTaskCreated);
 
       expect(onTaskCreated).toHaveBeenCalledWith(
-        taskFile,
+        '/mock-tasks/msg_test123/task.md',
         'msg_test123',
         'chat_abc123'
       );
     });
 
     it('should not trigger callback for existing tasks on start', async () => {
-      // Create a task before starting the watcher
-      const taskDir = path.join(tempDir, 'msg_existing');
-      await fs.promises.mkdir(taskDir, { recursive: true });
-
-      const taskFile = path.join(taskDir, 'task.md');
-      const taskContent = `# Task: Existing Task
+      // Add an existing task before starting a new watcher
+      const existingTaskContent = `# Task: Existing Task
 
 **Task ID**: msg_existing
 **Chat ID**: chat_existing
 `;
+      mockFiles.set('/mock-tasks/msg_existing', { content: '', isDirectory: true });
+      mockFiles.set('/mock-tasks/msg_existing/task.md', { content: existingTaskContent, isDirectory: false });
 
-      await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
-
-      // Stop and restart watcher
       watcher.stop();
 
       const newOnTaskCreated = vi.fn().mockResolvedValue(undefined);
       const newWatcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated: newOnTaskCreated,
       });
 
       await newWatcher.start();
-
       // Wait briefly for watcher to settle
       await new Promise(resolve => setTimeout(resolve, 100));
 
@@ -189,45 +280,44 @@ Test task description.
     });
 
     it('should ignore files without required metadata', async () => {
-      const taskDir = path.join(tempDir, 'msg_incomplete');
-      await fs.promises.mkdir(taskDir, { recursive: true });
-
-      const taskFile = path.join(taskDir, 'task.md');
-      const taskContent = `# Task: Incomplete Task
+      const incompleteContent = `# Task: Incomplete Task
 
 **Task ID**: msg_incomplete
 **Created**: 2024-01-01T00:00:00Z
 `;
 
-      await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
+      simulateFileCreation('msg_incomplete', incompleteContent);
 
-      // Wait briefly - invalid task should not trigger callback
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Wait for a short period - invalid task should not trigger callback
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       expect(onTaskCreated).not.toHaveBeenCalled();
     });
 
     it('should not process the same file twice', async () => {
-      const taskDir = path.join(tempDir, 'msg_duplicate');
-      await fs.promises.mkdir(taskDir, { recursive: true });
-
-      const taskFile = path.join(taskDir, 'task.md');
       const taskContent = `# Task: Test
 
 **Task ID**: msg_duplicate
 **Chat ID**: chat_dup
 `;
 
-      await fs.promises.writeFile(taskFile, taskContent, 'utf-8');
+      simulateFileCreation('msg_duplicate', taskContent);
 
-      // Wait for first processing
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await waitForCallback(onTaskCreated);
 
-      // Modify the file
-      await fs.promises.writeFile(taskFile, `${taskContent  }\n\nMore content`, 'utf-8');
+      // Modify the file (update content)
+      mockFiles.set('/mock-tasks/msg_duplicate/task.md', {
+        content: `${taskContent}\n\nMore content`,
+        isDirectory: false,
+      });
+
+      // Trigger watch event again
+      if (watchCallback) {
+        watchCallback('change', 'msg_duplicate/task.md');
+      }
 
       // Wait briefly - modified file should not retrigger
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       // Should only be called once
       expect(onTaskCreated).toHaveBeenCalledTimes(1);
@@ -240,27 +330,36 @@ Test task description.
 
       const slowCallback = vi.fn(async (_taskPath: string, messageId: string) => {
         executionOrder.push(`start-${messageId}`);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 50));
         executionOrder.push(`end-${messageId}`);
       });
 
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated: slowCallback,
       });
 
       await watcher.start();
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       // Create two tasks quickly
-      for (let i = 1; i <= 2; i++) {
-        const taskDir = path.join(tempDir, `msg_task${i}`);
-        await fs.promises.mkdir(taskDir, { recursive: true });
-        const taskFile = path.join(taskDir, 'task.md');
-        await fs.promises.writeFile(taskFile, `**Task ID**: msg_task${i}\n**Chat ID**: chat${i}`, 'utf-8');
-      }
+      simulateFileCreation('msg_task1', '**Task ID**: msg_task1\n**Chat ID**: chat1');
+      simulateFileCreation('msg_task2', '**Task ID**: msg_task2\n**Chat ID**: chat2');
 
       // Wait for both tasks to complete
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (slowCallback.mock.calls.length >= 2) {
+            resolve();
+          } else {
+            setTimeout(check, 50);
+          }
+        };
+        setTimeout(check, 50);
+      });
+
+      // Wait a bit more for execution order to be recorded
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       // Verify serial execution: first task should complete before second starts
       expect(executionOrder).toEqual([
@@ -285,38 +384,68 @@ Test task description.
       });
 
       watcher = new TaskFileWatcher({
-        tasksDir: tempDir,
+        tasksDir: '/mock-tasks',
         onTaskCreated: failingCallback,
       });
 
       await watcher.start();
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       // Create failing task first
-      const failDir = path.join(tempDir, 'msg_fail');
-      await fs.promises.mkdir(failDir, { recursive: true });
-      await fs.promises.writeFile(
-        path.join(failDir, 'task.md'),
-        '**Task ID**: msg_fail\n**Chat ID**: chat1',
-        'utf-8'
-      );
+      simulateFileCreation('msg_fail', '**Task ID**: msg_fail\n**Chat ID**: chat1');
 
-      // Wait a bit then create success task
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for failure to process
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (failingCallback.mock.calls.length >= 1) {
+            resolve();
+          } else {
+            setTimeout(check, 50);
+          }
+        };
+        setTimeout(check, 50);
+      });
 
-      const successDir = path.join(tempDir, 'msg_success');
-      await fs.promises.mkdir(successDir, { recursive: true });
-      await fs.promises.writeFile(
-        path.join(successDir, 'task.md'),
-        '**Task ID**: msg_success\n**Chat ID**: chat2',
-        'utf-8'
-      );
+      // Create success task
+      simulateFileCreation('msg_success', '**Task ID**: msg_success\n**Chat ID**: chat2');
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait for success task to process
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (failingCallback.mock.calls.length >= 2) {
+            resolve();
+          } else {
+            setTimeout(check, 50);
+          }
+        };
+        setTimeout(check, 50);
+      });
 
       // Both tasks should have been attempted
       expect(failingCallback).toHaveBeenCalledTimes(2);
       expect(executionOrder).toContain('msg_success');
+
+      watcher.stop();
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle fs.watch errors gracefully', async () => {
+      watcher = new TaskFileWatcher({
+        tasksDir: '/mock-tasks',
+        onTaskCreated,
+      });
+
+      await watcher.start();
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Simulate fs.watch error
+      if (currentWatcher) {
+        currentWatcher.emit('error', new Error('Watch error'));
+      }
+
+      // Watcher should still be running
+      expect(watcher.isRunning()).toBe(true);
 
       watcher.stop();
     });
