@@ -14,6 +14,7 @@ import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
 import type { PilotCallbacks } from '../agents/pilot.js';
+import type { AgentPool } from '../agents/agent-pool.js';
 
 const logger = createLogger('Scheduler');
 
@@ -28,12 +29,14 @@ interface ActiveJob {
 
 /**
  * Scheduler options.
+ *
+ * Issue #644: Uses AgentPool instead of single Pilot.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
-  /** ChatAgent instance for task execution */
-  pilot: import('../agents/types.js').ChatAgent;
+  /** AgentPool for getting Pilot per chatId (Issue #644) */
+  agentPool: AgentPool;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
 }
@@ -41,11 +44,13 @@ export interface SchedulerOptions {
 /**
  * Scheduler - Manages cron-based task execution.
  *
+ * Issue #644: Uses AgentPool for per-chatId Pilot instances.
+ *
  * Usage:
  * ```typescript
  * const scheduler = new Scheduler({
  *   scheduleManager,
- *   pilot,
+ *   agentPool,
  *   callbacks,
  * });
  *
@@ -61,7 +66,7 @@ export interface SchedulerOptions {
  */
 export class Scheduler {
   private scheduleManager: ScheduleManager;
-  private pilot: import('../agents/types.js').ChatAgent;
+  private agentPool: AgentPool;
   private callbacks: PilotCallbacks;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
@@ -70,7 +75,7 @@ export class Scheduler {
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
-    this.pilot = options.pilot;
+    this.agentPool = options.agentPool;
     this.callbacks = options.callbacks;
     logger.info('Scheduler created');
   }
@@ -214,9 +219,13 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
+      // Issue #644: Get Pilot for this chatId from AgentPool
+      // Each chatId gets its own Pilot instance for complete isolation
+      const pilot = this.agentPool.getOrCreate(task.chatId);
+
       // Execute task using Pilot's executeOnce method
       // messageId is undefined - scheduled tasks send new messages, not replies
-      await this.pilot.executeOnce(
+      await pilot.executeOnce(
         task.chatId,
         wrappedPrompt,
         undefined,

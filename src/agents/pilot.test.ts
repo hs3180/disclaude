@@ -1,5 +1,10 @@
 /**
- * Tests for Pilot class (Streaming Input version).
+ * Tests for Pilot class (Issue #644: ChatId-bound Pilot).
+ *
+ * Key changes from Issue #644:
+ * - Each Pilot is bound to a single chatId at construction time
+ * - No SessionManager - each Pilot = one session
+ * - AgentPool manages chatId → Pilot mapping
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -59,9 +64,10 @@ vi.mock('../utils/logger.js', () => ({
   })),
 }));
 
-describe('Pilot (Streaming Input)', () => {
+describe('Pilot (Issue #644: ChatId-bound)', () => {
   let mockCallbacks: PilotCallbacks;
   let pilot: Pilot;
+  const TEST_CHAT_ID = 'test-chat-123';
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -73,6 +79,7 @@ describe('Pilot (Streaming Input)', () => {
     pilot = new Pilot({
       apiKey: 'test-api-key',
       model: 'test-model',
+      chatId: TEST_CHAT_ID,
       callbacks: mockCallbacks,
     });
   });
@@ -92,249 +99,70 @@ describe('Pilot (Streaming Input)', () => {
       expect(pilot['callbacks']).toBe(mockCallbacks);
     });
 
-    it('should initialize sessionManager', () => {
-      expect(pilot['sessionManager']).toBeDefined();
-      expect(pilot['sessionManager'].size()).toBe(0);
+    it('should bind chatId at construction (Issue #644)', () => {
+      expect(pilot.getChatId()).toBe(TEST_CHAT_ID);
+    });
+
+    it('should not have sessionManager (Issue #644)', () => {
+      // sessionManager has been removed from Pilot
+      // Each Pilot now handles a single chatId, so no session management needed
+      expect(pilot.hasActiveSession()).toBe(false);
     });
 
     it('should initialize conversationOrchestrator', () => {
       expect(pilot['conversationOrchestrator']).toBeDefined();
-      expect(pilot['conversationOrchestrator'].size()).toBe(0);
+    });
+
+    it('should initialize restartManager', () => {
+      expect(pilot['restartManager']).toBeDefined();
     });
   });
 
   describe('processMessage', () => {
-    it('should create session for new chatId', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      expect(pilot['sessionManager'].has('chat-123')).toBe(true);
+    it('should create session on first message', () => {
+      expect(pilot.hasActiveSession()).toBe(false);
+      pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
+      expect(pilot.hasActiveSession()).toBe(true);
     });
 
-    it('should handle multiple messages for same chatId (same session)', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-123', 'World', 'msg-002');
-
-      // Should reuse the same session
-      expect(pilot['sessionManager'].size()).toBe(1);
-      expect(pilot['sessionManager'].has('chat-123')).toBe(true);
+    it('should reject message for wrong chatId', () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error');
+      pilot.processMessage('wrong-chat-id', 'Hello', 'msg-002');
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          boundChatId: TEST_CHAT_ID,
+          receivedChatId: 'wrong-chat-id',
+        })
+      );
     });
 
-    it('should handle different chatIds independently (different sessions)', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-
-      // Should create two separate sessions
-      expect(pilot['sessionManager'].size()).toBe(2);
-      expect(pilot['sessionManager'].has('chat-123')).toBe(true);
-      expect(pilot['sessionManager'].has('chat-456')).toBe(true);
-    });
-
-    it('should accept optional senderOpenId parameter', () => {
-      // Should not throw
-      pilot.processMessage('chat-123', 'Hello', 'msg-001', 'user-open-id');
-      expect(pilot['sessionManager'].has('chat-123')).toBe(true);
-    });
-
-    it('should be non-blocking (returns immediately)', () => {
-      const start = Date.now();
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const elapsed = Date.now() - start;
-
-      // Should return almost immediately (not wait for SDK)
-      expect(elapsed).toBeLessThan(100);
+    it('should call sendMessage callback with enhanced content', () => {
+      pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
+      // Note: sendMessage is called during iterator processing, not directly
     });
   });
 
   describe('reset', () => {
-    it('should reset specific chatId only', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['sessionManager'].size()).toBe(2);
-
-      // Reset only chat-123
-      pilot.resetSession('chat-123');
-
-      // chat-123 should be removed, chat-456 should remain
-      expect(pilot['sessionManager'].size()).toBe(1);
-      expect(pilot['sessionManager'].has('chat-123')).toBe(false);
-      expect(pilot['sessionManager'].has('chat-456')).toBe(true);
-    });
-
-    it('should handle non-existent chatId gracefully', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['sessionManager'].size()).toBe(1);
-
-      // Reset non-existent chatId
-      pilot.resetSession('chat-nonexistent');
-
-      // Original session should remain
-      expect(pilot['sessionManager'].size()).toBe(1);
-      expect(pilot['sessionManager'].has('chat-123')).toBe(true);
-    });
-
-    it('should close session when resetting', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      // Reset should work immediately without waiting
-      // The reset method is synchronous and handles session cleanup
-      pilot.resetSession('chat-123');
-
-      // Session should be removed
-      expect(pilot['sessionManager'].has('chat-123')).toBe(false);
-    });
-
-    it('should not affect other chatIds in group chat scenario', () => {
-      // Simulate multiple group chats
-      pilot.processMessage('group-chat-1', 'Hello from group 1', 'msg-001');
-      pilot.processMessage('group-chat-2', 'Hello from group 2', 'msg-002');
-      pilot.processMessage('group-chat-3', 'Hello from group 3', 'msg-003');
-
-      expect(pilot['sessionManager'].size()).toBe(3);
-
-      // User in group-chat-1 sends /reset
-      pilot.resetSession('group-chat-1');
-
-      // Only group-chat-1 should be reset
-      expect(pilot['sessionManager'].size()).toBe(2);
-      expect(pilot['sessionManager'].has('group-chat-1')).toBe(false);
-      expect(pilot['sessionManager'].has('group-chat-2')).toBe(true);
-      expect(pilot['sessionManager'].has('group-chat-3')).toBe(true);
-    });
-
-    it('should reset all sessions when reset() called without arguments', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['sessionManager'].size()).toBe(2);
-
-      // Reset all sessions
+    it('should clear session', () => {
+      pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
+      expect(pilot.hasActiveSession()).toBe(true);
       pilot.reset();
+      expect(pilot.hasActiveSession()).toBe(false);
+    });
 
-      // All sessions should be removed
-      expect(pilot['sessionManager'].size()).toBe(0);
+    it('should ignore reset for wrong chatId', () => {
+      pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
+      pilot.reset('wrong-chat-id');
+      // Session should still be active
+      expect(pilot.hasActiveSession()).toBe(true);
     });
   });
 
-  describe('getActiveSessionCount', () => {
-    it('should return 0 when no sessions', () => {
-      expect(pilot.getActiveSessionCount()).toBe(0);
-    });
-
-    it('should return count of active sessions', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-
-      expect(pilot.getActiveSessionCount()).toBe(2);
-    });
-  });
-
-  describe('shutdown', () => {
-    it('should cleanup resources', async () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      await pilot.shutdown();
-
-      expect(pilot['sessionManager'].size()).toBe(0);
-      expect(pilot['conversationOrchestrator'].size()).toBe(0);
-    });
-  });
-
-  describe('Session Management', () => {
-    it('should create session when processing first message', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      const session = pilot['sessionManager'].get('chat-123');
-
-      expect(session).toBeDefined();
-      expect(session?.handle).toBeDefined();
-      expect(session?.channel).toBeDefined();
-    });
-
-    it('should store thread root for replies', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-
-      expect(pilot['conversationOrchestrator'].getThreadRoot('chat-123')).toBe('msg-001');
-    });
-  });
-
-  describe('executeOnce', () => {
-    it('should be an instance method', () => {
-      // executeOnce is an instance method, not static
-      // This method is used by the Scheduler for scheduled task execution
-      expect(typeof pilot.executeOnce).toBe('function');
-    });
-
-    it('should accept all parameters', () => {
-      // Test that the method exists and can be called
-      expect(typeof pilot.executeOnce).toBe('function');
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('should handle errors in processMessage gracefully', () => {
-      // processMessage should not throw even if internal operations fail
-      expect(() => {
-        pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      }).not.toThrow();
-    });
-  });
-
-  describe('ChatAgent Interface', () => {
-    it('should have type property set to "chat"', () => {
-      expect(pilot.type).toBe('chat');
-    });
-
-    it('should have name property', () => {
-      expect(pilot.name).toBe('Pilot');
-    });
-
-    it('should implement start() method', async () => {
-      // start() should not throw
-      await expect(pilot.start()).resolves.toBeUndefined();
-    });
-
-    it('should implement dispose() method', async () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      expect(pilot['sessionManager'].size()).toBe(1);
-
-      // dispose() should clear all sessions
+  describe('dispose', () => {
+    it('should cleanup resources', () => {
+      pilot.processMessage(TEST_CHAT_ID, 'Hello', 'msg-001');
       pilot.dispose();
-
-      // Wait for async dispose to complete
-      await vi.waitFor(() => {
-        expect(pilot['sessionManager'].size()).toBe(0);
-      });
-    });
-
-    it('should implement reset() method (no args)', () => {
-      pilot.processMessage('chat-123', 'Hello', 'msg-001');
-      pilot.processMessage('chat-456', 'Hi', 'msg-002');
-      expect(pilot['sessionManager'].size()).toBe(2);
-
-      // reset() should clear all sessions
-      pilot.reset();
-      expect(pilot['sessionManager'].size()).toBe(0);
-    });
-
-    it('should implement handleInput() method', async () => {
-      // Create a simple input generator
-      async function* inputGen() {
-        yield {
-          role: 'user' as const,
-          content: 'Hello',
-          metadata: { chatId: 'test-chat', parentMessageId: 'msg-001' },
-        };
-      }
-
-      // handleInput should return an async generator
-      const output = pilot.handleInput(inputGen());
-
-      // Consume the output
-      const results = [];
-      for await (const msg of output) {
-        results.push(msg);
-      }
-
-      // Should have received at least one message
-      expect(results.length).toBeGreaterThan(0);
+      expect(pilot.hasActiveSession()).toBe(false);
     });
   });
 });

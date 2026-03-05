@@ -24,7 +24,7 @@
 import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, AgentPool } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import {
   ScheduleManager,
@@ -68,8 +68,8 @@ export class WorkerNode {
   // File client for file transfer
   private fileClient: FileClient;
 
-  // Shared Pilot instance
-  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
+  // AgentPool for per-chatId Pilot instances (Issue #644)
+  private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
 
   // Scheduler
@@ -122,70 +122,77 @@ export class WorkerNode {
   }
 
   /**
-   * Initialize the shared Pilot instance.
+   * Initialize the AgentPool for per-chatId Pilot instances.
+   *
+   * Issue #644: Each chatId gets its own Pilot instance.
    */
   private async initPilot(): Promise<void> {
     console.log('Initializing execution capability...');
 
-    this.sharedPilot = AgentFactory.createChatAgent('pilot', {
-      sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendMessage');
-        }
-        return Promise.resolve();
-      },
-      sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for sendCard');
-        }
-        return Promise.resolve();
-      },
-      sendFile: async (chatId: string, filePath: string) => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (!ctx) {
-          logger.warn({ chatId }, 'No active feedback channel for sendFile');
-          return;
-        }
+    // Issue #644: Create AgentPool with factory function
+    this.agentPool = new AgentPool({
+      pilotFactory: (chatId: string) => {
+        return AgentFactory.createChatAgent('pilot', chatId, {
+          sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
+            } else {
+              logger.warn({ chatId }, 'No active feedback channel for sendMessage');
+            }
+            return Promise.resolve();
+          },
+          sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
+            } else {
+              logger.warn({ chatId }, 'No active feedback channel for sendCard');
+            }
+            return Promise.resolve();
+          },
+          sendFile: async (chatId: string, filePath: string) => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (!ctx) {
+              logger.warn({ chatId }, 'No active feedback channel for sendFile');
+              return;
+            }
 
-        try {
-          // Upload file to Primary Node
-          const fileRef = await this.fileClient.uploadFile(filePath, chatId);
+            try {
+              // Upload file to Primary Node
+              const fileRef = await this.fileClient.uploadFile(filePath, chatId);
 
-          // Send fileRef to Primary Node
-          ctx.sendFeedback({
-            type: 'file',
-            chatId,
-            fileRef,
-            fileName: fileRef.fileName,
-            fileSize: fileRef.size,
-            mimeType: fileRef.mimeType,
-            threadId: ctx.threadId,
-          });
-        } catch (error) {
-          logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
-          ctx.sendFeedback({
-            type: 'error',
-            chatId,
-            error: `Failed to send file: ${(error as Error).message}`,
-            threadId: ctx.threadId,
-          });
-        }
-      },
-      onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
-          logger.info({ chatId }, 'Task completed, sent done signal');
-        } else {
-          logger.warn({ chatId }, 'No active feedback channel for onDone');
-        }
-        return Promise.resolve();
+              // Send fileRef to Primary Node
+              ctx.sendFeedback({
+                type: 'file',
+                chatId,
+                fileRef,
+                fileName: fileRef.fileName,
+                fileSize: fileRef.size,
+                mimeType: fileRef.mimeType,
+                threadId: ctx.threadId,
+              });
+            } catch (error) {
+              logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
+              ctx.sendFeedback({
+                type: 'error',
+                chatId,
+                error: `Failed to send file: ${(error as Error).message}`,
+                threadId: ctx.threadId,
+              });
+            }
+          },
+          onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
+              logger.info({ chatId }, 'Task completed, sent done signal');
+            } else {
+              logger.warn({ chatId }, 'No active feedback channel for onDone');
+            }
+            return Promise.resolve();
+          },
+        });
       },
     });
 
@@ -195,7 +202,7 @@ export class WorkerNode {
     const scheduleManager = new ScheduleManager({ schedulesDir });
     this.scheduler = new Scheduler({
       scheduleManager,
-      pilot: this.sharedPilot,
+      agentPool: this.agentPool,
       callbacks: {
         sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
           const ctx = this.activeFeedbackChannels.get(chatId);
@@ -364,7 +371,8 @@ export class WorkerNode {
 
           try {
             if (command === 'reset' || command === 'restart') {
-              this.sharedPilot?.reset(chatId);
+              // Issue #644: Reset Pilot via AgentPool
+              this.agentPool?.reset(chatId);
               logger.info({ chatId }, `Pilot ${command} executed for chatId`);
             }
           } catch (error) {
@@ -404,8 +412,9 @@ export class WorkerNode {
           this.activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
 
           try {
-            // Use processMessage for persistent session context
-            this.sharedPilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+            // Issue #644: Get Pilot for this chatId from AgentPool
+            const pilot = this.agentPool?.getOrCreate(chatId);
+            pilot?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;
             logger.error({ err, chatId }, 'Execution failed');

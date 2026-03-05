@@ -1,31 +1,25 @@
 /**
  * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
  *
- * The Pilot class manages conversational AI interactions using Claude Agent SDK's
- * streaming input mode. It maintains persistent Query instances per chatId, allowing
- * for context persistence across multiple user messages indefinitely.
+ * Issue #644: Refactored to ensure complete isolation between chat sessions.
+ * Each Pilot instance is bound to a single chatId at construction time.
  *
  * Key Features:
  * - Streaming Input Mode: Uses SDK's streamInput() for real-time message delivery
- * - Per-chatId Query Instances: Each chatId has its own persistent Query instance
+ * - Single chatId binding: Each Pilot serves exactly one chatId
  * - Persistent Context: Session context persists until manual reset (/reset) or shutdown
  *
- * Architecture:
+ * Architecture (Issue #644):
  * ```
- * User Message → Pilot.processMessage()
- *                    ↓
- *              SessionManager.getOrCreate()
- *                    ↓
- *              ConversationContext.trackThread()
- *                    ↓
- *              Query.streamInput() → SDK processes
- *                    ↓
- *              SDK output → Callbacks → Platform (Feishu/CLI)
+ * AgentPool
+ *     └── Map<chatId, Pilot>
+ *             └── Each Pilot handles ONE chatId only
+ *                     └── Single Query + Channel pair
  * ```
  *
- * Separation of Concerns (refactored from #218):
- * - SessionManager: Query and Channel lifecycle management
- * - ConversationContext: Thread root and context tracking
+ * Separation of Concerns:
+ * - ConversationOrchestrator: Thread root and context tracking
+ * - RestartManager: Restart policy and circuit breaker
  * - Pilot: Orchestration, callbacks, and main logic flow
  *
  * Extends BaseAgent to inherit:
@@ -35,7 +29,7 @@
  * - Error handling
  */
 
-import type { StreamingUserMessage } from '../sdk/index.js';
+import type { StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
@@ -44,7 +38,6 @@ import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { ChannelCapabilities } from '../channels/types.js';
 import { MessageChannel } from './message-channel.js';
-import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
 
@@ -96,13 +89,15 @@ export interface PilotCallbacks {
 /**
  * Configuration options for Pilot.
  *
- * Uses ChatAgentConfig for unified configuration structure (Issue #327).
- * Use AgentFactory.createPilot() for convenient instance creation with defaults.
- *
- * Note: The special default value logic from Config.getAgentConfig() has been removed.
- * Callers must provide all required fields, or use AgentFactory which handles defaults.
+ * Issue #644: Added chatId binding for session isolation.
  */
 export interface PilotConfig extends BaseAgentConfig {
+  /**
+   * The chatId this Pilot is bound to.
+   * Each Pilot instance serves exactly one chatId.
+   */
+  chatId: string;
+
   /**
    * Callback functions for platform-specific operations.
    */
@@ -124,12 +119,8 @@ interface MessageData {
 /**
  * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
  *
- * Simplified implementation using SDK's streamInput() for message delivery.
- * Each chatId gets its own persistent Query instance.
- *
- * Refactored to use:
- * - SessionManager for Query/Channel lifecycle
- * - ConversationOrchestrator for conversation management (from #237)
+ * Issue #644: Each Pilot instance is bound to a single chatId.
+ * No session management needed - each Pilot = one chatId.
  */
 export class Pilot extends BaseAgent implements ChatAgent {
   /** Agent type identifier (Issue #282) */
@@ -138,20 +129,28 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /** Agent name for logging */
   readonly name = 'Pilot';
 
+  /** The chatId this Pilot is bound to (Issue #644) */
+  private readonly boundChatId: string;
+
   private readonly callbacks: PilotCallbacks;
 
-  // Separated concerns
-  private readonly sessionManager: SessionManager;
+  // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
+  private queryHandle?: QueryHandle;
+  private channel?: MessageChannel;
+  private isSessionActive = false;
+
+  // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
 
   constructor(config: PilotConfig) {
     super(config);
 
+    // Issue #644: Bind chatId at construction time
+    this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
 
-    // Initialize separated managers
-    this.sessionManager = new SessionManager({ logger: this.logger });
+    // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
     this.restartManager = new RestartManager({
       logger: this.logger,
@@ -159,10 +158,19 @@ export class Pilot extends BaseAgent implements ChatAgent {
       initialBackoffMs: 5000,  // Start with 5 seconds
       maxBackoffMs: 60000,     // Max 1 minute
     });
+
+    this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
 
   protected getAgentName(): string {
     return 'Pilot';
+  }
+
+  /**
+   * Get the chatId this Pilot is bound to.
+   */
+  getChatId(): string {
+    return this.boundChatId;
   }
 
   /**
@@ -174,7 +182,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @returns Promise that resolves when started
    */
   start(): Promise<void> {
-    this.logger.debug('Pilot start() called - sessions are created on-demand');
+    this.logger.debug({ chatId: this.boundChatId }, 'Pilot start() called - session is created on-demand');
     return Promise.resolve();
   }
 
@@ -184,8 +192,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * This method provides a unified interface for processing user messages
    * from an async generator and yielding AgentMessage responses.
    *
-   * The UserInput.metadata.chatId is used to route messages to the correct session.
-   *
    * @param input - AsyncGenerator yielding UserInput messages
    * @yields AgentMessage responses
    */
@@ -193,18 +199,27 @@ export class Pilot extends BaseAgent implements ChatAgent {
     for await (const userInput of input) {
       const chatId = userInput.metadata?.chatId ?? 'default';
       const messageId = userInput.metadata?.parentMessageId ?? `msg-${Date.now()}`;
-      const senderOpenId = userInput.metadata?.fileRefs?.[0]?.name; // Not applicable in this context
+      const senderOpenId = userInput.metadata?.fileRefs?.[0]?.name;
+
+      // Issue #644: Verify chatId matches bound chatId
+      if (chatId !== this.boundChatId) {
+        this.logger.warn(
+          { boundChatId: this.boundChatId, receivedChatId: chatId },
+          'Received message for different chatId, ignoring'
+        );
+        continue;
+      }
 
       // Track thread root
       this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
-      // Get or create session
-      if (!this.sessionManager.has(chatId)) {
-        this.startAgentLoop(chatId);
+      // Start session if needed
+      if (!this.isSessionActive) {
+        this.startAgentLoop();
       }
 
       // Build the user message
-      const enhancedContent = this.buildEnhancedContent(chatId, {
+      const enhancedContent = this.buildEnhancedContent({
         text: userInput.content,
         messageId,
         senderOpenId,
@@ -221,13 +236,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
       };
 
       // Push message to channel
-      const channel = this.sessionManager.getChannel(chatId);
-      if (channel) {
-        channel.push(streamingMessage);
+      if (this.channel) {
+        this.channel.push(streamingMessage);
       }
 
-      // For now, yield a simple acknowledgment
-      // The actual response will come through the iterator callback
       yield {
         content: `Message received for session ${chatId}`,
         role: 'assistant',
@@ -243,7 +255,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Uses direct string prompt instead of streaming input.
    * No session state is maintained - each call is independent.
    *
-   * @param chatId - Platform-specific chat identifier
+   * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
@@ -254,6 +266,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
     messageId?: string,
     senderOpenId?: string
   ): Promise<void> {
+    // Issue #644: Verify chatId matches bound chatId
+    if (chatId !== this.boundChatId) {
+      this.logger.error(
+        { boundChatId: this.boundChatId, receivedChatId: chatId },
+        'executeOnce called with wrong chatId'
+      );
+      throw new Error(`Pilot bound to ${this.boundChatId} cannot execute for ${chatId}`);
+    }
+
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
     // Add MCP servers
@@ -274,15 +295,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
-    // Note: EnterPlanMode is disabled for Pilot as it's a task dispatch agent
-    // that should not proactively enter plan mode (Issue #403)
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
     });
 
     // Build enhanced content with context
-    const enhancedContent = this.buildEnhancedContent(chatId, {
+    const enhancedContent = this.buildEnhancedContent({
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
@@ -328,9 +347,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * This method is non-blocking - it pushes the message to the channel and returns immediately.
    * The message will be processed by the SDK via the channel's generator.
    *
-   * If no channel exists for this chatId, one is created automatically via startAgentLoop.
+   * Issue #644: Only accepts messages for the bound chatId.
    *
-   * @param chatId - Platform-specific chat identifier
+   * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
@@ -345,22 +364,31 @@ export class Pilot extends BaseAgent implements ChatAgent {
     attachments?: FileRef[],
     chatHistoryContext?: string
   ): void {
+    // Issue #644: Verify chatId matches bound chatId
+    if (chatId !== this.boundChatId) {
+      this.logger.error(
+        { boundChatId: this.boundChatId, receivedChatId: chatId },
+        'processMessage called with wrong chatId - this should not happen'
+      );
+      return;
+    }
+
     this.logger.info(
       { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
       'processMessage called'
     );
 
-    // Track thread root using ConversationContext
+    // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
-    // Get or create session using SessionManager
-    if (!this.sessionManager.has(chatId)) {
-      this.logger.info({ chatId }, 'No existing session, starting agent loop');
-      this.startAgentLoop(chatId);
+    // Start session if needed
+    if (!this.isSessionActive) {
+      this.logger.info({ chatId }, 'No active session, starting agent loop');
+      this.startAgentLoop();
     }
 
     // Build the user message
-    const enhancedContent = this.buildEnhancedContent(chatId, { text, messageId, senderOpenId, attachments, chatHistoryContext });
+    const enhancedContent = this.buildEnhancedContent({ text, messageId, senderOpenId, attachments, chatHistoryContext });
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
@@ -372,28 +400,28 @@ export class Pilot extends BaseAgent implements ChatAgent {
       session_id: '',
     };
 
-    // Push message to channel - generator will yield it to SDK
-    const channel = this.sessionManager.getChannel(chatId);
-    if (channel) {
-      channel.push(userMessage);
+    // Push message to channel
+    if (this.channel) {
+      this.channel.push(userMessage);
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
     }
   }
 
   /**
-   * Start the Agent loop for a chatId.
+   * Start the Agent loop for this chatId.
    *
    * Creates a MessageChannel and Query, using the channel's generator for streaming input.
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    */
-  private startAgentLoop(chatId: string): void {
+  private startAgentLoop(): void {
+    const chatId = this.boundChatId;
+
     // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
     const capabilities = this.callbacks.getCapabilities?.(chatId);
     const supportedMcpTools = capabilities?.supportedMcpTools;
 
     // Determine if we should include Feishu MCP server
-    // Include if: supportedMcpTools is undefined (legacy behavior) or includes any feishu tool
     const feishuTools = ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction'];
     const shouldIncludeFeishuMcp = supportedMcpTools === undefined ||
       feishuTools.some(tool => supportedMcpTools.includes(tool));
@@ -420,8 +448,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
-    // Note: EnterPlanMode is disabled for Pilot as it's a task dispatch agent
-    // that should not proactively enter plan mode (Issue #403)
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
@@ -432,36 +458,36 @@ export class Pilot extends BaseAgent implements ChatAgent {
       'Starting SDK query with message channel'
     );
 
-    // Create message channel for this chatId
-    const channel = new MessageChannel();
+    // Create message channel
+    this.channel = new MessageChannel();
 
     // Create streaming query using channel's generator
     const { handle, iterator } = this.createQueryStream(
-      channel.generator(),
+      this.channel.generator(),
       sdkOptions
     );
 
-    // Create session using SessionManager
-    this.sessionManager.create(chatId, handle, channel);
+    this.queryHandle = handle;
+    this.isSessionActive = true;
 
     // Process SDK messages in background
-    this.processIterator(chatId, iterator).catch((err) => {
+    this.processIterator(iterator).catch((err) => {
       this.logger.error({
         err,
         chatId,
         errorMessage: err instanceof Error ? err.message : String(err),
         errorStack: err instanceof Error ? err.stack : undefined,
       }, 'Agent loop error');
-      this.sessionManager.deleteTracking(chatId);
+      this.isSessionActive = false;
     });
   }
 
   /**
-   * Process the SDK iterator for a chatId.
+   * Process the SDK iterator for this chatId.
    *
-   * IMPORTANT: This method preserves conversation context by NOT deleting the Query/Channel
+   * IMPORTANT: This method preserves conversation context by NOT clearing the session
    * when the iterator ends unexpectedly. Only explicit close (reset)
-   * removes the Query and Channel from the maps.
+   * clears the session.
    *
    * If the iterator ends without explicit close, we use RestartManager to:
    * - Limit consecutive restarts (max 3 by default)
@@ -469,9 +495,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * - Open circuit breaker after max restarts exceeded
    */
   private async processIterator(
-    chatId: string,
     iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
   ): Promise<void> {
+    const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
     let messageCount = 0;
 
@@ -522,9 +548,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
       }
     }
 
-    // Check if this was an explicit close (reset removed the session)
-    // If session is still tracked, it means the iterator ended unexpectedly
-    const wasExplicitClose = !this.sessionManager.has(chatId);
+    // Check if this was an explicit close (reset cleared the session)
+    const wasExplicitClose = !this.isSessionActive;
 
     if (wasExplicitClose) {
       this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
@@ -532,8 +557,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Iterator ended without explicit close - this is unexpected
-    // Remove the stale session tracking, then check restart policy
-    this.sessionManager.deleteTracking(chatId);
+    this.isSessionActive = false;
 
     // Use RestartManager to decide if we should restart
     const errorMessage = iteratorError?.message ?? 'Unknown error';
@@ -573,21 +597,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
     await this.callbacks.sendMessage(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
-    this.startAgentLoop(chatId);
+    this.startAgentLoop();
     this.logger.info({ chatId }, 'Agent loop restarted');
   }
 
   /**
    * Build enhanced content with Feishu context.
    *
-   * **IMPORTANT**: For skill commands (messages starting with `/`):
-   * - Keep the command at START for SDK skill detection
-   * - Append minimal context AFTER the command for skill to extract
-   * - Do NOT wrap with system prompt template
-   *
-   * **Capability-aware**: Adjusts available tools based on channel capabilities (Issue #582).
+   * Uses boundChatId for context (Issue #644).
    */
-  private buildEnhancedContent(chatId: string, msg: MessageData): string {
+  private buildEnhancedContent(msg: MessageData): string {
+    const chatId = this.boundChatId;
+
     // Check if this is a skill command (starts with /)
     const isSkillCommand = msg.text.trimStart().startsWith('/');
 
@@ -636,8 +657,6 @@ ${msg.chatHistoryContext}
       const mentionSection = capabilities?.supportsMention !== false
         ? `
 
----
-
 ## @ Mention the User
 
 To notify the user in your FINAL response, use:
@@ -680,14 +699,6 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
   /**
    * Build capability-aware tools section for the prompt.
-   * Adjusts available tools based on channel capabilities (Issue #582).
-   * Issue #590 Phase 3: Uses supportedMcpTools for dynamic tool filtering.
-   *
-   * @param chatId - Chat ID for tool usage
-   * @param messageId - Message ID for thread replies
-   * @param capabilities - Channel capabilities (optional, defaults to all enabled)
-   * @param _senderOpenId - Optional sender Open ID for mentions
-   * @returns Tools section string for the prompt
    */
   private buildToolsSection(
     chatId: string,
@@ -699,7 +710,6 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     const supportedTools = capabilities?.supportedMcpTools;
 
     // If supportedMcpTools is defined, use it for dynamic tool filtering
-    // Otherwise, fall back to legacy behavior (assume all tools available)
     const hasTool = (toolName: string): boolean => {
       if (supportedTools === undefined) {
         // Legacy behavior: check individual capability flags
@@ -735,7 +745,6 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
       parts.push(`
 - send_file_to_feishu is available for sending files`);
     } else if (supportedTools !== undefined) {
-      // Only show the note if we're using the new capability system
       parts.push(`
 - Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
     }
@@ -790,62 +799,62 @@ You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
-   * Reset all agent sessions (ChatAgent interface).
+   * Reset the agent session (ChatAgent interface).
    *
-   * Clears all conversation history and state across all sessions.
-   * For resetting a specific session, use resetSession(chatId).
+   * Clears conversation history and state for this Pilot's bound chatId.
+   *
+   * @param chatId - Optional chat ID (must match bound chatId if provided)
    */
-  reset(): void {
-    this.logger.info('Resetting all Pilot sessions');
+  reset(chatId?: string): void {
+    // Issue #644: If chatId is provided, it must match bound chatId
+    if (chatId && chatId !== this.boundChatId) {
+      this.logger.warn(
+        { boundChatId: this.boundChatId, requestedChatId: chatId },
+        'Reset called for different chatId, ignoring'
+      );
+      return;
+    }
 
-    // Close all sessions
-    this.sessionManager.closeAll();
+    this.logger.info({ chatId: this.boundChatId }, 'Resetting Pilot session');
 
-    // Clear all conversation context
-    this.conversationOrchestrator.clearAll();
+    // Mark session as inactive BEFORE closing to signal explicit close
+    this.isSessionActive = false;
 
-    // Clear all restart states
-    this.restartManager.clearAll();
-  }
+    // Close channel and query
+    if (this.channel) {
+      this.channel.close();
+      this.channel = undefined;
+    }
+    if (this.queryHandle) {
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
 
-  /**
-   * Reset state for a specific chatId (close session and remove from map).
-   *
-   * This is useful for /reset commands that clear conversation context for a specific chat.
-   *
-   * IMPORTANT: Deletes session from tracking BEFORE closing, so processIterator
-   * can distinguish explicit close from unexpected iterator end.
-   *
-   * @param chatId - Platform-specific chat identifier
-   */
-  resetSession(chatId: string): void {
-    // Delete session (this closes channel and query)
-    const deleted = this.sessionManager.delete(chatId);
+    // Clear conversation context
+    this.conversationOrchestrator.deleteThreadRoot(this.boundChatId);
 
     // Reset restart state
-    this.restartManager.reset(chatId);
-
-    if (deleted) {
-      // Also clear thread root
-      this.conversationOrchestrator.deleteThreadRoot(chatId);
-      this.logger.info({ chatId }, 'State reset for chatId');
-    } else {
-      this.logger.debug({ chatId }, 'No state to reset for chatId');
-    }
+    this.restartManager.reset(this.boundChatId);
   }
 
   /**
-   * Get the number of active sessions.
+   * Get the number of active sessions (always 0 or 1 for bound Pilot).
    */
   getActiveSessionCount(): number {
-    return this.sessionManager.size();
+    return this.isSessionActive ? 1 : 0;
+  }
+
+  /**
+   * Check if this Pilot has an active session.
+   */
+  hasActiveSession(): boolean {
+    return this.isSessionActive;
   }
 
   /**
    * Dispose of resources held by this agent.
    *
    * Implements Disposable interface (Issue #328).
-   * Called when agent is no longer needed. Delegates to shutdown().
    */
   dispose(): void {
     this.shutdown().catch((err) => {
@@ -860,17 +869,27 @@ You can read these files using the Read tool with the local paths above.`;
    */
   async shutdown(): Promise<void> {
     await Promise.resolve(); // No-op to satisfy linter
-    this.logger.info('Shutting down Pilot');
+    this.logger.info({ chatId: this.boundChatId }, 'Shutting down Pilot');
 
-    // Close all sessions via SessionManager
-    this.sessionManager.closeAll();
+    // Mark session as inactive
+    this.isSessionActive = false;
 
-    // Clear all context via ConversationContext
+    // Close channel and query
+    if (this.channel) {
+      this.channel.close();
+      this.channel = undefined;
+    }
+    if (this.queryHandle) {
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+
+    // Clear conversation context
     this.conversationOrchestrator.clearAll();
 
     // Clear restart states
     this.restartManager.clearAll();
 
-    this.logger.info('Pilot shutdown complete');
+    this.logger.info({ chatId: this.boundChatId }, 'Pilot shutdown complete');
   }
 }

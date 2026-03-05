@@ -6,6 +6,8 @@
  * - Schedule file watching for hot reload
  * - Callbacks for schedule execution
  *
+ * Issue #644: Uses AgentPool for per-chatId Pilot instances.
+ *
  * Architecture:
  * ```
  * PrimaryNode → SchedulerService → { Scheduler, ScheduleFileWatcher }
@@ -23,7 +25,7 @@ import {
   ScheduleFileWatcher,
 } from '../schedule/index.js';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
-import type { ChatAgent } from '../agents/types.js';
+import type { AgentPool } from '../agents/agent-pool.js';
 
 const logger = createLogger('SchedulerService');
 
@@ -43,12 +45,14 @@ export interface SchedulerCallbacks {
 
 /**
  * Configuration for SchedulerService.
+ *
+ * Issue #644: Uses AgentPool instead of single Pilot.
  */
 export interface SchedulerServiceConfig {
   /** Callbacks for schedule execution */
   callbacks: SchedulerCallbacks;
-  /** Pilot agent for schedule execution */
-  pilot: ChatAgent;
+  /** AgentPool for getting Pilot per chatId (Issue #644) */
+  agentPool: AgentPool;
 }
 
 /**
@@ -61,14 +65,14 @@ export interface SchedulerServiceConfig {
  */
 export class SchedulerService {
   private readonly callbacks: SchedulerCallbacks;
-  private readonly pilot: SchedulerServiceConfig['pilot'];
+  private readonly agentPool: AgentPool;
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
   private schedulesDir: string;
 
   constructor(config: SchedulerServiceConfig) {
     this.callbacks = config.callbacks;
-    this.pilot = config.pilot;
+    this.agentPool = config.agentPool;
 
     const workspaceDir = Config.getWorkspaceDir();
     this.schedulesDir = path.join(workspaceDir, 'schedules');
@@ -82,7 +86,7 @@ export class SchedulerService {
 
     this.scheduler = new Scheduler({
       scheduleManager,
-      pilot: this.pilot,
+      agentPool: this.agentPool,
       callbacks: {
         // Directly route messages through PrimaryNode's handleFeedback
         // This ensures scheduled task messages are delivered even though

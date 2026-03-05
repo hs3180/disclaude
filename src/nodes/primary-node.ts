@@ -33,7 +33,7 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, AgentPool } from '../agents/index.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
@@ -123,7 +123,7 @@ export class PrimaryNode extends EventEmitter {
   private scheduleFileScanner?: ScheduleFileScanner;
 
   // Local execution
-  private sharedPilot?: ReturnType<typeof AgentFactory.createChatAgent>;
+  private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
@@ -371,6 +371,9 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Initialize local execution capability.
+   *
+   * Issue #644: Uses AgentPool instead of sharedPilot.
+   * Each chatId gets its own Pilot instance for complete isolation.
    */
   private async initLocalExecution(): Promise<void> {
     if (!this.localExecEnabled) {
@@ -379,72 +382,77 @@ export class PrimaryNode extends EventEmitter {
 
     console.log('Initializing local execution capability...');
 
-    // Create shared Pilot instance
-    this.sharedPilot = AgentFactory.createChatAgent('pilot', {
-      sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
-        } else {
-          // Fallback for scheduled tasks: route directly through handleFeedback
-          void this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
-        }
-        return Promise.resolve();
-      },
-      sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-        } else {
-          // Fallback for scheduled tasks: route directly through handleFeedback
-          void this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
-        }
-        return Promise.resolve();
-      },
-      sendFile: async (chatId: string, filePath: string) => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          try {
-            await this.sendFileToUser(chatId, filePath, ctx.threadId);
-          } catch (error) {
-            logger.error({ err: error, chatId, filePath }, 'Failed to send file');
-            ctx.sendFeedback({
-              type: 'error',
-              chatId,
-              error: `Failed to send file: ${(error as Error).message}`,
-              threadId: ctx.threadId,
-            });
-          }
-        } else {
-          // Fallback for scheduled tasks: send file without threadId
-          try {
-            await this.sendFileToUser(chatId, filePath);
-          } catch (error) {
-            logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
-          }
-        }
-      },
-      onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
-          logger.info({ chatId }, 'Task completed, sent done signal');
-        } else {
-          // Fallback for scheduled tasks: route directly through handleFeedback
-          void this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
-          logger.info({ chatId }, 'Task completed (scheduled task)');
-        }
-        return Promise.resolve();
-      },
-      // Capability-aware prompt generation (Issue #582)
-      getCapabilities: (chatId: string) => {
-        return this.getChannelCapabilities(chatId);
+    // Issue #644: Create AgentPool with factory function
+    // Each chatId gets its own Pilot instance for complete isolation
+    this.agentPool = new AgentPool({
+      pilotFactory: (chatId: string) => {
+        return AgentFactory.createChatAgent('pilot', chatId, {
+          sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
+            } else {
+              // Fallback for scheduled tasks: route directly through handleFeedback
+              void this.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
+            }
+            return Promise.resolve();
+          },
+          sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
+            } else {
+              // Fallback for scheduled tasks: route directly through handleFeedback
+              void this.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
+            }
+            return Promise.resolve();
+          },
+          sendFile: async (chatId: string, filePath: string) => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              try {
+                await this.sendFileToUser(chatId, filePath, ctx.threadId);
+              } catch (error) {
+                logger.error({ err: error, chatId, filePath }, 'Failed to send file');
+                ctx.sendFeedback({
+                  type: 'error',
+                  chatId,
+                  error: `Failed to send file: ${(error as Error).message}`,
+                  threadId: ctx.threadId,
+                });
+              }
+            } else {
+              // Fallback for scheduled tasks: send file without threadId
+              try {
+                await this.sendFileToUser(chatId, filePath);
+              } catch (error) {
+                logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
+              }
+            }
+          },
+          onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
+              logger.info({ chatId }, 'Task completed, sent done signal');
+            } else {
+              // Fallback for scheduled tasks: route directly through handleFeedback
+              void this.handleFeedback({ type: 'done', chatId, threadId: threadMessageId });
+              logger.info({ chatId }, 'Task completed (scheduled task)');
+            }
+            return Promise.resolve();
+          },
+          // Capability-aware prompt generation (Issue #582)
+          getCapabilities: (chatId: string) => {
+            return this.getChannelCapabilities(chatId);
+          },
+        });
       },
     });
 
     // Initialize SchedulerService
     this.schedulerService = new SchedulerService({
-      pilot: this.sharedPilot,
+      agentPool: this.agentPool,
       callbacks: {
         sendMessage: async (chatId, text, threadId) => {
           await this.sendMessage(chatId, text, threadId);
@@ -496,10 +504,12 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
-   * Execute a prompt locally using the shared Pilot.
+   * Execute a prompt locally using the AgentPool.
+   *
+   * Issue #644: Uses AgentPool to get Pilot for this chatId.
    */
   private executeLocally(message: PromptMessage): void {
-    if (!this.sharedPilot) {
+    if (!this.agentPool) {
       throw new Error('Local execution not initialized');
     }
 
@@ -518,8 +528,9 @@ export class PrimaryNode extends EventEmitter {
     this.activeFeedbackChannels.set(chatId, { sendFeedback, threadId });
 
     try {
-      // Use processMessage for persistent session context
-      this.sharedPilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+      // Issue #644: Get Pilot for this chatId from AgentPool
+      const pilot = this.agentPool.getOrCreate(chatId);
+      pilot.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
     } catch (error) {
       const err = error as Error;
       logger.error({ err, chatId }, 'Local execution failed');
@@ -696,13 +707,14 @@ export class PrimaryNode extends EventEmitter {
     }
 
     // Handle locally
-    if (execNode.isLocal && this.sharedPilot) {
+    if (execNode.isLocal && this.agentPool) {
       const { command, chatId } = message;
       logger.info({ command, chatId }, 'Executing command locally');
 
       try {
         if (command === 'reset' || command === 'restart') {
-          this.sharedPilot.reset(chatId);
+          // Issue #644: Reset the Pilot for this chatId via AgentPool
+          this.agentPool.reset(chatId);
           logger.info({ chatId }, `Pilot ${command} executed for chatId`);
         }
       } catch (error) {
@@ -977,8 +989,10 @@ export class PrimaryNode extends EventEmitter {
       await this.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
 
       // Execute task using Pilot
-      if (this.sharedPilot) {
-        await this.sharedPilot.executeOnce(
+      if (this.agentPool) {
+        // Issue #644: Get Pilot for this chatId from AgentPool
+        const pilot = this.agentPool.getOrCreate(fullTask.chatId);
+        await pilot.executeOnce(
           fullTask.chatId,
           fullTask.prompt,
           undefined,
