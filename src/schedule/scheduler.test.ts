@@ -37,7 +37,7 @@ const createMockPilot = (): ChatAgent => {
 const createMockAgentPool = (): AgentPool => {
   const pilots = new Map<string, ChatAgent>();
   return {
-    getOrCreate: vi.fn((chatId: string) => {
+    getOrCreateChatAgent: vi.fn((chatId: string) => {
       if (!pilots.has(chatId)) {
         pilots.set(chatId, createMockPilot());
       }
@@ -424,7 +424,7 @@ describe('Scheduler', () => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-blocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -470,7 +470,7 @@ describe('Scheduler', () => {
         resolveExecute = resolve;
       });
       const taskChatId = 'test-chat-nonblocking';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockReturnValue(executePromise);
 
       const task: ScheduledTask = {
@@ -521,7 +521,7 @@ describe('Scheduler', () => {
 
     it('should default blocking to true when not specified', async () => {
       const taskChatId = 'test-chat-default';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
@@ -546,7 +546,7 @@ describe('Scheduler', () => {
 
     it('should allow task to run after previous execution completes', async () => {
       const taskChatId = 'test-chat-sequential';
-      const mockPilot = mockAgentPool.getOrCreate(taskChatId);
+      const mockPilot = mockAgentPool.getOrCreateChatAgent(taskChatId);
       (mockPilot.executeOnce as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const task: ScheduledTask = {
