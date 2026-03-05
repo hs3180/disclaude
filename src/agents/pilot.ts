@@ -47,6 +47,8 @@ import { MessageChannel } from './message-channel.js';
 import { SessionManager } from './session-manager.js';
 import { RestartManager } from './restart-manager.js';
 import { ConversationOrchestrator } from '../conversation/index.js';
+import { messageHistoryManager } from '../core/message-history.js';
+import { SkillAgent } from './skill-agent.js';
 
 /**
  * Callback functions for platform-specific operations.
@@ -500,6 +502,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
           }
+
+          // Run next-step recommendations after task completion (Issue #680)
+          const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+          await this.runNextStep(chatId, threadRoot);
         }
       }
     } catch (error) {
@@ -759,6 +765,69 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * Run next-step recommendations after task completion (Issue #680).
+   *
+   * Called when Pilot receives a 'result' message, indicating a turn is complete.
+   * Uses SkillAgent to execute next-step skill with recent chat history.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param parentMessageId - Parent message ID for thread replies
+   */
+  private async runNextStep(
+    chatId: string,
+    parentMessageId?: string
+  ): Promise<void> {
+    this.logger.info({ chatId }, 'Running next-step recommendations');
+
+    try {
+      // Get recent chat history (last 10 messages for context)
+      const recentHistory = messageHistoryManager.getFormattedHistory(chatId, 10);
+
+      // Build context for next-step agent
+      const context = `## Chat ID for Feishu tools
+\`${chatId}\`
+
+## Recent Conversation History
+\`\`\`
+${recentHistory}
+\`\`\``;
+
+      // Get agent config
+      const agentConfig = Config.getAgentConfig();
+
+      // Create and run next-step skill agent
+      const nextStepAgent = new SkillAgent({
+        apiKey: agentConfig.apiKey,
+        model: agentConfig.model,
+        apiBaseUrl: agentConfig.apiBaseUrl,
+        permissionMode: 'bypassPermissions',
+      }, 'skills/next-step/SKILL.md');
+
+      try {
+        // Execute and stream responses
+        for await (const message of nextStepAgent.execute(context)) {
+          if (message.content) {
+            // Send as card to the user
+            await this.callbacks.sendCard(
+              chatId,
+              { content: message.content },
+              'next-step recommendation',
+              parentMessageId
+            );
+          }
+        }
+      } finally {
+        nextStepAgent.dispose();
+      }
+
+      this.logger.info({ chatId }, 'Next-step recommendations completed');
+    } catch (error) {
+      // Log error but don't fail the main flow
+      this.logger.error({ err: error, chatId }, 'Next-step recommendations failed');
+    }
   }
 
   /**
