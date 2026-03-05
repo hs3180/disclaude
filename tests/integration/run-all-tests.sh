@@ -31,6 +31,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Set defaults before sourcing common.sh
 REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-60}"
+# Wait time after REST Channel Tests for background sessions to complete (Issue #644)
+# Default: 5 seconds - can be overridden via environment variable
+WAIT_AFTER_REST_TESTS="${WAIT_AFTER_REST_TESTS:-5}"
 
 # Source common functions
 source "$SCRIPT_DIR/common.sh"
@@ -141,6 +144,14 @@ main() {
     if ! run_test_script "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
         failed=$((failed + 1))
     fi
+
+    # Wait for background Agent sessions to complete (Issue #644)
+    # REST Channel Tests uses async mode (/api/chat) which leaves Agent sessions
+    # running in the background. We need to wait for these sessions to complete
+    # before starting the next test suite to avoid message routing issues.
+    local wait_time="${WAIT_AFTER_REST_TESTS:-5}"
+    log_info "Waiting ${wait_time} seconds for background Agent sessions to complete..."
+    sleep "$wait_time"
 
     # Run Use Case 1 Tests
     if ! run_test_script "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
