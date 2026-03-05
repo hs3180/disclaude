@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Pilot, type PilotCallbacks } from './pilot.js';
+import { Config } from '../config/index.js';
 
 // Mock the SDK to avoid unhandled errors
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -24,25 +25,29 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: vi.fn(() => ({})),
 }));
 
-// Mock config
-vi.mock('../config/index.js', () => ({
-  Config: {
-    getWorkspaceDir: vi.fn(() => '/test/workspace'),
-    getAgentConfig: vi.fn(() => ({
-      apiKey: 'test-key',
-      model: 'test-model',
-      provider: 'anthropic',
-    })),
-    getGlobalEnv: vi.fn(() => ({})),
-    getMcpServersConfig: vi.fn(() => null),
-    getLoggingConfig: vi.fn(() => ({
-      level: 'info',
-      pretty: true,
-      rotate: false,
-      sdkDebug: true,
-    })),
-  },
-}));
+// Mock config - use importOriginal to allow per-test overrides
+vi.mock('../config/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../config/index.js')>();
+  return {
+    Config: {
+      ...actual.Config,
+      getWorkspaceDir: vi.fn(() => '/test/workspace'),
+      getAgentConfig: vi.fn(() => ({
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+      })),
+      getGlobalEnv: vi.fn(() => ({})),
+      getMcpServersConfig: vi.fn(() => null),
+      getLoggingConfig: vi.fn(() => ({
+        level: 'info',
+        pretty: true,
+        rotate: false,
+        sdkDebug: true,
+      })),
+    },
+  };
+});
 
 // Mock utils
 vi.mock('../utils/sdk.js', () => ({
@@ -163,6 +168,109 @@ describe('Pilot (Issue #644: ChatId-bound)', () => {
       // dispose() calls async shutdown(), need to wait for it
       await pilot.shutdown();
       expect(pilot.hasActiveSession()).toBe(false);
+    });
+  });
+
+  describe('buildAttachmentsInfo (Issue #809)', () => {
+    // Access private method for testing
+    const getAttachmentsInfo = (attachments: any[]) =>
+      (pilot as any).buildAttachmentsInfo(attachments);
+
+    it('should include image analyzer hint for image attachments when MCP is configured', () => {
+      // Mock MCP server configuration
+      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
+        '4_5v_mcp': { type: 'stdio', command: 'test' },
+      });
+
+      const imageAttachment = [{
+        id: 'test-id',
+        fileName: 'test.png',
+        mimeType: 'image/png',
+        size: 1024,
+        source: 'user' as const,
+        localPath: '/tmp/test.png',
+        createdAt: Date.now(),
+      }];
+
+      const result = getAttachmentsInfo(imageAttachment);
+
+      expect(result).toContain('Image attachment(s) detected');
+      expect(result).toContain('analyze_image');
+      expect(result).toContain('image analyzer MCP');
+    });
+
+    it('should not include image analyzer hint when no image analyzer MCP is configured', () => {
+      // Mock no MCP server configuration
+      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce(null);
+
+      const imageAttachment = [{
+        id: 'test-id',
+        fileName: 'test.png',
+        mimeType: 'image/png',
+        size: 1024,
+        source: 'user' as const,
+        localPath: '/tmp/test.png',
+        createdAt: Date.now(),
+      }];
+
+      const result = getAttachmentsInfo(imageAttachment);
+
+      expect(result).not.toContain('Image attachment(s) detected');
+      expect(result).not.toContain('analyze_image');
+    });
+
+    it('should not include image analyzer hint for non-image attachments', () => {
+      // Mock MCP server configuration
+      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
+        '4_5v_mcp': { type: 'stdio', command: 'test' },
+      });
+
+      const textAttachment = [{
+        id: 'test-id',
+        fileName: 'test.txt',
+        mimeType: 'text/plain',
+        size: 1024,
+        source: 'user' as const,
+        localPath: '/tmp/test.txt',
+        createdAt: Date.now(),
+      }];
+
+      const result = getAttachmentsInfo(textAttachment);
+
+      expect(result).not.toContain('Image attachment(s) detected');
+    });
+
+    it('should return empty string for no attachments', () => {
+      const result = getAttachmentsInfo([]);
+      expect(result).toBe('');
+    });
+
+    it('should return empty string for undefined attachments', () => {
+      const result = getAttachmentsInfo(undefined);
+      expect(result).toBe('');
+    });
+
+    it('should detect various image analyzer MCP names', () => {
+      const mcpNames = ['4_5v_mcp', 'glm-vision', 'image-analyzer', 'vision'];
+
+      for (const name of mcpNames) {
+        vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
+          [name]: { type: 'stdio', command: 'test' },
+        });
+
+        const imageAttachment = [{
+          id: 'test-id',
+          fileName: 'test.jpg',
+          mimeType: 'image/jpeg',
+          size: 1024,
+          source: 'user' as const,
+          localPath: '/tmp/test.jpg',
+          createdAt: Date.now(),
+        }];
+
+        const result = getAttachmentsInfo(imageAttachment);
+        expect(result).toContain('analyze_image');
+      }
     });
   });
 });
