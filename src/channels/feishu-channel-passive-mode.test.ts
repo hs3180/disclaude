@@ -337,6 +337,31 @@ describe('FeishuChannel - Group Chat Passive Mode (Issue #460)', () => {
       );
       expect(messageHandler).not.toHaveBeenCalled();
     });
+
+    it('should show error for unknown command in private chat (Issue #698)', async () => {
+      // Mock controlHandler to return failure for unknown command
+      controlHandler.mockResolvedValueOnce({
+        success: false,
+        error: 'Unknown command: unknown-command',
+      });
+
+      await simulateMessageReceive({
+        text: '/unknown-command',
+        chatId: 'ou_user_private',
+        mentions: undefined,
+      });
+
+      // Control handler should be called (to check if command exists)
+      expect(controlHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'unknown-command',
+        })
+      );
+
+      // Issue #698: Unknown commands should NOT be passed to agent
+      // Instead, an error message is shown to the user
+      expect(messageHandler).not.toHaveBeenCalled();
+    });
   });
 
   describe('Edge cases', () => {

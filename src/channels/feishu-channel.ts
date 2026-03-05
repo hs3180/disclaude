@@ -725,7 +725,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
 
           // Only return if command was successfully handled
-          // Unknown commands (success: false) will fall through to normal message processing
           if (response.success) {
             if (response.message) {
               await this.sendMessage({
@@ -736,16 +735,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             }
             return;
           }
-          // Without @mention: unknown commands fall through to agent (original behavior)
-          // With @mention: show error instead of passing to agent (Issue #595)
-          if (botMentioned) {
-            await this.sendMessage({
-              chatId: chat_id,
-              type: 'text',
-              text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
-            });
-            return;
-          }
+          // Issue #698: Unknown commands should show error instead of passing to agent
+          // This ensures /-prefixed messages are always treated as system commands
+          await this.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+          });
+          return;
         }
 
         // Default command handling if no control handler registered
@@ -767,8 +764,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           return;
         }
       } else {
-        // Unknown command with @mention: show error instead of passing to agent
-        // Issue #595: Control commands not parsed when bot is @mentioned in group chat
+        // Issue #698: Unknown command without control handler
+        // Show error instead of passing to agent
         await this.sendMessage({
           chatId: chat_id,
           type: 'text',
