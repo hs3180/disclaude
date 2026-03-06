@@ -48,7 +48,7 @@ export class SkillCommand implements Command {
     // Handle subcommands
     switch (subCommand) {
       case 'run':
-        return this.handleRun(context);
+        return await this.handleRun(context);
 
       case 'list':
         return this.handleList(context);
@@ -57,10 +57,10 @@ export class SkillCommand implements Command {
         return this.handleStatus(context);
 
       case 'stop':
-        return this.handleStop(context);
+        return await this.handleStop(context);
 
       case 'stop-all':
-        return this.handleStopAll(context);
+        return await this.handleStopAll(context);
 
       default:
         return {
@@ -77,7 +77,7 @@ export class SkillCommand implements Command {
     const { services, chatId, args } = context;
 
     // args[0] is 'run', args[1] should be skill name
-    const skillName = args[1];
+    const [, skillName] = args;
 
     if (!skillName) {
       return {
@@ -102,7 +102,7 @@ export class SkillCommand implements Command {
         message: `🎯 **Skill Agent 已启动**\n\n` +
           `- **Agent ID**: \`${agentId}\`\n` +
           `- **Skill**: ${skillName}\n` +
-          `- **状态**: 运行中\n\n` +
+          '- **状态**: 运行中\n\n' +
           `使用 \`/skill status ${agentId}\` 查看状态\n` +
           `使用 \`/skill stop ${agentId}\` 停止 agent`,
       };
@@ -117,7 +117,7 @@ export class SkillCommand implements Command {
   /**
    * Handle 'list' subcommand - list running agents.
    */
-  private async handleList(context: CommandContext): Promise<CommandResult> {
+  private handleList(context: CommandContext): CommandResult {
     const { services } = context;
 
     const agents = services.listSkillAgents();
@@ -144,10 +144,10 @@ export class SkillCommand implements Command {
   /**
    * Handle 'status' subcommand - get agent status.
    */
-  private async handleStatus(context: CommandContext): Promise<CommandResult> {
+  private handleStatus(context: CommandContext): CommandResult {
     const { services, args } = context;
 
-    const agentId = args[1];
+    const [, agentId] = args;
 
     if (!agentId) {
       return {
@@ -183,7 +183,7 @@ export class SkillCommand implements Command {
 
     if (agent.output) {
       const truncatedOutput = agent.output.length > 500
-        ? agent.output.slice(0, 500) + '\n... (已截断)'
+        ? `${agent.output.slice(0, 500)}\n... (已截断)`
         : agent.output;
       details += `\n\n**输出:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
     }
@@ -200,7 +200,7 @@ export class SkillCommand implements Command {
   private async handleStop(context: CommandContext): Promise<CommandResult> {
     const { services, args } = context;
 
-    const agentId = args[1];
+    const [, agentId] = args;
 
     if (!agentId) {
       return {
