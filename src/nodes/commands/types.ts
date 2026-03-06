@@ -86,6 +86,54 @@ export interface DebugGroupInfo {
 }
 
 /**
+ * Skill Agent status.
+ * Issue #455: Skill Agent System
+ */
+export type SkillAgentStatus = 'starting' | 'running' | 'completed' | 'failed' | 'stopped';
+
+/**
+ * Skill Agent info for display.
+ * Issue #455: Skill Agent System
+ */
+export interface SkillAgentInfo {
+  /** Agent ID */
+  id: string;
+  /** Skill name */
+  skillName: string;
+  /** Target chat ID */
+  chatId: string;
+  /** Current status */
+  status: SkillAgentStatus;
+  /** Process ID (if running) */
+  pid?: number;
+  /** Start time */
+  startedAt: Date;
+  /** Completion time (if completed) */
+  completedAt?: Date;
+  /** Error message (if failed) */
+  error?: string;
+  /** Output from the agent */
+  output?: string;
+  /** Cron schedule (if scheduled) */
+  schedule?: string;
+}
+
+/**
+ * Options for starting a skill agent.
+ * Issue #455: Skill Agent System
+ */
+export interface StartSkillAgentOptions {
+  /** Skill name to execute */
+  skillName: string;
+  /** Chat ID to send notifications to */
+  chatId: string;
+  /** Optional template variables for the skill */
+  templateVars?: Record<string, string>;
+  /** Optional timeout in milliseconds */
+  timeout?: number;
+}
+
+/**
  * Command services - dependencies injected into commands.
  *
  * These services provide access to the underlying functionality
@@ -236,6 +284,22 @@ export interface CommandServices {
 
   /** List all topic groups */
   listTopicGroups: () => ManagedGroupInfo[];
+
+  // Skill Agent management (Issue #455)
+  /** Start a skill agent in the background */
+  startSkillAgent: (options: StartSkillAgentOptions) => Promise<string>;
+
+  /** Stop a skill agent */
+  stopSkillAgent: (agentId: string) => boolean;
+
+  /** Get skill agent info */
+  getSkillAgent: (agentId: string) => SkillAgentInfo | undefined;
+
+  /** List all skill agents */
+  listSkillAgents: () => SkillAgentInfo[];
+
+  /** Stop all skill agents */
+  stopAllSkillAgents: () => Promise<number>;
 }
 
 /**

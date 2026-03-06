@@ -74,6 +74,8 @@ import { ScheduleManagement } from './schedule-management.js';
 import { buildCommandServices } from './command-services.js';
 // Issue #935: Card action routing to Worker Nodes
 import { CardActionRouter } from './card-action-router.js';
+// Issue #455: Skill Agent System
+import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -123,6 +125,8 @@ export class PrimaryNode extends EventEmitter {
   private scheduleManager?: ScheduleManager;
   private scheduleFileScanner?: ScheduleFileScanner;
   private scheduleManagement?: ScheduleManagement;
+  // Skill Agent management (Issue #455)
+  private skillAgentManager?: SkillAgentManager;
 
   // Local execution
   private agentPool?: AgentPool;
@@ -181,6 +185,12 @@ export class PrimaryNode extends EventEmitter {
     // Issue #463: Initialize CommandRegistry with default commands
     const commandRegistry = getCommandRegistry();
     registerDefaultCommands(commandRegistry, () => commandRegistry.generateHelpText());
+
+    // Issue #455: Initialize SkillAgentManager
+    this.skillAgentManager = initSkillAgentManager({
+      sendMessage: this.sendMessage.bind(this),
+      sendCard: this.sendCard.bind(this),
+    });
 
     // Register custom channels if provided
     if (config.channels) {
@@ -649,6 +659,7 @@ export class PrimaryNode extends EventEmitter {
       taskStateManager,
       getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
       getChannels: () => this.messageRouter.getChannels(),
+      skillAgentManager: this.skillAgentManager!,
     });
 
     const context = {
