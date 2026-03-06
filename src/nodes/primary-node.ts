@@ -6,7 +6,7 @@
  * - Execute Agent tasks locally
  * - Accept connections from Worker Nodes for horizontal scaling
  *
- * Architecture (Refactored - Issue #435):
+ * Architecture (Refactored - Issue #435, Issue #695):
  * ```
  * ┌─────────────────────────────────────────────────────────────┐
  *                      Primary Node                             │
@@ -34,7 +34,6 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory, AgentPool } from '../agents/index.js';
-import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
@@ -50,14 +49,6 @@ import { UnifiedMessageRouter } from './unified-message-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 // Group management (Issue #486)
-import {
-  createDiscussionChat,
-  dissolveChat,
-  addMembers,
-  removeMembers,
-  getMembers,
-  getBotChats,
-} from '../platforms/feishu/chat-ops.js';
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
 // Debug group (Issue #487)
@@ -74,9 +65,12 @@ import {
 // Schedule management (Issue #469)
 import { ScheduleManager } from '../schedule/schedule-manager.js';
 import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
-import type { ScheduleTaskInfo } from './commands/types.js';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
+// Extracted modules (Issue #695)
+import { ScheduleManagement } from './schedule-management.js';
+import { triggerNextStepRecommendation } from './next-step-recommendation.js';
+import { buildCommandServices } from './command-services.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -102,6 +96,8 @@ interface FeedbackContext {
  * - FeedbackRouter: Feedback routing to channels
  * - WebSocketServerService: WebSocket/HTTP server management
  * - SchedulerService: Scheduler and file watcher management
+ * - ScheduleManagement: Schedule operations (Issue #695)
+ * - NextStepRecommendation: Post-task recommendations (Issue #695)
  */
 export class PrimaryNode extends EventEmitter {
   private port: number;
@@ -118,9 +114,10 @@ export class PrimaryNode extends EventEmitter {
   private messageRouter: UnifiedMessageRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
-  // Schedule management (Issue #469)
+  // Schedule management (Issue #469, #695)
   private scheduleManager?: ScheduleManager;
   private scheduleFileScanner?: ScheduleFileScanner;
+  private scheduleManagement?: ScheduleManagement;
 
   // Local execution
   private agentPool?: AgentPool;
@@ -161,7 +158,9 @@ export class PrimaryNode extends EventEmitter {
     // Issue #659: Initialize UnifiedMessageRouter (replaces FeedbackRouter)
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
-      onTaskDone: this.triggerNextStepRecommendation.bind(this),
+      onTaskDone: async (chatId: string, threadId?: string) => {
+        await triggerNextStepRecommendation(chatId, threadId);
+      },
       // Admin chat can be configured via environment or config
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
     });
@@ -478,6 +477,17 @@ export class PrimaryNode extends EventEmitter {
     this.scheduleManager = new ScheduleManager({ schedulesDir });
     this.scheduleFileScanner = new ScheduleFileScanner({ schedulesDir });
 
+    // Initialize ScheduleManagement module (Issue #695)
+    this.scheduleManagement = new ScheduleManagement({
+      scheduleManager: this.scheduleManager,
+      scheduleFileScanner: this.scheduleFileScanner,
+      schedulerService: this.schedulerService,
+      agentPool: this.agentPool ? {
+        getOrCreateChatAgent: (chatId: string) => this.agentPool!.getOrCreateChatAgent(chatId),
+      } : undefined,
+      sendMessage: (chatId, text, threadId) => this.sendMessage(chatId, text, threadId),
+    });
+
     // Initialize TaskFlowOrchestrator
     const taskTracker = new TaskTracker();
     this.taskFlowOrchestrator = new TaskFlowOrchestrator(
@@ -590,92 +600,42 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Handle control command using CommandRegistry (Issue #537).
+   * Uses buildCommandServices factory (Issue #695).
    */
   private async handleControlCommand(command: ControlCommand): Promise<ControlResponse> {
     const commandRegistry = getCommandRegistry();
 
-    // Build command context with services
+    // Build command context with services using factory (Issue #695)
     const debugGroupService = getDebugGroupService();
     const taskStateManager = getTaskStateManager();
+
+    const services = buildCommandServices({
+      isRunning: () => this.running,
+      getLocalNodeId: () => this.localNodeId,
+      execNodeRegistry: this.execNodeRegistry,
+      sendCommand: async (cmd: 'reset' | 'restart', chatId: string) => {
+        await this.sendCommand({ type: 'command', command: cmd, chatId });
+      },
+      getFeishuClient: () => this.getFeishuClient(),
+      groupService: this.groupService,
+      debugGroupService,
+      scheduleManagement: this.scheduleManagement!,
+      taskStateManager,
+      getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
+      getChannels: () => this.messageRouter.getChannels(),
+    });
+
     const context = {
       chatId: command.chatId,
       userId: command.data?.senderOpenId as string | undefined,
       args: (command.data?.args as string[]) || (command.type === 'switch-node' && command.targetNodeId ? [command.targetNodeId] : []),
       rawText: command.data?.rawText as string || '',
       data: command.data,
-      services: {
-        isRunning: () => this.running,
-        getLocalNodeId: () => this.localNodeId,
-        getExecNodes: () => this.execNodeRegistry.getNodes(),
-        getChatNodeAssignment: (chatId: string) => this.execNodeRegistry.getChatNodeAssignment(chatId),
-        switchChatNode: (chatId: string, targetNodeId: string) => this.execNodeRegistry.switchChatNode(chatId, targetNodeId),
-        getNode: (nodeId: string) => this.execNodeRegistry.getNode(nodeId),
-        sendCommand: async (cmd: 'reset' | 'restart', chatId: string) => {
-          await this.sendCommand({ type: 'command', command: cmd, chatId });
-        },
-        getFeishuClient: () => this.getFeishuClient(),
-        createDiscussionChat,
-        addMembers,
-        removeMembers,
-        getMembers,
-        dissolveChat,
-        registerGroup: (group: Parameters<typeof this.groupService.registerGroup>[0]) => this.groupService.registerGroup(group),
-        unregisterGroup: (chatId: string) => this.groupService.unregisterGroup(chatId),
-        listGroups: () => this.groupService.listGroups(),
-        // Group creation (Issue #692)
-        createGroup: (client: lark.Client, options: { topic?: string; members?: string[]; creatorId?: string }) => this.groupService.createGroup(client, options),
-        getBotChats,
-        setDebugGroup: (chatId: string, name?: string) => debugGroupService.setDebugGroup(chatId, name),
-        getDebugGroup: () => debugGroupService.getDebugGroup(),
-        clearDebugGroup: () => debugGroupService.clearDebugGroup(),
-        getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
-        // Schedule management (Issue #469)
-        listSchedules: () => this.listSchedules(),
-        getSchedule: (nameOrId: string) => this.getSchedule(nameOrId),
-        enableSchedule: (nameOrId: string) => this.enableSchedule(nameOrId),
-        disableSchedule: (nameOrId: string) => this.disableSchedule(nameOrId),
-        runSchedule: (nameOrId: string) => this.runSchedule(nameOrId),
-        isScheduleRunning: (taskId: string) => this.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false,
-        // Task management methods (Issue #468)
-        startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
-        getCurrentTask: () => taskStateManager.getCurrentTask(),
-        updateTaskProgress: (progress: number, currentStep?: string) => taskStateManager.updateProgress(progress, currentStep),
-        pauseTask: () => taskStateManager.pauseTask(),
-        resumeTask: () => taskStateManager.resumeTask(),
-        cancelTask: () => taskStateManager.cancelTask(),
-        completeTask: () => taskStateManager.completeTask(),
-        setTaskError: (error: string) => taskStateManager.setTaskError(error),
-        listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
-        // Passive mode management (Issue #601)
-        setPassiveMode: (chatId: string, disabled: boolean) => {
-          const feishuChannel = this.messageRouter.getChannels().find(c => c.name === 'Feishu');
-          if (feishuChannel && 'setPassiveModeDisabled' in feishuChannel) {
-            (feishuChannel as any).setPassiveModeDisabled(chatId, disabled);
-          }
-        },
-        getPassiveMode: (chatId: string) => {
-          const feishuChannel = this.messageRouter.getChannels().find(c => c.name === 'Feishu');
-          if (feishuChannel && 'isPassiveModeDisabled' in feishuChannel) {
-            return (feishuChannel as any).isPassiveModeDisabled(chatId);
-          }
-          return false; // Default: passive mode enabled (only @mention)
-        },
-        // Topic group management (Issue #721)
-        markAsTopicGroup: (chatId: string, isTopic: boolean) => {
-          return this.groupService.markAsTopicGroup(chatId, isTopic);
-        },
-        isTopicGroup: (chatId: string) => {
-          return this.groupService.isTopicGroup(chatId);
-        },
-        listTopicGroups: () => {
-          return this.groupService.listTopicGroups();
-        },
-      },
+      services,
     };
 
     // Execute command via registry
     const result = await commandRegistry.execute(command.type, context);
-
 
     if (result === null) {
       return { success: false, error: `Unknown command: ${command.type}` };
@@ -886,220 +846,5 @@ export class PrimaryNode extends EventEmitter {
    */
   isRunning(): boolean {
     return this.running;
-  }
-
-  // ============================================================================
-  // Schedule Management (Issue #469)
-  // ============================================================================
-
-  /**
-   * List all scheduled tasks.
-   */
-  private async listSchedules(): Promise<ScheduleTaskInfo[]> {
-    if (!this.scheduleManager) {
-      return [];
-    }
-
-    const tasks = await this.scheduleManager.listAll();
-    const scheduler = this.schedulerService?.getScheduler();
-    const activeJobs = scheduler?.getActiveJobs() ?? [];
-
-    return tasks.map(task => {
-      const activeJob = activeJobs.find(j => j.taskId === task.id);
-      return {
-        id: task.id,
-        name: task.name,
-        cron: task.cron,
-        enabled: task.enabled,
-        isScheduled: !!activeJob,
-        isRunning: scheduler?.isTaskRunning(task.id) ?? false,
-        chatId: task.chatId,
-        createdAt: task.createdAt,
-      };
-    });
-  }
-
-  /**
-   * Get a schedule by name or ID.
-   */
-  private async getSchedule(nameOrId: string): Promise<ScheduleTaskInfo | undefined> {
-    const tasks = await this.listSchedules();
-
-    // Try to find by ID first, then by name
-    return tasks.find(t => t.id === nameOrId || t.id === `schedule-${nameOrId}` || t.name === nameOrId);
-  }
-
-  /**
-   * Enable a schedule.
-   */
-  private async enableSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // If already enabled, return false
-    if (task.enabled) {
-      return false;
-    }
-
-    // Update the task file
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    const updatedTask = { ...fullTask, enabled: true };
-    await this.scheduleFileScanner?.writeTask(updatedTask);
-
-    return true;
-  }
-
-  /**
-   * Disable a schedule.
-   */
-  private async disableSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // If already disabled, return false
-    if (!task.enabled) {
-      return false;
-    }
-
-    // Update the task file
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    const updatedTask = { ...fullTask, enabled: false };
-    await this.scheduleFileScanner?.writeTask(updatedTask);
-
-    return true;
-  }
-
-  /**
-   * Manually trigger a schedule.
-   */
-  private async runSchedule(nameOrId: string): Promise<boolean> {
-    const task = await this.getSchedule(nameOrId);
-    if (!task) {
-      return false;
-    }
-
-    // Get the full task
-    const fullTask = await this.scheduleManager?.get(task.id);
-    if (!fullTask) {
-      return false;
-    }
-
-    // Execute the task directly
-    try {
-      // Send start notification
-      await this.sendMessage(fullTask.chatId, `🚀 手动触发定时任务「${fullTask.name}」开始执行...`);
-
-      // Execute task using ChatAgent
-      if (this.agentPool) {
-        // Issue #644: Get ChatAgent for this chatId from AgentPool
-        const agent = this.agentPool.getOrCreateChatAgent(fullTask.chatId);
-        await agent.executeOnce(
-          fullTask.chatId,
-          fullTask.prompt,
-          undefined,
-          fullTask.createdBy
-        );
-      }
-
-      return true;
-    } catch (error) {
-      logger.error({ err: error, taskId: task.id }, 'Failed to run schedule manually');
-      return false;
-    }
-  }
-
-  // ============================================================================
-  // Next Step Recommendations (Issue #657)
-  // ============================================================================
-
-  /**
-   * Trigger next-step recommendations after task completion.
-   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
-   *
-   * Issue #716: SkillAgent should be disposed after execution, not stored.
-   * Context is limited to recent messages to avoid context overflow.
-   *
-   * @param chatId - Chat ID to get history from
-   * @param threadId - Optional thread ID for reply
-   */
-  private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
-    let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
-    try {
-      logger.info({ chatId }, 'Triggering next-step recommendations');
-
-      // Get chat history for context
-      const chatHistory = await messageLogger.getChatHistory(chatId);
-
-      if (!chatHistory || chatHistory.trim().length === 0) {
-        logger.debug({ chatId }, 'No chat history available for recommendations');
-        return;
-      }
-
-      // Create SkillAgent for next-step recommendations using AgentFactory
-      nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-      // Limit context to recent messages (Issue #716)
-      // Only use the last 10 messages to avoid context overflow
-      const recentHistory = this.extractRecentMessages(chatHistory, 10);
-
-      // Build prompt with chat history
-      const prompt = `## Context
-
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
-
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-      // Execute skill and handle responses
-      for await (const message of nextStepAgent.execute(prompt)) {
-        if (message.type === 'tool_use' || message.metadata?.toolName) {
-          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-        }
-      }
-
-      logger.info({ chatId }, 'Next-step recommendations completed');
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-    } finally {
-      // Issue #716: Dispose SkillAgent after execution (do not store)
-      if (nextStepAgent) {
-        nextStepAgent.dispose();
-        logger.debug({ chatId }, 'Next-step SkillAgent disposed');
-      }
-    }
-  }
-
-  /**
-   * Extract recent messages from chat history.
-   * Limits context size for SkillAgent execution.
-   *
-   * @param chatHistory - Full chat history
-   * @param count - Number of recent messages to extract (lines)
-   * @returns Recent messages as string
-   */
-  private extractRecentMessages(chatHistory: string, count: number): string {
-    const lines = chatHistory.split('\n');
-    if (lines.length <= count) {
-      return chatHistory;
-    }
-    // Take the last N lines
-    return lines.slice(-count).join('\n');
   }
 }
