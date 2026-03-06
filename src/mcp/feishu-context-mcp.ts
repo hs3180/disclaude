@@ -13,6 +13,10 @@ import {
   wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
+  create_post,
+  reply_post,
+  get_posts,
+  get_post,
 } from './tools/index.js';
 
 // Re-export for backward compatibility
@@ -327,6 +331,177 @@ In actionPrompts, you can use these placeholders:
       required: ['card', 'actionPrompts', 'chatId'],
     },
     handler: send_interactive_message,
+  },
+  create_post: {
+    description: `Create a post in a topic group (BBS mode).
+
+In topic groups, a "post" is a root message that starts a new topic/thread.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "content": "Today's discussion topic: ..."}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **content**: Post content as text (required)
+
+---
+
+## Returns
+
+- **success**: Whether the post was created
+- **messageId**: The created post's message ID
+- **threadId**: The thread ID for replies
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/im-v1/message/create
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['chatId', 'content'],
+    },
+    handler: create_post,
+  },
+  reply_post: {
+    description: `Reply to a post in a topic group (BBS mode).
+
+Replies are added to the post's thread. Use the postId (root message ID) to reply.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "postId": "om_xxx", "content": "Great point! I think..."}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **postId**: The post (root message) ID to reply to (required)
+- **content**: Reply content as text (required)
+
+---
+
+## Returns
+
+- **success**: Whether the reply was posted
+- **messageId**: The reply's message ID
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/im-v1/message/reply
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string' },
+        postId: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['chatId', 'postId', 'content'],
+    },
+    handler: reply_post,
+  },
+  get_posts: {
+    description: `Get posts from a topic group (BBS mode).
+
+Retrieves root messages (posts) from the topic group.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "pageSize": 20}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **pageSize**: Maximum posts to return (default: 20, max: 50)
+- **pageToken**: Pagination token from previous response
+
+---
+
+## Returns
+
+- **posts**: Array of post info
+- **hasMore**: Whether more posts exist
+- **pageToken**: Token for next page
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/im-v1/message/list
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string' },
+        pageSize: { type: 'number' },
+        pageToken: { type: 'string' },
+      },
+      required: ['chatId'],
+    },
+    handler: get_posts,
+  },
+  get_post: {
+    description: `Get a specific post by message ID.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "postId": "om_xxx"}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **postId**: The post (message) ID (required)
+
+---
+
+## Returns
+
+- **post**: Post details including content, createTime, senderId
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/im-v1/message/get
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string' },
+        postId: { type: 'string' },
+      },
+      required: ['chatId', 'postId'],
+    },
+    handler: get_post,
   },
 };
 
@@ -656,6 +831,166 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'create_post',
+    description: `Create a post in a topic group (BBS mode).
+
+In topic groups, a "post" is a root message that starts a new topic/thread.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "content": "Today's discussion topic: ..."}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **content**: Post content as text (required)
+
+---
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: z.object({
+      chatId: z.string(),
+      content: z.string(),
+    }),
+    handler: async ({ chatId, content }) => {
+      try {
+        const result = await create_post({ chatId, content });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Create post failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'reply_post',
+    description: `Reply to a post in a topic group (BBS mode).
+
+Replies are added to the post's thread. Use the postId (root message ID) to reply.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "postId": "om_xxx", "content": "Great point!"}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **postId**: The post (root message) ID to reply to (required)
+- **content**: Reply content as text (required)
+
+---
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: z.object({
+      chatId: z.string(),
+      postId: z.string(),
+      content: z.string(),
+    }),
+    handler: async ({ chatId, postId, content }) => {
+      try {
+        const result = await reply_post({ chatId, postId, content });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Reply post failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_posts',
+    description: `Get posts from a topic group (BBS mode).
+
+Retrieves root messages (posts) from the topic group.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "pageSize": 20}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **pageSize**: Maximum posts to return (default: 20, max: 50)
+- **pageToken**: Pagination token from previous response
+
+---
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: z.object({
+      chatId: z.string(),
+      pageSize: z.number().optional(),
+      pageToken: z.string().optional(),
+    }),
+    handler: async ({ chatId, pageSize, pageToken }) => {
+      try {
+        const result = await get_posts({ chatId, pageSize, pageToken });
+        if (result.success && result.posts) {
+          const postList = result.posts.map(p =>
+            `- ID: ${p.messageId}\n  时间: ${new Date(p.createTime * 1000).toLocaleString('zh-CN')}\n  内容: ${p.content.substring(0, 100)}...`
+          ).join('\n\n');
+          return toolSuccess(`✅ 获取到 ${result.posts.length} 个帖子\n\n${postList}${result.hasMore ? `\n\n还有更多帖子，使用 pageToken: ${result.pageToken}` : ''}`);
+        }
+        return toolSuccess(`⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get posts failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_post',
+    description: `Get a specific post by message ID.
+
+---
+
+## Usage
+
+\`\`\`json
+{"chatId": "oc_xxx", "postId": "om_xxx"}
+\`\`\`
+
+---
+
+## Parameters
+
+- **chatId**: Topic group chat ID (required)
+- **postId**: The post (message) ID (required)
+
+---
+
+**See also:** Issue #873 - 话题群扩展`,
+    parameters: z.object({
+      chatId: z.string(),
+      postId: z.string(),
+    }),
+    handler: async ({ chatId, postId }) => {
+      try {
+        const result = await get_post({ chatId, postId });
+        if (result.success && result.post) {
+          const post = result.post;
+          return toolSuccess(`✅ 帖子详情\n\nID: ${post.messageId}\n时间: ${new Date(post.createTime * 1000).toLocaleString('zh-CN')}\n类型: ${post.contentType}\n内容:\n${post.content}`);
+        }
+        return toolSuccess(`⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get post failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

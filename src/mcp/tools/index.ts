@@ -27,3 +27,6 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+
+export type { PostResult, PostInfo, ListPostsOptions, ListPostsResult } from './topic-post.js';
+export { create_post, reply_post, get_posts, get_post } from './topic-post.js';
