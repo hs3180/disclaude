@@ -55,6 +55,7 @@ export interface ScheduleFileTask extends ScheduledTask {
  * - cron (required)
  * - enabled (optional, default: true)
  * - blocking (optional, default: true)
+ * - cooldownPeriod (optional, cooldown in milliseconds)
  * - chatId (required)
  * - createdBy (optional)
  * - createdAt (optional)
@@ -99,6 +100,10 @@ function parseScheduleFrontmatter(content: string): {
       case 'enabled':
       case 'blocking':
         frontmatter[key] = value === 'true';
+        break;
+      case 'cooldownPeriod':
+        // Parse as integer (milliseconds)
+        frontmatter[key] = parseInt(value, 10);
         break;
     }
   }
@@ -208,6 +213,7 @@ export class ScheduleFileScanner {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
@@ -249,6 +255,9 @@ export class ScheduleFileScanner {
       `chatId: ${task.chatId}`,
     ];
 
+    if (task.cooldownPeriod) {
+      frontmatter.push(`cooldownPeriod: ${task.cooldownPeriod}`);
+    }
     if (task.createdBy) {
       frontmatter.push(`createdBy: ${task.createdBy}`);
     }
@@ -520,6 +529,7 @@ export class ScheduleFileWatcher {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         sourceFile: filePath,

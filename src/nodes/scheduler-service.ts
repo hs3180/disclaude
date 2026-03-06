@@ -24,6 +24,7 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
+  CooldownManager,
 } from '../schedule/index.js';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
 
@@ -65,13 +66,16 @@ export class SchedulerService {
   private readonly callbacks: SchedulerCallbacks;
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
+  private cooldownManager?: CooldownManager;
   private schedulesDir: string;
+  private cooldownDir: string;
 
   constructor(config: SchedulerServiceConfig) {
     this.callbacks = config.callbacks;
 
     const workspaceDir = Config.getWorkspaceDir();
     this.schedulesDir = path.join(workspaceDir, 'schedules');
+    this.cooldownDir = path.join(this.schedulesDir, '.cooldown');
   }
 
   /**
@@ -80,10 +84,14 @@ export class SchedulerService {
   async start(): Promise<void> {
     const scheduleManager = new ScheduleManager({ schedulesDir: this.schedulesDir });
 
+    // Issue #869: Create CooldownManager for cooldown period support
+    this.cooldownManager = new CooldownManager({ cooldownDir: this.cooldownDir });
+
     // Issue #711: Scheduler now uses AgentFactory.createScheduleAgent
     // instead of AgentPool for short-lived agents
     this.scheduler = new Scheduler({
       scheduleManager,
+      cooldownManager: this.cooldownManager,
       callbacks: {
         // Directly route messages through PrimaryNode's handleFeedback
         // This ensures scheduled task messages are delivered even though
