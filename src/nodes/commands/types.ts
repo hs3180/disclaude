@@ -177,6 +177,18 @@ export interface CommandServices {
   /** Check if a schedule is currently running */
   isScheduleRunning: (taskId: string) => boolean;
 
+  // Cooldown management (Issue #869)
+  /** Get cooldown status for a schedule */
+  getScheduleCooldownStatus: (taskId: string) => Promise<{
+    inCooldown: boolean;
+    lastExecutedAt?: string;
+    cooldownEndsAt?: string;
+    remainingMs?: number;
+  }>;
+
+  /** Clear cooldown for a schedule */
+  clearScheduleCooldown: (taskId: string) => Promise<boolean>;
+
   // Task management methods (Issue #468)
 
   /** Start a new task */

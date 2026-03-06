@@ -62,6 +62,9 @@ function createMockServices(): CommandServices {
     markAsTopicGroup: () => false,
     isTopicGroup: () => false,
     listTopicGroups: () => [],
+    // Cooldown management (Issue #869)
+    getScheduleCooldownStatus: () => Promise.resolve({ inCooldown: false }),
+    clearScheduleCooldown: () => Promise.resolve(false),
   };
 }
 

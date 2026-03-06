@@ -3,6 +3,7 @@
  *
  * Issue #696: 拆分 builtin-commands.ts
  * Issue #469: 定时任务控制指令
+ * Issue #869: 定时任务冷静期
  *
  * Subcommands:
  * - list: List all scheduled tasks
@@ -10,6 +11,7 @@
  * - enable <name>: Enable a task
  * - disable <name>: Disable a task
  * - run <name>: Manually trigger a task
+ * - clear-cooldown <name>: Clear cooldown for a task
  */
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
@@ -24,12 +26,13 @@ import type { Command, CommandContext, CommandResult } from '../types.js';
  * - enable <name>: Enable a task
  * - disable <name>: Disable a task
  * - run <name>: Manually trigger a task
+ * - clear-cooldown <name>: Clear cooldown for a task (Issue #869)
  */
 export class ScheduleCommand implements Command {
   readonly name = 'schedule';
   readonly category = 'schedule' as const;
   readonly description = '定时任务管理';
-  readonly usage = 'schedule <list|status|enable|disable|run>';
+  readonly usage = 'schedule <list|status|enable|disable|run|clear-cooldown>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const subCommand = context.args[0]?.toLowerCase();
@@ -49,6 +52,7 @@ export class ScheduleCommand implements Command {
 - \`enable <名称>\` - 启用定时任务
 - \`disable <名称>\` - 禁用定时任务
 - \`run <名称>\` - 手动触发定时任务
+- \`clear-cooldown <名称>\` - 清除任务冷静期（调试用）
 
 示例:
 \`\`\`
@@ -57,12 +61,13 @@ export class ScheduleCommand implements Command {
 /schedule enable daily-report
 /schedule disable daily-report
 /schedule run daily-report
+/schedule clear-cooldown daily-report
 \`\`\``,
       };
     }
 
     // Validate subcommand
-    const validSubcommands = ['list', 'status', 'enable', 'disable', 'run'];
+    const validSubcommands = ['list', 'status', 'enable', 'disable', 'run', 'clear-cooldown'];
     if (!validSubcommands.includes(subCommand)) {
       return {
         success: false,

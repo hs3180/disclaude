@@ -86,6 +86,9 @@ describe('ScheduleCommand', () => {
     markAsTopicGroup: () => false,
     isTopicGroup: () => false,
     listTopicGroups: () => [],
+    // Cooldown management (Issue #869)
+    getScheduleCooldownStatus: () => Promise.resolve({ inCooldown: false }),
+    clearScheduleCooldown: () => Promise.resolve(false),
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({
@@ -110,7 +113,7 @@ describe('ScheduleCommand', () => {
     });
 
     it('should have usage', () => {
-      expect(command.usage).toBe('schedule <list|status|enable|disable|run>');
+      expect(command.usage).toBe('schedule <list|status|enable|disable|run|clear-cooldown>');
     });
   });
 

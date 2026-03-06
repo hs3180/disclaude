@@ -119,6 +119,10 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     runSchedule: (nameOrId: string) => scheduleManagement.runSchedule(nameOrId),
     isScheduleRunning: (taskId: string) => scheduleManagement.isScheduleRunning(taskId),
 
+    // Cooldown management (Issue #869)
+    getScheduleCooldownStatus: (taskId: string) => scheduleManagement.getScheduleCooldownStatus(taskId),
+    clearScheduleCooldown: (taskId: string) => scheduleManagement.clearScheduleCooldown(taskId),
+
     // Task management
     startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
     getCurrentTask: () => taskStateManager.getCurrentTask(),

@@ -174,4 +174,33 @@ export class ScheduleManagement {
   isScheduleRunning(taskId: string): boolean {
     return this.deps.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false;
   }
+
+  /**
+   * Get cooldown status for a schedule.
+   * Issue #869: Cooldown period for scheduled tasks.
+   */
+  async getScheduleCooldownStatus(taskId: string): Promise<{
+    inCooldown: boolean;
+    lastExecutedAt?: string;
+    cooldownEndsAt?: string;
+    remainingMs?: number;
+  }> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) {
+      return { inCooldown: false };
+    }
+    return await scheduler.getCooldownStatus(taskId);
+  }
+
+  /**
+   * Clear cooldown for a schedule.
+   * Issue #869: Manual cooldown clearing for debugging.
+   */
+  async clearScheduleCooldown(taskId: string): Promise<boolean> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) {
+      return false;
+    }
+    return await scheduler.clearCooldown(taskId);
+  }
 }

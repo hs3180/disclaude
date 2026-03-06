@@ -55,6 +55,7 @@ export interface ScheduleFileTask extends ScheduledTask {
  * - cron (required)
  * - enabled (optional, default: true)
  * - blocking (optional, default: true)
+ * - cooldownPeriod (optional, in milliseconds, Issue #869)
  * - chatId (required)
  * - createdBy (optional)
  * - createdAt (optional)
@@ -99,6 +100,10 @@ function parseScheduleFrontmatter(content: string): {
       case 'enabled':
       case 'blocking':
         frontmatter[key] = value === 'true';
+        break;
+      case 'cooldownPeriod':
+        // Parse as number (milliseconds)
+        frontmatter[key] = parseInt(value, 10);
         break;
     }
   }
@@ -208,6 +213,7 @@ export class ScheduleFileScanner {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
@@ -246,8 +252,14 @@ export class ScheduleFileScanner {
       `cron: "${task.cron}"`,
       `enabled: ${task.enabled}`,
       `blocking: ${task.blocking ?? true}`,
-      `chatId: ${task.chatId}`,
     ];
+
+    // Issue #869: Add cooldownPeriod if specified
+    if (task.cooldownPeriod !== undefined) {
+      frontmatter.push(`cooldownPeriod: ${task.cooldownPeriod}`);
+    }
+
+    frontmatter.push(`chatId: ${task.chatId}`);
 
     if (task.createdBy) {
       frontmatter.push(`createdBy: ${task.createdBy}`);
@@ -520,6 +532,7 @@ export class ScheduleFileWatcher {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         sourceFile: filePath,
