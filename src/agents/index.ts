@@ -88,3 +88,40 @@ export {
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
+
+// Worker Agent System - Master-Workers Collaboration Pattern (Issue #897)
+export {
+  // Types
+  type SubTask,
+  type SubTaskStatus,
+  type TaskPriority,
+  type TaskHandle,
+  type TaskResult,
+  type WorkerStatus,
+  type WorkerCapabilities,
+  type WorkerStats,
+  type WorkerAgent,
+  type WorkerFactory,
+  type WorkerPoolConfig,
+  type WorkerPool as WorkerPoolInterface,
+  type TaskQueueConfig,
+  type TaskQueue as TaskQueueInterface,
+  type TaskDispatcherConfig,
+  type TaskDispatcher as TaskDispatcherInterface,
+  type AggregationStrategy,
+  type ResultAggregatorConfig,
+  type ResultAggregator as ResultAggregatorInterface,
+  // Type guards
+  isWorkerAgent,
+  isWorkerPool,
+  isTaskQueue,
+  isTaskDispatcher,
+  // Implementations
+  TaskQueue,
+  WorkerPool,
+  TaskDispatcher,
+  ResultAggregator,
+  SimpleWorker,
+  type SimpleWorkerConfig,
+  type TaskExecutor,
+} from './worker/index.js';
