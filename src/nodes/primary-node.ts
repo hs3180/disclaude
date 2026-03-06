@@ -1021,22 +1021,19 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
-  // Next Step Recommendations (Issue #657)
+  // Next Step Recommendations (Issue #657, Issue #834)
   // ============================================================================
 
   /**
    * Trigger next-step recommendations after task completion.
-   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
    *
-   * Issue #716: SkillAgent should be disposed after execution, not stored.
-   * Context is limited to recent messages to avoid context overflow.
+   * Issue #834: Simplified architecture - uses simple prompt instead of SkillAgent.
+   * The next step candidates are generated inline and sent directly to the user.
    *
    * @param chatId - Chat ID to get history from
    * @param threadId - Optional thread ID for reply
    */
   private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
-    let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
     try {
       logger.info({ chatId }, 'Triggering next-step recommendations');
 
@@ -1048,47 +1045,119 @@ export class PrimaryNode extends EventEmitter {
         return;
       }
 
-      // Create SkillAgent for next-step recommendations using AgentFactory
-      nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-      // Limit context to recent messages (Issue #716)
-      // Only use the last 10 messages to avoid context overflow
+      // Limit context to recent messages
       const recentHistory = this.extractRecentMessages(chatHistory, 10);
 
-      // Build prompt with chat history
-      const prompt = `## Context
+      // Issue #834: Generate next step candidates inline
+      // This is a simplified approach that doesn't require a separate SkillAgent
+      const candidates = this.generateNextStepCandidates(recentHistory);
 
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
-
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-      // Execute skill and handle responses
-      for await (const message of nextStepAgent.execute(prompt)) {
-        if (message.type === 'tool_use' || message.metadata?.toolName) {
-          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-        }
+      if (candidates.length > 0) {
+        // Send interactive card with quick-action buttons
+        await this.sendNextStepCard(chatId, candidates, threadId);
+        logger.info({ chatId, candidateCount: candidates.length }, 'Next-step recommendations sent');
+      } else {
+        logger.debug({ chatId }, 'No next-step candidates generated');
       }
-
-      logger.info({ chatId }, 'Next-step recommendations completed');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-    } finally {
-      // Issue #716: Dispose SkillAgent after execution (do not store)
-      if (nextStepAgent) {
-        nextStepAgent.dispose();
-        logger.debug({ chatId }, 'Next-step SkillAgent disposed');
-      }
     }
   }
 
   /**
+   * Generate next-step candidates based on chat history.
+   * Uses simple pattern matching to suggest relevant follow-up actions.
+   *
+   * Issue #834: Simplified approach without SkillAgent.
+   *
+   * @param chatHistory - Recent chat history
+   * @returns Array of next-step candidates
+   */
+  private generateNextStepCandidates(chatHistory: string): Array<{ emoji: string; label: string; action: string }> {
+    const candidates: Array<{ emoji: string; label: string; action: string }> = [];
+    const historyLower = chatHistory.toLowerCase();
+
+    // Detect task type and suggest relevant actions
+    if (historyLower.includes('fix') || historyLower.includes('bug') || historyLower.includes('error') || historyLower.includes('issue')) {
+      candidates.push({ emoji: '📋', label: '提交 GitHub Issue', action: 'create_github_issue' });
+      candidates.push({ emoji: '🧪', label: '添加回归测试', action: 'add_regression_test' });
+    }
+
+    if (historyLower.includes('implement') || historyLower.includes('add') || historyLower.includes('create') || historyLower.includes('feature')) {
+      candidates.push({ emoji: '📋', label: '创建 PR', action: 'create_pr' });
+      candidates.push({ emoji: '📝', label: '更新文档', action: 'update_docs' });
+      candidates.push({ emoji: '🧪', label: '添加单元测试', action: 'add_tests' });
+    }
+
+    if (historyLower.includes('refactor') || historyLower.includes('clean') || historyLower.includes('restructure')) {
+      candidates.push({ emoji: '🧪', label: '运行测试验证', action: 'run_tests' });
+      candidates.push({ emoji: '📊', label: '检查代码覆盖', action: 'check_coverage' });
+    }
+
+    if (historyLower.includes('analyze') || historyLower.includes('research') || historyLower.includes('investigate')) {
+      candidates.push({ emoji: '📝', label: '创建总结文档', action: 'create_summary' });
+      candidates.push({ emoji: '📋', label: '创建 Issue 记录发现', action: 'create_issue_findings' });
+    }
+
+    if (historyLower.includes('pr') || historyLower.includes('commit') || historyLower.includes('merge') || historyLower.includes('github')) {
+      candidates.push({ emoji: '🔄', label: '检查 PR 状态', action: 'check_pr_status' });
+      candidates.push({ emoji: '🏷️', label: '添加标签', action: 'add_labels' });
+    }
+
+    // Default actions if no specific patterns matched
+    if (candidates.length === 0) {
+      candidates.push({ emoji: '📋', label: '创建 GitHub Issue', action: 'create_github_issue' });
+      candidates.push({ emoji: '📝', label: '总结变更', action: 'summarize_changes' });
+      candidates.push({ emoji: '🔄', label: '继续相关工作', action: 'continue_work' });
+    }
+
+    // Limit to 4 candidates
+    return candidates.slice(0, 4);
+  }
+
+  /**
+   * Send an interactive card with next-step action buttons.
+   *
+   * @param chatId - Chat ID to send to
+   * @param candidates - Next-step candidates
+   * @param threadId - Optional thread ID for reply
+   */
+  private async sendNextStepCard(
+    chatId: string,
+    candidates: Array<{ emoji: string; label: string; action: string }>,
+    threadId?: string
+  ): Promise<void> {
+    const actions = candidates.map(c => ({
+      tag: 'button',
+      text: { tag: 'plain_text', content: `${c.emoji} ${c.label}` },
+      type: 'default',
+      value: c.action,
+    }));
+
+    const card = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '✅ 任务完成' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: '接下来您可以：',
+        },
+        {
+          tag: 'action',
+          actions,
+        },
+      ],
+    };
+
+    await this.sendCard(chatId, card, undefined, threadId);
+  }
+
+  /**
    * Extract recent messages from chat history.
-   * Limits context size for SkillAgent execution.
+   * Limits context size for analysis.
    *
    * @param chatHistory - Full chat history
    * @param count - Number of recent messages to extract (lines)
