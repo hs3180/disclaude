@@ -14,6 +14,10 @@ import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getMessageSentCallback } from './send-message.js';
+import {
+  UnixSocketIpcServer,
+  createInteractiveMessageHandler,
+} from '../../ipc/unix-socket-server.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
@@ -256,4 +260,66 @@ export async function send_interactive_message(params: {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: errorMessage, message: `❌ Failed to send interactive message: ${errorMessage}` };
   }
+}
+
+// ============================================================================
+// IPC Server for Cross-Process Communication
+// ============================================================================
+
+let ipcServer: UnixSocketIpcServer | null = null;
+
+/**
+ * Start the IPC server for cross-process communication.
+ * This allows other processes (e.g., the main bot process) to query
+ * the interactive contexts stored in this process.
+ */
+export async function startIpcServer(): Promise<void> {
+  if (ipcServer) {
+    logger.debug('IPC server already running');
+    return;
+  }
+
+  const handler = createInteractiveMessageHandler({
+    getActionPrompts,
+    registerActionPrompts,
+    unregisterActionPrompts,
+    generateInteractionPrompt,
+    cleanupExpiredContexts,
+  });
+
+  ipcServer = new UnixSocketIpcServer(handler);
+
+  try {
+    await ipcServer.start();
+    logger.info({ path: ipcServer.getSocketPath() }, 'IPC server started for cross-process communication');
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to start IPC server');
+    ipcServer = null;
+    throw error;
+  }
+}
+
+/**
+ * Stop the IPC server.
+ */
+export async function stopIpcServer(): Promise<void> {
+  if (ipcServer) {
+    await ipcServer.stop();
+    ipcServer = null;
+    logger.info('IPC server stopped');
+  }
+}
+
+/**
+ * Check if the IPC server is running.
+ */
+export function isIpcServerRunning(): boolean {
+  return ipcServer?.isRunning() ?? false;
+}
+
+/**
+ * Get the IPC server socket path.
+ */
+export function getIpcServerSocketPath(): string | null {
+  return ipcServer?.getSocketPath() ?? null;
 }
