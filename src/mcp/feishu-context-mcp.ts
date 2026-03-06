@@ -14,6 +14,7 @@ import {
   send_interactive_message,
   setMessageSentCallback,
 } from './tools/index.js';
+import { startIpcServer } from './tools/interactive-message.js';
 
 // Re-export for backward compatibility
 export type { MessageSentCallback } from './tools/types.js';
@@ -27,6 +28,13 @@ export {
   generateInteractionPrompt,
   getActionPrompts,
 } from './tools/interactive-message.js';
+
+// Start IPC server on module load for cross-process communication
+// This allows the main process to query interactive contexts
+startIpcServer().catch((error) => {
+  // Log error but don't fail - IPC is optional enhancement
+  console.error('[feishu-context-mcp] Failed to start IPC server:', error);
+});
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
