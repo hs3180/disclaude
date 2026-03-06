@@ -2,15 +2,26 @@
  * Next Step Recommendation Module for PrimaryNode.
  *
  * Extracted from primary-node.ts (Issue #695) to improve maintainability.
- * Handles post-task completion recommendations using SkillAgent.
+ * Refactored (Issue #834) to use simple LLM prompt instead of SkillAgent.
  *
  * Issue #657: 任务完成后推荐下一步
- * Issue #716: SkillAgent 应该在执行后销毁，不要存储
+ * Issue #834: Use simple prompt instead of skill agent for next step generation
+ *
+ * Architecture:
+ * ```
+ * PrimaryNode.onTaskDone
+ *     └── triggerNextStepRecommendation
+ *             └── generateNextStepCandidates (LLM call)
+ *                     └── Returns NextStepResult with candidates
+ *                             └── ChatAgent decides how to display
+ * ```
  */
 
-import { AgentFactory } from '../agents/index.js';
+import { generateNextStepCandidates } from './next-step-prompt.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
+import { send_user_feedback } from '../mcp/feishu-context-mcp.js';
+import type { NextStepResult } from './next-step-types.js';
 
 const logger = createLogger('NextStepRecommendation');
 
@@ -20,6 +31,8 @@ const logger = createLogger('NextStepRecommendation');
 export interface NextStepRecommendationDeps {
   /** Get chat history for a chat ID */
   getChatHistory: (chatId: string) => Promise<string | undefined>;
+  /** Send feedback to user (optional, for direct card sending) */
+  sendFeedback?: (chatId: string, card: Record<string, unknown>, threadId?: string) => Promise<void>;
 }
 
 /**
@@ -33,11 +46,54 @@ const defaultDeps: NextStepRecommendationDeps = {
 };
 
 /**
- * Trigger next-step recommendations after task completion.
- * Uses SkillAgent to analyze chat history and suggest follow-up actions.
+ * Build an interactive card from next-step candidates.
  *
- * Issue #716: SkillAgent should be disposed after execution, not stored.
- * Context is limited to recent messages to avoid context overflow.
+ * Issue #834: This function creates a Feishu card for displaying candidates.
+ * In the future, ChatAgent should handle this based on channel type.
+ */
+function buildNextStepCard(result: NextStepResult): Record<string, unknown> {
+  const { candidates, taskSummary } = result;
+
+  // Build action buttons from candidates
+  const actions = candidates.map((c) => ({
+    tag: 'button',
+    text: { tag: 'plain_text', content: c.label },
+    type: 'default',
+    value: c.id,
+  }));
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '✅ 任务完成' },
+      template: 'blue',
+    },
+    elements: [
+      ...(taskSummary
+        ? [
+            {
+              tag: 'markdown',
+              content: `**完成内容**: ${taskSummary}`,
+            },
+          ]
+        : []),
+      {
+        tag: 'markdown',
+        content: '接下来您可以：',
+      },
+      {
+        tag: 'action',
+        actions,
+      },
+    ],
+  };
+}
+
+/**
+ * Trigger next-step recommendations after task completion.
+ *
+ * Issue #834: Refactored to use simple LLM prompt instead of SkillAgent.
+ * This reduces complexity and latency by using a single LLM call.
  *
  * @param chatId - Chat ID to get history from
  * @param threadId - Optional thread ID for reply
@@ -48,10 +104,8 @@ export async function triggerNextStepRecommendation(
   threadId?: string,
   deps: NextStepRecommendationDeps = defaultDeps
 ): Promise<void> {
-  let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
   try {
-    logger.info({ chatId }, 'Triggering next-step recommendations');
+    logger.info({ chatId, threadId }, 'Triggering next-step recommendations');
 
     // Get chat history for context
     const chatHistory = await deps.getChatHistory(chatId);
@@ -61,47 +115,51 @@ export async function triggerNextStepRecommendation(
       return;
     }
 
-    // Create SkillAgent for next-step recommendations using AgentFactory
-    nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
     // Limit context to recent messages (Issue #716)
     // Only use the last 10 messages to avoid context overflow
     const recentHistory = extractRecentMessages(chatHistory, 10);
 
-    // Build prompt with chat history
-    const prompt = `## Context
+    // Generate next-step candidates using LLM (Issue #834)
+    const result = await generateNextStepCandidates({
+      chatId,
+      chatHistory: recentHistory,
+    });
 
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
+    logger.info(
+      { chatId, candidateCount: result.candidates.length, taskType: result.taskType },
+      'Next-step candidates generated'
+    );
 
-## Chat History (last 10 messages)
+    // Issue #834: ChatAgent should decide how to display candidates
+    // For now, we send a card directly as a transition step
+    // In the future, this should be handled by ChatAgent based on channel type
 
-${recentHistory}`;
-
-    // Execute skill and handle responses
-    for await (const message of nextStepAgent.execute(prompt)) {
-      if (message.type === 'tool_use' || message.metadata?.toolName) {
-        logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-      } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-        logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-      }
+    // Try to use sendFeedback callback if available (for better testability)
+    if (deps.sendFeedback) {
+      const card = buildNextStepCard(result);
+      await deps.sendFeedback(chatId, card, threadId);
+    } else {
+      // Fallback to direct MCP call for Feishu
+      // This maintains backward compatibility while we transition to ChatAgent-based display
+      const card = buildNextStepCard(result);
+      await send_user_feedback({
+        chatId,
+        content: card,
+        format: 'card',
+        parentMessageId: threadId,
+      });
     }
 
-    logger.info({ chatId }, 'Next-step recommendations completed');
+    logger.info({ chatId }, 'Next-step recommendations sent');
   } catch (error) {
     logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-  } finally {
-    // Issue #716: Dispose SkillAgent after execution (do not store)
-    if (nextStepAgent) {
-      nextStepAgent.dispose();
-      logger.debug({ chatId }, 'Next-step SkillAgent disposed');
-    }
+    // Don't throw - this is a non-critical feature
   }
 }
 
 /**
  * Extract recent messages from chat history.
- * Limits context size for SkillAgent execution.
+ * Limits context size for LLM execution.
  *
  * @param chatHistory - Full chat history
  * @param count - Number of recent messages to extract (lines)
@@ -115,3 +173,7 @@ export function extractRecentMessages(chatHistory: string, count: number): strin
   // Take the last N lines
   return lines.slice(-count).join('\n');
 }
+
+// Re-export types for external use
+export type { NextStepCandidate, NextStepResult } from './next-step-types.js';
+export { generateNextStepCandidates, formatCandidatesForPrompt } from './next-step-prompt.js';
