@@ -170,7 +170,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Issue #935: Initialize CardActionRouter for Worker Node card routing
     this.cardActionRouter = new CardActionRouter({
-      sendToRemoteNode: async (nodeId: string, message: CardActionMessage) => {
+      sendToRemoteNode: (nodeId: string, message: CardActionMessage) => {
         return this.sendCardActionToRemoteNode(nodeId, message);
       },
       isNodeConnected: (nodeId: string) => {
@@ -198,7 +198,7 @@ export class PrimaryNode extends EventEmitter {
         appId,
         appSecret,
         // Issue #935: Route card actions to Worker Nodes
-        routeCardAction: async (message) => {
+        routeCardAction: (message) => {
           return this.routeCardAction({
             type: 'card_action',
             chatId: message.chatId,
@@ -748,7 +748,7 @@ export class PrimaryNode extends EventEmitter {
    * @param message - Card action message to route
    * @returns True if the action was routed to a Worker Node, false otherwise
    */
-  async routeCardAction(message: CardActionMessage): Promise<boolean> {
+  routeCardAction(message: CardActionMessage): Promise<boolean> {
     return this.cardActionRouter.routeCardAction(message);
   }
 
@@ -760,25 +760,25 @@ export class PrimaryNode extends EventEmitter {
    * @param message - Card action message to send
    * @returns True if the message was sent successfully
    */
-  private async sendCardActionToRemoteNode(nodeId: string, message: CardActionMessage): Promise<boolean> {
+  private sendCardActionToRemoteNode(nodeId: string, message: CardActionMessage): Promise<boolean> {
     const node = this.execNodeRegistry.getNode(nodeId);
     if (!node || node.isLocal || !node.ws) {
       logger.warn({ nodeId }, 'Remote node not found or not connected');
-      return false;
+      return Promise.resolve(false);
     }
 
     if (node.ws.readyState !== WebSocket.OPEN) {
       logger.warn({ nodeId }, 'Remote node WebSocket not open');
-      return false;
+      return Promise.resolve(false);
     }
 
     try {
       node.ws.send(JSON.stringify(message));
       logger.debug({ nodeId, chatId: message.chatId }, 'Card action sent to remote Worker Node');
-      return true;
+      return Promise.resolve(true);
     } catch (error) {
       logger.error({ err: error, nodeId }, 'Failed to send card action to remote Worker Node');
-      return false;
+      return Promise.resolve(false);
     }
   }
 
