@@ -21,6 +21,10 @@ import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
+import {
+  parseMessageContext,
+  formatContextPrompt,
+} from '../../feishu/message-content-parser.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -292,7 +296,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id, root_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -519,6 +523,37 @@ export class MessageHandler {
     // Add typing reaction only for messages that will be processed
     await this.addTypingReaction(message_id);
 
+    // Parse special message context (quote replies, forwarded history)
+    // Issue #846: Support for quote replies and forwarded chat history
+    let messageContextPrompt: string | undefined;
+    if (parent_id || message_type === 'post') {
+      try {
+        const messageContext = await parseMessageContext(
+          this.client!,
+          parent_id,
+          content,
+          message_type
+        );
+
+        messageContextPrompt = formatContextPrompt(messageContext);
+
+        if (messageContext.quoteReply) {
+          logger.info(
+            { messageId: message_id, parentId: parent_id },
+            'Message contains quote reply'
+          );
+        }
+        if (messageContext.forwardedHistory?.isForwarded) {
+          logger.info(
+            { messageId: message_id },
+            'Message contains forwarded chat history'
+          );
+        }
+      } catch (error) {
+        logger.warn({ err: error, messageId: message_id }, 'Failed to parse message context');
+      }
+    }
+
     // Get chat history context for passive mode
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
@@ -531,6 +566,22 @@ export class MessageHandler {
       );
     }
 
+    // Build metadata with chat history and message context
+    const metadata: Record<string, unknown> = {};
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+    // Issue #846: Include quote reply and forwarded history in metadata
+    if (messageContextPrompt) {
+      metadata.messageContext = messageContextPrompt;
+    }
+    if (parent_id) {
+      metadata.parentMessageId = parent_id;
+    }
+    if (root_id) {
+      metadata.rootMessageId = root_id;
+    }
+
     // Emit as incoming message
     await this.callbacks.emitMessage({
       messageId: message_id,
@@ -540,7 +591,7 @@ export class MessageHandler {
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 
