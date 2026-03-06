@@ -69,6 +69,14 @@ describe('ScheduleCommand', () => {
     disableSchedule: () => Promise.resolve(true),
     runSchedule: () => Promise.resolve(true),
     isScheduleRunning: () => false,
+    // Cooldown management (Issue #869)
+    getScheduleCooldownStatus: () => Promise.resolve({
+      isInCooldown: false,
+      lastExecutionTime: null,
+      cooldownEndsAt: null,
+      remainingMs: 0,
+    }),
+    clearScheduleCooldown: () => Promise.resolve(true),
     // Task management methods (Issue #468)
     startTask: () => Promise.resolve({ id: 'task_test', prompt: 'test', status: 'running', progress: 0, chatId: 'oc_test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
     getCurrentTask: () => Promise.resolve(null),
@@ -110,7 +118,7 @@ describe('ScheduleCommand', () => {
     });
 
     it('should have usage', () => {
-      expect(command.usage).toBe('schedule <list|status|enable|disable|run>');
+      expect(command.usage).toBe('schedule <list|status|enable|disable|run|cooldown>');
     });
   });
 
@@ -125,6 +133,7 @@ describe('ScheduleCommand', () => {
       expect(result.message).toContain('enable');
       expect(result.message).toContain('disable');
       expect(result.message).toContain('run');
+      expect(result.message).toContain('cooldown');
     });
 
     it('should show error for invalid subcommand', async () => {

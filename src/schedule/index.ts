@@ -6,6 +6,7 @@
  * - Scheduler: Cron-based task execution
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
+ * - CooldownManager: Manages cooldown periods for tasks
  *
  * Note: CRUD operations (create/update/delete) are handled via file system directly.
  * Users create schedule files manually, and ScheduleFileWatcher auto-loads them.
@@ -16,6 +17,7 @@
  * @see Issue #123 - Remove MCP dependency, use basic tools directly
  * @see Issue #354 - Remove unused lastExecutedAt maintenance
  * @see Issue #355 - Remove unused CRUD methods
+ * @see Issue #869 - Cooldown period for scheduled tasks
  */
 
 export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from './schedule-manager.js';
@@ -30,3 +32,4 @@ export {
   type OnFileRemoved,
   type ScheduleFileWatcherOptions,
 } from './schedule-watcher.js';
+export { CooldownManager, type CooldownManagerOptions } from './cooldown-manager.js';

@@ -18,6 +18,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { AgentFactory } from '../agents/index.js';
+import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
 import type { PilotCallbacks } from '../agents/pilot/index.js';
 import type { ChatAgent } from '../agents/types.js';
@@ -38,12 +39,15 @@ interface ActiveJob {
  *
  * Issue #711: No longer requires AgentPool.
  * Uses AgentFactory.createScheduleAgent for short-lived agents.
+ * Issue #869: Added cooldownManager for cooldown period support.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
+  /** CooldownManager for cooldown period management */
+  cooldownManager?: CooldownManager;
 }
 
 /**
@@ -72,6 +76,7 @@ export interface SchedulerOptions {
 export class Scheduler {
   private scheduleManager: ScheduleManager;
   private callbacks: PilotCallbacks;
+  private cooldownManager?: CooldownManager;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -80,6 +85,7 @@ export class Scheduler {
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
+    this.cooldownManager = options.cooldownManager;
     logger.info('Scheduler created');
   }
 
@@ -197,10 +203,35 @@ ${task.prompt}`;
    *
    * Issue #711: Creates a short-lived ScheduleAgent for each execution.
    * Agent is disposed after execution to free resources.
+   * Issue #869: Added cooldown period check before execution.
    *
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
+    // Issue #869: Check cooldown period first
+    if (task.cooldownPeriod && this.cooldownManager) {
+      const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
+      if (isInCooldown) {
+        const status = await this.cooldownManager.getCooldownStatus(task.id, task.cooldownPeriod);
+        const remainingMinutes = Math.ceil(status.remainingMs / 60000);
+
+        logger.info(
+          { taskId: task.id, name: task.name, remainingMinutes },
+          'Task skipped - in cooldown period'
+        );
+
+        // Send cooldown notification
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `⏰ 定时任务「${task.name}」冷静期中，跳过执行\n` +
+          `   上次执行: ${status.lastExecutionTime?.toLocaleString('zh-CN')}\n` +
+          `   冷静期结束: ${status.cooldownEndsAt?.toLocaleString('zh-CN')}\n` +
+          `   剩余时间: ${remainingMinutes} 分钟`
+        );
+        return;
+      }
+    }
+
     // Check blocking mechanism
     if (task.blocking && this.runningTasks.has(task.id)) {
       logger.info(
@@ -255,6 +286,12 @@ ${task.prompt}`;
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);
+
+      // Issue #869: Record execution for cooldown period
+      if (task.cooldownPeriod && this.cooldownManager) {
+        await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
+        logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
+      }
 
       // Issue #711: Always dispose the agent after execution
       if (agent) {
@@ -319,5 +356,33 @@ ${task.prompt}`;
    */
   getRunningTaskIds(): string[] {
     return Array.from(this.runningTasks);
+  }
+
+  /**
+   * Get cooldown status for a task.
+   *
+   * @param taskId - Task ID to check
+   * @param cooldownPeriod - Cooldown period in milliseconds
+   * @returns Cooldown status or null if not applicable
+   */
+  async getCooldownStatus(taskId: string, cooldownPeriod?: number): Promise<{
+    isInCooldown: boolean;
+    lastExecutionTime: Date | null;
+    cooldownEndsAt: Date | null;
+    remainingMs: number;
+  } | null> {
+    if (!this.cooldownManager) { return null; }
+    return this.cooldownManager.getCooldownStatus(taskId, cooldownPeriod);
+  }
+
+  /**
+   * Clear cooldown for a task (for debugging).
+   *
+   * @param taskId - Task ID to clear cooldown for
+   * @returns true if cooldown was cleared, false otherwise
+   */
+  async clearCooldown(taskId: string): Promise<boolean> {
+    if (!this.cooldownManager) { return false; }
+    return this.cooldownManager.clearCooldown(taskId);
   }
 }
