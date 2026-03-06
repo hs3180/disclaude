@@ -17,7 +17,7 @@ import { Scheduler } from './scheduler.js';
 import { ScheduleManager } from './schedule-manager.js';
 import { AgentFactory, type AgentCreateOptions } from '../agents/index.js';
 import type { ScheduledTask } from './index.js';
-import type { PilotCallbacks } from '../agents/pilot.js';
+import type { PilotCallbacks } from '../agents/pilot/index.js';
 import type { ChatAgent } from '../agents/types.js';
 
 // Mock Pilot / ScheduleAgent

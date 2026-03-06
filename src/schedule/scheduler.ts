@@ -19,7 +19,7 @@ import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { AgentFactory } from '../agents/index.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
-import type { PilotCallbacks } from '../agents/pilot.js';
+import type { PilotCallbacks } from '../agents/pilot/index.js';
 import type { ChatAgent } from '../agents/types.js';
 
 const logger = createLogger('Scheduler');
