@@ -159,7 +159,21 @@ export class PrimaryNode extends EventEmitter {
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
       onTaskDone: async (chatId: string, threadId?: string) => {
-        await triggerNextStepRecommendation(chatId, threadId);
+        // Issue #834: Use simple prompt instead of SkillAgent
+        // promptNextSteps sends the generated prompt to ChatAgent for display
+        const promptNextSteps = async (targetChatId: string, prompt: string, targetThreadId?: string) => {
+          if (this.agentPool) {
+            const agent = this.agentPool.getOrCreateChatAgent(targetChatId);
+            // Generate a unique message ID for this recommendation
+            const messageId = `next-step-${Date.now()}`;
+            // Send prompt to ChatAgent - it will decide how to display
+            agent.processMessage(targetChatId, prompt, messageId, undefined, undefined, undefined);
+          } else {
+            // Fallback: send directly via messageRouter
+            await this.sendMessage(targetChatId, prompt, targetThreadId);
+          }
+        };
+        await triggerNextStepRecommendation(chatId, threadId, promptNextSteps);
       },
       // Admin chat can be configured via environment or config
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
