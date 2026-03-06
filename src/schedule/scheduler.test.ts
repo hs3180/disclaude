@@ -15,7 +15,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { Scheduler } from './scheduler.js';
 import { ScheduleManager } from './schedule-manager.js';
-import { AgentFactory } from '../agents/index.js';
+import { AgentFactory, type AgentCreateOptions } from '../agents/index.js';
 import type { ScheduledTask } from './index.js';
 import type { PilotCallbacks } from '../agents/pilot.js';
 import type { ChatAgent } from '../agents/types.js';
@@ -89,7 +89,7 @@ describe('Scheduler', () => {
   let mockCallbacks: PilotCallbacks;
   let testDir: string;
   let mockAgent: ChatAgent;
-  let createScheduleAgentSpy: MockInstance<(...args: unknown[]) => ChatAgent>;
+  let createScheduleAgentSpy: MockInstance<(chatId: string, callbacks: PilotCallbacks, options?: AgentCreateOptions) => ChatAgent>;
 
   beforeEach(async () => {
     testDir = path.join(os.tmpdir(), `scheduler-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
