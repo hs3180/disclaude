@@ -1,6 +1,7 @@
 /**
  * Feishu message event structure.
  * @see https://open.feishu.cn/document/server-docs/im-v1/message/events/receive_v1
+ * @see Issue #846: Added parent_id and root_id for quote/reply support
  */
 export interface FeishuMessageEvent {
   message: {
@@ -10,6 +11,18 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /**
+     * Parent message ID for reply messages.
+     * When a user replies to a message (quote reply), this field contains the original message ID.
+     * @see Issue #846
+     */
+    parent_id?: string;
+    /**
+     * Root message ID for thread messages.
+     * In topic groups, this identifies the thread root message.
+     * @see Issue #846
+     */
+    root_id?: string;
     mentions?: Array<{
       key: string;
       id: {
