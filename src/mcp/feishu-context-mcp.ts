@@ -56,6 +56,7 @@ export function setMessageSentCallback(callback: MessageSentCallback | null): vo
  * @param msgType - Message type ('text' or 'interactive')
  * @param content - Message content (JSON stringified)
  * @param parentId - Optional parent message ID for thread replies
+ * @returns The message ID of the sent message (only for new messages, not replies)
  * @throws Error if sending fails
  */
 async function sendMessageToFeishu(
@@ -64,7 +65,7 @@ async function sendMessageToFeishu(
   msgType: 'text' | 'interactive',
   content: string,
   parentId?: string
-): Promise<void> {
+): Promise<string | undefined> {
   const messageData: {
     receive_id_type?: string;
     msg_type: string;
@@ -82,9 +83,10 @@ async function sendMessageToFeishu(
       },
       data: messageData,
     });
+    return undefined; // Reply doesn't return a new message ID
   } else {
     // New message: use create method with receive_id
-    await client.im.message.create({
+    const response = await client.im.message.create({
       params: {
         receive_id_type: 'chat_id',
       },
@@ -93,6 +95,7 @@ async function sendMessageToFeishu(
         ...messageData,
       },
     });
+    return response.data?.message_id;
   }
 }
 
@@ -176,7 +179,7 @@ function getCardValidationError(content: unknown): string {
  * instead of being sent to Feishu API.
  *
  * @param params - Tool parameters
- * @returns Result object with success status
+ * @returns Result object with success status and optional messageId
  */
 export async function send_user_feedback(params: {
   content: string | Record<string, unknown>;
@@ -187,6 +190,7 @@ export async function send_user_feedback(params: {
   success: boolean;
   message: string;
   error?: string;
+  messageId?: string;
 }> {
   const { content, format, chatId, parentMessageId } = params;
 
@@ -270,31 +274,35 @@ export async function send_user_feedback(params: {
       domain: lark.Domain.Feishu,
     });
 
+    let messageId: string | undefined;
+
     if (format === 'text') {
       // Send as text message
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
-      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      messageId = await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
 
       logger.debug({
         chatId,
         messageLength: textContent.length,
         message: textContent,
         parentMessageId,
+        messageId,
       }, 'User feedback sent (text)');
     } else {
       // Card format: strict validation, no fallback
+
       if (typeof content === 'object' && isValidFeishuCard(content)) {
         // Valid card object - send as-is
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, hasValidStructure: true, parentMessageId }, 'User card sent (interactive)');
+        messageId = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
+        logger.debug({ chatId, hasValidStructure: true, parentMessageId, messageId }, 'User card sent (interactive)');
       } else if (typeof content === 'string') {
         // String content - must be valid JSON card
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
             // Valid JSON card string - send directly
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
-            logger.debug({ chatId, wasJsonString: true, parentMessageId }, 'User card sent (from JSON string)');
+            messageId = await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            logger.debug({ chatId, wasJsonString: true, parentMessageId, messageId }, 'User card sent (from JSON string)');
           } else {
             // Valid JSON but not a valid card - return error for LLM to fix
             const validationError = getCardValidationError(parsed);
@@ -357,6 +365,7 @@ export async function send_user_feedback(params: {
     return {
       success: true,
       message: `✅ Feedback sent (format: ${format})`,
+      messageId,
     };
 
   } catch (error) {
@@ -842,6 +851,202 @@ export async function wait_for_interaction(params: {
   }
 }
 
+// ============================================================================
+// Human-in-the-Loop Tools (Issue #532)
+// ============================================================================
+
+/**
+ * Build a question card with options.
+ *
+ * @param question - The question to ask
+ * @param options - Array of option strings (max 4 for best display)
+ * @returns Feishu interactive card
+ */
+function buildQuestionCard(question: string, options: string[]): Record<string, unknown> {
+  const elements: CardElement[] = [
+    {
+      tag: 'markdown',
+      content: question,
+    },
+    { tag: 'hr' },
+  ];
+
+  // Build buttons for each option
+  const buttons: ButtonAction[] = options.map((option, index) => ({
+    tag: 'button' as const,
+    text: { tag: 'plain_text' as const, content: option },
+    type: index === 0 ? 'primary' as const : 'default' as const,
+    value: { action: option },
+  }));
+
+  elements.push({
+    tag: 'action',
+    actions: buttons,
+  });
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '🤖 Agent 询问' },
+      template: 'blue',
+    },
+    elements,
+  };
+}
+
+/**
+ * Tool: Ask user a question and wait for response.
+ *
+ * Sends an interactive card with the question and options, then waits
+ * for the user to click a button. This implements Human-in-the-Loop
+ * interaction for Agent workflows.
+ *
+ * @param params - Tool parameters
+ * @returns Result object with the user's answer
+ */
+export async function ask_user(params: {
+  question: string;
+  options?: string[];
+  chatId: string;
+  timeoutSeconds?: number;
+}): Promise<{
+  success: boolean;
+  message: string;
+  answer?: string;
+  userId?: string;
+  error?: string;
+}> {
+  const { question, options = [], chatId, timeoutSeconds = 300 } = params;
+
+  logger.info({
+    question: question.substring(0, 100),
+    optionsCount: options.length,
+    chatId,
+    timeoutSeconds,
+  }, 'ask_user called');
+
+  try {
+    if (!question) {
+      throw new Error('question is required');
+    }
+    if (!chatId) {
+      throw new Error('chatId is required');
+    }
+
+    // CLI mode: Simulate response
+    if (chatId.startsWith('cli-')) {
+      logger.info({ chatId, question }, 'CLI mode: Simulating ask_user response');
+      const simulatedAnswer = options.length > 0 ? options[0] : 'simulated_response';
+      return {
+        success: true,
+        message: `✅ User answered (CLI mode - simulated): ${simulatedAnswer}`,
+        answer: simulatedAnswer,
+        userId: 'cli-user',
+      };
+    }
+
+    // Build and send the question card
+    const card = buildQuestionCard(question, options.length > 0 ? options : ['确认', '取消']);
+
+    const sendResult = await send_user_feedback({
+      content: card,
+      format: 'card',
+      chatId,
+    });
+
+    if (!sendResult.success) {
+      return {
+        success: false,
+        error: sendResult.error,
+        message: `❌ Failed to send question: ${sendResult.message}`,
+      };
+    }
+
+    const { messageId } = sendResult;
+    if (!messageId) {
+      return {
+        success: false,
+        error: 'No message ID returned from send',
+        message: '❌ Failed to get message ID for interaction tracking',
+      };
+    }
+
+    logger.debug({ messageId, chatId }, 'Question card sent, waiting for response');
+
+    // Wait for user interaction
+    const interactionResult = await wait_for_interaction({
+      messageId,
+      chatId,
+      timeoutSeconds,
+    });
+
+    if (!interactionResult.success) {
+      return {
+        success: false,
+        error: interactionResult.error,
+        message: `❌ No response received: ${interactionResult.message}`,
+      };
+    }
+
+    // Parse the action value (it's stored as { action: option_value })
+    let answer = interactionResult.actionValue || '';
+    try {
+      // Try to parse as JSON in case it's an object
+      const parsed = JSON.parse(answer);
+      if (typeof parsed === 'object' && parsed.action) {
+        answer = parsed.action;
+      }
+    } catch {
+      // Not JSON, use as-is
+    }
+
+    logger.info({
+      messageId,
+      chatId,
+      answer,
+      userId: interactionResult.userId,
+    }, 'User answered question');
+
+    return {
+      success: true,
+      message: `✅ User answered: ${answer}`,
+      answer,
+      userId: interactionResult.userId,
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    logger.error({
+      err: error,
+      chatId,
+      question: question.substring(0, 100),
+    }, 'ask_user failed');
+
+    return {
+      success: false,
+      error: errorMessage,
+      message: `❌ Ask user failed: ${errorMessage}`,
+    };
+  }
+}
+
+// Type imports for card building
+type CardElement = {
+  tag: 'div' | 'markdown' | 'action' | 'hr' | 'note' | 'img' | 'column_set';
+  text?: { tag: 'plain_text' | 'lark_md'; content: string };
+  content?: string;
+  actions?: ButtonAction[];
+  elements?: { tag: 'plain_text'; content: string }[];
+};
+
+type ButtonAction = {
+  tag: 'button';
+  text: { tag: 'plain_text'; content: string };
+  type: 'primary' | 'default' | 'danger';
+  value: Record<string, string>;
+};
+
 /**
  * Tool definitions for Agent SDK integration.
  *
@@ -992,6 +1197,54 @@ export const feishuContextTools = {
       required: ['messageId', 'chatId'],
     },
     handler: wait_for_interaction,
+  },
+  ask_user: {
+    description: `Ask the user a question and wait for their response.
+
+This tool implements Human-in-the-Loop interaction by:
+1. Sending an interactive card with the question and option buttons
+2. Waiting for the user to click a button
+3. Returning the user's answer
+
+Use this when the Agent needs user input to proceed, such as:
+- Choosing between multiple actions (e.g., "Merge PR?" with Yes/No options)
+- Getting confirmation before a destructive operation
+- Asking for clarification on ambiguous requests
+
+**Example Usage:**
+\`\`\`json
+{
+  "question": "How should I handle this PR?",
+  "options": ["Merge", "Request Changes", "Close", "Wait"],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+If no options are provided, defaults to ["确认", "取消"] (Confirm/Cancel).`,
+    parameters: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: 'The question to ask the user',
+        },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of option strings for the user to choose from (optional, defaults to Confirm/Cancel)',
+        },
+        chatId: {
+          type: 'string',
+          description: 'Feishu chat ID to send the question to',
+        },
+        timeoutSeconds: {
+          type: 'number',
+          description: 'Maximum time to wait in seconds (default: 300)',
+        },
+      },
+      required: ['question', 'chatId'],
+    },
+    handler: ask_user,
   },
 };
 
@@ -1213,6 +1466,54 @@ When parentMessageId is provided, the message is sent as a reply to that message
         }
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'ask_user',
+    description: `Ask the user a question and wait for their response.
+
+This tool implements Human-in-the-Loop interaction by:
+1. Sending an interactive card with the question and option buttons
+2. Waiting for the user to click a button
+3. Returning the user's answer
+
+**Use Cases:**
+- Choosing between multiple actions (e.g., "Merge PR?" with Yes/No/Cancel options)
+- Getting confirmation before a destructive operation
+- Asking for clarification on ambiguous requests
+- PR review workflow: "How to handle this PR?" → [Merge] [Request Changes] [Close]
+
+**Example Usage:**
+\`\`\`json
+{
+  "question": "How should I handle this PR?",
+  "options": ["Merge", "Request Changes", "Close", "Wait"],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+**Returns:**
+- answer: The option string the user clicked
+- userId: The ID of the user who answered
+
+If no options are provided, defaults to ["确认", "取消"] (Confirm/Cancel).`,
+    parameters: z.object({
+      question: z.string().describe('The question to ask the user'),
+      options: z.array(z.string()).optional().describe('Array of option strings for the user to choose from (optional, defaults to Confirm/Cancel)'),
+      chatId: z.string().describe('Feishu chat ID to send the question to'),
+      timeoutSeconds: z.number().optional().describe('Maximum time to wait in seconds (default: 300 = 5 minutes)'),
+    }),
+    handler: async ({ question, options, chatId, timeoutSeconds }) => {
+      try {
+        const result = await ask_user({ question, options, chatId, timeoutSeconds });
+        if (result.success) {
+          return toolSuccess(`${result.message}\nAnswer: ${result.answer}\nUser: ${result.userId}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Ask user failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
