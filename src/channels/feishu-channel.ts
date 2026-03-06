@@ -5,6 +5,7 @@
  * Implements the IChannel interface for unified message handling.
  *
  * Issue #694: Refactored to use modular components.
+ * Issue #959: Added WebSocket reconnection watchdog mechanism.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
@@ -41,6 +42,25 @@ import type {
 const logger = createLogger('FeishuChannel');
 
 /**
+ * WebSocket reconnection watchdog configuration.
+ * Issue #959: Monitor WebSocket connection health and detect reconnection issues.
+ */
+interface WatchdogConfig {
+  /** Interval in milliseconds to check connection health (default: 60000 = 1 minute) */
+  checkIntervalMs: number;
+  /** Threshold in milliseconds after which to warn about potential disconnection (default: 300000 = 5 minutes) */
+  warningThresholdMs: number;
+  /** Threshold in milliseconds after which to log error and suggest action (default: 600000 = 10 minutes) */
+  errorThresholdMs: number;
+}
+
+const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
+  checkIntervalMs: 60 * 1000, // 1 minute
+  warningThresholdMs: 5 * 60 * 1000, // 5 minutes
+  errorThresholdMs: 10 * 60 * 1000, // 10 minutes
+};
+
+/**
  * Feishu channel configuration.
  */
 export interface FeishuChannelConfig extends ChannelConfig {
@@ -64,6 +84,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appId: string;
   private appSecret: string;
   private wsClient?: lark.WSClient;
+
+  // Issue #959: WebSocket reconnection watchdog
+  private lastWsReadyTime: number = 0;
+  private reconnectWatchdog?: NodeJS.Timeout;
+  private watchdogConfig: WatchdogConfig = DEFAULT_WATCHDOG_CONFIG;
 
   // Modular components
   private passiveModeManager: PassiveModeManager;
@@ -176,10 +201,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     });
 
     await this.wsClient.start({ eventDispatcher });
+
+    // Issue #959: Start WebSocket reconnection watchdog
+    this.lastWsReadyTime = Date.now();
+    this.startReconnectWatchdog();
+
     logger.info('FeishuChannel started');
   }
 
   protected doStop(): Promise<void> {
+    // Issue #959: Stop WebSocket reconnection watchdog
+    this.stopReconnectWatchdog();
+
     this.wsClient = undefined;
     this.feishuMessageHandler.clearClient();
 
@@ -224,6 +257,109 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   protected checkHealth(): boolean {
     return this.wsClient !== undefined;
+  }
+
+  /**
+   * Issue #959: Start the WebSocket reconnection watchdog.
+   * Monitors connection health and logs warnings when reconnection takes too long.
+   */
+  private startReconnectWatchdog(): void {
+    if (this.reconnectWatchdog) {
+      clearInterval(this.reconnectWatchdog);
+    }
+
+    this.reconnectWatchdog = setInterval(() => {
+      this.checkWebSocketHealth();
+    }, this.watchdogConfig.checkIntervalMs);
+
+    logger.debug(
+      { checkIntervalMs: this.watchdogConfig.checkIntervalMs },
+      'WebSocket reconnection watchdog started'
+    );
+  }
+
+  /**
+   * Issue #959: Stop the WebSocket reconnection watchdog.
+   */
+  private stopReconnectWatchdog(): void {
+    if (this.reconnectWatchdog) {
+      clearInterval(this.reconnectWatchdog);
+      this.reconnectWatchdog = undefined;
+      logger.debug('WebSocket reconnection watchdog stopped');
+    }
+  }
+
+  /**
+   * Issue #959: Check WebSocket connection health.
+   * Uses SDK's getReconnectInfo() API to monitor reconnection status.
+   */
+  private checkWebSocketHealth(): void {
+    if (!this.wsClient) {
+      return;
+    }
+
+    const now = Date.now();
+    const timeSinceLastReady = now - this.lastWsReadyTime;
+
+    try {
+      // Get reconnection info from SDK
+      const reconnectInfo = this.wsClient.getReconnectInfo();
+
+      if (reconnectInfo) {
+        const { lastConnectTime, nextConnectTime } = reconnectInfo;
+
+        // If we have a nextConnectTime, it means we're in reconnecting state
+        if (nextConnectTime > 0) {
+          const timeUntilNextConnect = nextConnectTime - now;
+          logger.warn(
+            {
+              timeSinceLastReady: Math.round(timeSinceLastReady / 1000),
+              timeUntilNextConnect: Math.round(timeUntilNextConnect / 1000),
+              lastConnectTime: new Date(lastConnectTime).toISOString(),
+            },
+            'WebSocket is in reconnection state'
+          );
+
+          // Update lastWsReadyTime to lastConnectTime from SDK
+          // This gives us the actual last connection attempt time
+          if (lastConnectTime > 0) {
+            this.lastWsReadyTime = lastConnectTime;
+          }
+        } else {
+          // Connection is healthy, update last ready time
+          this.lastWsReadyTime = now;
+        }
+      }
+
+      // Check if we've been disconnected for too long
+      if (timeSinceLastReady > this.watchdogConfig.errorThresholdMs) {
+        logger.error(
+          {
+            disconnectedDuration: Math.round(timeSinceLastReady / 1000 / 60),
+            thresholdMinutes: Math.round(this.watchdogConfig.errorThresholdMs / 1000 / 60),
+          },
+          'WebSocket has been disconnected for an extended period. Consider restarting the channel.'
+        );
+      } else if (timeSinceLastReady > this.watchdogConfig.warningThresholdMs) {
+        logger.warn(
+          {
+            disconnectedDuration: Math.round(timeSinceLastReady / 1000 / 60),
+            thresholdMinutes: Math.round(this.watchdogConfig.warningThresholdMs / 1000 / 60),
+          },
+          'WebSocket connection may be unstable - no activity detected recently'
+        );
+      }
+    } catch (error) {
+      logger.debug({ err: error }, 'Failed to get WebSocket reconnect info');
+    }
+  }
+
+  /**
+   * Issue #959: Update last WebSocket ready time.
+   * Called when WebSocket connection is confirmed to be working.
+   */
+  private updateWsReadyTime(): void {
+    this.lastWsReadyTime = Date.now();
   }
 
   /**
