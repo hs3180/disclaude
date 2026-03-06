@@ -3,11 +3,39 @@
  *
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
  * Handles building enhanced content with Feishu context.
+ *
+ * Also provides task complexity assessment guidance (Issue #857):
+ * - Guides Agent to self-assess task complexity via prompt
+ * - Supports recording task execution times for self-improvement
+ * - Uses historical data to improve time estimates
  */
 
 import { Config } from '../../config/index.js';
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { MessageData } from './types.js';
+
+/**
+ * Keywords that suggest a complex task.
+ * Used to conditionally inject complexity assessment guidance.
+ */
+const COMPLEX_TASK_KEYWORDS = [
+  // Development tasks
+  'refactor', 'implement', 'create', 'build', 'develop', 'modify', 'change',
+  'analyze', 'review', 'design', 'architect', 'rewrite', 'migrate', 'integrate',
+  'fix', 'bug', 'optimize', 'write', 'add', 'delete', 'remove', 'update',
+  // Chinese equivalents
+  '重构', '实现', '创建', '开发', '修改', '分析', '设计', '改写', '迁移', '集成',
+  '修复', '优化', '编写', '添加', '删除', '更新',
+  // Multi-step indicators
+  'multiple', 'several', 'all', 'entire', 'comprehensive', 'full',
+  '多个', '所有', '整个', '完整',
+];
+
+/**
+ * Minimum message length (in characters) to consider for complexity guidance.
+ * Short messages are likely simple queries.
+ */
+const MIN_LENGTH_FOR_GUIDANCE = 20;
 
 /**
  * Message builder for Pilot.
@@ -18,6 +46,7 @@ import type { MessageData } from './types.js';
  * - Capability-aware tools section
  * - Attachments info
  * - Chat history context
+ * - Task complexity assessment guidance (conditional)
  */
 export class MessageBuilder {
   /**
@@ -72,6 +101,11 @@ ${msg.chatHistoryContext}
     // Build capability-aware tools section (Issue #582)
     const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
 
+    // Conditionally add complexity guidance for complex-looking tasks
+    const complexityGuidance = this.shouldIncludeComplexityGuidance(msg.text)
+      ? `\n\n${this.buildComplexityGuidance()}`
+      : '';
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -99,7 +133,7 @@ ${chatHistorySection}${mentionSection}
 ---
 
 ## Tools
-${toolsSection}
+${toolsSection}${complexityGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -111,7 +145,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 **Message ID:** ${msg.messageId}
 ${chatHistorySection}
 ## Tools
-${toolsSection}
+${toolsSection}${complexityGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -245,5 +279,54 @@ You can read these files using the Read tool with the local paths above.`;
     // Check for common image analyzer MCP server names
     const imageAnalyzerNames = ['4_5v_mcp', 'glm-vision', 'image-analyzer', 'vision'];
     return imageAnalyzerNames.some(name => name in mcpServers);
+  }
+
+  /**
+   * Check if message likely requires complexity assessment guidance.
+   *
+   * Only inject guidance for messages that appear to be complex tasks,
+   * reducing token usage for simple queries.
+   */
+  private shouldIncludeComplexityGuidance(text: string): boolean {
+    const normalizedText = text.toLowerCase();
+
+    // Skip short messages
+    if (text.length < MIN_LENGTH_FOR_GUIDANCE) {
+      return false;
+    }
+
+    // Check for complex task keywords
+    return COMPLEX_TASK_KEYWORDS.some(keyword => normalizedText.includes(keyword.toLowerCase()));
+  }
+
+  /**
+   * Build task complexity assessment guidance section.
+   *
+   * Guides the Agent to self-assess task complexity and provide
+   * appropriate user experience for complex tasks.
+   */
+  private buildComplexityGuidance(): string {
+    return `## Complex Task Handling
+
+Before processing, quickly assess task complexity:
+
+- **Simple** (quick Q&A, lookups): Respond directly
+- **Moderate** (analysis, reviews): May need multiple steps
+- **Complex** (refactoring, multi-file changes): Needs planning
+
+### For Complex Tasks
+1. Send a brief acknowledgment first:
+   - Task description
+   - Rough time estimate (based on scope)
+
+2. For tasks >2 min, send periodic progress updates
+
+3. After completion, briefly note: actual vs estimated time. This helps improve future estimates.
+
+### Time Reference
+These are rough guides - adjust based on specific task:
+- Simple file operations: ~30s
+- Code analysis: ~2-5min
+- Multi-file refactoring: ~10-30min`;
   }
 }

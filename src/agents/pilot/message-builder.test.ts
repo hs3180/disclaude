@@ -2,6 +2,7 @@
  * Tests for MessageBuilder class.
  *
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
+ * Issue #857: Tests for conditional complexity assessment guidance.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -27,15 +28,15 @@ describe('MessageBuilder', () => {
 
   describe('buildAttachmentsInfo (Issue #809)', () => {
     // Access private method for testing
-    const getAttachmentsInfo = (mb: MessageBuilder, attachments?: any[]) =>
-      (mb as any).buildAttachmentsInfo(attachments);
+    const getAttachmentsInfo = (mb: MessageBuilder, attachments?: unknown[]) =>
+      (mb as unknown as { buildAttachmentsInfo: (a?: unknown[]) => string }).buildAttachmentsInfo(attachments);
 
     it('should include image analyzer hint for image attachments when MCP is configured', async () => {
       // Import Config to get access to the mocked version
       const { Config } = await import('../../config/index.js');
       vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
         '4_5v_mcp': { command: 'test-command' },
-      } as any);
+      } as unknown as Record<string, unknown>);
 
       const imageAttachment = [{
         id: 'test-id',
@@ -54,7 +55,7 @@ describe('MessageBuilder', () => {
 
     it('should not include image analyzer hint when no image analyzer MCP is configured', async () => {
       const { Config } = await import('../../config/index.js');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce(undefined as any);
+      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce(undefined as unknown as Record<string, unknown>);
 
       const imageAttachment = [{
         id: 'test-id',
@@ -74,7 +75,7 @@ describe('MessageBuilder', () => {
       const { Config } = await import('../../config/index.js');
       vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
         '4_5v_mcp': { command: 'test-command' },
-      } as any);
+      } as unknown as Record<string, unknown>);
 
       const textAttachment = [{
         id: 'test-id',
@@ -106,7 +107,7 @@ describe('MessageBuilder', () => {
       for (const name of mcpNames) {
         vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
           [name]: { command: 'test-command' },
-        } as any);
+        } as unknown as Record<string, unknown>);
 
         const imageAttachment = [{
           id: 'test-id',
@@ -119,6 +120,79 @@ describe('MessageBuilder', () => {
         const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
         expect(result).toContain('analyze_image');
       }
+    });
+  });
+
+  describe('buildEnhancedContent - Complexity Guidance (Issue #857)', () => {
+    it('should include complexity guidance for complex-looking tasks', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '请帮我重构整个认证模块，包括登录、注册和密码重置功能',
+        messageId: 'test-msg-1',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).toContain('Complex Task Handling');
+      expect(result).toContain('refactoring');
+    });
+
+    it('should include complexity guidance for implementation tasks', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '帮我实现一个新的用户管理功能，包括增删改查',
+        messageId: 'test-msg-2',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).toContain('Complex Task Handling');
+    });
+
+    it('should not include complexity guidance for simple queries', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '你好',
+        messageId: 'test-msg-3',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).not.toContain('Complex Task Handling');
+    });
+
+    it('should not include complexity guidance for short messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '你好，请帮我',
+        messageId: 'test-msg-4',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).not.toContain('Complex Task Handling');
+    });
+
+    it('should not include complexity guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/help refactor the authentication module',
+        messageId: 'test-msg-5',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).not.toContain('Complex Task Handling');
+    });
+
+    it('should detect Chinese keywords for complex tasks', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '请帮我修改代码，实现新的功能模块，支持多种配置',
+        messageId: 'test-msg-6',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).toContain('Complex Task Handling');
+    });
+
+    it('should detect English keywords for complex tasks', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Please help me implement a new feature for user authentication',
+        messageId: 'test-msg-7',
+        senderOpenId: 'test-user-1',
+      }, 'test-chat-1');
+
+      expect(result).toContain('Complex Task Handling');
     });
   });
 });
