@@ -3,6 +3,8 @@
  *
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
  * Handles building enhanced content with Feishu context.
+ *
+ * Issue #857: Added task complexity assessment guidance for complex task handling.
  */
 
 import type { ChannelCapabilities } from '../../channels/types.js';
@@ -100,6 +102,8 @@ ${chatHistorySection}${mentionSection}
 ## Tools
 ${toolsSection}
 
+${this.buildComplexityGuidance()}
+
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
@@ -112,8 +116,61 @@ ${chatHistorySection}
 ## Tools
 ${toolsSection}
 
+${this.buildComplexityGuidance()}
+
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+  }
+
+  /**
+   * Build task complexity assessment guidance section.
+   *
+   * Issue #857: Guides the Agent to self-assess task complexity and handle
+   * complex tasks appropriately with progress reporting.
+   */
+  private buildComplexityGuidance(): string {
+    return `## Task Complexity Assessment (Issue #857)
+
+Before processing the user's request, assess its complexity:
+
+### Complexity Levels
+- **Simple** (1-3): Quick questions, simple lookups, short explanations
+- **Moderate** (4-6): Code review, file analysis, multi-step reasoning
+- **Complex** (7-10): Multi-file refactoring, architecture changes, long-running tasks
+
+### For Complex Tasks (Score 7+)
+If you determine the task is complex:
+
+1. **Immediate Acknowledgment**: Send a brief confirmation message first:
+   \`\`\`
+   🔄 **Complex Task Detected**
+
+   I'm working on: [Brief task description]
+   Estimated time: [Your best estimate based on task scope]
+
+   I'll provide progress updates as I work through this...
+   \`\`\`
+
+2. **Progress Updates**: For tasks taking >2 minutes, send periodic updates:
+   \`\`\`
+   ⏳ **Progress Update**
+
+   Status: [Current activity]
+   Completed: [What's done]
+   Remaining: [What's left]
+   \`\`\`
+
+3. **Time Estimation Guide**:
+   - Simple file reads/edits: ~30 seconds
+   - Multi-file analysis: ~2-5 minutes
+   - Code refactoring: ~5-15 minutes
+   - Architecture changes: ~15-30 minutes
+
+### Self-Improvement
+After completing complex tasks, briefly note:
+- Actual time taken vs. estimate
+- What made the task complex
+- This helps improve future estimates`;
   }
 
   /**
