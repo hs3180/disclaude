@@ -46,7 +46,9 @@ export {
 export {
   buildReviewCard,
   buildQuickReviewCard,
-  buildReviewStatsCard,
+  buildReviewCardWithDiff,
+  buildBatchReviewCard,
+  buildReviewActionPrompts,
   REVIEW_THEMES,
   type ReviewCardConfig,
   type ChangeItem,

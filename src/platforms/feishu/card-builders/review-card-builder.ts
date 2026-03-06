@@ -21,13 +21,30 @@ import {
 } from './interactive-card-builder.js';
 
 /**
+ * Feishu card header template colors.
+ */
+type CardTemplateColor =
+  | 'blue'
+  | 'wathet'
+  | 'turquoise'
+  | 'green'
+  | 'yellow'
+  | 'orange'
+  | 'red'
+  | 'carmine'
+  | 'violet'
+  | 'purple'
+  | 'indigo'
+  | 'grey';
+
+/**
  * Review theme configuration.
  */
 export interface ReviewTheme {
   /** Header title */
   title: string;
   /** Header template color */
-  template: BuiltCard['header'] extends { template?: infer T } ? T : never;
+  template: CardTemplateColor;
   /** Approve button text */
   approveText: string;
   /** Reject button text */
