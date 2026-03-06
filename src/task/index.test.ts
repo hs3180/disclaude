@@ -63,19 +63,19 @@ describe('Task Module Exports', () => {
       expect(typeof TaskModule.feishuContextTools).toBe('object');
     });
 
-    it('should export send_user_feedback function', () => {
-      expect(TaskModule.send_user_feedback).toBeDefined();
-      expect(typeof TaskModule.send_user_feedback).toBe('function');
+    it('should export send_message function', () => {
+      expect(TaskModule.send_message).toBeDefined();
+      expect(typeof TaskModule.send_message).toBe('function');
     });
 
-    it('should export send_file_to_feishu function', () => {
-      expect(TaskModule.send_file_to_feishu).toBeDefined();
-      expect(typeof TaskModule.send_file_to_feishu).toBe('function');
+    it('should export send_file function', () => {
+      expect(TaskModule.send_file).toBeDefined();
+      expect(typeof TaskModule.send_file).toBe('function');
     });
 
-    it('should have send_user_feedback and send_file_to_feishu in feishuContextTools', () => {
-      expect('send_user_feedback' in TaskModule.feishuContextTools).toBe(true);
-      expect('send_file_to_feishu' in TaskModule.feishuContextTools).toBe(true);
+    it('should have send_message and send_file in feishuContextTools', () => {
+      expect('send_message' in TaskModule.feishuContextTools).toBe(true);
+      expect('send_file' in TaskModule.feishuContextTools).toBe(true);
     });
   });
 
@@ -124,8 +124,8 @@ describe('Task Module Exports', () => {
 
       // Feishu tools
       expect(exports).toContain('feishuContextTools');
-      expect(exports).toContain('send_user_feedback');
-      expect(exports).toContain('send_file_to_feishu');
+      expect(exports).toContain('send_message');
+      expect(exports).toContain('send_file');
 
       // Utilities
       expect(exports).toContain('extractText');
