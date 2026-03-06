@@ -77,6 +77,8 @@ export default defineConfig({
       },
       include: ['src/**/*.ts'],
     },
-    setupFiles: [],
+    // Global setup file for network isolation via nock
+    // @see Issue #920 - Test isolation infrastructure
+    setupFiles: ['./tests/setup.ts'],
   },
 });

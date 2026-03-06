@@ -231,6 +231,44 @@ npm run test               # Run tests
 npm run test -- --coverage # With coverage
 ```
 
+## Testing Rules (Mandatory)
+
+These rules are enforced to maintain test quality and prevent AI Agent from bypassing test failures by modifying mock implementations.
+
+### 1. 严禁对外部 SDK 使用 vi.mock()
+
+`@anthropic-ai/sdk`、`@larksuiteoapi/node-sdk` 等外部网络库**不得使用 vi.mock()**。违反此规则将导致 ESLint 报错并阻断 CI。
+
+**Why?** AI Agent 在重构代码时会同步修改 mock 返回值以维持测试绿灯。外部 API 协议变更、路由接错、参数结构破损均无法被检测到。
+
+### 2. 网络交互测试必须使用 nock
+
+需要模拟 HTTP 交互时，应在 `tests/fixtures/recordings/` 提供录制的请求/响应 JSON，通过 nock 加载后测试。
+
+```typescript
+// ✅ Good: Use nock for HTTP mocking
+import nock from 'nock';
+
+nock('https://api.anthropic.com')
+  .post('/v1/messages')
+  .reply(200, { content: '...' });
+
+// ❌ Bad: Do NOT use vi.mock for external SDKs
+vi.mock('@anthropic-ai/sdk', () => ({ ... })); // ESLint error!
+vi.mock('@larksuiteoapi/node-sdk', () => ({ ... })); // ESLint error!
+```
+
+### 3. 先建后删原则
+
+重构测试时，必须**先新增替代测试并确保覆盖率不下降**，再删除旧的 vi.mock 代码。严禁先删后补，否则覆盖率暴跌将阻塞所有其他 PR 的合入。
+
+**Rationale**: 当前 CI 存在 70% 覆盖率硬门禁，先删后补会导致覆盖率暴跌阻塞 PR。
+
+### Related Issues
+
+- #918 - 四层防御架构总览
+- #920 - 测试隔离基础设施
+
 ## Development Workflow
 
 ### PM2 Restart Policy

@@ -90,4 +90,26 @@ export default [
       'no-unused-labels': 'error',
     },
   },
+  {
+    // Test file specific rules
+    // @see Issue #920 - Test isolation infrastructure
+    files: ['**/*.test.ts', '**/*.spec.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'][arguments.0.value=/@anthropic-ai/]",
+          message:
+            '禁止对 @anthropic-ai/sdk 使用 vi.mock()。请使用 nock VCR 录制回放模式。参见 Issue #918。',
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'][arguments.0.value=/@larksuiteoapi/]",
+          message:
+            '禁止对 @larksuiteoapi/node-sdk 使用 vi.mock()。请使用 nock VCR 录制回放模式。参见 Issue #918。',
+        },
+      ],
+    },
+  },
 ];
