@@ -10,6 +10,7 @@ import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
+import { ttfrMetrics } from '../../utils/ttfr-metrics.js';
 import type { SendFeedbackResult, MessageSentCallback } from './types.js';
 
 const logger = createLogger('SendMessage');
@@ -101,6 +102,9 @@ export async function send_user_feedback(params: {
         };
       }
     }
+
+    // Record TTFR metric (Issue #855)
+    ttfrMetrics.recordResponse(chatId);
 
     invokeMessageSentCallback(chatId);
     return { success: true, message: `✅ Feedback sent (format: ${format})` };

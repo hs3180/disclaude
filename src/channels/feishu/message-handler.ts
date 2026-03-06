@@ -19,6 +19,7 @@ import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
+import { ttfrMetrics } from '../../utils/ttfr-metrics.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -498,6 +499,9 @@ export class MessageHandler {
 
     // Add typing reaction only for messages that will be processed
     await this.addTypingReaction(message_id);
+
+    // Start TTFR tracking (Issue #855)
+    ttfrMetrics.startTracking(chat_id, message_id);
 
     // Get chat history context for passive mode
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;

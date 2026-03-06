@@ -49,6 +49,12 @@ vi.mock('../../utils/error-handler.js', () => ({
   },
 }));
 
+vi.mock('../../utils/ttfr-metrics.js', () => ({
+  ttfrMetrics: {
+    recordResponse: vi.fn(),
+  },
+}));
+
 vi.mock('./card-builders/content-builder.js', () => ({
   buildTextContent: vi.fn((text) => JSON.stringify({ text })),
 }));

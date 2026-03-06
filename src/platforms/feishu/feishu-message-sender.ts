@@ -13,6 +13,7 @@ import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { retry } from '../../utils/retry.js';
+import { ttfrMetrics } from '../../utils/ttfr-metrics.js';
 
 /**
  * Feishu Message Sender Configuration.
@@ -80,6 +81,9 @@ export class FeishuMessageSender implements IMessageSender {
         await messageLogger.logOutgoingMessage(botMessageId, chatId, text);
       }
 
+      // Record TTFR metric (Issue #855)
+      ttfrMetrics.recordResponse(chatId, botMessageId);
+
       const safeText = text || '';
       const preview = safeText.length > 100 ? `${safeText.substring(0, 100)}...` : safeText;
       this.logger.debug(
@@ -145,6 +149,9 @@ export class FeishuMessageSender implements IMessageSender {
         await messageLogger.logOutgoingMessage(botMessageId, chatId, cardContent);
       }
 
+      // Record TTFR metric (Issue #855)
+      ttfrMetrics.recordResponse(chatId, botMessageId);
+
       const desc = description ? ` (${description})` : '';
       this.logger.debug({ chatId, description: desc, threadId, botMessageId }, 'Card sent');
     } catch (error) {
@@ -182,6 +189,9 @@ export class FeishuMessageSender implements IMessageSender {
         chatId,
         fileContent
       );
+
+      // Record TTFR metric (Issue #855)
+      ttfrMetrics.recordResponse(chatId);
 
       this.logger.info({ chatId, filePath, fileSize, threadId }, 'File sent to user');
     } catch (error) {
