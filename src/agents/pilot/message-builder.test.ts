@@ -3,6 +3,7 @@
  *
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
+ * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -168,6 +169,48 @@ describe('MessageBuilder', () => {
         const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
         expect(result).toContain('analyze_image');
       }
+    });
+  });
+
+  describe('buildOutputFormatGuidance (Issue #962)', () => {
+    it('should include output format guidance in regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Never output raw JSON');
+    });
+
+    it('should include correct and wrong format examples', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('✅ Correct Format');
+      expect(result).toContain('❌ Wrong Format');
+    });
+
+    it('should not include output format guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Output Format Requirements');
+    });
+
+    it('should include guidance for converting JSON to readable format', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Convert JSON objects to readable text');
+      expect(result).toContain('Markdown tables instead of raw JSON');
     });
   });
 });
