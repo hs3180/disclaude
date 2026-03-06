@@ -138,7 +138,14 @@ export class WorkerNode {
             if (ctx) {
               ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
             } else {
-              logger.warn({ chatId }, 'No active feedback channel for sendMessage');
+              // Issue #935: Fallback to direct WebSocket send when no active feedback channel
+              // This enables Worker Node to send messages proactively (e.g., from scheduled tasks)
+              if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
+                logger.debug({ chatId }, 'Message sent via WebSocket fallback');
+              } else {
+                logger.warn({ chatId }, 'No active feedback channel and WebSocket not connected for sendMessage');
+              }
             }
             return Promise.resolve();
           },
@@ -147,39 +154,66 @@ export class WorkerNode {
             if (ctx) {
               ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
             } else {
-              logger.warn({ chatId }, 'No active feedback channel for sendCard');
+              // Issue #935: Fallback to direct WebSocket send when no active feedback channel
+              if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'card', chatId, card, text: description, threadId: threadMessageId }));
+                logger.debug({ chatId }, 'Card sent via WebSocket fallback');
+              } else {
+                logger.warn({ chatId }, 'No active feedback channel and WebSocket not connected for sendCard');
+              }
             }
             return Promise.resolve();
           },
           sendFile: async (chatId: string, filePath: string) => {
             const ctx = this.activeFeedbackChannels.get(chatId);
-            if (!ctx) {
-              logger.warn({ chatId }, 'No active feedback channel for sendFile');
-              return;
-            }
 
             try {
               // Upload file to Primary Node
               const fileRef = await this.fileClient.uploadFile(filePath, chatId);
 
-              // Send fileRef to Primary Node
-              ctx.sendFeedback({
-                type: 'file',
-                chatId,
-                fileRef,
-                fileName: fileRef.fileName,
-                fileSize: fileRef.size,
-                mimeType: fileRef.mimeType,
-                threadId: ctx.threadId,
-              });
+              if (ctx) {
+                // Send fileRef to Primary Node via active feedback channel
+                ctx.sendFeedback({
+                  type: 'file',
+                  chatId,
+                  fileRef,
+                  fileName: fileRef.fileName,
+                  fileSize: fileRef.size,
+                  mimeType: fileRef.mimeType,
+                  threadId: ctx.threadId,
+                });
+              } else {
+                // Issue #935: Fallback to direct WebSocket send when no active feedback channel
+                if (this.ws?.readyState === WebSocket.OPEN) {
+                  this.ws.send(JSON.stringify({
+                    type: 'file',
+                    chatId,
+                    fileRef,
+                    fileName: fileRef.fileName,
+                    fileSize: fileRef.size,
+                    mimeType: fileRef.mimeType,
+                  }));
+                  logger.debug({ chatId }, 'File sent via WebSocket fallback');
+                } else {
+                  logger.warn({ chatId }, 'No active feedback channel and WebSocket not connected for sendFile');
+                }
+              }
             } catch (error) {
               logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
-              ctx.sendFeedback({
-                type: 'error',
-                chatId,
-                error: `Failed to send file: ${(error as Error).message}`,
-                threadId: ctx.threadId,
-              });
+              if (ctx) {
+                ctx.sendFeedback({
+                  type: 'error',
+                  chatId,
+                  error: `Failed to send file: ${(error as Error).message}`,
+                  threadId: ctx.threadId,
+                });
+              } else if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                  type: 'error',
+                  chatId,
+                  error: `Failed to send file: ${(error as Error).message}`,
+                }));
+              }
             }
           },
           onDone: (chatId: string, threadMessageId?: string): Promise<void> => {
@@ -188,7 +222,13 @@ export class WorkerNode {
               ctx.sendFeedback({ type: 'done', chatId, threadId: threadMessageId || ctx.threadId });
               logger.info({ chatId }, 'Task completed, sent done signal');
             } else {
-              logger.warn({ chatId }, 'No active feedback channel for onDone');
+              // Issue #935: Fallback to direct WebSocket send when no active feedback channel
+              if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'done', chatId, threadId: threadMessageId }));
+                logger.debug({ chatId }, 'Done signal sent via WebSocket fallback');
+              } else {
+                logger.warn({ chatId }, 'No active feedback channel and WebSocket not connected for onDone');
+              }
             }
             return Promise.resolve();
           },
