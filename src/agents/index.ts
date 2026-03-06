@@ -66,8 +66,8 @@ export {
   type SkillAgentExecuteOptions,
 } from './skill-agent.js';
 
-// Conversational agent
-export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot.js';
+// Conversational agent (Issue #697: refactored to pilot/ directory)
+export { Pilot, type PilotCallbacks, type PilotConfig } from './pilot/index.js';
 
 // Pilot support classes (extracted from Pilot for separation of concerns)
 // Note: SessionManager is deprecated for Pilot (Issue #644) but kept for backward compatibility
