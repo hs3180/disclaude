@@ -304,7 +304,7 @@ Please process the user's response and take appropriate action.
       await fs.mkdir(knowledgeDir, { recursive: true });
 
       // Create a knowledge entry
-      const timestamp = new Date().toISOString().split('T')[0];
+      const [timestamp] = new Date().toISOString().split('T');
       const knowledgeFile = path.join(knowledgeDir, `offline-replies-${timestamp}.md`);
 
       const entry = `
