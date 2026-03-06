@@ -97,3 +97,16 @@ export interface SendInteractiveResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Result type for create_group tool.
+ *
+ * @see Issue #393 - PR Scanner scheduled task
+ */
+export interface CreateGroupResult {
+  success: boolean;
+  chatId?: string;
+  name?: string;
+  error?: string;
+  message: string;
+}

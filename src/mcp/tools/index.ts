@@ -14,6 +14,7 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  CreateGroupResult,
 } from './types.js';
 
 export { send_user_feedback, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -27,3 +28,4 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+export { create_group } from './create-group.js';

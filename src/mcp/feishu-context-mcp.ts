@@ -12,6 +12,7 @@ import {
   update_card,
   wait_for_interaction,
   send_interactive_message,
+  create_group,
   setMessageSentCallback,
 } from './tools/index.js';
 
@@ -327,6 +328,48 @@ In actionPrompts, you can use these placeholders:
       required: ['card', 'actionPrompts', 'chatId'],
     },
     handler: send_interactive_message,
+  },
+  create_group: {
+    description: `Create a new Feishu group chat.
+
+This tool creates a group chat that can be used for discussions. The bot will automatically be added as a member.
+
+## Parameters
+
+- **topic** (optional): Group name/topic. If not provided, an auto-generated name will be used.
+- **members** (optional): Array of open_ids to add as initial members.
+
+## Example
+
+\`\`\`json
+{
+  "topic": "PR #123 Discussion",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+## Return Value
+
+Returns the created group's chatId and name.
+
+## Use Cases
+
+- Creating discussion groups for PRs (Issue #393)
+- Creating topic groups for specific discussions
+- Setting up temporary discussion channels
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/group/chat/chat/create`,
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Group name/topic (optional, auto-generated if not provided)' },
+        members: { type: 'array', items: { type: 'string' }, description: 'Initial member open_ids (optional)' },
+      },
+      required: [],
+    },
+    handler: create_group,
   },
 };
 
@@ -656,6 +699,54 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'create_group',
+    description: `Create a new Feishu group chat.
+
+This tool creates a group chat that can be used for discussions. The bot will automatically be added as a member.
+
+## Parameters
+
+- **topic** (optional): Group name/topic. If not provided, an auto-generated name will be used.
+- **members** (optional): Array of open_ids to add as initial members.
+
+## Example
+
+\`\`\`json
+{
+  "topic": "PR #123 Discussion",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+## Return Value
+
+Returns the created group's chatId and name.
+
+## Use Cases
+
+- Creating discussion groups for PRs (Issue #393)
+- Creating topic groups for specific discussions
+- Setting up temporary discussion channels
+
+---
+
+**Reference:** https://open.feishu.cn/document/server-docs/group/chat/chat/create`,
+    parameters: z.object({
+      topic: z.string().optional(),
+      members: z.array(z.string()).optional(),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_group({ topic, members });
+        return toolSuccess(result.success
+          ? `${result.message}\nchatId: ${result.chatId}\nname: ${result.name}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Group creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
