@@ -70,6 +70,7 @@ export class MessageHandler {
   private callbacks: MessageCallbacks;
   private isRunning: () => boolean;
   private controlHandler: boolean;
+  private getHasControlHandler: () => boolean;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -93,6 +94,7 @@ export class MessageHandler {
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
     this.isRunning = options.isRunning;
+    this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
 
     // Initialize FileHandler
@@ -129,6 +131,9 @@ export class MessageHandler {
         await this.messageSender!.sendText(chatId, text);
       },
     });
+    // Set control handler availability from the callback
+    this.controlHandler = this.getHasControlHandler();
+    logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
 
   /**
