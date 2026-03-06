@@ -43,6 +43,8 @@ import { RestartManager } from '../restart-manager.js';
 import { ConversationOrchestrator } from '../../conversation/index.js';
 import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
+import { TaskComplexityAssessor, type ComplexityInput } from '../../utils/task-complexity-assessor.js';
+import { getComplexityLevel, ComplexityLevel, formatComplexity } from '../../utils/task-complexity-types.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -77,6 +79,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Task complexity assessor (Issue #857)
+  private readonly complexityAssessor: TaskComplexityAssessor;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -95,6 +100,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
+
+    // Initialize complexity assessor (Issue #857)
+    this.complexityAssessor = new TaskComplexityAssessor({ verbose: true });
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -320,6 +328,39 @@ export class Pilot extends BaseAgent implements ChatAgent {
       { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
       'processMessage called'
     );
+
+    // Assess task complexity (Issue #857 Phase 1)
+    const complexityInput: ComplexityInput = {
+      text,
+      attachmentCount: attachments?.length ?? 0,
+      hasCodeBlocks: /```[\s\S]*?```/.test(text),
+      mentionsMultipleFiles: (text.match(/\b\.(ts|js|py|json|yaml|md)\b/g) || []).length > 1,
+      chatHistoryLength: chatHistoryContext?.length,
+    };
+    const complexity = this.complexityAssessor.assess(complexityInput);
+    const complexityLevel = getComplexityLevel(complexity.score);
+
+    // Log complexity assessment
+    this.logger.info(
+      {
+        chatId,
+        messageId,
+        complexityScore: complexity.score,
+        complexityLevel,
+        estimatedSteps: complexity.estimatedSteps,
+        estimatedTimeSeconds: complexity.estimatedTimeSeconds,
+        reasoning: complexity.reasoning,
+      },
+      'Task complexity assessed'
+    );
+
+    // Log human-readable complexity for complex tasks
+    if (complexityLevel === ComplexityLevel.COMPLEX) {
+      this.logger.warn(
+        { chatId, messageId, complexity: formatComplexity(complexity) },
+        'Complex task detected - consider Task Agent for better UX'
+      );
+    }
 
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
