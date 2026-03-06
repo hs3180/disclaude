@@ -248,7 +248,7 @@ describe('Interactive Message Tool', () => {
   });
 
   describe('cleanupExpiredContexts', () => {
-    it('should clean up expired contexts', async () => {
+    it('should clean up expired contexts', () => {
       // This test would require manipulating time, which is complex
       // For now, just verify the function exists and doesn't throw
       const count = cleanupExpiredContexts();
