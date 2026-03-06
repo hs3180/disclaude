@@ -306,6 +306,102 @@ export class ExpertService {
   getFilePath(): string {
     return this.filePath;
   }
+
+  /**
+   * Check if an expert is currently available.
+   *
+   * Parses the availability string and checks if the current time falls within
+   * the specified time range.
+   *
+   * Supported formats:
+   * - "weekdays 9:00-18:00" - Available on weekdays (Mon-Fri) during hours
+   * - "weekends 10:00-20:00" - Available on weekends (Sat-Sun) during hours
+   * - "daily 9:00-18:00" - Available every day during hours
+   * - "9:00-18:00" - Available every day during hours (same as daily)
+   * - "always" or empty - Always available
+   *
+   * @param userId - User ID
+   * @returns Whether the expert is currently available
+   */
+  isAvailable(userId: string): boolean {
+    const profile = this.registry.experts[userId];
+    if (!profile) {
+      return false;
+    }
+
+    // If no availability set, consider always available
+    if (!profile.availability) {
+      return true;
+    }
+
+    const availability = profile.availability.toLowerCase().trim();
+
+    // Always available
+    if (availability === 'always' || availability === '') {
+      return true;
+    }
+
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute; // Minutes since midnight
+
+    // Parse time range (e.g., "9:00-18:00")
+    const timeMatch = availability.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+    if (!timeMatch) {
+      // If we can't parse the time, consider available
+      logger.warn({ userId, availability }, 'Could not parse availability, considering available');
+      return true;
+    }
+
+    const [, startHour, startMin, endHour, endMin] = timeMatch.map(Number);
+    const startTime = startHour * 60 + startMin;
+    const endTime = endHour * 60 + endMin;
+
+    const inTimeRange = currentTime >= startTime && currentTime <= endTime;
+
+    // Check day constraints
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+    if (availability.includes('weekday')) {
+      return isWeekday && inTimeRange;
+    }
+
+    if (availability.includes('weekend')) {
+      return isWeekend && inTimeRange;
+    }
+
+    // "daily" or just time range - available any day
+    return inTimeRange;
+  }
+
+  /**
+   * Search for available experts by skill.
+   *
+   * Combines skill search with availability check.
+   *
+   * @param query - Skill name or tag to search for
+   * @param options - Search options
+   * @returns Array of matching expert profiles that are currently available
+   */
+  searchAvailableExperts(
+    query: string,
+    options?: {
+      minLevel?: SkillLevel;
+      checkAvailability?: boolean;
+    }
+  ): ExpertProfile[] {
+    const { minLevel, checkAvailability = true } = options || {};
+    const experts = this.searchBySkill(query, minLevel);
+
+    if (!checkAvailability) {
+      return experts;
+    }
+
+    return experts.filter(expert => this.isAvailable(expert.userId));
+  }
 }
 
 // Singleton instance

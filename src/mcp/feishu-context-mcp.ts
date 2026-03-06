@@ -20,6 +20,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
+import { getExpertService } from '../experts/index.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -843,6 +844,71 @@ export async function wait_for_interaction(params: {
 }
 
 /**
+ * Find experts by skill.
+ *
+ * @see Issue #536 - 专家查询与匹配
+ */
+async function find_experts(params: {
+  skill: string;
+  minLevel?: number;
+  availableOnly?: boolean;
+}): Promise<{
+  success: boolean;
+  experts: Array<{
+    userId: string;
+    name: string;
+    skills: Array<{ name: string; level: number; tags?: string[] }>;
+    availability?: string;
+    isAvailable: boolean;
+  }>;
+  message: string;
+}> {
+  const { skill, minLevel, availableOnly = true } = params;
+
+  try {
+    const expertService = getExpertService();
+    const experts = expertService.searchAvailableExperts(skill, {
+      minLevel: minLevel as 1 | 2 | 3 | 4 | 5 | undefined,
+      checkAvailability: availableOnly,
+    });
+
+    const result = experts.map(expert => ({
+      userId: expert.userId,
+      name: expert.name,
+      skills: expert.skills.map(s => ({
+        name: s.name,
+        level: s.level,
+        tags: s.tags,
+      })),
+      availability: expert.availability,
+      isAvailable: expertService.isAvailable(expert.userId),
+    }));
+
+    if (result.length === 0) {
+      return {
+        success: true,
+        experts: [],
+        message: `No experts found for skill "${skill}"${minLevel ? ` with min level ${minLevel}` : ''}${availableOnly ? ' (available only)' : ''}`,
+      };
+    }
+
+    return {
+      success: true,
+      experts: result,
+      message: `Found ${result.length} expert(s) for skill "${skill}"`,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error({ err: error, skill }, 'find_experts failed');
+    return {
+      success: false,
+      experts: [],
+      message: `Failed to find experts: ${errorMessage}`,
+    };
+  }
+}
+
+/**
  * Tool definitions for Agent SDK integration.
  *
  * Export tools in a format compatible with inline MCP servers.
@@ -992,6 +1058,53 @@ export const feishuContextTools = {
       required: ['messageId', 'chatId'],
     },
     handler: wait_for_interaction,
+  },
+  find_experts: {
+    description: `Find human experts by skill. Searches the expert registry for experts with matching skills.
+
+**Usage:**
+\`\`\`json
+{
+  "skill": "TypeScript",
+  "minLevel": 3,
+  "availableOnly": true
+}
+\`\`\`
+
+**Returns:**
+- List of experts with their skills, levels, and availability status
+- Each expert includes userId (for contacting via Feishu), name, and skill details
+
+**Parameters:**
+- skill: Skill name or tag to search for (required)
+- minLevel: Minimum skill level filter (1-5, optional)
+- availableOnly: Only return currently available experts (default: true)
+
+**Use Cases:**
+- Find an expert to review code
+- Find an expert for consultation on a specific topic
+- Match experts to tasks based on skill requirements`,
+    parameters: {
+      type: 'object',
+      properties: {
+        skill: {
+          type: 'string',
+          description: 'Skill name or tag to search for (e.g., "TypeScript", "React", "backend")',
+        },
+        minLevel: {
+          type: 'number',
+          minimum: 1,
+          maximum: 5,
+          description: 'Minimum skill level filter (1-5)',
+        },
+        availableOnly: {
+          type: 'boolean',
+          description: 'Only return currently available experts (default: true)',
+        },
+      },
+      required: ['skill'],
+    },
+    handler: find_experts,
   },
 };
 
@@ -1213,6 +1326,53 @@ When parentMessageId is provided, the message is sent as a reply to that message
         }
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'find_experts',
+    description: `Find human experts by skill. Searches the expert registry for experts with matching skills.
+
+**Usage:**
+\`\`\`json
+{
+  "skill": "TypeScript",
+  "minLevel": 3,
+  "availableOnly": true
+}
+\`\`\`
+
+**Returns:**
+- List of experts with their skills, levels, and availability status
+- Each expert includes userId (for contacting via Feishu), name, and skill details
+
+**Use Cases:**
+- Find an expert to review code
+- Find an expert for consultation on a specific topic
+- Match experts to tasks based on skill requirements`,
+    parameters: z.object({
+      skill: z.string().describe('Skill name or tag to search for (e.g., "TypeScript", "React", "backend")'),
+      minLevel: z.number().min(1).max(5).optional().describe('Minimum skill level filter (1-5)'),
+      availableOnly: z.boolean().optional().describe('Only return currently available experts (default: true)'),
+    }),
+    handler: async ({ skill, minLevel, availableOnly }) => {
+      try {
+        const result = await find_experts({ skill, minLevel, availableOnly });
+        if (result.success && result.experts.length > 0) {
+          const expertList = result.experts
+            .map(
+              e =>
+                `- **${e.name}** (${e.userId})
+  Skills: ${e.skills.map(s => `${s.name} (L${s.level})`).join(', ')}
+  Available: ${e.isAvailable ? '✅' : '❌'}`
+            )
+            .join('\n');
+          return toolSuccess(`${result.message}\n\n${expertList}`);
+        } else {
+          return toolSuccess(result.message);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Expert search failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

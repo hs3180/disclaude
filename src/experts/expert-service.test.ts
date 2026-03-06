@@ -221,4 +221,62 @@ describe('ExpertService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('isAvailable', () => {
+    it('should return true if no availability set', () => {
+      service.registerExpert('user_123', 'John Doe');
+      expect(service.isAvailable('user_123')).toBe(true);
+    });
+
+    it('should return true for "always" availability', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', 'always');
+      expect(service.isAvailable('user_123')).toBe(true);
+    });
+
+    it('should return false for non-existent expert', () => {
+      expect(service.isAvailable('nonexistent')).toBe(false);
+    });
+
+    it('should return true if availability cannot be parsed', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', 'some random text');
+      expect(service.isAvailable('user_123')).toBe(true);
+    });
+  });
+
+  describe('searchAvailableExperts', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'Expert 1');
+      service.registerExpert('user_2', 'Expert 2');
+
+      service.addSkill('user_1', { name: 'TypeScript', level: 5 });
+      service.addSkill('user_2', { name: 'TypeScript', level: 3 });
+
+      // Set availability to "always" so tests don't depend on current time
+      service.setAvailability('user_1', 'always');
+      service.setAvailability('user_2', 'always');
+    });
+
+    it('should find available experts by skill', () => {
+      const experts = service.searchAvailableExperts('TypeScript');
+      expect(experts).toHaveLength(2);
+    });
+
+    it('should filter by minimum level', () => {
+      const experts = service.searchAvailableExperts('TypeScript', { minLevel: 4 });
+      expect(experts).toHaveLength(1);
+      expect(experts[0].name).toBe('Expert 1');
+    });
+
+    it('should skip availability check when disabled', () => {
+      // Set availability to something that would fail
+      service.setAvailability('user_1', 'weekdays 1:00-2:00');
+
+      const experts = service.searchAvailableExperts('TypeScript', {
+        checkAvailability: false,
+      });
+      expect(experts).toHaveLength(2);
+    });
+  });
 });
