@@ -163,7 +163,7 @@ export class PrimaryNode extends EventEmitter {
         await triggerNextStepRecommendation(
           chatId,
           threadId,
-          async (id: string, prompt: string, _tid?: string) => {
+          (id: string, prompt: string, _tid?: string) => {
             if (this.agentPool) {
               const agent = this.agentPool.getOrCreateChatAgent(id);
               agent.processMessage(id, prompt, `next-step-${Date.now()}`);

@@ -100,7 +100,7 @@ export async function leave_message(params: {
       logger.info({ chatId, message }, 'CLI mode: Offline message logged');
       return {
         success: true,
-        message: `✅ Offline message logged (CLI mode)`,
+        message: '✅ Offline message logged (CLI mode)',
         messageId: `cli-${Date.now()}`,
       };
     }
@@ -122,7 +122,7 @@ export async function leave_message(params: {
       };
     }
 
-    const messageId = sendResult.messageId;
+    const { messageId } = sendResult;
     if (!messageId) {
       return {
         success: false,
@@ -152,7 +152,7 @@ export async function leave_message(params: {
 
     return {
       success: true,
-      message: `✅ Offline message sent. User can reply at any time.`,
+      message: '✅ Offline message sent. User can reply at any time.',
       messageId,
     };
 

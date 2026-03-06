@@ -167,13 +167,13 @@ export class OfflineCallbackHandler {
   ): Promise<{ success: boolean; error?: string }> {
     switch (context.callbackAction) {
       case 'create_task':
-        return this.createTask(context, replyContent, userId);
+        return await this.createTask(context, replyContent, userId);
 
       case 'trigger_skill':
-        return this.triggerSkill(context, replyContent, userId);
+        return await this.triggerSkill(context, replyContent, userId);
 
       case 'record_knowledge':
-        return this.recordKnowledge(context, replyContent, userId);
+        return await this.recordKnowledge(context, replyContent, userId);
 
       default:
         return { success: false, error: `Unknown callback action: ${context.callbackAction}` };
@@ -304,7 +304,7 @@ Please process the user's response and take appropriate action.
       await fs.mkdir(knowledgeDir, { recursive: true });
 
       // Create a knowledge entry
-      const timestamp = new Date().toISOString().split('T')[0];
+      const [timestamp] = new Date().toISOString().split('T');
       const knowledgeFile = path.join(knowledgeDir, `offline-replies-${timestamp}.md`);
 
       const entry = `
