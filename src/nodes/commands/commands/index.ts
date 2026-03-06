@@ -39,3 +39,6 @@ export { TopicGroupCommand } from './topic-group-command.js';
 
 // Expert commands (Issue #535)
 export { ExpertCommand } from './expert-commands.js';
+
+// Budget commands (Issue #538)
+export { BudgetCommand } from './budget-commands.js';
