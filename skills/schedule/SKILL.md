@@ -282,3 +282,111 @@ After each operation, verify:
 - Execute unrelated operations
 - Create new schedules from within a scheduled task execution
 - Write prompts that depend on previous conversation context
+
+---
+
+## Example: Daily Soul Question (Issue #719)
+
+This example demonstrates how to create a schedule for the 0.4.2 MVP use case: daily analysis of chat/work records with open-ended "soul questions" to trigger discussions in topic groups.
+
+### Prerequisites
+
+1. **Topic Group**: First mark a group as a topic group using `/topic-group mark <chatId>`
+2. **Chat Logs**: The message logging system automatically records chat content to `workspace/logs/chat-messages/`
+
+### Schedule File
+
+Create `workspace/schedules/daily-soul-question.md`:
+
+```markdown
+---
+name: 每日灵魂拷问
+cron: "0 21 * * *"
+enabled: true
+blocking: true
+# ⚠️ Replace with your topic group's chatId
+chatId: oc_your_topic_group_chat_id
+createdAt: 2026-03-06T00:00:00.000Z
+---
+
+# 每日灵魂拷问
+
+## 背景
+
+0.4.2 的 MVP 用例：每日分析聊天/工作记录，发出开放式的灵魂拷问，引发话题群讨论。
+
+## 核心特点
+
+- **类 BBS 模式**: 不预期用户一定有响应
+- **开放式讨论**: 引发思考,而非等待决策
+- **主动推送**: 发送到话题群
+
+## 执行步骤
+
+### 步骤 1: 获取话题群
+
+读取 `workspace/groups.json` 文件,获取所有 `isTopicGroup: true` 的群。
+
+如果没有话题群,输出以下消息并结束:
+```
+📋 每日灵魂拷问: 暂无话题群
+
+请先使用 /topic-group mark <chatId> 命令标记一个群为话题群。
+```
+
+### 步骤 2: 读取今日聊天记录
+
+读取 `workspace/logs/chat-messages/` 目录下今天的日期文件夹中的所有 `.md` 文件。
+
+今天的日期格式为 YYYY-MM-DD (如 2026-03-06)。
+
+如果没有聊天记录,输出以下消息并发送到话题群:
+```
+📋 每日灵魂拷问: 今日暂无聊天记录
+
+今天还没有聊天记录,无法生成灵魂拷问。明天再试试吧!
+```
+
+### 步骤 3: 分析并生成灵魂拷问
+
+分析聊天记录,识别以下类型的话题:
+- 有趣的决策或讨论
+- 潜在的改进点
+- 值得反思的问题
+- 有趣的技术讨论
+
+生成 1-3 个开放式的灵魂拷问问题,格式示例:
+```
+🤔 今日灵魂拷问
+
+分析今天的聊天记录,发现一个有趣的问题:
+
+「在处理 xxx 时,我们选择了方案 A 而非方案 B。
+这个决策是否正确?有没有更好的选择?」
+
+欢迎在群里讨论 👇
+```
+
+### 步骤 4: 发送到话题群
+
+使用 `send_user_feedback` 工具发送灵魂拷问到第一个话题群。
+
+参数设置:
+- content: 灵魂拷问内容
+- format: "text"
+- chatId: 第一个话题群的 chatId
+
+## 重要提示
+
+1. **不要创建新的定时任务** - 这是定时任务执行环境的规则
+2. **不要修改现有的定时任务**
+3. **只执行上述步骤,完成后结束**
+4. **使用 send_user_feedback 发送消息时,确保 chatId 是话题群的 ID**
+
+## 验收标准
+
+- [ ] 能获取话题群列表
+- [ ] 能读取今日聊天记录
+- [ ] 能生成灵魂拷问内容
+- [ ] 能发送到话题群
+```
