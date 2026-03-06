@@ -231,6 +231,55 @@ export class GroupService {
   }
 
   /**
+   * Batch mark or unmark multiple groups as topic groups.
+   *
+   * This is useful for managing topic groups in bulk, especially when
+   * integrating with external systems or performing batch operations.
+   *
+   * @param chatIds - Array of chat IDs to update
+   * @param isTopic - Whether to mark as topic groups (default: true)
+   * @returns Object with success count and failed chat IDs
+   *
+   * @see Issue #873 - 话题群扩展 - 批量管理
+   */
+  markMultipleAsTopicGroups(
+    chatIds: string[],
+    isTopic: boolean = true
+  ): { successCount: number; failedChatIds: string[] } {
+    let successCount = 0;
+    const failedChatIds: string[] = [];
+
+    for (const chatId of chatIds) {
+      const success = this.markAsTopicGroup(chatId, isTopic);
+      if (success) {
+        successCount++;
+      } else {
+        failedChatIds.push(chatId);
+      }
+    }
+
+    logger.info(
+      { successCount, failedCount: failedChatIds.length, isTopic },
+      'Batch topic group operation completed'
+    );
+
+    return { successCount, failedChatIds };
+  }
+
+  /**
+   * Get all non-topic groups (regular groups).
+   *
+   * Useful for identifying groups that could be converted to topic groups.
+   *
+   * @returns Array of non-topic group info
+   *
+   * @see Issue #873 - 话题群扩展
+   */
+  listNonTopicGroups(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.isTopicGroup !== true);
+  }
+
+  /**
    * Get the storage file path.
    */
   getFilePath(): string {
