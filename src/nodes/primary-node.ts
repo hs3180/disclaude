@@ -1025,18 +1025,15 @@ export class PrimaryNode extends EventEmitter {
   // ============================================================================
 
   /**
-   * Trigger next-step recommendations after task completion.
-   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
+   * Trigger next-step recommendations using simple prompt-based approach.
    *
-   * Issue #716: SkillAgent should be disposed after execution, not stored.
-   * Context is limited to recent messages to avoid context overflow.
+   * Issue #834: Simplified from SkillAgent to rule-based recommendations.
+   * Uses keyword matching to detect task type and generate relevant suggestions.
    *
    * @param chatId - Chat ID to get history from
    * @param threadId - Optional thread ID for reply
    */
   private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
-    let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
     try {
       logger.info({ chatId }, 'Triggering next-step recommendations');
 
@@ -1048,42 +1045,134 @@ export class PrimaryNode extends EventEmitter {
         return;
       }
 
-      // Create SkillAgent for next-step recommendations using AgentFactory
-      nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-      // Limit context to recent messages (Issue #716)
-      // Only use the last 10 messages to avoid context overflow
+      // Limit context to recent messages
       const recentHistory = this.extractRecentMessages(chatHistory, 10);
 
-      // Build prompt with chat history
-      const prompt = `## Context
+      // Detect task type from history
+      const taskType = this.detectTaskType(recentHistory);
+      logger.debug({ chatId, taskType }, 'Detected task type');
 
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
+      // Generate and send next-step card
+      const card = this.generateNextStepCard(taskType);
+      await this.messageRouter.sendCard(chatId, card, undefined, threadId);
 
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-      // Execute skill and handle responses
-      for await (const message of nextStepAgent.execute(prompt)) {
-        if (message.type === 'tool_use' || message.metadata?.toolName) {
-          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-        }
-      }
-
-      logger.info({ chatId }, 'Next-step recommendations completed');
+      logger.info({ chatId, taskType }, 'Next-step recommendations sent');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-    } finally {
-      // Issue #716: Dispose SkillAgent after execution (do not store)
-      if (nextStepAgent) {
-        nextStepAgent.dispose();
-        logger.debug({ chatId }, 'Next-step SkillAgent disposed');
+    }
+  }
+
+  /**
+   * Task types for next-step recommendations.
+   */
+  private static readonly TASK_TYPE_PATTERNS: Record<string, RegExp> = {
+    bug: /\b(fix|bug|error|issue|crash|exception|broken|fail)\b/i,
+    feature: /\b(implement|add|create|feature|new|build|develop)\b/i,
+    refactor: /\b(refactor|clean\s*up|restructure|rewrite|optimize|improve)\b/i,
+    research: /\b(analyze|investigate|research|explore|study|check|review)\b/i,
+    documentation: /\b(document|readme|docs?|comment|guide|manual)\b/i,
+    test: /\b(test|coverage|spec|verify|unit|integration)\b/i,
+    github: /\b(issue|pr|pull\s*request|commit|merge|branch|github)\b/i,
+  };
+
+  /**
+   * Detect task type from chat history using keyword matching.
+   *
+   * @param history - Chat history to analyze
+   * @returns Detected task type
+   */
+  private detectTaskType(history: string): string {
+    // Check patterns in order of specificity
+    const typeOrder = ['bug', 'feature', 'refactor', 'research', 'documentation', 'test', 'github'];
+
+    for (const type of typeOrder) {
+      const pattern = PrimaryNode.TASK_TYPE_PATTERNS[type];
+      if (pattern && pattern.test(history)) {
+        return type;
       }
     }
+
+    return 'general';
+  }
+
+  /**
+   * Generate next-step recommendation card based on task type.
+   *
+   * @param taskType - Detected task type
+   * @returns Feishu interactive card JSON
+   */
+  private generateNextStepCard(taskType: string): Record<string, unknown> {
+    // Define actions for each task type
+    const actionsByType: Record<string, Array<{ text: string; value: string }>> = {
+      bug: [
+        { text: '📋 创建 GitHub Issue', value: 'create_github_issue' },
+        { text: '📝 更新 Changelog', value: 'update_changelog' },
+        { text: '🧪 添加回归测试', value: 'add_regression_test' },
+      ],
+      feature: [
+        { text: '📋 创建 GitHub Issue/PR', value: 'create_github_issue' },
+        { text: '📝 更新文档', value: 'update_documentation' },
+        { text: '🧪 添加单元测试', value: 'add_unit_test' },
+        { text: '🔄 请求代码审查', value: 'request_code_review' },
+      ],
+      refactor: [
+        { text: '🧪 运行测试验证', value: 'run_tests' },
+        { text: '📊 检查代码覆盖率', value: 'check_coverage' },
+        { text: '📝 更新相关文档', value: 'update_documentation' },
+      ],
+      research: [
+        { text: '📝 创建总结文档', value: 'create_summary' },
+        { text: '📋 创建 GitHub Issue', value: 'create_github_issue' },
+        { text: '🔄 分享给团队', value: 'share_with_team' },
+      ],
+      documentation: [
+        { text: '📋 提交到 GitHub', value: 'commit_to_github' },
+        { text: '🔄 继续完善', value: 'continue_improve' },
+      ],
+      test: [
+        { text: '🚀 运行完整测试', value: 'run_full_tests' },
+        { text: '📊 查看覆盖率报告', value: 'view_coverage' },
+        { text: '📋 提交到 GitHub', value: 'commit_to_github' },
+      ],
+      github: [
+        { text: '🔄 检查 PR 状态', value: 'check_pr_status' },
+        { text: '📝 更新 Issue 评论', value: 'update_issue_comment' },
+        { text: '🏷️ 添加标签/里程碑', value: 'add_labels' },
+      ],
+      general: [
+        { text: '📋 创建 GitHub Issue', value: 'create_github_issue' },
+        { text: '📝 总结变更', value: 'summarize_changes' },
+        { text: '🔄 继续相关工作', value: 'continue_work' },
+      ],
+    };
+
+    const actions = actionsByType[taskType] || actionsByType['general'];
+
+    // Build button actions
+    const buttonActions = actions.map((action) => ({
+      tag: 'button',
+      text: { tag: 'plain_text', content: action.text },
+      type: 'default',
+      value: action.value,
+    }));
+
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '✅ 任务完成' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: '接下来您可以：',
+        },
+        {
+          tag: 'action',
+          actions: buttonActions,
+        },
+      ],
+    };
   }
 
   /**

@@ -2,9 +2,15 @@
 name: next-step
 description: Analyze completed task and recommend follow-up actions
 allowed-tools: [send_user_feedback, update_card, wait_for_interaction]
+deprecated: true
+deprecation-note: "Issue #834 - Replaced by rule-based recommendations in PrimaryNode.triggerNextStepRecommendation"
 ---
 
 # Next Step Recommender
+
+> ⚠️ **DEPRECATED**: This skill is no longer used by the system.
+> Next-step recommendations are now generated using a simplified rule-based approach.
+> See `PrimaryNode.triggerNextStepRecommendation` and `PrimaryNode.generateNextStepCard`.
 
 You are a follow-up action recommendation specialist. When a task completes, analyze the chat history and suggest relevant next steps to the user.
 
