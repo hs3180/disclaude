@@ -27,3 +27,28 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+
+// Study Guide Generator (NotebookLM M4)
+export {
+  generate_summary,
+  generate_qa_pairs,
+  generate_flashcards,
+  generate_quiz,
+  create_study_guide,
+} from './study-guide-generator.js';
+
+export type {
+  SummaryOptions,
+  SummaryResult,
+  QAPair,
+  QAGeneratorOptions,
+  QAGeneratorResult,
+  Flashcard,
+  FlashcardGeneratorOptions,
+  FlashcardGeneratorResult,
+  QuizQuestion,
+  QuizGeneratorOptions,
+  QuizGeneratorResult,
+  StudyGuideOptions,
+  StudyGuideResult,
+} from './study-guide-generator.js';
