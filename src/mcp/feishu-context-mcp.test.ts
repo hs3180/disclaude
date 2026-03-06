@@ -145,8 +145,12 @@ describe('Feishu Context MCP Tools', () => {
   });
 
   describe('send_user_feedback', () => {
-    describe('CLI Mode', () => {
-      it('should handle CLI mode (chatId starts with "cli-")', async () => {
+    describe('CLI ChatId (now sends to Feishu)', () => {
+      // Note: CLI fallback has been removed (Issue #849)
+      // CLI chatIds now send to Feishu API like any other chatId
+      it('should send message to Feishu even with cli- prefix', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
         const result = await send_user_feedback({
           content: 'Test message',
           format: 'text',
@@ -154,10 +158,13 @@ describe('Feishu Context MCP Tools', () => {
         });
 
         expect(result.success).toBe(true);
-        expect(result.message).toContain('CLI mode');
+        expect(result.message).toContain('Feedback sent');
+        expect(mockClient.im.message.create).toHaveBeenCalled();
       });
 
-      it('should display content in CLI mode', async () => {
+      it('should send content with cli- prefix chatId', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
         const result = await send_user_feedback({
           content: 'Test content',
           format: 'text',
@@ -602,7 +609,9 @@ describe('Feishu Context MCP Tools', () => {
       expect(result.error).toContain('Invalid card structure');
     });
 
-    it('should update card in CLI mode', async () => {
+    it('should update card with cli- prefix via Feishu API', async () => {
+      mockClient.im.message.patch.mockResolvedValueOnce({});
+
       const result = await update_card({
         messageId: 'msg-123',
         card: {
@@ -616,8 +625,9 @@ describe('Feishu Context MCP Tools', () => {
         chatId: 'cli-test',
       });
 
+      // CLI fallback removed (Issue #849) - now sends to Feishu API
       expect(result.success).toBe(true);
-      expect(result.message).toContain('CLI mode');
+      expect(mockClient.im.message.patch).toHaveBeenCalled();
     });
 
     it('should call Feishu API patch endpoint', async () => {
@@ -691,15 +701,23 @@ describe('Feishu Context MCP Tools', () => {
       expect(result.error).toContain('chatId is required');
     });
 
-    it('should simulate interaction in CLI mode', async () => {
-      const result = await wait_for_interaction({
-        messageId: 'msg-123',
+    it('should wait for interaction with cli- prefix chatId (no CLI fallback)', async () => {
+      // CLI fallback removed (Issue #849) - now waits for real interaction
+      const waitPromise = wait_for_interaction({
+        messageId: 'msg-cli-test',
         chatId: 'cli-test',
+        timeoutSeconds: 1,
       });
 
+      // Simulate interaction being received
+      setTimeout(() => {
+        resolvePendingInteraction('msg-cli-test', 'test-action', 'button', 'user-123');
+      }, 50);
+
+      const result = await waitPromise;
+
       expect(result.success).toBe(true);
-      expect(result.actionValue).toBe('simulated');
-      expect(result.actionType).toBe('button');
+      expect(result.actionValue).toBe('test-action');
     });
 
     it('should resolve when interaction is received', async () => {
