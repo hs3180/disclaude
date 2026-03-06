@@ -64,6 +64,7 @@ export class ScheduleManagement {
         isRunning: scheduler?.isTaskRunning(task.id) ?? false,
         chatId: task.chatId,
         createdAt: task.createdAt,
+        cooldownPeriod: task.cooldownPeriod,
       };
     });
   }
@@ -173,5 +174,30 @@ export class ScheduleManagement {
    */
   isScheduleRunning(taskId: string): boolean {
     return this.deps.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false;
+  }
+
+  /**
+   * Get cooldown status for a schedule.
+   * Issue #869: 冷静期支持
+   */
+  async getScheduleCooldownStatus(taskId: string, cooldownPeriod?: number): Promise<{
+    isInCooldown: boolean;
+    lastExecutionTime: Date | null;
+    cooldownEndsAt: Date | null;
+    remainingMs: number;
+  } | null> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) { return null; }
+    return scheduler.getCooldownStatus(taskId, cooldownPeriod);
+  }
+
+  /**
+   * Clear cooldown for a schedule.
+   * Issue #869: 冷静期支持
+   */
+  async clearScheduleCooldown(taskId: string): Promise<boolean> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) { return false; }
+    return scheduler.clearCooldown(taskId);
   }
 }

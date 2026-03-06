@@ -39,6 +39,8 @@ export interface ScheduledTask {
   enabled: boolean;
   /** Whether to block concurrent executions (skip if previous still running) */
   blocking?: boolean;
+  /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */
+  cooldownPeriod?: number;
   /** Creation timestamp */
   createdAt: string;
   /** Last execution timestamp (read from file, for display purposes only) */

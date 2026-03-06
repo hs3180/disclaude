@@ -17,6 +17,7 @@ export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 
 /**
  * Schedule task info for display.
  * Issue #469: 定时任务控制指令
+ * Issue #869: 冷静期支持
  */
 export interface ScheduleTaskInfo {
   /** Task ID */
@@ -35,6 +36,8 @@ export interface ScheduleTaskInfo {
   chatId: string;
   /** Creation timestamp */
   createdAt?: string;
+  /** Cooldown period in milliseconds (Issue #869) */
+  cooldownPeriod?: number;
 }
 
 /**
@@ -176,6 +179,17 @@ export interface CommandServices {
 
   /** Check if a schedule is currently running */
   isScheduleRunning: (taskId: string) => boolean;
+
+  /** Get cooldown status for a schedule (Issue #869) */
+  getScheduleCooldownStatus: (taskId: string, cooldownPeriod?: number) => Promise<{
+    isInCooldown: boolean;
+    lastExecutionTime: Date | null;
+    cooldownEndsAt: Date | null;
+    remainingMs: number;
+  } | null>;
+
+  /** Clear cooldown for a schedule (Issue #869) */
+  clearScheduleCooldown: (taskId: string) => Promise<boolean>;
 
   // Task management methods (Issue #468)
 
