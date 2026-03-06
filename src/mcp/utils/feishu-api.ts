@@ -7,6 +7,13 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 
 /**
+ * Result of sending a message to Feishu.
+ */
+export interface SendMessageResult {
+  messageId?: string;
+}
+
+/**
  * Send a message to Feishu chat.
  */
 export async function sendMessageToFeishu(
@@ -15,7 +22,7 @@ export async function sendMessageToFeishu(
   msgType: 'text' | 'interactive',
   content: string,
   parentId?: string
-): Promise<void> {
+): Promise<SendMessageResult> {
   const messageData: {
     receive_id_type?: string;
     msg_type: string;
@@ -26,14 +33,16 @@ export async function sendMessageToFeishu(
   };
 
   if (parentId) {
-    await client.im.message.reply({
+    const response = await client.im.message.reply({
       path: { message_id: parentId },
       data: messageData,
     });
+    return { messageId: response?.data?.message_id };
   } else {
-    await client.im.message.create({
+    const response = await client.im.message.create({
       params: { receive_id_type: 'chat_id' },
       data: { receive_id: chatId, ...messageData },
     });
+    return { messageId: response?.data?.message_id };
   }
 }

@@ -16,6 +16,7 @@ import { InteractionManager } from '../../platforms/feishu/interaction-manager.j
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
+import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
@@ -566,8 +567,19 @@ export class MessageHandler {
 
     // Always emit card action as a message to the agent
     try {
-      const buttonText = action.text || action.value;
-      const messageContent = `User clicked '${buttonText}' button`;
+      // Try to get a pre-defined prompt template first
+      const promptFromTemplate = generateInteractionPrompt(
+        message_id,
+        action.value,
+        action.text,
+        action.type
+      );
+
+      // Use the template prompt if available, otherwise use default message
+      const messageContent = promptFromTemplate || (() => {
+        const buttonText = action.text || action.value;
+        return `User clicked '${buttonText}' button`;
+      })();
 
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
@@ -580,11 +592,12 @@ export class MessageHandler {
           cardAction: action,
           cardMessageId: message_id,
           wasPendingInteraction: resolved,
+          usedPromptTemplate: !!promptFromTemplate,
         },
       });
 
       logger.debug(
-        { messageId: message_id, chatId: chat_id, actionValue: action.value },
+        { messageId: message_id, chatId: chat_id, actionValue: action.value, usedTemplate: !!promptFromTemplate },
         'Card action emitted as message to agent'
       );
     } catch (error) {
@@ -599,8 +612,19 @@ export class MessageHandler {
     try {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-        const buttonText = defaultEvent.action.text || defaultEvent.action.value;
-        const messageContent = `The user clicked '${buttonText}' button`;
+        // Try to get a pre-defined prompt template first
+        const promptFromTemplate = generateInteractionPrompt(
+          defaultEvent.message_id,
+          defaultEvent.action.value,
+          defaultEvent.action.text,
+          defaultEvent.action.type
+        );
+
+        // Use the template prompt if available, otherwise use default message
+        const messageContent = promptFromTemplate || (() => {
+          const buttonText = defaultEvent.action.text || defaultEvent.action.value;
+          return `The user clicked '${buttonText}' button`;
+        })();
 
         await this.callbacks.emitMessage({
           messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,
@@ -612,6 +636,7 @@ export class MessageHandler {
           metadata: {
             cardAction: defaultEvent.action,
             cardMessageId: defaultEvent.message_id,
+            usedPromptTemplate: !!promptFromTemplate,
           },
         });
       });

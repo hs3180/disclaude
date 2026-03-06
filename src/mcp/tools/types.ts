@@ -66,3 +66,34 @@ export interface PendingInteraction {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * Map of action values to prompt templates.
+ * Keys are action values from button/menu components.
+ * Values are prompt templates that can include placeholders:
+ * - {{actionText}} - The display text of the clicked button/option
+ * - {{actionValue}} - The value of the action
+ * - {{actionType}} - The type of action (button, select_static, etc.)
+ * - {{form.fieldName}} - Form field values (for form submissions)
+ */
+export type ActionPromptMap = Record<string, string>;
+
+/**
+ * Context for an interactive message.
+ */
+export interface InteractiveMessageContext {
+  messageId: string;
+  chatId: string;
+  actionPrompts: ActionPromptMap;
+  createdAt: number;
+}
+
+/**
+ * Result type for send_interactive_message tool.
+ */
+export interface SendInteractiveResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  error?: string;
+}
