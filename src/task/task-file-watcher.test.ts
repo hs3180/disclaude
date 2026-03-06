@@ -118,7 +118,8 @@ const simulateFileCreation = (dirName: string, content: string) => {
 };
 
 // Helper to wait for callback to be called
-const waitForCallback = (fn: ReturnType<typeof vi.fn>, timeout = 3000) => {
+// Increased default timeout from 3000ms to 5000ms for CI environments (Issue #980)
+const waitForCallback = (fn: ReturnType<typeof vi.fn>, timeout = 5000) => {
   return new Promise<void>((resolve, reject) => {
     const startTime = Date.now();
     const check = () => {
@@ -223,8 +224,9 @@ describe('TaskFileWatcher', () => {
       });
 
       await watcher.start();
-      // Wait for initial scan to complete
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Wait for initial scan to complete and mainLoop to enter waitForNewTask state
+      // Increased from 50ms to 100ms to prevent timeout in CI environments (Issue #980)
+      await new Promise(resolve => setTimeout(resolve, 100));
     });
 
     afterEach(() => {
