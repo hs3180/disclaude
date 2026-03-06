@@ -231,6 +231,61 @@ npm run test               # Run tests
 npm run test -- --coverage # With coverage
 ```
 
+## Testing Rules (Mandatory)
+
+These rules are enforced to prevent AI agents from "self-justifying" tests by modifying mock return values to keep tests green while actual behavior is broken.
+
+### 1. Prohibit vi.mock() for External SDKs
+
+**严禁对外部 SDK 使用 vi.mock()**：`@anthropic-ai/sdk`、`@larksuiteoapi/node-sdk` 等外部网络库不得使用 vi.mock()，违反此规则将导致 ESLint 报错并阻断 CI。
+
+```typescript
+// ❌ PROHIBITED - Will cause ESLint error
+vi.mock('@anthropic-ai/sdk');
+vi.mock('@larksuiteoapi/node-sdk');
+
+// ✅ CORRECT - Use nock for network interception
+import nock from 'nock';
+nock('https://api.anthropic.com')
+  .post('/v1/messages')
+  .reply(200, { content: 'mocked response' });
+```
+
+### 2. Network Tests Must Use nock
+
+**网络交互测试必须使用 nock**：需要模拟 HTTP 交互时，在 `tests/fixtures/recordings/` 提供录制的请求/响应 JSON，通过 nock 加载后测试。
+
+```typescript
+// ✅ Using nock for HTTP mocking
+import nock from 'nock';
+
+describe('API tests', () => {
+  afterEach(() => nock.cleanAll());
+
+  it('should fetch data', async () => {
+    nock('https://api.example.com')
+      .get('/data')
+      .reply(200, { result: 'success' });
+
+    const result = await fetchData();
+    expect(result).toEqual({ result: 'success' });
+  });
+});
+```
+
+### 3. Build Before Delete
+
+**先建后删原则**：重构测试时，必须先新增替代测试并确保覆盖率不下降，再删除旧的 vi.mock 代码。
+
+**Why?** The project has a 70% coverage threshold. Deleting tests before adding replacements will cause CI to fail due to coverage drops.
+
+### Network Isolation
+
+All tests run with network isolation enabled via `tests/setup.ts`:
+- External network requests are BLOCKED by default
+- Only `localhost` and `127.0.0.1` are allowed
+- Use `allowHost()` helper for specific test scenarios requiring real network access
+
 ## Development Workflow
 
 ### PM2 Restart Policy

@@ -7,6 +7,20 @@
 import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 
+// Legacy test files that still use vi.mock() for external SDKs
+// These will be refactored in Epic 2-6 to use nock instead
+const legacyMockTestFiles = [
+  'src/agents/pilot.test.ts',
+  'src/channels/feishu-channel-bot-mention.test.ts',
+  'src/channels/feishu-channel-mention.test.ts',
+  'src/channels/feishu-channel-passive-mode.test.ts',
+  'src/mcp/feishu-context-mcp.test.ts',
+  'src/mcp/feishu-mcp-server.test.ts',
+  'src/mcp/tools/interactive-message.test.ts',
+  'src/platforms/feishu/feishu-adapter.test.ts',
+  'src/platforms/feishu/feishu-message-sender.test.ts',
+];
+
 export default [
   {
     // Ignore patterns
@@ -88,6 +102,29 @@ export default [
       // Import rules
       'no-unreachable': 'error',
       'no-unused-labels': 'error',
+    },
+  },
+  {
+    // Test files: Prohibit direct mocking of external SDK modules
+    // This forces tests to use nock for network interception instead of vi.mock()
+    files: ['**/*.test.ts', '**/*.spec.ts'],
+    ignores: legacyMockTestFiles,
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'][arguments.0.value=/@anthropic-ai/]",
+          message:
+            '禁止对 @anthropic-ai/sdk 使用 vi.mock()。请使用 nock VCR 录制回放模式进行网络拦截。参见 Issue #918。',
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='vi'][callee.property.name='mock'][arguments.0.value=/@larksuiteoapi/]",
+          message:
+            '禁止对 @larksuiteoapi/node-sdk 使用 vi.mock()。请使用 nock VCR 录制回放模式进行网络拦截。参见 Issue #918。',
+        },
+      ],
     },
   },
 ];
