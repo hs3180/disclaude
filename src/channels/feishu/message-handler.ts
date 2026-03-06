@@ -3,6 +3,7 @@
  *
  * Handles incoming message events and card actions for Feishu channel.
  * Issue #694: Extracted from feishu-channel.ts
+ * Issue #846: Added support for quoted/reply messages and merged forward messages
  */
 
 import type * as lark from '@larksuiteoapi/node-sdk';
@@ -17,6 +18,7 @@ import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
+import { createMessageQuoteResolver } from '../../feishu/message-quote-resolver.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
 import type {
@@ -272,7 +274,9 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    // root_id is available for topic messages but not currently used
+    // Issue #846: parent_id is used for quote reply support
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -360,40 +364,53 @@ export class MessageHandler {
       return;
     }
 
-    // Handle text and post messages
-    if (message_type !== 'text' && message_type !== 'post') {
+    // Handle text, post, and merge_forward messages
+    // Issue #846: Added merge_forward support for bundled forwarded chat history
+    if (message_type !== 'text' && message_type !== 'post' && message_type !== 'merge_forward') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
       await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
       return;
     }
 
-    // Parse content
+    // Parse text content
     let text = '';
-    try {
-      const parsed = JSON.parse(content);
-      if (message_type === 'text') {
-        text = parsed.text?.trim() || '';
-      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        for (const row of parsed.content) {
-          if (Array.isArray(row)) {
-            for (const segment of row) {
-              if (segment?.tag === 'text' && segment.text) {
-                text += segment.text;
+
+    if (message_type === 'merge_forward') {
+      // For merge_forward messages, we use a placeholder
+      // The actual content will be fetched via API in the quote resolver
+      logger.info(
+        { chatId: chat_id, messageId: message_id },
+        'Processing merge_forward message (bundled forwarded chat history)'
+      );
+      text = '[转发的对话记录]';
+    } else {
+      // Parse content for text and post messages
+      try {
+        const parsed = JSON.parse(content);
+        if (message_type === 'text') {
+          text = parsed.text?.trim() || '';
+        } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
+          for (const row of parsed.content) {
+            if (Array.isArray(row)) {
+              for (const segment of row) {
+                if (segment?.tag === 'text' && segment.text) {
+                  text += segment.text;
+                }
               }
             }
           }
+          text = text.trim();
         }
-        text = text.trim();
+      } catch {
+        logger.error('Failed to parse content');
+        return;
       }
-    } catch {
-      logger.error('Failed to parse content');
-      return;
-    }
 
-    if (!text) {
-      logger.debug('Skipped empty text');
-      await this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
-      return;
+      if (!text) {
+        logger.debug('Skipped empty text');
+        await this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
+        return;
+      }
     }
 
     logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
@@ -511,6 +528,45 @@ export class MessageHandler {
       );
     }
 
+    // Resolve quoted/forwarded message content (Issue #846)
+    let quoteContextString: string | undefined;
+    if ((parent_id || message_type === 'merge_forward') && this.client) {
+      try {
+        const quoteResolver = createMessageQuoteResolver(this.client);
+        const quoteResult = await quoteResolver.resolveMessageQuote(
+          message_type,
+          parent_id,
+          message_id
+        );
+
+        if (quoteResult?.contextString) {
+          quoteContextString = quoteResult.contextString;
+          logger.info(
+            {
+              messageId: message_id,
+              isReply: quoteResult.isReply,
+              isMergedForward: quoteResult.isMergedForward,
+            },
+            'Resolved quoted/forwarded message context'
+          );
+        }
+      } catch (error) {
+        logger.error(
+          { err: error, messageId: message_id, parentId: parent_id },
+          'Failed to resolve quote context'
+        );
+      }
+    }
+
+    // Build metadata with quote context and chat history
+    const metadata: Record<string, unknown> = {};
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+    if (quoteContextString) {
+      metadata.quoteContext = quoteContextString;
+    }
+
     // Emit as incoming message
     await this.callbacks.emitMessage({
       messageId: message_id,
@@ -520,7 +576,7 @@ export class MessageHandler {
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 
