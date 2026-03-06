@@ -15,6 +15,7 @@ import type {
   OutgoingMessage,
   ChannelCapabilities,
   IncomingMessage,
+  ControlCommandType,
 } from './types.js';
 import {
   RuliuMessageSender,
@@ -318,7 +319,7 @@ export class RuliuChannel extends BaseChannel<RuliuChannelConfig> {
       // Try to handle as control command
       if (this.controlHandler) {
         const response = await this.emitControl({
-          type: cmd,
+          type: cmd as ControlCommandType,
           chatId,
           data: { args, rawText: text, senderId: event.fromuser },
         });

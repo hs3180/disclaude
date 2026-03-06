@@ -46,8 +46,9 @@ describe('RuliuChannel Command Handling', () => {
 
     // Track sent messages
     sentMessages = [];
-    channel.onMessage(async (msg) => {
+    channel.onMessage((_msg): Promise<void> => {
       // Message handler (not used in command tests)
+      return Promise.resolve();
     });
 
     return channel;
@@ -73,10 +74,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should handle /reset command', async () => {
-      // Intercept sendMessage
-      const originalSendMessage = channel.sendMessage.bind(channel);
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       // Simulate receiving a /reset message
@@ -98,8 +98,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should handle /status command', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -119,8 +120,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should handle /help command', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -141,8 +143,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should show unknown command message for unrecognized commands', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -162,8 +165,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should handle commands in group chat', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -190,22 +194,23 @@ describe('RuliuChannel Command Handling', () => {
       createChannel();
 
       // Set up control handler
-      controlHandler = vi.fn(async (cmd): Promise<ControlResponse> => {
+      controlHandler = vi.fn((cmd): Promise<ControlResponse> => {
         if (cmd.type === 'reset') {
-          return { success: true, message: 'Custom reset message from handler' };
+          return Promise.resolve({ success: true, message: 'Custom reset message from handler' });
         }
         if (cmd.type === 'status') {
-          return { success: true, message: 'Custom status from handler' };
+          return Promise.resolve({ success: true, message: 'Custom status from handler' });
         }
-        return { success: false, error: 'Unknown command' };
+        return Promise.resolve({ success: false, error: 'Unknown command' });
       });
 
       channel.onControl(controlHandler);
     });
 
     it('should use control handler for /reset command', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -230,8 +235,9 @@ describe('RuliuChannel Command Handling', () => {
     });
 
     it('should show unknown command when control handler returns failure', async () => {
-      vi.spyOn(channel, 'sendMessage').mockImplementation(async (msg) => {
+      vi.spyOn(channel, 'sendMessage').mockImplementation((msg) => {
         sentMessages.push({ chatId: msg.chatId, type: msg.type, text: msg.text });
+        return Promise.resolve();
       });
 
       const event = {
@@ -257,8 +263,9 @@ describe('RuliuChannel Command Handling', () => {
 
     it('should pass non-command messages to message handler', async () => {
       let receivedMessage: unknown = null;
-      channel.onMessage(async (msg) => {
+      channel.onMessage((msg): Promise<void> => {
         receivedMessage = msg;
+        return Promise.resolve();
       });
 
       const event = {
