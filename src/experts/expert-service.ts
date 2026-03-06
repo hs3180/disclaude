@@ -71,6 +71,18 @@ export interface ExpertServiceConfig {
 }
 
 /**
+ * Options for searching experts.
+ */
+export interface ExpertSearchOptions {
+  /** Minimum skill level filter (1-5) */
+  minLevel?: SkillLevel;
+  /** Only return currently available experts */
+  available?: boolean;
+  /** Maximum number of results to return */
+  limit?: number;
+}
+
+/**
  * Service for managing human experts.
  *
  * Features:
@@ -288,16 +300,116 @@ export class ExpertService {
    * @param minLevel - Minimum skill level filter (optional)
    * @returns Array of matching expert profiles
    */
-  searchBySkill(query: string, minLevel?: SkillLevel): ExpertProfile[] {
+  searchBySkill(query: string, minLevel?: SkillLevel): ExpertProfile[];
+  /**
+   * Search experts by skill name or tag with options.
+   *
+   * @param query - Skill name or tag to search for
+   * @param options - Search options
+   * @returns Array of matching expert profiles
+   */
+  searchBySkill(query: string, options: ExpertSearchOptions): ExpertProfile[];
+  searchBySkill(query: string, minLevelOrOptions?: SkillLevel | ExpertSearchOptions): ExpertProfile[] {
     const queryLower = query.toLowerCase();
-    return Object.values(this.registry.experts).filter(expert => {
-      return expert.skills.some(skill => {
+
+    // Normalize options
+    const options: ExpertSearchOptions = typeof minLevelOrOptions === 'number'
+      ? { minLevel: minLevelOrOptions }
+      : (minLevelOrOptions ?? {});
+
+    let results = Object.values(this.registry.experts).filter(expert => {
+      // Check skill match
+      const hasMatchingSkill = expert.skills.some(skill => {
         const nameMatch = skill.name.toLowerCase().includes(queryLower);
         const tagMatch = skill.tags?.some(t => t.toLowerCase().includes(queryLower)) ?? false;
-        const levelMatch = minLevel === undefined || skill.level >= minLevel;
+        const levelMatch = options.minLevel === undefined || skill.level >= options.minLevel;
         return (nameMatch || tagMatch) && levelMatch;
       });
+
+      if (!hasMatchingSkill) {
+        return false;
+      }
+
+      // Check availability if requested
+      if (options.available && !this.isExpertAvailable(expert)) {
+        return false;
+      }
+
+      return true;
     });
+
+    // Apply limit if specified
+    if (options.limit !== undefined && options.limit > 0) {
+      results = results.slice(0, options.limit);
+    }
+
+    return results;
+  }
+
+  /**
+   * Check if an expert is currently available based on their availability string.
+   *
+   * Supported availability formats:
+   * - "weekdays 10:00-18:00" - Available on weekdays during specified hours
+   * - "工作日 10:00-18:00" - Same as above in Chinese
+   * - "9:00-17:00" - Available daily during specified hours
+   * - "anytime" or "随时" - Always available
+   *
+   * @param expert - Expert profile to check
+   * @returns Whether the expert is currently available
+   */
+  isExpertAvailable(expert: ExpertProfile): boolean {
+    // No availability set means not available when filtering
+    if (!expert.availability) {
+      return false;
+    }
+
+    const availability = expert.availability.toLowerCase().trim();
+
+    // Check for "anytime" or "随时"
+    if (availability === 'anytime' || availability === '随时') {
+      return true;
+    }
+
+    // Parse availability string
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute;
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+
+    // Check for weekday-only availability
+    const weekdayPattern = /^(weekdays|工作日)\s+(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/i;
+    const weekdayMatch = availability.match(weekdayPattern);
+    if (weekdayMatch) {
+      if (!isWeekday) {
+        return false;
+      }
+      const startHour = parseInt(weekdayMatch[2], 10);
+      const startMin = parseInt(weekdayMatch[3], 10);
+      const endHour = parseInt(weekdayMatch[4], 10);
+      const endMin = parseInt(weekdayMatch[5], 10);
+      const startTime = startHour * 60 + startMin;
+      const endTime = endHour * 60 + endMin;
+      return currentTime >= startTime && currentTime <= endTime;
+    }
+
+    // Check for daily time range availability
+    const dailyPattern = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/;
+    const dailyMatch = availability.match(dailyPattern);
+    if (dailyMatch) {
+      const startHour = parseInt(dailyMatch[1], 10);
+      const startMin = parseInt(dailyMatch[2], 10);
+      const endHour = parseInt(dailyMatch[3], 10);
+      const endMin = parseInt(dailyMatch[4], 10);
+      const startTime = startHour * 60 + startMin;
+      const endTime = endHour * 60 + endMin;
+      return currentTime >= startTime && currentTime <= endTime;
+    }
+
+    // Unknown format - assume available if availability is set
+    return true;
   }
 
   /**

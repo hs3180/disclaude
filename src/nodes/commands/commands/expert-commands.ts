@@ -14,7 +14,7 @@
  */
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
-import { getExpertService, type SkillLevel, type SkillDeclaration } from '../../../experts/index.js';
+import { getExpertService, type SkillLevel, type SkillDeclaration, type ExpertSearchOptions } from '../../../experts/index.js';
 
 /**
  * Parse skill level from string.
@@ -69,7 +69,7 @@ function formatProfile(profile: ReturnType<typeof getExpertService>['getExpert']
  * - /expert skills add <name> <level> [tags...] - Add skill
  * - /expert skills remove <name> - Remove skill
  * - /expert availability <hours> - Set availability
- * - /expert search <skill> [minLevel] - Search experts
+ * - /expert search <skill> [minLevel] [--available] - Search experts
  * - /expert list - List all experts
  */
 export class ExpertCommand implements Command {
@@ -103,7 +103,7 @@ export class ExpertCommand implements Command {
       default:
         return {
           success: false,
-          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert search <技能> [最低等级]\n- /expert list - 列出所有专家`,
+          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert search <技能> [最低等级] [--available]\n- /expert list - 列出所有专家`,
         };
     }
   }
@@ -239,24 +239,45 @@ export class ExpertCommand implements Command {
     const { args } = context;
     const expertService = getExpertService();
 
-    const [, query, minLevelStr] = args;
+    // Parse arguments: /expert search <skill> [minLevel] [--available]
+    const searchArgs = args.slice(1);
+    const availableFlag = searchArgs.includes('--available') || searchArgs.includes('-a');
+    const filteredArgs = searchArgs.filter(arg => arg !== '--available' && arg !== '-a');
+
+    const [query, minLevelStr] = filteredArgs;
 
     if (!query) {
-      return { success: false, error: '❌ 请指定搜索关键词\n\n用法: /expert search <技能> [最低等级]' };
-    }
-
-    const minLevel = minLevelStr ? parseSkillLevel(minLevelStr) : undefined;
-    const experts = expertService.searchBySkill(query, minLevel);
-
-    if (experts.length === 0) {
       return {
-        success: true,
-        message: `🔍 未找到匹配 "${query}" 的专家`,
+        success: false,
+        error: '❌ 请指定搜索关键词\n\n用法: /expert search <技能> [最低等级] [--available]\n\n选项:\n  --available, -a  只显示当前可用的专家',
       };
     }
 
+    const options: ExpertSearchOptions = {};
+    if (minLevelStr) {
+      const minLevel = parseSkillLevel(minLevelStr);
+      if (!minLevel) {
+        return { success: false, error: '❌ 等级必须是 1-5 的数字' };
+      }
+      options.minLevel = minLevel;
+    }
+    if (availableFlag) {
+      options.available = true;
+    }
+
+    const experts = expertService.searchBySkill(query, options);
+
+    if (experts.length === 0) {
+      const filterDesc = availableFlag ? '当前可用且匹配' : '匹配';
+      return {
+        success: true,
+        message: `🔍 未找到${filterDesc} "${query}" 的专家`,
+      };
+    }
+
+    const filterDesc = availableFlag ? '当前可用' : '';
     const lines: string[] = [
-      `🔍 **找到 ${experts.length} 位专家**`,
+      `🔍 **找到 ${experts.length} 位${filterDesc}专家**`,
       '',
     ];
 
@@ -270,6 +291,9 @@ export class ExpertCommand implements Command {
       for (const skill of matchingSkills) {
         const stars = '⭐'.repeat(skill.level);
         lines.push(`   ${skill.name} ${stars}`);
+      }
+      if (expert.availability) {
+        lines.push(`   ⏰ ${expert.availability}`);
       }
       lines.push('');
     }

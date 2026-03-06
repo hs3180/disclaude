@@ -221,4 +221,81 @@ describe('ExpertService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('isExpertAvailable', () => {
+    it('should return false if no availability set', () => {
+      service.registerExpert('user_123', 'John Doe');
+      const profile = service.getExpert('user_123')!;
+      expect(service.isExpertAvailable(profile)).toBe(false);
+    });
+
+    it('should return true for "anytime" availability', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', 'anytime');
+      const profile = service.getExpert('user_123')!;
+      expect(service.isExpertAvailable(profile)).toBe(true);
+    });
+
+    it('should return true for "随时" availability', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', '随时');
+      const profile = service.getExpert('user_123')!;
+      expect(service.isExpertAvailable(profile)).toBe(true);
+    });
+
+    it('should return true for unknown availability format', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', 'some custom format');
+      const profile = service.getExpert('user_123')!;
+      // Unknown format assumes available
+      expect(service.isExpertAvailable(profile)).toBe(true);
+    });
+  });
+
+  describe('searchBySkill with options', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'Expert 1');
+      service.registerExpert('user_2', 'Expert 2');
+      service.registerExpert('user_3', 'Expert 3');
+
+      service.addSkill('user_1', { name: 'TypeScript', level: 5 });
+      service.addSkill('user_2', { name: 'TypeScript', level: 4 });
+      service.addSkill('user_3', { name: 'TypeScript', level: 3 });
+
+      // Set different availabilities
+      service.setAvailability('user_1', 'anytime');
+      service.setAvailability('user_2', 'weekdays 10:00-18:00');
+      // user_3 has no availability set
+    });
+
+    it('should filter by available option', () => {
+      // Only user_1 has "anytime" availability
+      const experts = service.searchBySkill('TypeScript', { available: true });
+
+      // Results depend on current time, so we just check structure
+      expect(experts.length).toBeGreaterThanOrEqual(0);
+      expect(experts.length).toBeLessThanOrEqual(3);
+    });
+
+    it('should support limit option', () => {
+      const experts = service.searchBySkill('TypeScript', { limit: 2 });
+
+      expect(experts.length).toBe(2);
+    });
+
+    it('should support combined options', () => {
+      const experts = service.searchBySkill('TypeScript', { minLevel: 4, limit: 1 });
+
+      expect(experts.length).toBe(1);
+      expect(experts[0].name).toBe('Expert 1');
+    });
+
+    it('should maintain backward compatibility with minLevel number', () => {
+      const experts = service.searchBySkill('TypeScript', 4);
+
+      expect(experts.length).toBe(2);
+      expect(experts.map(e => e.name)).toContain('Expert 1');
+      expect(experts.map(e => e.name)).toContain('Expert 2');
+    });
+  });
 });

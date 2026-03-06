@@ -11,4 +11,5 @@ export {
   type SkillDeclaration,
   type SkillLevel,
   type ExpertServiceConfig,
+  type ExpertSearchOptions,
 } from './expert-service.js';
