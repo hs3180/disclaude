@@ -7,10 +7,12 @@
  * - /expert skills add - Add a skill
  * - /expert skills remove - Remove a skill
  * - /expert availability - Set availability
+ * - /expert price - Set consultation price (Issue #538)
  * - /expert search - Search experts by skill
  * - /expert list - List all experts
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #538 - 积分系统 - 身价与消费
  */
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
@@ -42,6 +44,11 @@ function formatProfile(profile: ReturnType<typeof getExpertService>['getExpert']
 
   if (profile.availability) {
     lines.push(`   ⏰ 可用时间: ${profile.availability}`);
+  }
+
+  // Issue #538: Display price
+  if (profile.price !== undefined && profile.price > 0) {
+    lines.push(`   💰 咨询价格: ${profile.price} 积分/次`);
   }
 
   if (profile.skills.length > 0) {
@@ -96,6 +103,8 @@ export class ExpertCommand implements Command {
         return this.handleSkills(context);
       case 'availability':
         return this.handleAvailability(context);
+      case 'price':
+        return this.handlePrice(context);
       case 'search':
         return this.handleSearch(context);
       case 'list':
@@ -103,7 +112,7 @@ export class ExpertCommand implements Command {
       default:
         return {
           success: false,
-          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert search <技能> [最低等级]\n- /expert list - 列出所有专家`,
+          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert price <积分> - 设置咨询价格\n- /expert search <技能> [最低等级]\n- /expert list - 列出所有专家`,
         };
     }
   }
@@ -232,6 +241,45 @@ export class ExpertCommand implements Command {
     return {
       success: true,
       message: `✅ **可用时间已设置**\n\n${formatProfile(profile)}`,
+    };
+  }
+
+  /**
+   * Handle /expert price command (Issue #538).
+   */
+  private handlePrice(context: CommandContext): CommandResult {
+    const { args, userId } = context;
+    const expertService = getExpertService();
+
+    // Check if user is registered
+    if (!expertService.isExpert(userId!)) {
+      return {
+        success: false,
+        error: '❌ 您尚未注册为专家\n\n使用 `/expert register [名字]` 注册',
+      };
+    }
+
+    const [, priceStr] = args;
+
+    if (!priceStr) {
+      return { success: false, error: '❌ 请指定咨询价格\n\n用法: /expert price <积分>' };
+    }
+
+    const price = parseInt(priceStr, 10);
+
+    if (isNaN(price) || price < 0) {
+      return { success: false, error: '❌ 价格必须是非负整数\n\n用法: /expert price <积分>' };
+    }
+
+    const profile = expertService.setPrice(userId!, price);
+
+    if (!profile) {
+      return { success: false, error: '❌ 设置价格失败' };
+    }
+
+    return {
+      success: true,
+      message: `✅ **咨询价格已设置**\n\n${formatProfile(profile)}`,
     };
   }
 
