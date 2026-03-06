@@ -231,6 +231,55 @@ npm run test               # Run tests
 npm run test -- --coverage # With coverage
 ```
 
+### Test Anti-Tampering Rules (Issue #914)
+
+**CRITICAL: These rules prevent AI from accidentally modifying test assertions and ensure test reliability.**
+
+#### Network Isolation
+
+All tests run with network isolation enabled via `tests/setup.ts`:
+- **External network requests are BLOCKED by default**
+- Only `localhost` and `127.0.0.1` are allowed
+- Tests must use `nock` for HTTP mocking, not `vi.mock()` on SDK modules
+
+#### Prohibited Patterns
+
+The following patterns are **ESLint errors** and will fail CI:
+
+```typescript
+// ❌ PROHIBITED - Direct mocking of core SDK modules
+vi.mock('@anthropic-ai/sdk');
+vi.mock('@larksuiteoapi/node-sdk');
+
+// ✅ CORRECT - Use nock for network interception
+import nock from 'nock';
+nock('https://api.anthropic.com')
+  .post('/v1/messages')
+  .reply(200, { content: 'mocked response' });
+```
+
+#### Why These Rules Exist
+
+1. **Prevents test flakiness**: Internal mocks break when SDK internals change
+2. **Enforces black-box testing**: Tests should verify behavior, not implementation
+3. **Enables VCR-style testing**: Recorded network responses can be replayed reliably
+4. **Protects against AI tampering**: AI cannot silently weaken test assertions
+
+#### When You Need Real Network Access
+
+For integration tests that require real network access:
+
+```typescript
+import { allowHost } from '../tests/setup';
+
+describe('integration test', () => {
+  beforeAll(() => {
+    allowHost('api.example.com');
+  });
+  // ... tests
+});
+```
+
 ## Development Workflow
 
 ### PM2 Restart Policy

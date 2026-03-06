@@ -11,9 +11,15 @@ import { defineConfig } from 'vitest/config';
  * For coverage reports, use `npm run test:coverage` which enables coverage collection.
  * The default `npm test` runs without coverage to minimize memory footprint.
  *
+ * Test Isolation (Issue #914):
+ * - Global setup in tests/setup.ts blocks external network requests by default
+ * - Only localhost/127.0.0.1 is allowed for local integration tests
+ * - Tests must use nock for mocking or recorded fixtures
+ *
  * @see https://vitest.dev/guide/cli.html#options
  * @see Issue #80 - OOM issue with child processes
  * @see Issue #807 - vitest-worker timeout fix with increased timeouts
+ * @see Issue #914 - Epic 1: Test isolation with VCR-style setup
  */
 
 // CI environments need longer timeouts due to slower I/O and module loading
@@ -77,6 +83,6 @@ export default defineConfig({
       },
       include: ['src/**/*.ts'],
     },
-    setupFiles: [],
+    setupFiles: ['./tests/setup.ts'],
   },
 });
