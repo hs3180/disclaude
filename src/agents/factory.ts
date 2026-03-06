@@ -48,7 +48,7 @@
 import { Config } from '../config/index.js';
 import { findSkill } from '../skills/index.js';
 import { SkillAgent } from './skill-agent.js';
-import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot.js';
+import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 import type { ChatAgent, SkillAgent as SkillAgentInterface, Subagent, BaseAgentConfig, AgentProvider } from './types.js';
 

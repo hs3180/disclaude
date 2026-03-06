@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Pilot, type PilotCallbacks } from './pilot.js';
+import { Pilot, type PilotCallbacks } from './pilot/index.js';
 
 // Mock the SDK to avoid unhandled errors
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({

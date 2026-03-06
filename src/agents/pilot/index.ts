@@ -4,6 +4,8 @@
  * Issue #644: Refactored to ensure complete isolation between chat sessions.
  * Each Pilot instance is bound to a single chatId at construction time.
  *
+ * Issue #697: Extracted types and message builder to separate modules.
+ *
  * Key Features:
  * - Streaming Input Mode: Uses SDK's streamInput() for real-time message delivery
  * - Single chatId binding: Each Pilot serves exactly one chatId
@@ -20,6 +22,7 @@
  * Separation of Concerns:
  * - ConversationOrchestrator: Thread root and context tracking
  * - RestartManager: Restart policy and circuit breaker
+ * - MessageBuilder: Enhanced content building (Issue #697)
  * - Pilot: Orchestration, callbacks, and main logic flow
  *
  * Extends BaseAgent to inherit:
@@ -29,92 +32,20 @@
  * - Error handling
  */
 
-import type { StreamingUserMessage, QueryHandle } from '../sdk/index.js';
-import { Config } from '../config/index.js';
-import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
-import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { ChatAgent, UserInput } from './types.js';
-import type { AgentMessage } from '../types/agent.js';
-import type { FileRef } from '../file-transfer/types.js';
-import type { ChannelCapabilities } from '../channels/types.js';
-import { MessageChannel } from './message-channel.js';
-import { RestartManager } from './restart-manager.js';
-import { ConversationOrchestrator } from '../conversation/index.js';
+import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
+import { Config } from '../../config/index.js';
+import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
+import { BaseAgent } from '../base-agent.js';
+import type { ChatAgent, UserInput } from '../types.js';
+import type { AgentMessage } from '../../types/agent.js';
+import { MessageChannel } from '../message-channel.js';
+import { RestartManager } from '../restart-manager.js';
+import { ConversationOrchestrator } from '../../conversation/index.js';
+import { MessageBuilder } from './message-builder.js';
+import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
 
-/**
- * Callback functions for platform-specific operations.
- */
-export interface PilotCallbacks {
-  /**
-   * Send a text message to the user.
-   * @param chatId - Platform-specific chat identifier
-   * @param text - Message content
-   * @param parentMessageId - Optional parent message ID for thread replies
-   */
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-
-  /**
-   * Send an interactive card to the user.
-   * @param chatId - Platform-specific chat identifier
-   * @param card - Card JSON structure
-   * @param description - Optional description for logging
-   * @param parentMessageId - Optional parent message ID for thread replies
-   */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
-
-  /**
-   * Send a file to the user.
-   * @param chatId - Platform-specific chat identifier
-   * @param filePath - Local file path to send
-   */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
-
-  /**
-   * Called when the Agent query completes (result message received).
-   * Used to signal completion to communication layer (e.g., REST sync mode).
-   * @param chatId - Platform-specific chat identifier
-   * @param parentMessageId - Optional parent message ID for thread replies
-   */
-  onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
-
-  /**
-   * Get the capabilities of the channel for a specific chat.
-   * Used for capability-aware prompt generation (Issue #582).
-   * @param chatId - Platform-specific chat identifier
-   * @returns Channel capabilities or undefined if not available
-   */
-  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
-}
-
-/**
- * Configuration options for Pilot.
- *
- * Issue #644: Added chatId binding for session isolation.
- */
-export interface PilotConfig extends BaseAgentConfig {
-  /**
-   * The chatId this Pilot is bound to.
-   * Each Pilot instance serves exactly one chatId.
-   */
-  chatId: string;
-
-  /**
-   * Callback functions for platform-specific operations.
-   */
-  callbacks: PilotCallbacks;
-}
-
-/**
- * Message data for processing.
- */
-interface MessageData {
-  text: string;
-  messageId?: string;
-  senderOpenId?: string;
-  attachments?: FileRef[];
-  /** Chat history context for passive mode (Issue #517) */
-  chatHistoryContext?: string;
-}
+// Re-export types for backward compatibility
+export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
 
 /**
  * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
@@ -143,6 +74,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
 
+  // Message builder (Issue #697)
+  private readonly messageBuilder: MessageBuilder;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -158,6 +92,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
       initialBackoffMs: 5000,  // Start with 5 seconds
       maxBackoffMs: 60000,     // Max 1 minute
     });
+
+    // Initialize message builder (Issue #697)
+    this.messageBuilder = new MessageBuilder();
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -218,12 +155,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
         this.startAgentLoop();
       }
 
-      // Build the user message
-      const enhancedContent = this.buildEnhancedContent({
+      // Get capabilities for message building
+      const capabilities = this.callbacks.getCapabilities?.(chatId);
+
+      // Build the user message using MessageBuilder (Issue #697)
+      const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content,
         messageId,
         senderOpenId,
-      });
+      }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
         type: 'user',
@@ -300,12 +240,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
       mcpServers,
     });
 
-    // Build enhanced content with context
-    const enhancedContent = this.buildEnhancedContent({
+    // Get capabilities for message building
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
+
+    // Build enhanced content using MessageBuilder (Issue #697)
+    const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
-    });
+    }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
 
@@ -361,7 +304,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     text: string,
     messageId: string,
     senderOpenId?: string,
-    attachments?: FileRef[],
+    attachments?: MessageData['attachments'],
     chatHistoryContext?: string
   ): void {
     // Issue #644: Verify chatId matches bound chatId
@@ -387,8 +330,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.startAgentLoop();
     }
 
-    // Build the user message
-    const enhancedContent = this.buildEnhancedContent({ text, messageId, senderOpenId, attachments, chatHistoryContext });
+    // Get capabilities for message building
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
+
+    // Build the user message using MessageBuilder (Issue #697)
+    const enhancedContent = this.messageBuilder.buildEnhancedContent({
+      text, messageId, senderOpenId, attachments, chatHistoryContext
+    }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
@@ -599,203 +547,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Restart the agent loop to preserve context for future messages
     this.startAgentLoop();
     this.logger.info({ chatId }, 'Agent loop restarted');
-  }
-
-  /**
-   * Build enhanced content with Feishu context.
-   *
-   * Uses boundChatId for context (Issue #644).
-   */
-  private buildEnhancedContent(msg: MessageData): string {
-    const chatId = this.boundChatId;
-
-    // Check if this is a skill command (starts with /)
-    const isSkillCommand = msg.text.trimStart().startsWith('/');
-
-    // Get channel capabilities (Issue #582)
-    const capabilities = this.callbacks.getCapabilities?.(chatId);
-
-    // Build chat history section if available (Issue #517)
-    const chatHistorySection = msg.chatHistoryContext
-      ? `
-
----
-
-## Recent Chat History
-
-You were @mentioned in a group chat. Here's the recent conversation context:
-
-${msg.chatHistoryContext}
-
----
-`
-      : '';
-
-    if (isSkillCommand) {
-      // For skill commands: command first, then minimal context for skill to use
-      const contextInfo = msg.senderOpenId
-        ? `
-
----
-**Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}
-**Sender Open ID:** ${msg.senderOpenId}${this.buildAttachmentsInfo(msg.attachments)}`
-        : `
-
----
-**Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}${this.buildAttachmentsInfo(msg.attachments)}`;
-
-      return `${msg.text}${contextInfo}`;
-    }
-
-    // Build capability-aware tools section (Issue #582)
-    const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
-
-    // For regular messages: context FIRST, then user message
-    if (msg.senderOpenId) {
-      const mentionSection = capabilities?.supportsMention !== false
-        ? `
-
-## @ Mention the User
-
-To notify the user in your FINAL response, use:
-\`\`\`
-<at user_id="${msg.senderOpenId}">@用户</at>
-\`\`\`
-
-**Rules:**
-- Use @ ONLY in your **final/complete response**, NOT in intermediate messages
-- This triggers a Feishu notification to the user`
-        : '';
-
-      return `You are responding in a Feishu chat.
-
-**Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}
-**Sender Open ID:** ${msg.senderOpenId}
-${chatHistorySection}${mentionSection}
-
----
-
-## Tools
-${toolsSection}
-
---- User Message ---
-${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
-    }
-
-    return `You are responding in a Feishu chat.
-
-**Chat ID:** ${chatId}
-**Message ID:** ${msg.messageId}
-${chatHistorySection}
-## Tools
-${toolsSection}
-
---- User Message ---
-${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
-  }
-
-  /**
-   * Build capability-aware tools section for the prompt.
-   */
-  private buildToolsSection(
-    chatId: string,
-    messageId: string,
-    capabilities?: ChannelCapabilities,
-    _senderOpenId?: string
-  ): string {
-    const parts: string[] = [];
-    const supportedTools = capabilities?.supportedMcpTools;
-
-    // If supportedMcpTools is defined, use it for dynamic tool filtering
-    const hasTool = (toolName: string): boolean => {
-      if (supportedTools === undefined) {
-        // Legacy behavior: check individual capability flags
-        if (toolName === 'send_file_to_feishu') {
-          return capabilities?.supportsFile !== false;
-        }
-        if (toolName === 'update_card' || toolName === 'wait_for_interaction') {
-          return capabilities?.supportsCard !== false;
-        }
-        return true; // send_user_feedback is always available
-      }
-      return supportedTools.includes(toolName);
-    };
-
-    // send_user_feedback tool
-    if (hasTool('send_user_feedback')) {
-      parts.push(`When using send_user_feedback, use:
-- Chat ID: \`${chatId}\`
-- parentMessageId: \`${messageId}\` (for thread replies)`);
-
-      // Include card support note if supported
-      if (hasTool('update_card') || hasTool('wait_for_interaction')) {
-        parts.push(`
-- For rich content, use format: "card" with a valid Feishu card structure`);
-      } else {
-        parts.push(`
-- Note: This channel does not support interactive cards. Use text format only.`);
-      }
-    }
-
-    // send_file_to_feishu tool
-    if (hasTool('send_file_to_feishu')) {
-      parts.push(`
-- send_file_to_feishu is available for sending files`);
-    } else if (supportedTools !== undefined) {
-      parts.push(`
-- Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
-    }
-
-    // update_card tool
-    if (hasTool('update_card')) {
-      parts.push(`
-- update_card is available for updating existing cards`);
-    }
-
-    // wait_for_interaction tool
-    if (hasTool('wait_for_interaction')) {
-      parts.push(`
-- wait_for_interaction is available for waiting for user card interactions`);
-    }
-
-    // Include thread support note
-    if (capabilities?.supportsThread === false) {
-      parts.push(`
-- Note: Thread replies are NOT supported on this channel.`);
-    }
-
-    return parts.join('\n');
-  }
-
-  /**
-   * Build attachments info string for the message content.
-   */
-  private buildAttachmentsInfo(attachments?: FileRef[]): string {
-    if (!attachments || attachments.length === 0) {
-      return '';
-    }
-
-    const attachmentList = attachments
-      .map((att, index) => {
-        const sizeInfo = att.size ? ` (${(att.size / 1024).toFixed(1)} KB)` : '';
-        return `${index + 1}. **${att.fileName}**${sizeInfo}
-   - File ID: \`${att.id}\`
-   - Local path: \`${att.localPath}\`
-   - MIME type: ${att.mimeType || 'unknown'}`;
-      })
-      .join('\n');
-
-    return `
-
---- Attachments ---
-The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
-
-${attachmentList}
-
-You can read these files using the Read tool with the local paths above.`;
   }
 
   /**
