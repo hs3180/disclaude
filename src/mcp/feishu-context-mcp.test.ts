@@ -61,6 +61,11 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
+// Mock chat-ops
+vi.mock('../platforms/feishu/chat-ops.js', () => ({
+  createDiscussionChat: vi.fn(),
+}));
+
 // Import after mocks
 import * as fs from 'fs/promises';
 import type * as fsStats from 'fs';
@@ -72,8 +77,10 @@ import {
   resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
+  create_group,
 } from './feishu-context-mcp.js';
 import { uploadAndSendFile } from '../file-transfer/outbound/feishu-uploader.js';
+import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
 
 describe('Feishu Context MCP Tools', () => {
   beforeEach(() => {
@@ -97,6 +104,12 @@ describe('Feishu Context MCP Tools', () => {
       expect(feishuContextTools.send_file_to_feishu).toBeDefined();
       expect(feishuContextTools.send_file_to_feishu.description).toContain('Send a file to a Feishu chat');
       expect(feishuContextTools.send_file_to_feishu.handler).toBe(send_file_to_feishu);
+    });
+
+    it('should have create_group tool definition', () => {
+      expect(feishuContextTools.create_group).toBeDefined();
+      expect(feishuContextTools.create_group.description).toContain('Create a new Feishu group chat');
+      expect(feishuContextTools.create_group.handler).toBe(create_group);
     });
   });
 
@@ -755,6 +768,65 @@ describe('Feishu Context MCP Tools', () => {
       // Clean up first wait
       resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
       await firstWait;
+    });
+  });
+
+  describe('create_group', () => {
+    it('should create group successfully', async () => {
+      vi.mocked(createDiscussionChat).mockResolvedValueOnce('oc_new_group_123');
+
+      const result = await create_group({
+        topic: 'PR #123 Discussion',
+        members: ['ou_user_1', 'ou_user_2'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.chatId).toBe('oc_new_group_123');
+      expect(result.message).toContain('Group created successfully');
+      expect(createDiscussionChat).toHaveBeenCalledWith(
+        expect.anything(),
+        { topic: 'PR #123 Discussion', members: ['ou_user_1', 'ou_user_2'] }
+      );
+    });
+
+    it('should create group without topic or members', async () => {
+      vi.mocked(createDiscussionChat).mockResolvedValueOnce('oc_auto_named');
+
+      const result = await create_group({});
+
+      expect(result.success).toBe(true);
+      expect(result.chatId).toBe('oc_auto_named');
+      expect(createDiscussionChat).toHaveBeenCalledWith(
+        expect.anything(),
+        { topic: undefined, members: undefined }
+      );
+    });
+
+    it('should return error when Feishu not configured', async () => {
+      // Temporarily remove credentials
+      const mockConfig = vi.mocked(await import('../config/index.js'));
+      mockConfig.Config.FEISHU_APP_ID = '';
+
+      const result = await create_group({
+        topic: 'Test Group',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Feishu credentials not configured');
+
+      // Restore credentials
+      mockConfig.Config.FEISHU_APP_ID = 'test-app-id';
+    });
+
+    it('should handle creation error', async () => {
+      vi.mocked(createDiscussionChat).mockRejectedValueOnce(new Error('API error'));
+
+      const result = await create_group({
+        topic: 'Test Group',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('API error');
     });
   });
 });

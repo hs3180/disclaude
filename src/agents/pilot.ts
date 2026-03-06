@@ -422,7 +422,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const supportedMcpTools = capabilities?.supportedMcpTools;
 
     // Determine if we should include Feishu MCP server
-    const feishuTools = ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction'];
+    const feishuTools = ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction', 'create_group'];
     const shouldIncludeFeishuMcp = supportedMcpTools === undefined ||
       feishuTools.some(tool => supportedMcpTools.includes(tool));
 

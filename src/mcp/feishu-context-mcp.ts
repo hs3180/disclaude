@@ -20,6 +20,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { Config } from '../config/index.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
+import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
 
 const logger = createLogger('FeishuContextMCP');
 
@@ -842,6 +843,93 @@ export async function wait_for_interaction(params: {
   }
 }
 
+// ============================================================================
+// Group Creation Tool (Issue #393)
+// ============================================================================
+
+/**
+ * Tool: Create a new group chat.
+ *
+ * Creates a Feishu group chat with optional topic and members.
+ * The bot will be automatically added to the group.
+ *
+ * @param params - Tool parameters
+ * @returns Result object with the created chat ID
+ *
+ * @see Issue #393 - PR Scanner 群聊创建
+ */
+export async function create_group(params: {
+  topic?: string;
+  members?: string[];
+}): Promise<{
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}> {
+  const { topic, members } = params;
+
+  logger.info({
+    topic,
+    memberCount: members?.length || 0,
+  }, 'create_group called');
+
+  try {
+    // Read credentials from Config
+    const appId = Config.FEISHU_APP_ID;
+    const appSecret = Config.FEISHU_APP_SECRET;
+
+    // Graceful degradation: When Feishu credentials are not configured,
+    // return a soft error instead of throwing.
+    if (!appId || !appSecret) {
+      logger.warn({
+        topic,
+        reason: 'Feishu credentials not configured'
+      }, 'Group creation skipped (Feishu not configured)');
+
+      return {
+        success: false,
+        error: 'Feishu credentials not configured',
+        message: '⚠️ Group cannot be created: Feishu is not configured.',
+      };
+    }
+
+    // Create Lark client
+    const client = createFeishuClient(appId, appSecret, {
+      domain: lark.Domain.Feishu,
+    });
+
+    // Create the discussion chat
+    const chatId = await createDiscussionChat(client, { topic, members });
+
+    logger.info({
+      chatId,
+      topic,
+      memberCount: members?.length || 0,
+    }, 'Group created successfully');
+
+    return {
+      success: true,
+      message: `✅ Group created successfully${topic ? `: ${topic}` : ''}`,
+      chatId,
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    logger.error({
+      err: error,
+      topic,
+    }, 'create_group failed');
+
+    return {
+      success: false,
+      error: errorMessage,
+      message: `❌ Failed to create group: ${errorMessage}`,
+    };
+  }
+}
+
 /**
  * Tool definitions for Agent SDK integration.
  *
@@ -992,6 +1080,48 @@ export const feishuContextTools = {
       required: ['messageId', 'chatId'],
     },
     handler: wait_for_interaction,
+  },
+  create_group: {
+    description: `Create a new Feishu group chat. The bot will be automatically added to the group.
+
+**Use Cases:**
+- Create discussion groups for specific topics (e.g., PR discussions)
+- Set up ad-hoc collaboration spaces
+- Create topic-specific channels
+
+**Parameters:**
+- topic (optional): The group name/topic. If not provided, an auto-generated name will be used.
+- members (optional): Array of user open_ids to add as initial members.
+
+**Returns:**
+- chatId: The ID of the created group chat (can be used with send_user_feedback)
+
+**Example:**
+\`\`\`json
+{
+  "topic": "PR #123 Discussion",
+  "members": ["ou_user_1", "ou_user_2"]
+}
+\`\`\`
+
+**Note:** This tool requires Feishu credentials to be configured.
+
+@see Issue #393 - PR Scanner 群聊创建`,
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'The group name/topic (optional, auto-generated if not provided)',
+        },
+        members: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of user open_ids to add as initial members (optional)',
+        },
+      },
+    },
+    handler: create_group,
   },
 };
 
@@ -1213,6 +1343,50 @@ When parentMessageId is provided, the message is sent as a reply to that message
         }
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'create_group',
+    description: `Create a new Feishu group chat. The bot will be automatically added to the group.
+
+**Use Cases:**
+- Create discussion groups for specific topics (e.g., PR discussions)
+- Set up ad-hoc collaboration spaces
+- Create topic-specific channels
+
+**Parameters:**
+- topic (optional): The group name/topic. If not provided, an auto-generated name will be used.
+- members (optional): Array of user open_ids to add as initial members.
+
+**Returns:**
+- chatId: The ID of the created group chat (can be used with send_user_feedback)
+
+**Example:**
+\`\`\`json
+{
+  "topic": "PR #123 Discussion",
+  "members": ["ou_user_1", "ou_user_2"]
+}
+\`\`\`
+
+**Note:** This tool requires Feishu credentials to be configured.
+
+@see Issue #393 - PR Scanner 群聊创建`,
+    parameters: z.object({
+      topic: z.string().optional().describe('The group name/topic (optional, auto-generated if not provided)'),
+      members: z.array(z.string()).optional().describe('Array of user open_ids to add as initial members (optional)'),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_group({ topic, members });
+        if (result.success) {
+          return toolSuccess(`${result.message}\nChat ID: ${result.chatId}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Group creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
