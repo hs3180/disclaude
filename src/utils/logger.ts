@@ -90,10 +90,29 @@ function getDefaultLogLevel(): LogLevel {
 
 /**
  * Get development environment configuration
+ *
+ * Note: In test environment, we skip pino-pretty transport to avoid
+ * conflicts with vitest's worker mechanism (Issue #825).
+ * The transport uses worker_threads internally which can cause module
+ * loading timeouts in CI environments.
  */
 function getDevelopmentConfig(): LoggerOptions {
-  return {
+  const baseConfig: LoggerOptions = {
     level: getDefaultLogLevel(),
+    formatters: {
+      level: (label) => {
+        return { level: label };
+      }
+    }
+  };
+
+  // Skip pino-pretty in test environment to avoid worker_threads conflicts
+  if (process.env.NODE_ENV === 'test') {
+    return baseConfig;
+  }
+
+  return {
+    ...baseConfig,
     transport: {
       target: 'pino-pretty',
       options: {
@@ -102,11 +121,6 @@ function getDevelopmentConfig(): LoggerOptions {
         ignore: 'pid,hostname',
         singleLine: false,
         messageFormat: '[{context}] {msg}' // Add context prefix if present
-      }
-    },
-    formatters: {
-      level: (label) => {
-        return { level: label };
       }
     }
   };
