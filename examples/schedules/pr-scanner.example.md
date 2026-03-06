@@ -51,9 +51,10 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
    ```
 
 2. **尝试创建群聊** (Phase 2):
-   - 如果有 `create_discussion_chat` MCP 工具可用，为该 PR 创建独立群聊
+   - 调用 `create_discussion_chat` MCP 工具为该 PR 创建独立群聊
    - 群聊名称: `PR #{number}: {title 前30字符}`
-   - 如果创建失败或工具不可用，使用配置的 `chatId` 发送通知
+   - 获取返回的 chatId 用于后续通知
+   - 如果创建失败，回退到使用配置的 `chatId` 发送通知
 
 3. 发送 PR 信息通知：
    - PR 标题和编号
@@ -91,13 +92,31 @@ PR #{number}: {title}
 
 ## 群聊创建说明 (Phase 2)
 
-当前 MCP 工具暂不支持创建群聊，因此使用 Phase 1 模式（发送到配置的 chatId）。
+现在可以使用 `create_discussion_chat` MCP 工具为每个新 PR 创建独立群聊：
 
-未来当 `create_discussion_chat` MCP 工具可用时，可以：
-1. 为每个新 PR 创建独立群聊
-2. 邀请 PR 作者和相关人员
-3. 在群聊中发送 PR 信息卡片
-4. 支持通过命令执行 PR 操作
+### 群聊创建步骤
+
+1. 调用 `create_discussion_chat` 工具：
+   ```json
+   {
+     "topic": "PR #{number}: {title前30字符}"
+   }
+   ```
+
+2. 工具返回新创建的 chatId
+
+3. 使用 `send_user_feedback` 将 PR 信息发送到新群聊
+
+### 完整流程
+
+```
+对于每个新 PR:
+1. 获取 PR 详细信息
+2. 调用 create_discussion_chat({ topic: "PR #xxx: ..." })
+3. 获取返回的 chatId
+4. 调用 send_user_feedback({ content: ..., format: "card", chatId: 新chatId })
+5. 更新历史记录，记录 PR 和 chatId 的对应关系
+```
 
 ## 错误处理
 
@@ -117,7 +136,7 @@ PR #{number}: {title}
 | Phase | 功能 | 状态 |
 |-------|------|------|
 | Phase 1 | 基本扫描 + 通知 | ✅ 可用 |
-| Phase 2 | 为每个 PR 创建群聊 | ⏳ 需要 MCP 工具 |
+| Phase 2 | 为每个 PR 创建群聊 | ✅ 可用 (使用 create_discussion_chat MCP 工具) |
 | Phase 3 | 交互式操作按钮 | ❌ 不计划实现 |
 
 详见: `docs/designs/pr-scanner-design.md`

@@ -27,3 +27,5 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+
+export { create_discussion_chat, type CreateChatResult } from './create-chat.js';

@@ -13,6 +13,7 @@ import {
   wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
+  create_discussion_chat,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -28,6 +29,7 @@ export {
   generateInteractionPrompt,
   getActionPrompts,
 } from './tools/interactive-message.js';
+export { create_discussion_chat } from './tools/create-chat.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -335,6 +337,59 @@ In actionPrompts, you can use these placeholders:
       required: ['card', 'actionPrompts', 'chatId'],
     },
     handler: send_interactive_message,
+  },
+  create_discussion_chat: {
+    description: `Create a new discussion group chat in Feishu.
+
+This tool creates a new group chat that can be used for discussions about specific topics, such as PR reviews, issue discussions, etc.
+
+---
+
+## Parameters
+
+- **topic**: (Optional) The chat topic/name. If not provided, a default name with timestamp will be generated.
+- **members**: (Optional) Array of member open_ids to add to the chat initially.
+
+---
+
+## Return Value
+
+Returns an object with:
+- **success**: Whether the chat was created successfully
+- **message**: Status message
+- **chatId**: The ID of the created chat (on success)
+
+---
+
+## Usage Example
+
+\`\`\`json
+{
+  "topic": "PR #123: Feature Discussion",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+---
+
+## Use Cases
+
+1. **PR Scanner**: Create a dedicated chat for each new PR
+2. **Issue Discussion**: Create a chat for discussing complex issues
+3. **Team Collaboration**: Create temporary chats for specific tasks
+
+---
+
+⚠️ **Note**: The bot will be automatically added as a member of the created chat.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Chat topic/name (optional, auto-generated if not provided)' },
+        members: { type: 'array', items: { type: 'string' }, description: 'Initial member open_ids (optional)' },
+      },
+      required: [],
+    },
+    handler: create_discussion_chat,
   },
 };
 
@@ -664,6 +719,65 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'create_discussion_chat',
+    description: `Create a new discussion group chat in Feishu.
+
+This tool creates a new group chat that can be used for discussions about specific topics, such as PR reviews, issue discussions, etc.
+
+---
+
+## Parameters
+
+- **topic**: (Optional) The chat topic/name. If not provided, a default name with timestamp will be generated.
+- **members**: (Optional) Array of member open_ids to add to the chat initially.
+
+---
+
+## Return Value
+
+Returns an object with:
+- **success**: Whether the chat was created successfully
+- **message**: Status message
+- **chatId**: The ID of the created chat (on success)
+
+---
+
+## Usage Example
+
+\`\`\`json
+{
+  "topic": "PR #123: Feature Discussion",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+---
+
+## Use Cases
+
+1. **PR Scanner**: Create a dedicated chat for each new PR
+2. **Issue Discussion**: Create a chat for discussing complex issues
+3. **Team Collaboration**: Create temporary chats for specific tasks
+
+---
+
+⚠️ **Note**: The bot will be automatically added as a member of the created chat.`,
+    parameters: z.object({
+      topic: z.string().optional(),
+      members: z.array(z.string()).optional(),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_discussion_chat({ topic, members });
+        return toolSuccess(result.success
+          ? `${result.message}${result.chatId ? ` Chat ID: ${result.chatId}` : ''}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Chat creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
