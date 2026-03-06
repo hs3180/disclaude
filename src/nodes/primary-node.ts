@@ -159,15 +159,13 @@ export class PrimaryNode extends EventEmitter {
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
       onTaskDone: async (chatId: string, threadId?: string) => {
-        // Issue #834: Send next-step prompt to ChatAgent as regular message
+        // Issue #884: Send next-step recommendations directly via sendMessage
+        // to avoid infinite loop caused by agent.processMessage triggering onDone again
         await triggerNextStepRecommendation(
           chatId,
           threadId,
           async (id: string, prompt: string, _tid?: string) => {
-            if (this.agentPool) {
-              const agent = this.agentPool.getOrCreateChatAgent(id);
-              agent.processMessage(id, prompt, `next-step-${Date.now()}`);
-            }
+            await this.sendMessage(id, prompt, _tid);
           }
         );
       },
