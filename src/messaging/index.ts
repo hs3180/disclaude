@@ -174,3 +174,20 @@ export {
   resetRestAdapter,
   type RestMessage,
 } from './adapters/rest-adapter.js';
+
+// Offline Message Store (Issue #631)
+export {
+  OfflineMessageStore,
+  getOfflineMessageStore,
+  resetOfflineMessageStore,
+  type OfflineMessageContext,
+  type OfflineMessageStoreConfig,
+} from './offline-message-store.js';
+
+// Offline Message Callback Handler (Issue #631)
+export {
+  OfflineCallbackHandler,
+  getOfflineCallbackHandler,
+  resetOfflineCallbackHandler,
+  type ReplyProcessResult,
+} from './offline-callback-handler.js';
