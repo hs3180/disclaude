@@ -23,6 +23,7 @@ import type { ExecNodeRegistry } from './exec-node-registry.js';
 import type { DebugGroupService } from './debug-group-service.js';
 import type { ScheduleManagement } from './schedule-management.js';
 import type { CommandServices, ManagedGroupInfo } from './commands/types.js';
+import { messageHistoryManager } from '../core/message-history.js';
 
 /**
  * Dependencies needed for building command services.
@@ -149,5 +150,8 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     markAsTopicGroup: (chatId: string, isTopic: boolean) => groupService.markAsTopicGroup(chatId, isTopic),
     isTopicGroup: (chatId: string) => groupService.isTopicGroup(chatId),
     listTopicGroups: () => groupService.listTopicGroups(),
+
+    // Feedback and history (Issue #930)
+    getFormattedHistory: (chatId: string, maxMessages?: number) => messageHistoryManager.getFormattedHistory(chatId, maxMessages),
   };
 }

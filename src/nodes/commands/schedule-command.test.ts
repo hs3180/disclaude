@@ -86,6 +86,8 @@ describe('ScheduleCommand', () => {
     markAsTopicGroup: () => false,
     isTopicGroup: () => false,
     listTopicGroups: () => [],
+    // Feedback and history (Issue #930)
+    getFormattedHistory: () => '(No previous conversation history)',
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({

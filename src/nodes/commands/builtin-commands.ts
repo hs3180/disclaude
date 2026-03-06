@@ -44,6 +44,7 @@ import {
   TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
+  FeedbackCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -68,6 +69,7 @@ export {
   TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
+  FeedbackCommand,
 };
 
 /**
@@ -101,4 +103,6 @@ export function registerDefaultCommands(
   registry.register(new TopicGroupCommand());
   // Issue #535: Expert registration and skill management
   registry.register(new ExpertCommand());
+  // Issue #930: Feedback command for user feedback submission
+  registry.register(new FeedbackCommand());
 }

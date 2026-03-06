@@ -62,6 +62,8 @@ function createMockServices(): CommandServices {
     markAsTopicGroup: () => false,
     isTopicGroup: () => false,
     listTopicGroups: () => [],
+    // Feedback and history (Issue #930)
+    getFormattedHistory: () => '(No previous conversation history)',
   };
 }
 

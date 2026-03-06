@@ -12,7 +12,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 /**
  * Command category for grouping related commands.
  */
-export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
+export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill' | 'feedback';
 
 /**
  * Schedule task info for display.
@@ -222,6 +222,10 @@ export interface CommandServices {
 
   /** List all topic groups */
   listTopicGroups: () => ManagedGroupInfo[];
+
+  // Feedback and history (Issue #930)
+  /** Get formatted conversation history for a chat */
+  getFormattedHistory: (chatId: string, maxMessages?: number) => string;
 }
 
 /**
@@ -320,4 +324,5 @@ export const CATEGORY_CONFIG: Record<CommandCategory, CategoryInfo> = {
   task: { label: '任务', emoji: '📋', order: 5 },
   schedule: { label: '定时', emoji: '⏰', order: 6 },
   skill: { label: '技能', emoji: '🎯', order: 7 },
+  feedback: { label: '反馈', emoji: '📢', order: 8 },
 };
