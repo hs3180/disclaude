@@ -69,7 +69,7 @@ import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
 import { getTaskStateManager } from '../utils/task-state-manager.js';
 // Extracted modules (Issue #695)
 import { ScheduleManagement } from './schedule-management.js';
-import { triggerNextStepRecommendation } from './next-step-recommendation.js';
+// Issue #893: Removed triggerNextStepRecommendation - now using in-prompt guidance
 import { buildCommandServices } from './command-services.js';
 
 const logger = createLogger('PrimaryNode');
@@ -158,21 +158,9 @@ export class PrimaryNode extends EventEmitter {
     // Issue #659: Initialize UnifiedMessageRouter (replaces FeedbackRouter)
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
-      onTaskDone: async (chatId: string, threadId?: string) => {
-        // Issue #834: Send next-step prompt to ChatAgent as regular message
-        await triggerNextStepRecommendation(
-          chatId,
-          threadId,
-          async (id: string, prompt: string, _tid?: string) => {
-            if (this.agentPool) {
-              const agent = this.agentPool.getOrCreateChatAgent(id);
-              agent.processMessage(id, prompt, `next-step-${Date.now()}`);
-            }
-          }
-        );
-      },
+      onTaskDone: undefined, // Issue #893: Removed next-step recommendation - now using in-prompt guidance
       // Admin chat can be configured via environment or config
-      adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
+      adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId
     });
 
     // Issue #463: Initialize CommandRegistry with default commands
