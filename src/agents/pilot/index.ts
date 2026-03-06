@@ -603,6 +603,120 @@ export class Pilot extends BaseAgent implements ChatAgent {
   }
 
   /**
+   * Prompt user with next step candidates (Issue #834).
+   *
+   * This method receives generated next step candidates and presents
+   * them to the user in a channel-appropriate way.
+   *
+   * Implementation strategy:
+   * - If channel supports sendCard (e.g., Feishu), use interactive card
+   * - Otherwise, fall back to text message with numbered options
+   *
+   * @param candidates - List of next step candidates to present
+   * @param contextMessage - Optional context message
+   * @param threadId - Optional thread ID for reply
+   */
+  async promptNextSteps(
+    candidates: Array<{ id: string; label: string; emoji: string; description: string }>,
+    contextMessage?: string,
+    threadId?: string
+  ): Promise<void> {
+    const chatId = this.boundChatId;
+    this.logger.info({ chatId, candidateCount: candidates.length }, 'Prompting next steps');
+
+    // Get channel capabilities
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
+
+    // Check if channel supports interactive cards
+    const supportsCards = capabilities?.supportedMcpTools?.includes('send_user_feedback') ?? false;
+
+    if (supportsCards) {
+      // Use interactive card for channels that support it (Feishu)
+      await this.sendNextStepCard(candidates, contextMessage, threadId);
+    } else {
+      // Fall back to text message
+      await this.sendNextStepText(candidates, contextMessage, threadId);
+    }
+  }
+
+  /**
+   * Send next step candidates as an interactive card.
+   */
+  private async sendNextStepCard(
+    candidates: Array<{ id: string; label: string; emoji: string; description: string }>,
+    contextMessage?: string,
+    threadId?: string
+  ): Promise<void> {
+    const chatId = this.boundChatId;
+
+    // Build action buttons from candidates
+    const actions = candidates.map(c => ({
+      tag: 'button',
+      text: { tag: 'plain_text', content: `${c.emoji} ${c.label}` },
+      type: 'default' as const,
+      value: c.id,
+    }));
+
+    const card = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '✅ 任务完成' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: contextMessage || '接下来您可以：',
+        },
+        {
+          tag: 'action',
+          actions,
+        },
+      ],
+    };
+
+    try {
+      await this.callbacks.sendCard(chatId, card, 'Next step recommendations', threadId);
+      this.logger.debug({ chatId }, 'Sent next step card');
+    } catch (error) {
+      this.logger.error({ err: error, chatId }, 'Failed to send next step card');
+      // Fall back to text on error
+      await this.sendNextStepText(candidates, contextMessage, threadId);
+    }
+  }
+
+  /**
+   * Send next step candidates as a text message.
+   */
+  private async sendNextStepText(
+    candidates: Array<{ id: string; label: string; emoji: string; description: string }>,
+    contextMessage?: string,
+    threadId?: string
+  ): Promise<void> {
+    const chatId = this.boundChatId;
+
+    const lines: string[] = [
+      '✅ **任务完成**',
+      '',
+      contextMessage || '接下来您可以：',
+      '',
+    ];
+
+    candidates.forEach((c, index) => {
+      lines.push(`${index + 1}. ${c.emoji} **${c.label}**${c.description ? ` - ${c.description}` : ''}`);
+    });
+
+    const message = lines.join('\n');
+
+    try {
+      await this.callbacks.sendMessage(chatId, message, threadId);
+      this.logger.debug({ chatId }, 'Sent next step text message');
+    } catch (error) {
+      this.logger.error({ err: error, chatId }, 'Failed to send next step text message');
+    }
+  }
+
+  /**
    * Dispose of resources held by this agent.
    *
    * Implements Disposable interface (Issue #328).

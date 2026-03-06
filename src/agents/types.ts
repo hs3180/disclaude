@@ -38,6 +38,7 @@
 import type { AgentMessage } from '../types/agent.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
 import type { FileRef } from '../file-transfer/types.js';
+import type { NextStepCandidate } from '../nodes/next-step-generator.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -195,6 +196,27 @@ export interface ChatAgent extends Disposable {
    * @param chatId - Optional chat ID to reset specific session
    */
   reset(chatId?: string): void;
+
+  /**
+   * Prompt user with next step candidates (Issue #834).
+   *
+   * This method receives generated next step candidates and presents
+   * them to the user in a channel-appropriate way (card, text, buttons, etc.).
+   *
+   * The implementation decides how to present based on channel capabilities:
+   * - Feishu: Interactive card with action buttons
+   * - REST: Text message with numbered options
+   * - CLI: Text message with options
+   *
+   * @param candidates - List of next step candidates to present
+   * @param contextMessage - Optional context message
+   * @param threadId - Optional thread ID for reply
+   */
+  promptNextSteps?(
+    candidates: NextStepCandidate[],
+    contextMessage?: string,
+    threadId?: string
+  ): Promise<void>;
 }
 
 // ============================================================================

@@ -159,7 +159,23 @@ export class PrimaryNode extends EventEmitter {
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
       onTaskDone: async (chatId: string, threadId?: string) => {
-        await triggerNextStepRecommendation(chatId, threadId);
+        // Issue #834: Pass promptNextSteps callback to triggerNextStepRecommendation
+        // The callback uses agentPool to get/create ChatAgent and call promptNextSteps
+        await triggerNextStepRecommendation(chatId, threadId, {
+          promptNextSteps: async (candidates, contextMessage, tid) => {
+            // agentPool may not be initialized yet (during startup)
+            if (!this.agentPool) {
+              logger.debug({ chatId }, 'agentPool not initialized, skipping promptNextSteps');
+              return;
+            }
+            const agent = this.agentPool.getOrCreateChatAgent(chatId);
+            if (agent.promptNextSteps) {
+              await agent.promptNextSteps(candidates, contextMessage, tid ?? threadId);
+            } else {
+              logger.warn({ chatId }, 'ChatAgent does not implement promptNextSteps');
+            }
+          },
+        });
       },
       // Admin chat can be configured via environment or config
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
