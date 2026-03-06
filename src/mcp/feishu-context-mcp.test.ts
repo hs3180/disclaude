@@ -805,6 +805,7 @@ describe('Feishu Context MCP Tools', () => {
     it('should return error when Feishu not configured', async () => {
       // Temporarily remove credentials
       const mockConfig = vi.mocked(await import('../config/index.js'));
+      // @ts-expect-error - Testing runtime behavior by modifying readonly mock
       mockConfig.Config.FEISHU_APP_ID = '';
 
       const result = await create_group({
@@ -815,6 +816,7 @@ describe('Feishu Context MCP Tools', () => {
       expect(result.error).toContain('Feishu credentials not configured');
 
       // Restore credentials
+      // @ts-expect-error - Testing runtime behavior by modifying readonly mock
       mockConfig.Config.FEISHU_APP_ID = 'test-app-id';
     });
 
