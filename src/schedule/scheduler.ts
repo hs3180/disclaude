@@ -372,7 +372,7 @@ ${task.prompt}`;
     remainingMs: number;
   } | null> {
     if (!this.cooldownManager) { return null; }
-    return this.cooldownManager.getCooldownStatus(taskId, cooldownPeriod);
+    return await this.cooldownManager.getCooldownStatus(taskId, cooldownPeriod);
   }
 
   /**
@@ -383,6 +383,6 @@ ${task.prompt}`;
    */
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
-    return this.cooldownManager.clearCooldown(taskId);
+    return await this.cooldownManager.clearCooldown(taskId);
   }
 }
