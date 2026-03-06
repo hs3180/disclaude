@@ -1,20 +1,22 @@
 /**
- * Shared type definitions for Feishu MCP tools.
+ * Shared type definitions for messaging MCP tools.
+ *
+ * These types are platform-agnostic and can be used with any messaging platform.
  *
  * @module mcp/tools/types
  */
 
 /**
- * Result type for send_user_feedback tool.
+ * Result type for send_message tool.
  */
-export interface SendFeedbackResult {
+export interface SendMessageResult {
   success: boolean;
   message: string;
   error?: string;
 }
 
 /**
- * Result type for send_file_to_feishu tool.
+ * Result type for send_file tool.
  */
 export interface SendFileResult {
   success: boolean;
@@ -23,20 +25,30 @@ export interface SendFileResult {
   fileSize?: number;
   sizeMB?: string;
   error?: string;
-  feishuCode?: string | number;
-  feishuMsg?: string;
-  feishuLogId?: string;
+  platformCode?: string | number;
+  platformMsg?: string;
+  platformLogId?: string;
   troubleshooterUrl?: string;
 }
 
 /**
- * Result type for update_card tool.
+ * @deprecated Use SendMessageResult instead. Will be removed in a future version.
  */
-export interface UpdateCardResult {
+export type SendFeedbackResult = SendMessageResult;
+
+/**
+ * Result type for update_message tool.
+ */
+export interface UpdateMessageResult {
   success: boolean;
   message: string;
   error?: string;
 }
+
+/**
+ * @deprecated Use UpdateMessageResult instead. Will be removed in a future version.
+ */
+export type UpdateCardResult = UpdateMessageResult;
 
 /**
  * Result type for wait_for_interaction tool.

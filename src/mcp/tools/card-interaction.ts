@@ -1,5 +1,5 @@
 /**
- * Card interaction tools: update_card and wait_for_interaction.
+ * Card interaction tools: update_message and wait_for_interaction.
  *
  * @module mcp/tools/card-interaction
  */
@@ -9,7 +9,7 @@ import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import type { UpdateCardResult, WaitForInteractionResult, PendingInteraction } from './types.js';
+import type { UpdateMessageResult, WaitForInteractionResult, PendingInteraction } from './types.js';
 
 const logger = createLogger('CardInteraction');
 
@@ -32,14 +32,14 @@ export function resolvePendingInteraction(
   return false;
 }
 
-export async function update_card(params: {
+export async function update_message(params: {
   messageId: string;
   card: Record<string, unknown>;
   chatId: string;
-}): Promise<UpdateCardResult> {
+}): Promise<UpdateMessageResult> {
   const { messageId, card, chatId } = params;
 
-  logger.info({ messageId, chatId }, 'update_card called');
+  logger.info({ messageId, chatId }, 'update_message called');
 
   try {
     if (!messageId) { throw new Error('messageId is required'); }
@@ -58,7 +58,7 @@ export async function update_card(params: {
     const appSecret = Config.FEISHU_APP_SECRET;
 
     if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
+      const errorMsg = 'Messaging platform credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
       return {
         success: false,
         error: errorMsg,
@@ -73,15 +73,20 @@ export async function update_card(params: {
       data: { content: JSON.stringify(card) },
     });
 
-    logger.debug({ messageId, chatId }, 'Card updated successfully');
-    return { success: true, message: '✅ Card updated successfully' };
+    logger.debug({ messageId, chatId }, 'Message updated successfully');
+    return { success: true, message: '✅ Message updated successfully' };
 
   } catch (error) {
-    logger.error({ err: error, messageId, chatId }, 'update_card failed');
+    logger.error({ err: error, messageId, chatId }, 'update_message failed');
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return { success: false, error: errorMessage, message: `❌ Failed to update card: ${errorMessage}` };
+    return { success: false, error: errorMessage, message: `❌ Failed to update message: ${errorMessage}` };
   }
 }
+
+/**
+ * @deprecated Use update_message instead. Will be removed in a future version.
+ */
+export const update_card = update_message;
 
 export async function wait_for_interaction(params: {
   messageId: string;
@@ -100,7 +105,7 @@ export async function wait_for_interaction(params: {
       return {
         success: false,
         error: 'Already waiting for interaction on this message',
-        message: '❌ Another wait is already pending for this card',
+        message: '❌ Another wait is already pending for this message',
       };
     }
 

@@ -1,10 +1,10 @@
 /**
- * Tests for Feishu MCP Server (stdio implementation)
+ * Tests for Messaging MCP Server (stdio implementation)
  *
  * Tests the following functionality:
  * - MCP protocol initialization
  * - Tool list response
- * - Tool call handling (send_user_feedback, send_file_to_feishu)
+ * - Tool call handling (send_message, send_file)
  * - Error handling
  *
  * Note: This tests the server behavior indirectly through the exported
@@ -60,7 +60,7 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
-describe('Feishu MCP Server', () => {
+describe('Messaging MCP Server', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -71,24 +71,24 @@ describe('Feishu MCP Server', () => {
   });
 
   describe('Tool Definitions', () => {
-    it('should define send_user_feedback tool with correct schema', async () => {
+    it('should define send_message tool with correct schema', async () => {
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFeedbackTool = feishuToolDefinitions.find(t => t.name === 'send_user_feedback');
-      expect(sendFeedbackTool).toBeDefined();
+      const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
+      expect(sendMessageTool).toBeDefined();
 
       // Verify description mentions key features
-      expect(sendFeedbackTool?.description).toContain('Send a message to a Feishu chat');
-      expect(sendFeedbackTool?.description).toContain('Thread Support');
-      expect(sendFeedbackTool?.description).toContain('Card Format Requirements');
+      expect(sendMessageTool?.description).toContain('Send a message to a chat');
+      expect(sendMessageTool?.description).toContain('Thread Support');
+      expect(sendMessageTool?.description).toContain('Card Format Requirements');
     });
 
-    it('should define send_file_to_feishu tool with correct schema', async () => {
+    it('should define send_file tool with correct schema', async () => {
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFileTool = feishuToolDefinitions.find(t => t.name === 'send_file_to_feishu');
+      const sendFileTool = feishuToolDefinitions.find(t => t.name === 'send_file');
       expect(sendFileTool).toBeDefined();
-      expect(sendFileTool?.description).toContain('Send a file to a Feishu chat');
+      expect(sendFileTool?.description).toContain('Send a file to a chat');
     });
   });
 
@@ -103,16 +103,16 @@ describe('Feishu MCP Server', () => {
   });
 
   describe('Tool Execution via SDK Tools', () => {
-    it('should execute send_user_feedback through SDK tool wrapper', async () => {
+    it('should execute send_message through SDK tool wrapper', async () => {
       mockClient.im.message.create.mockResolvedValueOnce({});
 
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFeedbackTool = feishuToolDefinitions.find(t => t.name === 'send_user_feedback');
-      expect(sendFeedbackTool).toBeDefined();
+      const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
+      expect(sendMessageTool).toBeDefined();
 
       // Execute the tool handler
-      const result = await sendFeedbackTool?.handler({
+      const result = await sendMessageTool?.handler({
         content: 'Test message',
         format: 'text',
         chatId: 'chat-123',
@@ -124,14 +124,14 @@ describe('Feishu MCP Server', () => {
       expect(result?.content[0]).toHaveProperty('type', 'text');
     });
 
-    it('should execute send_file_to_feishu through SDK tool wrapper', async () => {
+    it('should execute send_file through SDK tool wrapper', async () => {
       const { uploadAndSendFile } = await import('../file-transfer/outbound/feishu-uploader.js');
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(1024);
       mockFsStat.mockResolvedValue({ isFile: () => true, size: 1024 });
 
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFileTool = feishuToolDefinitions.find(t => t.name === 'send_file_to_feishu');
+      const sendFileTool = feishuToolDefinitions.find(t => t.name === 'send_file');
       expect(sendFileTool).toBeDefined();
 
       // Execute the tool handler
@@ -150,10 +150,10 @@ describe('Feishu MCP Server', () => {
 
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFeedbackTool = feishuToolDefinitions.find(t => t.name === 'send_user_feedback');
+      const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
 
       // Execute the tool handler - should return soft error, not throw
-      const result = await sendFeedbackTool?.handler({
+      const result = await sendMessageTool?.handler({
         content: 'Test message',
         format: 'text',
         chatId: 'chat-123',
@@ -171,9 +171,9 @@ describe('Feishu MCP Server', () => {
 
       const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
 
-      const sendFeedbackTool = feishuToolDefinitions.find(t => t.name === 'send_user_feedback');
+      const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
 
-      const result = await sendFeedbackTool?.handler({
+      const result = await sendMessageTool?.handler({
         content: 'Test',
         format: 'text',
         chatId: 'chat-123',

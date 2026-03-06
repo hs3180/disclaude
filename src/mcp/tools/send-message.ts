@@ -1,5 +1,8 @@
 /**
- * send_user_feedback tool implementation.
+ * send_message tool implementation.
+ *
+ * This tool sends messages to the configured messaging platform.
+ * Currently supports Feishu/Lark platform with interactive cards.
  *
  * @module mcp/tools/send-message
  */
@@ -10,7 +13,7 @@ import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import type { SendFeedbackResult, MessageSentCallback } from './types.js';
+import type { SendMessageResult, MessageSentCallback } from './types.js';
 
 const logger = createLogger('SendMessage');
 
@@ -34,12 +37,12 @@ function invokeMessageSentCallback(chatId: string): void {
   }
 }
 
-export async function send_user_feedback(params: {
+export async function send_message(params: {
   content: string | Record<string, unknown>;
   format: 'text' | 'card';
   chatId: string;
   parentMessageId?: string;
-}): Promise<SendFeedbackResult> {
+}): Promise<SendMessageResult> {
   const { content, format, chatId, parentMessageId } = params;
 
   logger.info({
@@ -47,7 +50,7 @@ export async function send_user_feedback(params: {
     format,
     contentType: typeof content,
     contentPreview: typeof content === 'string' ? content.substring(0, 100) : JSON.stringify(content).substring(0, 100),
-  }, 'send_user_feedback called');
+  }, 'send_message called');
 
   try {
     if (!content) { throw new Error('content is required'); }
@@ -58,7 +61,7 @@ export async function send_user_feedback(params: {
     const appSecret = Config.FEISHU_APP_SECRET;
 
     if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
+      const errorMsg = 'Messaging platform credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
       logger.error({ chatId, format }, errorMsg);
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
@@ -68,11 +71,11 @@ export async function send_user_feedback(params: {
     if (format === 'text') {
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
       await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
-      logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
+      logger.debug({ chatId, parentMessageId }, 'Message sent (text)');
     } else {
       if (typeof content === 'object' && isValidFeishuCard(content)) {
         await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, parentMessageId }, 'User card sent');
+        logger.debug({ chatId, parentMessageId }, 'Card message sent');
       } else if (typeof content === 'string') {
         try {
           const parsed = JSON.parse(content);
@@ -81,7 +84,7 @@ export async function send_user_feedback(params: {
           } else {
             return {
               success: false,
-              error: `Invalid Feishu card structure: ${getCardValidationError(parsed)}`,
+              error: `Invalid card structure: ${getCardValidationError(parsed)}`,
               message: `❌ Card validation failed. ${getCardValidationError(parsed)}.`,
             };
           }
@@ -103,11 +106,16 @@ export async function send_user_feedback(params: {
     }
 
     invokeMessageSentCallback(chatId);
-    return { success: true, message: `✅ Feedback sent (format: ${format})` };
+    return { success: true, message: `✅ Message sent (format: ${format})` };
 
   } catch (error) {
-    logger.error({ err: error, chatId }, 'send_user_feedback FAILED');
+    logger.error({ err: error, chatId }, 'send_message FAILED');
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return { success: false, error: errorMessage, message: `❌ Failed to send feedback: ${errorMessage}` };
+    return { success: false, error: errorMessage, message: `❌ Failed to send message: ${errorMessage}` };
   }
 }
+
+/**
+ * @deprecated Use send_message instead. Will be removed in a future version.
+ */
+export const send_user_feedback = send_message;
