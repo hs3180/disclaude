@@ -39,3 +39,6 @@ export { TopicGroupCommand } from './topic-group-command.js';
 
 // Expert commands (Issue #535)
 export { ExpertCommand } from './expert-commands.js';
+
+// Feedback command (Issue #930)
+export { FeedbackCommand } from './feedback-command.js';
