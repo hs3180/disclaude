@@ -6,22 +6,22 @@ blocking: true
 chatId: "oc_REPLACE_WITH_YOUR_CHAT_ID"
 ---
 
-# PR Scanner - Phase 1
+# PR Scanner - Phase 1 & 2
 
-定期扫描仓库的 open PR，发现新 PR 时发送通知到指定群聊。
+定期扫描仓库的 open PR，发现新 PR 时创建群聊并发送通知。
 
 ## 配置
 
 - **仓库**: hs3180/disclaude
 - **扫描间隔**: 每 30 分钟
-- **通知目标**: 配置的 chatId
+- **通知目标**: 配置的 chatId（Phase 1）或为每个 PR 创建独立群聊（Phase 2）
 
 ## 执行步骤
 
 ### 1. 获取当前 open PR 列表
 
 ```bash
-gh pr list --repo hs3180/disclaude --state open --json number,title,author,updatedAt
+gh pr list --repo hs3180/disclaude --state open --json number,title,author,updatedAt,mergeable,statusCheckRollup
 ```
 
 ### 2. 读取历史记录
@@ -47,17 +47,24 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
 
 1. 获取详细信息：
    ```bash
-   gh pr view {number} --repo hs3180/disclaude
+   gh pr view {number} --repo hs3180/disclaude --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
    ```
 
-2. 使用 `send_user_feedback` 发送通知：
+2. **尝试创建群聊** (Phase 2):
+   - 如果有 `create_discussion_chat` MCP 工具可用，为该 PR 创建独立群聊
+   - 群聊名称: `PR #{number}: {title 前30字符}`
+   - 如果创建失败或工具不可用，使用配置的 `chatId` 发送通知
+
+3. 发送 PR 信息通知：
    - PR 标题和编号
    - 作者
+   - 分支信息 (head → base)
    - 状态（可合并/有冲突）
    - CI 检查状态
+   - 变更统计 (+additions/-deletions, changedFiles files)
    - 链接
 
-3. 更新历史记录
+4. 更新历史记录
 
 ### 5. 更新历史文件
 
@@ -71,29 +78,46 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
 PR #{number}: {title}
 
 👤 作者: {author}
+🌿 分支: {headRef} → {baseRef}
 📊 状态: {mergeable ? '✅ 可合并' : '⚠️ 有冲突'}
 🔍 检查: {ciStatus}
+📈 变更: +{additions} -{deletions} ({changedFiles} files)
 
 📋 描述:
-{description}
+{description 前500字符}
 
 🔗 链接: https://github.com/hs3180/disclaude/pull/{number}
 ```
 
+## 群聊创建说明 (Phase 2)
+
+当前 MCP 工具暂不支持创建群聊，因此使用 Phase 1 模式（发送到配置的 chatId）。
+
+未来当 `create_discussion_chat` MCP 工具可用时，可以：
+1. 为每个新 PR 创建独立群聊
+2. 邀请 PR 作者和相关人员
+3. 在群聊中发送 PR 信息卡片
+4. 支持通过命令执行 PR 操作
+
 ## 错误处理
 
-- 如果 `gh` 命令失败，记录错误并发送错误通知
+- 如果 `gh` 命令失败，记录错误并发送错误通知到 chatId
 - 如果历史文件损坏，重置并重新开始
 - 如果发送通知失败，记录错误但继续处理其他 PR
 
 ## 使用说明
 
 1. 复制此文件到 `workspace/schedules/pr-scanner.md`
-2. 替换 `chatId` 为实际的飞书群聊 ID
+2. 将 `chatId` 替换为实际的飞书群聊 ID（用于接收通知）
 3. 设置 `enabled: true`
 4. 调度器将自动加载并执行
 
-## 未来扩展 (Phase 2 & 3)
+## 实现状态
 
-- **Phase 2**: 为每个 PR 创建独立群聊（需要 PR #423 ChatOps）
-- **Phase 3**: 支持交互式操作按钮（需要 PR #412 FeedbackController）
+| Phase | 功能 | 状态 |
+|-------|------|------|
+| Phase 1 | 基本扫描 + 通知 | ✅ 可用 |
+| Phase 2 | 为每个 PR 创建群聊 | ⏳ 需要 MCP 工具 |
+| Phase 3 | 交互式操作按钮 | ❌ 不计划实现 |
+
+详见: `docs/designs/pr-scanner-design.md`
