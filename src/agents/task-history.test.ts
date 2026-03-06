@@ -35,7 +35,7 @@ describe('TaskHistoryStorage', () => {
   });
 
   describe('initialize', () => {
-    it('should create empty storage when no existing data', async () => {
+    it('should create empty storage when no existing data', () => {
       const stats = storage.getStats();
       expect(stats.historyCount).toBe(0);
       expect(stats.statsCount).toBe(0);

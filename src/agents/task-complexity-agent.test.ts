@@ -5,8 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TaskComplexityAgent, type TaskComplexityAgentConfig } from './task-complexity-agent.js';
-import type { TaskComplexityResult } from './task-complexity-agent.js';
+import { TaskComplexityAgent, type TaskComplexityAgentConfig, type TaskComplexityResult } from './task-complexity-agent.js';
 
 // Mock the base agent's queryOnce method
 vi.mock('./base-agent.js', () => {
@@ -226,7 +225,7 @@ describe('TaskComplexityAgent', () => {
       const results: TaskComplexityResult[] = [];
 
       for await (const message of agent.execute(input)) {
-        if (message.content) {
+        if (message.content && typeof message.content === 'string') {
           results.push(JSON.parse(message.content));
         }
       }

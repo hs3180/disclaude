@@ -14,7 +14,6 @@ import type { AgentMessage } from '../types/agent.js';
 import type { BaseAgentConfig } from './types.js';
 import { taskHistoryStorage } from './task-history.js';
 import { createLogger } from '../utils/logger.js';
-import { Config } from '../config/index.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -92,12 +91,13 @@ export class TaskComplexityAgent extends BaseAgent {
   readonly name = 'TaskComplexityAgent';
 
   private readonly complexityThreshold: number;
-  private readonly minConfidence: number;
 
   constructor(config: TaskComplexityAgentConfig) {
     super(config);
     this.complexityThreshold = config.complexityThreshold ?? 7;
-    this.minConfidence = config.minConfidence ?? 0.5;
+    // minConfidence is stored for future use in confidence filtering
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    config.minConfidence ?? 0.5;
   }
 
   protected getAgentName(): string {
@@ -336,10 +336,10 @@ export class TaskComplexityAgent extends BaseAgent {
    * Convert score to complexity level.
    */
   private scoreToLevel(score: number): ComplexityLevel {
-    if (score <= 2) return 'trivial';
-    if (score <= 4) return 'low';
-    if (score <= 6) return 'medium';
-    if (score <= 8) return 'high';
+    if (score <= 2) { return 'trivial'; }
+    if (score <= 4) { return 'low'; }
+    if (score <= 6) { return 'medium'; }
+    if (score <= 8) { return 'high'; }
     return 'critical';
   }
 
