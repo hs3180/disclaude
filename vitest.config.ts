@@ -77,6 +77,6 @@ export default defineConfig({
       },
       include: ['src/**/*.ts'],
     },
-    setupFiles: [],
+    setupFiles: ['./tests/setup.ts'],
   },
 });
