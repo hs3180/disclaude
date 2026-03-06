@@ -113,6 +113,75 @@ export const feishuContextTools = {
 
 ---
 
+## 🎯 预定义模板（推荐使用）
+
+以下是常用的交互场景模板，可直接复制使用：
+
+### 1. 确认对话框
+\`\`\`json
+{
+  "actionPrompts": {
+    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
+    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
+  }
+}
+\`\`\`
+
+### 2. 选择列表
+\`\`\`json
+{
+  "actionPrompts": {
+    "option_a": "[用户操作] 用户选择了「选项A」。请根据此选择继续。",
+    "option_b": "[用户操作] 用户选择了「选项B」。请根据此选择继续。"
+  }
+}
+\`\`\`
+
+### 3. 审批流程
+\`\`\`json
+{
+  "actionPrompts": {
+    "approve": "[用户操作] 用户已批准。请执行批准后的操作。",
+    "reject": "[用户操作] 用户已拒绝。请执行拒绝后的处理。",
+    "review": "[用户操作] 用户请求更多信息。请提供详细信息后重新请求审批。"
+  }
+}
+\`\`\`
+
+### 4. 文件操作
+\`\`\`json
+{
+  "actionPrompts": {
+    "view": "[用户操作] 用户选择查看详情。请展示完整信息。",
+    "edit": "[用户操作] 用户选择编辑。请提供编辑界面或指导。",
+    "delete": "[用户操作] 用户选择删除。请确认删除操作。"
+  }
+}
+\`\`\`
+
+---
+
+## 自定义 actionPrompts
+
+如果预定义模板不满足需求，可以自定义 prompt。支持以下占位符：
+
+| 占位符 | 说明 | 示例值 |
+|--------|------|--------|
+| \`{{actionText}}\` | 按钮显示文本 | "确认" |
+| \`{{actionValue}}\` | 按钮的 value 值 | "confirm" |
+| \`{{actionType}}\` | 组件类型 | "button" |
+
+**自定义示例：**
+\`\`\`json
+{
+  "actionPrompts": {
+    "custom": "用户点击了「{{actionText}}」(值: {{actionValue}})，请处理。"
+  }
+}
+\`\`\`
+
+---
+
 ## Parameters
 
 - **card**: The interactive card JSON structure (same as send_user_feedback with format="card")
@@ -369,6 +438,75 @@ When \`format: "card"\`, content MUST include:
     description: `Send an interactive card message with pre-defined action prompts.
 
 **Core Concept:** When the user interacts with the card (clicks a button, selects from menu), the corresponding prompt template is automatically converted into a message that you (the agent) receive. You don't need to wait for callbacks - just handle the incoming message naturally.
+
+---
+
+## 🎯 预定义模板（推荐使用）
+
+以下是常用的交互场景模板，可直接复制使用：
+
+### 1. 确认对话框
+\`\`\`json
+{
+  "actionPrompts": {
+    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
+    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
+  }
+}
+\`\`\`
+
+### 2. 选择列表
+\`\`\`json
+{
+  "actionPrompts": {
+    "option_a": "[用户操作] 用户选择了「选项A」。请根据此选择继续。",
+    "option_b": "[用户操作] 用户选择了「选项B」。请根据此选择继续。"
+  }
+}
+\`\`\`
+
+### 3. 审批流程
+\`\`\`json
+{
+  "actionPrompts": {
+    "approve": "[用户操作] 用户已批准。请执行批准后的操作。",
+    "reject": "[用户操作] 用户已拒绝。请执行拒绝后的处理。",
+    "review": "[用户操作] 用户请求更多信息。请提供详细信息后重新请求审批。"
+  }
+}
+\`\`\`
+
+### 4. 文件操作
+\`\`\`json
+{
+  "actionPrompts": {
+    "view": "[用户操作] 用户选择查看详情。请展示完整信息。",
+    "edit": "[用户操作] 用户选择编辑。请提供编辑界面或指导。",
+    "delete": "[用户操作] 用户选择删除。请确认删除操作。"
+  }
+}
+\`\`\`
+
+---
+
+## 自定义 actionPrompts
+
+如果预定义模板不满足需求，可以自定义 prompt。支持以下占位符：
+
+| 占位符 | 说明 | 示例值 |
+|--------|------|--------|
+| \`{{actionText}}\` | 按钮显示文本 | "确认" |
+| \`{{actionValue}}\` | 按钮的 value 值 | "confirm" |
+| \`{{actionType}}\` | 组件类型 | "button" |
+
+**自定义示例：**
+\`\`\`json
+{
+  "actionPrompts": {
+    "custom": "用户点击了「{{actionText}}」(值: {{actionValue}})，请处理。"
+  }
+}
+\`\`\`
 
 ---
 
