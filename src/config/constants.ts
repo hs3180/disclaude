@@ -75,6 +75,17 @@ export const CHAT_HISTORY = {
 } as const;
 
 /**
+ * Session restoration configuration (Issue #955)
+ */
+export const SESSION_RESTORE = {
+  /** Number of days to look back for chat history */
+  HISTORY_DAYS: 7,
+
+  /** Maximum characters for restored session context */
+  MAX_CONTEXT_LENGTH: 4000,
+} as const;
+
+/**
  * Error codes that should trigger a retry
  */
 export const RETRYABLE_ERROR_CODES = [

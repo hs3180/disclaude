@@ -81,4 +81,6 @@ export interface MessageData {
   attachments?: FileRef[];
   /** Chat history context for passive mode (Issue #517) */
   chatHistoryContext?: string;
+  /** Persisted history context for session restoration (Issue #955) */
+  persistedHistoryContext?: string;
 }

@@ -54,6 +54,22 @@ ${msg.chatHistoryContext}
 `
       : '';
 
+    // Build persisted history section for session restoration (Issue #955)
+    const persistedHistorySection = msg.persistedHistoryContext
+      ? `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted. Here's the conversation history from your previous session:
+
+${msg.persistedHistoryContext}
+
+---
+`
+      : '';
+
     if (isSkillCommand) {
       // For skill commands: command first, then minimal context for skill to use
       const contextInfo = msg.senderOpenId
@@ -100,7 +116,7 @@ To notify the user in your FINAL response, use:
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
-${chatHistorySection}${mentionSection}
+${persistedHistorySection}${chatHistorySection}${mentionSection}
 
 ---
 
@@ -116,7 +132,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
-${chatHistorySection}
+${persistedHistorySection}${chatHistorySection}
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}
