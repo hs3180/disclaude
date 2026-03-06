@@ -218,6 +218,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
    * Build attachments info string for the message content.
    *
    * Issue #809: Added image analyzer MCP hint for image attachments.
+   * Issue #808: Added native multimodal guidance when no MCP is configured.
    */
   private buildAttachmentsInfo(attachments?: MessageData['attachments']): string {
     if (!attachments || attachments.length === 0) {
@@ -234,24 +235,46 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
       })
       .join('\n');
 
-    // Issue #809: Check if there are image attachments and image analyzer MCP is configured
-    const hasImageAttachment = attachments.some(att =>
+    // Issue #809/#808: Check if there are image attachments
+    const imageAttachments = attachments.filter(att =>
       att.mimeType?.startsWith('image/')
     );
-    const imageAnalyzerHint = hasImageAttachment && this.hasImageAnalyzerMcp()
-      ? `
-
-**Note:** Image attachment(s) detected. If you need to analyze the image content, prefer using the \`analyze_image\` tool from the image analyzer MCP server for better results. You can also use the Read tool to view images if the model supports native multimodal input.`
-      : '';
+    const imageGuidance = this.buildImageGuidance(imageAttachments);
 
     return `
 
 --- Attachments ---
 The user has attached ${attachments.length} file(s). These files have been downloaded to local storage:
 
-${attachmentList}${imageAnalyzerHint}
+${attachmentList}${imageGuidance}
 
 You can read these files using the Read tool with the local paths above.`;
+  }
+
+  /**
+   * Build image guidance based on MCP configuration.
+   *
+   * Issue #808: Provides appropriate guidance for image analysis.
+   * - With MCP: Suggests using analyze_image tool
+   * - Without MCP: Suggests using Read tool for native multimodal models
+   */
+  private buildImageGuidance(imageAttachments: NonNullable<MessageData['attachments']>): string {
+    if (imageAttachments.length === 0) {
+      return '';
+    }
+
+    const count = imageAttachments.length;
+
+    if (this.hasImageAnalyzerMcp()) {
+      return `
+
+**Image attachment(s) detected (${count}):** If you need to analyze the image content, prefer using the \`analyze_image\` tool from the image analyzer MCP server for better results. You can also use the Read tool to view images if the model supports native multimodal input.`;
+    }
+
+    // Issue #808: Native multimodal guidance when no MCP is configured
+    return `
+
+**Image attachment(s) detected (${count}):** Use the Read tool with the local paths above to view and analyze the images. Native multimodal models can directly understand image content through the Read tool.`;
   }
 
   /**
