@@ -104,6 +104,15 @@ export type CardElement =
 export type ActionElement = ButtonAction | MenuAction;
 
 /**
+ * Button click configuration for triggering callbacks.
+ * Required for button clicks to trigger card.action.trigger events.
+ */
+export interface ButtonClick {
+  tag: 'request';
+  value: Record<string, string>;
+}
+
+/**
  * Button action element.
  */
 export interface ButtonAction {
@@ -111,6 +120,8 @@ export interface ButtonAction {
   text: { tag: 'plain_text'; content: string };
   type: ButtonStyle;
   value: Record<string, string>;
+  /** Click configuration required for triggering card.action.trigger events */
+  click: ButtonClick;
   url?: string;
 }
 
@@ -176,11 +187,18 @@ export interface BuiltCard {
  * const button = buildButton({ text: 'Confirm', value: 'confirm', style: 'primary' });
  */
 export function buildButton(config: ButtonConfig): ButtonAction {
+  const buttonValue = { action: config.value };
+
   const button: ButtonAction = {
     tag: 'button',
     text: { tag: 'plain_text', content: config.text },
     type: config.style || 'default',
-    value: { action: config.value },
+    value: buttonValue,
+    // click field is required for triggering card.action.trigger events
+    click: {
+      tag: 'request',
+      value: buttonValue,
+    },
   };
 
   if (config.url) {

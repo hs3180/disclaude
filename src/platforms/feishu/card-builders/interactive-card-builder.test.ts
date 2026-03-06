@@ -17,7 +17,7 @@ import {
 
 describe('Interactive Card Builder', () => {
   describe('buildButton', () => {
-    it('should build a default button', () => {
+    it('should build a default button with click configuration', () => {
       const button = buildButton({ text: 'Click Me', value: 'click' });
 
       expect(button).toEqual({
@@ -25,16 +25,24 @@ describe('Interactive Card Builder', () => {
         text: { tag: 'plain_text', content: 'Click Me' },
         type: 'default',
         value: { action: 'click' },
+        click: {
+          tag: 'request',
+          value: { action: 'click' },
+        },
       });
     });
 
-    it('should build a primary button', () => {
+    it('should build a primary button with click configuration', () => {
       const button = buildButton({ text: 'Confirm', value: 'confirm', style: 'primary' });
 
       expect(button.type).toBe('primary');
+      expect(button.click).toEqual({
+        tag: 'request',
+        value: { action: 'confirm' },
+      });
     });
 
-    it('should build a button with URL', () => {
+    it('should build a button with URL and click configuration', () => {
       const button = buildButton({
         text: 'Open Link',
         value: 'link',
@@ -42,6 +50,16 @@ describe('Interactive Card Builder', () => {
       });
 
       expect(button.url).toBe('https://example.com');
+      expect(button.click).toEqual({
+        tag: 'request',
+        value: { action: 'link' },
+      });
+    });
+
+    it('should have matching value and click.value for callback consistency', () => {
+      const button = buildButton({ text: 'Test', value: 'test-action' });
+
+      expect(button.value).toEqual(button.click.value);
     });
   });
 
@@ -132,12 +150,20 @@ describe('Interactive Card Builder', () => {
             text: { tag: 'plain_text', content: 'Yes' },
             type: 'primary',
             value: { action: 'yes' },
+            click: {
+              tag: 'request',
+              value: { action: 'yes' },
+            },
           },
           {
             tag: 'button',
             text: { tag: 'plain_text', content: 'No' },
             type: 'danger',
             value: { action: 'no' },
+            click: {
+              tag: 'request',
+              value: { action: 'no' },
+            },
           },
         ],
       });
