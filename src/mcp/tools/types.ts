@@ -10,6 +10,7 @@
 export interface SendFeedbackResult {
   success: boolean;
   message: string;
+  messageId?: string;
   error?: string;
 }
 
@@ -92,6 +93,16 @@ export interface InteractiveMessageContext {
  * Result type for send_interactive_message tool.
  */
 export interface SendInteractiveResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for leave_message tool (Issue #631).
+ */
+export interface LeaveMessageResult {
   success: boolean;
   message: string;
   messageId?: string;

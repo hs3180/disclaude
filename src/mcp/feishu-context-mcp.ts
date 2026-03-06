@@ -13,6 +13,7 @@ import {
   wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
+  leave_message,
 } from './tools/index.js';
 
 // Re-export for backward compatibility
@@ -27,6 +28,7 @@ export {
   generateInteractionPrompt,
   getActionPrompts,
 } from './tools/interactive-message.js';
+export { leave_message } from './tools/leave-message.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -327,6 +329,51 @@ In actionPrompts, you can use these placeholders:
       required: ['card', 'actionPrompts', 'chatId'],
     },
     handler: send_interactive_message,
+  },
+  leave_message: {
+    description: `Leave a non-blocking message for the user.
+
+Unlike ask_user, this tool does NOT wait for a response. The message is sent and the tool returns immediately.
+
+**Key Features:**
+- Non-blocking: Returns immediately after sending
+- Callback support: Can trigger actions when user replies
+- Context tracking: Stores context for later reference
+
+**Use Cases:**
+- Leaving reminders or status updates
+- Asking questions that don't need immediate answers
+- Starting async discussions (like daily review feedback)
+- Notifying about completed background tasks
+
+**Callback Actions:**
+- "create_task": Create a Task.md when user replies
+- "trigger_skill": Run a skill when user replies
+- "record_knowledge": Save the response to knowledge base
+
+**Example:**
+\`\`\`json
+{
+  "message": "今日分析发现一个问题需要讨论...",
+  "chatId": "oc_xxx",
+  "context": "分析 #123 时发现...",
+  "callbackAction": "create_task"
+}
+\`\`\`
+
+The user can reply at any time, and the callback will be triggered.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        chatId: { type: 'string' },
+        context: { type: 'string' },
+        callbackAction: { type: 'string', enum: ['create_task', 'trigger_skill', 'record_knowledge'] },
+        callbackParams: { type: 'object' },
+      },
+      required: ['message', 'chatId'],
+    },
+    handler: leave_message,
   },
 };
 
@@ -656,6 +703,59 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'leave_message',
+    description: `Leave a non-blocking message for the user.
+
+Unlike ask_user, this tool does NOT wait for a response. The message is sent and the tool returns immediately.
+
+**Key Features:**
+- Non-blocking: Returns immediately after sending
+- Callback support: Can trigger actions when user replies
+- Context tracking: Stores context for later reference
+
+**Use Cases:**
+- Leaving reminders or status updates
+- Asking questions that don't need immediate answers
+- Starting async discussions (like daily review feedback)
+- Notifying about completed background tasks
+
+**Callback Actions:**
+- "create_task": Create a Task.md when user replies
+- "trigger_skill": Run a skill when user replies
+- "record_knowledge": Save the response to knowledge base
+
+**Example:**
+\`\`\`json
+{
+  "message": "今日分析发现一个问题需要讨论...",
+  "chatId": "oc_xxx",
+  "context": "分析 #123 时发现...",
+  "callbackAction": "create_task"
+}
+\`\`\`
+
+The user can reply at any time, and the callback will be triggered.`,
+    parameters: z.object({
+      message: z.string().describe('The message content to leave for the user'),
+      chatId: z.string().describe('Feishu chat ID to send the message to'),
+      context: z.string().optional().describe('Optional context information for the message'),
+      callbackAction: z.enum(['create_task', 'trigger_skill', 'record_knowledge']).optional().describe('Action to trigger when user replies (default: create_task)'),
+      callbackParams: z.object({}).passthrough().optional().describe('Optional parameters for the callback action'),
+    }),
+    handler: async ({ message, chatId, context, callbackAction, callbackParams }) => {
+      try {
+        const result = await leave_message({ message, chatId, context, callbackAction, callbackParams });
+        if (result.success) {
+          return toolSuccess(`${result.message}\nMessage ID: ${result.messageId}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Leave message failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

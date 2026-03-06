@@ -67,17 +67,23 @@ export async function send_user_feedback(params: {
 
     if (format === 'text') {
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
-      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
-      logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
+      const result = await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      logger.debug({ chatId, parentMessageId, messageId: result.messageId }, 'User feedback sent (text)');
+      invokeMessageSentCallback(chatId);
+      return { success: true, message: `✅ Feedback sent (format: ${format})`, messageId: result.messageId };
     } else {
       if (typeof content === 'object' && isValidFeishuCard(content)) {
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, parentMessageId }, 'User card sent');
+        const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
+        logger.debug({ chatId, parentMessageId, messageId: result.messageId }, 'User card sent');
+        invokeMessageSentCallback(chatId);
+        return { success: true, message: `✅ Feedback sent (format: ${format})`, messageId: result.messageId };
       } else if (typeof content === 'string') {
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            const result = await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            invokeMessageSentCallback(chatId);
+            return { success: true, message: `✅ Feedback sent (format: ${format})`, messageId: result.messageId };
           } else {
             return {
               success: false,
@@ -101,9 +107,6 @@ export async function send_user_feedback(params: {
         };
       }
     }
-
-    invokeMessageSentCallback(chatId);
-    return { success: true, message: `✅ Feedback sent (format: ${format})` };
 
   } catch (error) {
     logger.error({ err: error, chatId }, 'send_user_feedback FAILED');
