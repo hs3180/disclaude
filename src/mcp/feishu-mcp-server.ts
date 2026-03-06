@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Feishu MCP Server - stdio implementation
+ * MCP Server - stdio implementation
  *
  * This is a Model Context Protocol (MCP) server that provides
- * Feishu/Lark integration tools to the Agent SDK via stdio.
+ * messaging integration tools to the Agent SDK via stdio.
  *
  * Tools provided:
- * - send_user_feedback: Send a message to a Feishu chat
- * - send_file_to_feishu: Send a file to a Feishu chat
- * - update_card: Update an existing interactive card
+ * - send_message: Send a message to a chat
+ * - send_file: Send a file to a chat
  * - wait_for_interaction: Wait for user to interact with a card
  *
  * Environment Variables Required:
@@ -21,9 +20,9 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import { send_user_feedback, send_file_to_feishu, update_card, wait_for_interaction } from './feishu-context-mcp.js';
+import { send_message, send_file, wait_for_interaction } from './feishu-context-mcp.js';
 
-const logger = createLogger('FeishuMCPServer');
+const logger = createLogger('MCPServer');
 
 /**
  * Handle MCP requests
@@ -42,8 +41,8 @@ async function handleMessage(message: unknown) {
           result: {
             tools: [
               {
-                name: 'send_user_feedback',
-                description: 'Send a message to a Feishu chat. Requires explicit format: "text" or "card".',
+                name: 'send_message',
+                description: 'Send a message to a chat. Requires explicit format: "text" or "card".',
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -58,7 +57,7 @@ async function handleMessage(message: unknown) {
                     },
                     chatId: {
                       type: 'string',
-                      description: 'Feishu chat ID to send the message to',
+                      description: 'Chat ID to send the message to',
                     },
                     parentMessageId: {
                       type: 'string',
@@ -69,8 +68,8 @@ async function handleMessage(message: unknown) {
                 },
               },
               {
-                name: 'send_file_to_feishu',
-                description: 'Send a file to a Feishu chat. Supports images, audio, video, and documents.',
+                name: 'send_file',
+                description: 'Send a file to a chat. Supports images, audio, video, and documents.',
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -80,32 +79,10 @@ async function handleMessage(message: unknown) {
                     },
                     chatId: {
                       type: 'string',
-                      description: 'Feishu chat ID to send the file to',
+                      description: 'Chat ID to send the file to',
                     },
                   },
                   required: ['filePath', 'chatId'],
-                },
-              },
-              {
-                name: 'update_card',
-                description: 'Update an existing interactive card message.',
-                inputSchema: {
-                  type: 'object',
-                  properties: {
-                    messageId: {
-                      type: 'string',
-                      description: 'The message ID of the card to update',
-                    },
-                    card: {
-                      type: 'object',
-                      description: 'The new card content',
-                    },
-                    chatId: {
-                      type: 'string',
-                      description: 'Feishu chat ID where the card was sent',
-                    },
-                  },
-                  required: ['messageId', 'card', 'chatId'],
                 },
               },
               {
@@ -120,7 +97,7 @@ async function handleMessage(message: unknown) {
                     },
                     chatId: {
                       type: 'string',
-                      description: 'Feishu chat ID where the card was sent',
+                      description: 'Chat ID where the card was sent',
                     },
                     timeoutSeconds: {
                       type: 'number',
@@ -139,9 +116,9 @@ async function handleMessage(message: unknown) {
         const callParams = params as Record<string, unknown>;
         const { name, arguments: toolArgs } = callParams;
 
-        if (name === 'send_user_feedback') {
+        if (name === 'send_message') {
           const args = toolArgs as { content: string; format: 'text' | 'card'; chatId: string; parentMessageId?: string };
-          const result = await send_user_feedback(args);
+          const result = await send_message(args);
 
           return {
             jsonrpc: '2.0',
@@ -157,27 +134,9 @@ async function handleMessage(message: unknown) {
           };
         }
 
-        if (name === 'send_file_to_feishu') {
+        if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string };
-          const result = await send_file_to_feishu(args);
-
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{
-                type: 'text',
-                text: result.success
-                  ? result.message
-                  : `⚠️ ${result.message}`,
-              }],
-            },
-          };
-        }
-
-        if (name === 'update_card') {
-          const args = toolArgs as { messageId: string; card: Record<string, unknown>; chatId: string };
-          const result = await update_card(args);
+          const result = await send_file(args);
 
           return {
             jsonrpc: '2.0',
@@ -224,7 +183,7 @@ async function handleMessage(message: unknown) {
               tools: {},
             },
             serverInfo: {
-              name: 'feishu-mcp-server',
+              name: 'mcp-server',
               version: '1.0.0',
             },
           },
@@ -249,7 +208,7 @@ async function handleMessage(message: unknown) {
  * Main server loop - read from stdin, write to stdout
  */
 function main() {
-  logger.info('Starting Feishu MCP Server (stdio)');
+  logger.info('Starting MCP Server (stdio)');
 
   let buffer = '';
 
@@ -285,7 +244,7 @@ function main() {
   });
 
   process.stdin.on('end', () => {
-    logger.info('Feishu MCP Server shutting down');
+    logger.info('MCP Server shutting down');
   });
 
   process.stdin.on('error', (error) => {

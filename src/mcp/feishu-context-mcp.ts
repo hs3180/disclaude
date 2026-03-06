@@ -1,5 +1,5 @@
 /**
- * Feishu Context MCP Tools - In-process tool implementation.
+ * Context MCP Tools - In-process tool implementation.
  *
  * @module mcp/feishu-context-mcp
  */
@@ -7,22 +7,21 @@
 import { z } from 'zod';
 import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import {
-  send_user_feedback,
-  send_file_to_feishu,
-  update_card,
+  send_message,
+  send_file,
   wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
-// Re-export for backward compatibility
+// Re-export
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
 export { resolvePendingInteraction } from './tools/card-interaction.js';
-export { send_user_feedback } from './tools/send-message.js';
-export { send_file_to_feishu } from './tools/send-file.js';
-export { update_card, wait_for_interaction } from './tools/card-interaction.js';
+export { send_message } from './tools/send-message.js';
+export { send_file } from './tools/send-file.js';
+export { wait_for_interaction } from './tools/card-interaction.js';
 export {
   send_interactive_message,
   generateInteractionPrompt,
@@ -33,7 +32,7 @@ export {
 // This allows the main process to query interactive contexts
 startIpcServer().catch((error) => {
   // Log error but don't fail - IPC is optional enhancement
-  console.error('[feishu-context-mcp] Failed to start IPC server:', error);
+  console.error('[context-mcp] Failed to start IPC server:', error);
 });
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
@@ -41,8 +40,8 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 }
 
 export const feishuContextTools = {
-  send_user_feedback: {
-    description: `Send a message to a Feishu chat. Requires explicit format: "text" or "card".
+  send_message: {
+    description: `Send a message to a chat. Requires explicit format: "text" or "card".
 
 **IMPORTANT: "format" parameter is REQUIRED for every call.**
 
@@ -85,25 +84,16 @@ export const feishuContextTools = {
       },
       required: ['content', 'format', 'chatId'],
     },
-    handler: send_user_feedback,
+    handler: send_message,
   },
-  send_file_to_feishu: {
-    description: 'Send a file to a Feishu chat.',
+  send_file: {
+    description: 'Send a file to a chat.',
     parameters: {
       type: 'object',
       properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
       required: ['filePath', 'chatId'],
     },
-    handler: send_file_to_feishu,
-  },
-  update_card: {
-    description: 'Update an existing interactive card message.',
-    parameters: {
-      type: 'object',
-      properties: { messageId: { type: 'string' }, card: { type: 'object' }, chatId: { type: 'string' } },
-      required: ['messageId', 'card', 'chatId'],
-    },
-    handler: update_card,
+    handler: send_file,
   },
   wait_for_interaction: {
     description: 'Wait for the user to interact with a card.',
@@ -192,7 +182,7 @@ export const feishuContextTools = {
 
 ## Parameters
 
-- **card**: The interactive card JSON structure (same as send_user_feedback with format="card")
+- **card**: The interactive card JSON structure (same as send_message with format="card")
 - **actionPrompts**: Map of action values to prompt templates
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
@@ -340,8 +330,8 @@ In actionPrompts, you can use these placeholders:
 
 export const feishuToolDefinitions: InlineToolDefinition[] = [
   {
-    name: 'send_user_feedback',
-    description: `Send a message to a Feishu chat. Requires explicit format: "text" or "card".
+    name: 'send_message',
+    description: `Send a message to a chat. Requires explicit format: "text" or "card".
 
 **IMPORTANT: "format" parameter is REQUIRED for every call.**
 
@@ -393,36 +383,23 @@ When \`format: "card"\`, content MUST include:
         return toolSuccess('❌ Error: When format="text", content must be a STRING.');
       }
       try {
-        const result = await send_user_feedback({ content, format, chatId, parentMessageId });
+        const result = await send_message({ content, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
-        return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolSuccess(`⚠️ Message send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
   {
-    name: 'send_file_to_feishu',
-    description: 'Send a file to a Feishu chat.',
+    name: 'send_file',
+    description: 'Send a file to a chat.',
     parameters: z.object({ filePath: z.string(), chatId: z.string() }),
     handler: async ({ filePath, chatId }) => {
       try {
-        const result = await send_file_to_feishu({ filePath, chatId });
+        const result = await send_file({ filePath, chatId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'update_card',
-    description: 'Update an existing interactive card message.',
-    parameters: z.object({ messageId: z.string(), card: z.object({}).passthrough(), chatId: z.string() }),
-    handler: async ({ messageId, card, chatId }) => {
-      try {
-        const result = await update_card({ messageId, card, chatId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Card update failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -520,7 +497,7 @@ When \`format: "card"\`, content MUST include:
 
 ## Parameters
 
-- **card**: The interactive card JSON structure (same as send_user_feedback with format="card")
+- **card**: The interactive card JSON structure (same as send_message with format="card")
 - **actionPrompts**: Map of action values to prompt templates
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
@@ -674,7 +651,7 @@ export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().cre
 export function createFeishuSdkMcpServer() {
   return getProvider().createMcpServer({
     type: 'inline',
-    name: 'feishu-context',
+    name: 'context-mcp',
     version: '1.0.0',
     tools: feishuToolDefinitions,
   });

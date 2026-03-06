@@ -1,5 +1,5 @@
 /**
- * send_file_to_feishu tool implementation.
+ * send_file tool implementation.
  *
  * @module mcp/tools/send-file
  */
@@ -14,7 +14,7 @@ import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
 
-export async function send_file_to_feishu(params: {
+export async function send_file(params: {
   filePath: string;
   chatId: string;
 }): Promise<SendFileResult> {
@@ -27,18 +27,18 @@ export async function send_file_to_feishu(params: {
     const appSecret = Config.FEISHU_APP_SECRET;
 
     if (!appId || !appSecret) {
-      logger.warn({ filePath, chatId }, 'File send skipped (Feishu not configured)');
+      logger.warn({ filePath, chatId }, 'File send skipped (platform not configured)');
       return {
         success: false,
-        error: 'Feishu credentials not configured',
-        message: '⚠️ File cannot be sent: Feishu is not configured.',
+        error: 'Platform credentials not configured',
+        message: '⚠️ File cannot be sent: Platform is not configured.',
       };
     }
 
     const workspaceDir = Config.getWorkspaceDir();
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceDir, filePath);
 
-    logger.debug({ filePath, resolvedPath, chatId }, 'send_file_to_feishu called');
+    logger.debug({ filePath, resolvedPath, chatId }, 'send_file called');
 
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) { throw new Error(`Path is not a file: ${filePath}`); }
@@ -61,9 +61,9 @@ export async function send_file_to_feishu(params: {
     };
 
   } catch (error) {
-    let feishuCode: number | undefined;
-    let feishuMsg: string | undefined;
-    let feishuLogId: string | undefined;
+    let platformCode: number | undefined;
+    let platformMsg: string | undefined;
+    let platformLogId: string | undefined;
     let troubleshooterUrl: string | undefined;
 
     if (error && typeof error === 'object') {
@@ -74,31 +74,31 @@ export async function send_file_to_feishu(params: {
       };
 
       if (err.response?.data && Array.isArray(err.response.data) && err.response.data[0]) {
-        feishuCode = err.response.data[0].code;
-        feishuMsg = err.response.data[0].msg;
-        feishuLogId = err.response.data[0].log_id;
+        platformCode = err.response.data[0].code;
+        platformMsg = err.response.data[0].msg;
+        platformLogId = err.response.data[0].log_id;
         troubleshooterUrl = err.response.data[0].troubleshooter;
       }
-      if (!feishuCode && typeof err.code === 'number') { feishuCode = err.code; }
-      if (!feishuMsg) { feishuMsg = err.msg || err.message; }
+      if (!platformCode && typeof err.code === 'number') { platformCode = err.code; }
+      if (!platformMsg) { platformMsg = err.msg || err.message; }
     }
 
-    logger.error({ err: error, filePath, chatId, feishuCode, feishuMsg }, 'send_file_to_feishu failed');
+    logger.error({ err: error, filePath, chatId, platformCode, platformMsg }, 'send_file failed');
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     let errorDetails = `❌ Failed to send file: ${errorMessage}`;
-    if (feishuCode) {
-      errorDetails += `\n\n**Feishu API Error:** Code: ${feishuCode}`;
-      if (feishuMsg) { errorDetails += `, Message: ${feishuMsg}`; }
+    if (platformCode) {
+      errorDetails += `\n\n**Platform API Error:** Code: ${platformCode}`;
+      if (platformMsg) { errorDetails += `, Message: ${platformMsg}`; }
     }
 
     return {
       success: false,
       error: errorMessage,
       message: errorDetails,
-      feishuCode,
-      feishuMsg,
-      feishuLogId,
+      platformCode,
+      platformMsg,
+      platformLogId,
       troubleshooterUrl,
     };
   }
