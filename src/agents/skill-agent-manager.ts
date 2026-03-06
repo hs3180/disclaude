@@ -154,11 +154,11 @@ export class SkillAgentManager {
   /**
    * Spawn a child process to run the skill agent.
    */
-  private async spawnAgentProcess(
+  private spawnAgentProcess(
     agentId: string,
     config: SkillAgentConfig,
     skillPath: string
-  ): Promise<void> {
+  ): void {
     const agentInfo = this.agents.get(agentId)!;
 
     // Build environment for child process
@@ -245,12 +245,12 @@ export class SkillAgentManager {
   private async notifyCompletion(agentInfo: SkillAgentInfo, output: string): Promise<void> {
     try {
       const truncatedOutput = output.length > 2000
-        ? output.slice(0, 2000) + '\n... (输出已截断)'
+        ? `${output.slice(0, 2000)}\n... (输出已截断)`
         : output;
 
       await this.callbacks.sendMessage(
         agentInfo.chatId,
-        `✅ **Skill Agent 完成**\n\n` +
+        '✅ **Skill Agent 完成**\n\n' +
         `- **Agent ID**: \`${agentInfo.id}\`\n` +
         `- **Skill**: ${agentInfo.skillName}\n` +
         `- **耗时**: ${this.getDuration(agentInfo)}\n\n` +
@@ -267,12 +267,12 @@ export class SkillAgentManager {
   private async notifyFailure(agentInfo: SkillAgentInfo, output: string): Promise<void> {
     try {
       const truncatedOutput = output.length > 1000
-        ? output.slice(0, 1000) + '\n... (输出已截断)'
+        ? `${output.slice(0, 1000)}\n... (输出已截断)`
         : output;
 
       await this.callbacks.sendMessage(
         agentInfo.chatId,
-        `❌ **Skill Agent 失败**\n\n` +
+        '❌ **Skill Agent 失败**\n\n' +
         `- **Agent ID**: \`${agentInfo.id}\`\n` +
         `- **Skill**: ${agentInfo.skillName}\n` +
         `- **错误**: ${agentInfo.error || '未知错误'}\n\n` +
@@ -307,7 +307,7 @@ export class SkillAgentManager {
    * @param agentId - Agent ID to stop
    * @returns True if stopped, false if not found
    */
-  async stop(agentId: string): Promise<boolean> {
+  stop(agentId: string): boolean {
     const agentInfo = this.agents.get(agentId);
     const childProcess = this.processes.get(agentId);
 

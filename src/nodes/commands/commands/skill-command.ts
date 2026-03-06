@@ -57,7 +57,7 @@ export class SkillCommand implements Command {
         return this.handleStatus(context);
 
       case 'stop':
-        return await this.handleStop(context);
+        return this.handleStop(context);
 
       case 'stop-all':
         return await this.handleStopAll(context);
@@ -99,7 +99,7 @@ export class SkillCommand implements Command {
 
       return {
         success: true,
-        message: `🎯 **Skill Agent 已启动**\n\n` +
+        message: '🎯 **Skill Agent 已启动**\n\n' +
           `- **Agent ID**: \`${agentId}\`\n` +
           `- **Skill**: ${skillName}\n` +
           '- **状态**: 运行中\n\n' +
@@ -197,7 +197,7 @@ export class SkillCommand implements Command {
   /**
    * Handle 'stop' subcommand - stop an agent.
    */
-  private async handleStop(context: CommandContext): Promise<CommandResult> {
+  private handleStop(context: CommandContext): CommandResult {
     const { services, args } = context;
 
     const [, agentId] = args;
@@ -209,26 +209,19 @@ export class SkillCommand implements Command {
       };
     }
 
-    try {
-      const stopped = await services.stopSkillAgent(agentId);
+    const stopped = services.stopSkillAgent(agentId);
 
-      if (!stopped) {
-        return {
-          success: false,
-          error: `未找到 Agent: \`${agentId}\``,
-        };
-      }
-
-      return {
-        success: true,
-        message: `✅ **Skill Agent 已停止**\n\nAgent ID: \`${agentId}\``,
-      };
-    } catch (error) {
+    if (!stopped) {
       return {
         success: false,
-        error: `停止 Agent 失败: ${error instanceof Error ? error.message : String(error)}`,
+        error: `未找到 Agent: \`${agentId}\``,
       };
     }
+
+    return {
+      success: true,
+      message: `✅ **Skill Agent 已停止**\n\nAgent ID: \`${agentId}\``,
+    };
   }
 
   /**

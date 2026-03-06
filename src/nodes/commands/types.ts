@@ -290,7 +290,7 @@ export interface CommandServices {
   startSkillAgent: (options: StartSkillAgentOptions) => Promise<string>;
 
   /** Stop a skill agent */
-  stopSkillAgent: (agentId: string) => Promise<boolean>;
+  stopSkillAgent: (agentId: string) => boolean;
 
   /** Get skill agent info */
   getSkillAgent: (agentId: string) => SkillAgentInfo | undefined;
