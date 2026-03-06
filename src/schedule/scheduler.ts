@@ -9,15 +9,21 @@
  * - Agent is disposed after execution completes
  * - No persistent agent state between executions
  *
+ * Issue #869: Cooldown period support.
+ * - Tasks can have a cooldown period to prevent duplicate executions
+ * - Cooldown state is persisted to survive service restarts
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with AgentFactory for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Cooldown period support (Issue #869)
  */
 
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { AgentFactory } from '../agents/index.js';
+import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
 import type { PilotCallbacks } from '../agents/pilot/index.js';
 import type { ChatAgent } from '../agents/types.js';
@@ -38,12 +44,26 @@ interface ActiveJob {
  *
  * Issue #711: No longer requires AgentPool.
  * Uses AgentFactory.createScheduleAgent for short-lived agents.
+ *
+ * Issue #869: Added cooldownManager for cooldown period support.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
+  /**
+   * CooldownManager instance for cooldown period management.
+   * If not provided, a default one will be created.
+   * @see Issue #869
+   */
+  cooldownManager?: CooldownManager;
+  /**
+   * Directory for cooldown state files.
+   * Only used if cooldownManager is not provided.
+   * @default './workspace/schedules/.cooldown'
+   */
+  cooldownDir?: string;
 }
 
 /**
@@ -51,6 +71,8 @@ export interface SchedulerOptions {
  *
  * Issue #711: Uses short-lived ScheduleAgents (max 24h lifetime).
  * Each execution creates a fresh agent, ensuring isolation.
+ *
+ * Issue #869: Supports cooldown period to prevent duplicate executions.
  *
  * Usage:
  * ```typescript
@@ -72,6 +94,7 @@ export interface SchedulerOptions {
 export class Scheduler {
   private scheduleManager: ScheduleManager;
   private callbacks: PilotCallbacks;
+  private cooldownManager: CooldownManager;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -80,6 +103,15 @@ export class Scheduler {
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
+
+    // Initialize CooldownManager (Issue #869)
+    if (options.cooldownManager) {
+      this.cooldownManager = options.cooldownManager;
+    } else {
+      const cooldownDir = options.cooldownDir || './workspace/schedules/.cooldown';
+      this.cooldownManager = new CooldownManager({ cooldownDir });
+    }
+
     logger.info('Scheduler created');
   }
 
@@ -198,9 +230,41 @@ ${task.prompt}`;
    * Issue #711: Creates a short-lived ScheduleAgent for each execution.
    * Agent is disposed after execution to free resources.
    *
+   * Issue #869: Checks cooldown period before execution.
+   *
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
+    // Check cooldown period (Issue #869)
+    const cooldownPeriod = task.cooldownPeriod || 0;
+    if (cooldownPeriod > 0) {
+      const cooldownStatus = await this.cooldownManager.checkCooldown(task.id, cooldownPeriod);
+
+      if (cooldownStatus.inCooldown) {
+        const remainingMinutes = Math.ceil(cooldownStatus.remainingMs / 60000);
+        logger.info(
+          {
+            taskId: task.id,
+            name: task.name,
+            lastExecution: cooldownStatus.lastExecutionTime,
+            cooldownEndsAt: cooldownStatus.cooldownEndsAt,
+            remainingMs: cooldownStatus.remainingMs,
+          },
+          'Task skipped - in cooldown period'
+        );
+
+        // Send cooldown notification
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `⏰ 定时任务「${task.name}」冷静期中，跳过执行
+- 上次执行: ${cooldownStatus.lastExecutionTime}
+- 冷静期结束: ${cooldownStatus.cooldownEndsAt}
+- 剩余时间: ${remainingMinutes} 分钟`
+        );
+        return;
+      }
+    }
+
     // Check blocking mechanism
     if (task.blocking && this.runningTasks.has(task.id)) {
       logger.info(
@@ -240,6 +304,11 @@ ${task.prompt}`;
         undefined,
         task.createdBy
       );
+
+      // Record execution for cooldown tracking (Issue #869)
+      if (cooldownPeriod > 0) {
+        await this.cooldownManager.recordExecution(task.id, cooldownPeriod);
+      }
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
@@ -319,5 +388,16 @@ ${task.prompt}`;
    */
   getRunningTaskIds(): string[] {
     return Array.from(this.runningTasks);
+  }
+
+  /**
+   * Get the CooldownManager instance.
+   * Used for cooldown status queries and manual clearing.
+   *
+   * @returns The CooldownManager instance
+   * @see Issue #869
+   */
+  getCooldownManager(): CooldownManager {
+    return this.cooldownManager;
   }
 }

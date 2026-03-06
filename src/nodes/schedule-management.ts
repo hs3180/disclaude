@@ -12,6 +12,7 @@ import type { ScheduleManager } from '../schedule/schedule-manager.js';
 import type { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
 import type { SchedulerService } from './scheduler-service.js';
 import type { ScheduleTaskInfo } from './commands/types.js';
+import type { CooldownStatus } from '../schedule/cooldown-manager.js';
 
 const logger = createLogger('ScheduleManagement');
 
@@ -64,6 +65,7 @@ export class ScheduleManagement {
         isRunning: scheduler?.isTaskRunning(task.id) ?? false,
         chatId: task.chatId,
         createdAt: task.createdAt,
+        cooldownPeriod: task.cooldownPeriod,
       };
     });
   }
@@ -173,5 +175,49 @@ export class ScheduleManagement {
    */
   isScheduleRunning(taskId: string): boolean {
     return this.deps.schedulerService?.getScheduler()?.isTaskRunning(taskId) ?? false;
+  }
+
+  /**
+   * Get cooldown status for a task.
+   * @see Issue #869
+   */
+  async getCooldownStatus(taskId: string): Promise<CooldownStatus | null> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) {
+      return null;
+    }
+
+    // Get the task to find its cooldown period
+    const task = await this.deps.scheduleManager?.get(taskId);
+    if (!task) {
+      return null;
+    }
+
+    const cooldownPeriod = task.cooldownPeriod || 0;
+    if (cooldownPeriod <= 0) {
+      return {
+        inCooldown: false,
+        taskId,
+        cooldownPeriod: 0,
+        remainingMs: 0,
+      };
+    }
+
+    const cooldownManager = scheduler.getCooldownManager();
+    return await cooldownManager.checkCooldown(taskId, cooldownPeriod);
+  }
+
+  /**
+   * Clear cooldown for a task.
+   * @see Issue #869
+   */
+  async clearCooldown(taskId: string): Promise<boolean> {
+    const scheduler = this.deps.schedulerService?.getScheduler();
+    if (!scheduler) {
+      return false;
+    }
+
+    const cooldownManager = scheduler.getCooldownManager();
+    return await cooldownManager.clearCooldown(taskId);
   }
 }

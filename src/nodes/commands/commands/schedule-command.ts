@@ -3,6 +3,7 @@
  *
  * Issue #696: 拆分 builtin-commands.ts
  * Issue #469: 定时任务控制指令
+ * Issue #869: 定时任务冷静期管理
  *
  * Subcommands:
  * - list: List all scheduled tasks
@@ -10,6 +11,8 @@
  * - enable <name>: Enable a task
  * - disable <name>: Disable a task
  * - run <name>: Manually trigger a task
+ * - cooldown <name>: View cooldown status
+ * - cooldown-clear <name>: Clear cooldown (debug)
  */
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
@@ -17,6 +20,7 @@ import type { Command, CommandContext, CommandResult } from '../types.js';
 /**
  * Schedule Command - Manage scheduled tasks.
  * Issue #469: 定时任务控制指令
+ * Issue #869: 冷静期管理
  *
  * Subcommands:
  * - list: List all scheduled tasks
@@ -24,12 +28,14 @@ import type { Command, CommandContext, CommandResult } from '../types.js';
  * - enable <name>: Enable a task
  * - disable <name>: Disable a task
  * - run <name>: Manually trigger a task
+ * - cooldown <name>: View cooldown status
+ * - cooldown-clear <name>: Clear cooldown (debug)
  */
 export class ScheduleCommand implements Command {
   readonly name = 'schedule';
   readonly category = 'schedule' as const;
   readonly description = '定时任务管理';
-  readonly usage = 'schedule <list|status|enable|disable|run>';
+  readonly usage = 'schedule <list|status|enable|disable|run|cooldown|cooldown-clear>';
 
   async execute(context: CommandContext): Promise<CommandResult> {
     const subCommand = context.args[0]?.toLowerCase();
@@ -49,6 +55,8 @@ export class ScheduleCommand implements Command {
 - \`enable <名称>\` - 启用定时任务
 - \`disable <名称>\` - 禁用定时任务
 - \`run <名称>\` - 手动触发定时任务
+- \`cooldown <名称>\` - 查看任务冷静期状态
+- \`cooldown-clear <名称>\` - 清除任务冷静期（调试用）
 
 示例:
 \`\`\`
@@ -57,12 +65,14 @@ export class ScheduleCommand implements Command {
 /schedule enable daily-report
 /schedule disable daily-report
 /schedule run daily-report
+/schedule cooldown daily-report
+/schedule cooldown-clear daily-report
 \`\`\``,
       };
     }
 
     // Validate subcommand
-    const validSubcommands = ['list', 'status', 'enable', 'disable', 'run'];
+    const validSubcommands = ['list', 'status', 'enable', 'disable', 'run', 'cooldown', 'cooldown-clear'];
     if (!validSubcommands.includes(subCommand)) {
       return {
         success: false,
@@ -96,6 +106,10 @@ export class ScheduleCommand implements Command {
         return await this.handleDisable(services, taskName);
       case 'run':
         return await this.handleRun(services, taskName);
+      case 'cooldown':
+        return await this.handleCooldown(services, taskName);
+      case 'cooldown-clear':
+        return await this.handleCooldownClear(services, taskName);
       default:
         return { success: false, error: `未知子命令: ${subCommand}` };
     }
@@ -216,6 +230,95 @@ Cron: \`${task.cron}\`
     return {
       success: true,
       message: `🚀 **任务已触发**\n\n任务 \`${nameOrId}\` 已手动触发执行。`,
+    };
+  }
+
+  /**
+   * Handle cooldown subcommand.
+   * @see Issue #869
+   */
+  private async handleCooldown(services: CommandContext['services'], nameOrId: string): Promise<CommandResult> {
+    // First get the task to check if it exists
+    const task = await services.getSchedule(nameOrId);
+
+    if (!task) {
+      return {
+        success: false,
+        error: `未找到任务: \`${nameOrId}\``,
+      };
+    }
+
+    const status = await services.getCooldownStatus(task.id);
+
+    if (!status) {
+      return {
+        success: false,
+        error: `无法获取任务 \`${nameOrId}\` 的冷静期状态。`,
+      };
+    }
+
+    if (status.cooldownPeriod === 0) {
+      return {
+        success: true,
+        message: `⏰ **冷静期状态**\n\n任务 \`${task.name}\` 未配置冷静期。`,
+      };
+    }
+
+    const cooldownMinutes = Math.round(status.cooldownPeriod / 60000);
+
+    if (status.inCooldown) {
+      const remainingMinutes = Math.ceil(status.remainingMs / 60000);
+      return {
+        success: true,
+        message: `⏰ **冷静期状态**
+
+任务: **${task.name}**
+状态: 🔴 冷静期中
+冷静期时长: ${cooldownMinutes} 分钟
+上次执行: ${status.lastExecutionTime}
+冷静期结束: ${status.cooldownEndsAt}
+剩余时间: ${remainingMinutes} 分钟`,
+      };
+    }
+
+    return {
+      success: true,
+      message: `⏰ **冷静期状态**
+
+任务: **${task.name}**
+状态: 🟢 可以执行
+冷静期时长: ${cooldownMinutes} 分钟
+上次执行: ${status.lastExecutionTime || '无'}`,
+    };
+  }
+
+  /**
+   * Handle cooldown-clear subcommand.
+   * @see Issue #869
+   */
+  private async handleCooldownClear(services: CommandContext['services'], nameOrId: string): Promise<CommandResult> {
+    // First get the task to check if it exists
+    const task = await services.getSchedule(nameOrId);
+
+    if (!task) {
+      return {
+        success: false,
+        error: `未找到任务: \`${nameOrId}\``,
+      };
+    }
+
+    const cleared = await services.clearCooldown(task.id);
+
+    if (!cleared) {
+      return {
+        success: true,
+        message: `⏰ **冷静期状态**\n\n任务 \`${task.name}\` 当前没有冷静期记录。`,
+      };
+    }
+
+    return {
+      success: true,
+      message: `✅ **冷静期已清除**\n\n任务 \`${task.name}\` 的冷静期已清除，可以立即执行。`,
     };
   }
 }
