@@ -21,7 +21,7 @@ import {
   PassiveModeManager,
   MentionDetector,
   WelcomeHandler,
-  MessageHandler,
+  MessageHandler as FeishuMessageHandler,
   type MessageCallbacks,
 } from './feishu/index.js';
 import type {
@@ -34,6 +34,8 @@ import type {
   ChannelConfig,
   OutgoingMessage,
   ChannelCapabilities,
+  IncomingMessage,
+  ControlCommand,
 } from './types.js';
 
 const logger = createLogger('FeishuChannel');
@@ -67,7 +69,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private passiveModeManager: PassiveModeManager;
   private mentionDetector: MentionDetector;
   private welcomeHandler: WelcomeHandler;
-  private messageHandler: MessageHandler;
+  private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
@@ -87,11 +89,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Create message callbacks
     const callbacks: MessageCallbacks = {
       emitMessage: async (message) => {
-        await this.emitMessage(message);
+        await this.emitMessage(message as IncomingMessage);
       },
       emitControl: async (control) => {
         if (this.controlHandler) {
-          return await this.emitControl(control);
+          return await this.emitControl(control as ControlCommand);
         }
         return { success: false };
       },
@@ -100,7 +102,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
     };
 
-    this.messageHandler = new MessageHandler({
+    this.feishuMessageHandler = new FeishuMessageHandler({
       appId: this.appId,
       appSecret: this.appSecret,
       passiveModeManager: this.passiveModeManager,
@@ -122,20 +124,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     await this.mentionDetector.fetchBotInfo(this.appId, this.appSecret);
 
     // Initialize message handler
-    this.messageHandler.initialize();
+    this.feishuMessageHandler.initialize();
 
     // Create event dispatcher
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
         try {
-          await this.messageHandler.handleMessageReceive(data as FeishuEventData);
+          await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle message receive');
         }
       },
       'card.action.trigger': async (data: unknown) => {
         try {
-          await this.messageHandler.handleCardAction(data as FeishuCardActionEventData);
+          await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle card action');
         }
@@ -179,7 +181,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   protected doStop(): Promise<void> {
     this.wsClient = undefined;
-    this.messageHandler.clearClient();
+    this.feishuMessageHandler.clearClient();
 
     // Dispose interaction manager
     this.interactionManager.dispose();
@@ -192,7 +194,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
-    const sender = this.messageHandler.getMessageSender();
+    const sender = this.feishuMessageHandler.getMessageSender();
     if (!sender) {
       throw new Error('MessageSender not initialized');
     }
@@ -300,6 +302,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * @internal
    */
   handleMessageReceive(data: FeishuEventData): Promise<void> {
-    return this.messageHandler.handleMessageReceive(data);
+    return this.feishuMessageHandler.handleMessageReceive(data);
   }
 }
