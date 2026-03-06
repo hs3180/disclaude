@@ -101,6 +101,27 @@ export interface UserInput {
 }
 
 // ============================================================================
+// Next Step Types (Issue #834)
+// ============================================================================
+
+/**
+ * A next-step action candidate for user selection.
+ *
+ * Used by ChatAgent.promptNextSteps() to display follow-up action suggestions
+ * after task completion.
+ */
+export interface NextStepCandidate {
+  /** Action identifier (e.g., 'create_github_issue', 'run_tests') */
+  action: string;
+  /** Display label for the button */
+  label: string;
+  /** Optional description of the action */
+  description?: string;
+  /** Icon emoji (e.g., '📋', '🧪') */
+  icon?: string;
+}
+
+// ============================================================================
 // ChatAgent Interface (对话型 Agent)
 // ============================================================================
 
@@ -195,6 +216,18 @@ export interface ChatAgent extends Disposable {
    * @param chatId - Optional chat ID to reset specific session
    */
   reset(chatId?: string): void;
+
+  /**
+   * Prompt user with next-step suggestions after task completion.
+   *
+   * Issue #834: ChatAgent decides how to display suggestions based on channel capabilities.
+   * - If channel supports cards: displays interactive card with action buttons
+   * - Otherwise: displays text list of suggestions
+   *
+   * @param candidates - Array of next-step suggestions
+   * @param threadId - Optional thread ID for reply
+   */
+  promptNextSteps(candidates: NextStepCandidate[], threadId?: string): Promise<void>;
 }
 
 // ============================================================================

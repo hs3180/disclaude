@@ -33,7 +33,7 @@ import type { StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 import { createFeishuSdkMcpServer } from '../mcp/feishu-context-mcp.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { ChatAgent, UserInput } from './types.js';
+import type { ChatAgent, UserInput, NextStepCandidate } from './types.js';
 import type { AgentMessage } from '../types/agent.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { ChannelCapabilities } from '../channels/types.js';
@@ -835,6 +835,84 @@ You can read these files using the Read tool with the local paths above.`;
 
     // Reset restart state
     this.restartManager.reset(this.boundChatId);
+  }
+
+  /**
+   * Prompt user with next-step suggestions after task completion.
+   *
+   * Issue #834: ChatAgent decides how to display suggestions based on channel capabilities.
+   * - If channel supports cards: displays interactive card with action buttons
+   * - Otherwise: displays text list of suggestions
+   *
+   * @param candidates - Array of next-step suggestions
+   * @param threadId - Optional thread ID for reply
+   */
+  async promptNextSteps(candidates: NextStepCandidate[], threadId?: string): Promise<void> {
+    const chatId = this.boundChatId;
+    this.logger.info({ chatId, candidateCount: candidates.length }, 'Prompting next steps');
+
+    // Get channel capabilities
+    const capabilities = this.callbacks.getCapabilities?.(chatId);
+
+    if (capabilities?.supportsCard) {
+      // Channel supports cards - send interactive card
+      const card = this.buildNextStepCard(candidates);
+      await this.callbacks.sendCard(chatId, card, 'Next step suggestions', threadId);
+    } else {
+      // Fallback to text message
+      const text = this.buildNextStepText(candidates);
+      await this.callbacks.sendMessage(chatId, text, threadId);
+    }
+  }
+
+  /**
+   * Build an interactive card for next-step suggestions.
+   *
+   * @param candidates - Array of next-step suggestions
+   * @returns Feishu card structure
+   */
+  private buildNextStepCard(candidates: NextStepCandidate[]): Record<string, unknown> {
+    const actions = candidates.map((candidate) => ({
+      tag: 'button',
+      text: { tag: 'plain_text', content: `${candidate.icon || '📌'} ${candidate.label}` },
+      type: 'default' as const,
+      value: candidate.action,
+    }));
+
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '✅ 任务完成' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: '接下来您可以：',
+        },
+        {
+          tag: 'action',
+          actions,
+        },
+      ],
+    };
+  }
+
+  /**
+   * Build a text message for next-step suggestions.
+   *
+   * @param candidates - Array of next-step suggestions
+   * @returns Text message with suggestions
+   */
+  private buildNextStepText(candidates: NextStepCandidate[]): string {
+    const lines = ['✅ **任务完成**\n', '接下来您可以：\n'];
+
+    for (const candidate of candidates) {
+      const icon = candidate.icon || '📌';
+      lines.push(`- ${icon} **${candidate.label}**${candidate.description ? `: ${candidate.description}` : ''}`);
+    }
+
+    return lines.join('\n');
   }
 
   /**

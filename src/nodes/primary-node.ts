@@ -34,6 +34,7 @@ import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory, AgentPool } from '../agents/index.js';
+import type { NextStepCandidate } from '../agents/types.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
@@ -1021,22 +1022,21 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
-  // Next Step Recommendations (Issue #657)
+  // Next Step Recommendations (Issue #657, Issue #834)
   // ============================================================================
 
   /**
    * Trigger next-step recommendations after task completion.
-   * Uses SkillAgent to analyze chat history and suggest follow-up actions.
    *
-   * Issue #716: SkillAgent should be disposed after execution, not stored.
-   * Context is limited to recent messages to avoid context overflow.
+   * Issue #834: Simplified architecture using rule-based approach.
+   * - Detects task type from chat history using pattern matching
+   * - Generates candidates based on task type
+   * - Delegates display to ChatAgent.promptNextSteps()
    *
    * @param chatId - Chat ID to get history from
    * @param threadId - Optional thread ID for reply
    */
   private async triggerNextStepRecommendation(chatId: string, threadId?: string): Promise<void> {
-    let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
-
     try {
       logger.info({ chatId }, 'Triggering next-step recommendations');
 
@@ -1048,42 +1048,112 @@ export class PrimaryNode extends EventEmitter {
         return;
       }
 
-      // Create SkillAgent for next-step recommendations using AgentFactory
-      nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-      // Limit context to recent messages (Issue #716)
-      // Only use the last 10 messages to avoid context overflow
+      // Limit context to recent messages
       const recentHistory = this.extractRecentMessages(chatHistory, 10);
 
-      // Build prompt with chat history
-      const prompt = `## Context
+      // Detect task type using pattern matching
+      const taskType = this.detectTaskType(recentHistory);
+      logger.debug({ chatId, taskType }, 'Detected task type');
 
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
+      // Generate candidates based on task type
+      const candidates = this.generateNextStepCandidates(taskType);
 
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-      // Execute skill and handle responses
-      for await (const message of nextStepAgent.execute(prompt)) {
-        if (message.type === 'tool_use' || message.metadata?.toolName) {
-          logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-        } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-          logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-        }
+      if (candidates.length === 0) {
+        logger.debug({ chatId }, 'No candidates generated for task type');
+        return;
       }
 
-      logger.info({ chatId }, 'Next-step recommendations completed');
+      // Delegate to ChatAgent to prompt user
+      if (this.agentPool) {
+        const agent = this.agentPool.getOrCreateChatAgent(chatId);
+        await agent.promptNextSteps(candidates, threadId);
+      }
+
+      logger.info({ chatId, candidateCount: candidates.length }, 'Next-step recommendations sent');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
-    } finally {
-      // Issue #716: Dispose SkillAgent after execution (do not store)
-      if (nextStepAgent) {
-        nextStepAgent.dispose();
-        logger.debug({ chatId }, 'Next-step SkillAgent disposed');
+    }
+  }
+
+  /**
+   * Task types for next-step recommendations.
+   */
+  private static readonly TASK_TYPE_PATTERNS: Record<string, RegExp[]> = {
+    bug: [/\b(fix|bug|error|issue|crash|exception)\b/i],
+    feature: [/\b(implement|add|create|feature|new)\b/i],
+    refactor: [/\b(refactor|clean\s*up|restructure|optimize)\b/i],
+    research: [/\b(analyze|investigate|research|explore|study)\b/i],
+    documentation: [/\b(document|readme|docs|comment|guide)\b/i],
+    test: [/\b(test|coverage|spec|verify|unit\s*test)\b/i],
+    github: [/\b(issue|pr|commit|merge|pull\s*request)\b/i],
+  };
+
+  /**
+   * Detect task type from chat history using pattern matching.
+   *
+   * @param chatHistory - Recent chat history
+   * @returns Detected task type
+   */
+  private detectTaskType(chatHistory: string): string {
+    for (const [type, patterns] of Object.entries(PrimaryNode.TASK_TYPE_PATTERNS)) {
+      for (const pattern of patterns) {
+        if (pattern.test(chatHistory)) {
+          return type;
+        }
       }
     }
+    return 'general';
+  }
+
+  /**
+   * Generate next-step candidates based on task type.
+   *
+   * @param taskType - Detected task type
+   * @returns Array of next-step candidates
+   */
+  private generateNextStepCandidates(taskType: string): NextStepCandidate[] {
+    const candidatesByType: Record<string, NextStepCandidate[]> = {
+      bug: [
+        { action: 'create_github_issue', label: '提交 GitHub Issue', icon: '📋' },
+        { action: 'add_regression_test', label: '添加回归测试', icon: '🧪' },
+        { action: 'document_fix', label: '记录修复说明', icon: '📝' },
+      ],
+      feature: [
+        { action: 'create_pr', label: '创建 Pull Request', icon: '🔄' },
+        { action: 'add_tests', label: '添加单元测试', icon: '🧪' },
+        { action: 'update_docs', label: '更新文档', icon: '📝' },
+      ],
+      refactor: [
+        { action: 'run_tests', label: '运行测试验证', icon: '🧪' },
+        { action: 'check_coverage', label: '检查代码覆盖率', icon: '📊' },
+        { action: 'update_related_docs', label: '更新相关文档', icon: '📝' },
+      ],
+      research: [
+        { action: 'create_summary', label: '创建总结文档', icon: '📝' },
+        { action: 'create_issue_findings', label: '提交发现到 Issue', icon: '📋' },
+        { action: 'share_with_team', label: '分享给团队', icon: '🔄' },
+      ],
+      documentation: [
+        { action: 'review_docs', label: '审核文档', icon: '✅' },
+        { action: 'add_examples', label: '添加示例', icon: '📝' },
+      ],
+      test: [
+        { action: 'run_all_tests', label: '运行所有测试', icon: '🧪' },
+        { action: 'check_coverage', label: '检查覆盖率', icon: '📊' },
+      ],
+      github: [
+        { action: 'check_pr_status', label: '检查 PR 状态', icon: '🔄' },
+        { action: 'update_comments', label: '更新评论', icon: '📝' },
+        { action: 'add_labels', label: '添加标签', icon: '🏷️' },
+      ],
+      general: [
+        { action: 'create_github_issue', label: '提交 GitHub Issue', icon: '📋' },
+        { action: 'summarize_changes', label: '总结变更', icon: '📝' },
+        { action: 'continue_work', label: '继续相关工作', icon: '🔄' },
+      ],
+    };
+
+    return candidatesByType[taskType] || candidatesByType['general'];
   }
 
   /**
