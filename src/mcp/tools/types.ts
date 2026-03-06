@@ -66,3 +66,14 @@ export interface PendingInteraction {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * Result type for send_interactive_message tool.
+ */
+export interface SendInteractiveResult {
+  success: boolean;
+  message: string;
+  /** The message ID of the sent card (for potential future operations) */
+  messageId?: string;
+  error?: string;
+}

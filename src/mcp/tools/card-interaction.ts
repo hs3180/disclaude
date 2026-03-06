@@ -2,6 +2,17 @@
  * Card interaction tools: update_card and wait_for_interaction.
  *
  * @module mcp/tools/card-interaction
+ *
+ * @deprecated These tools are deprecated. Use send_interactive_message instead.
+ *
+ * Migration Guide:
+ * - update_card: Instead of updating cards, send new messages to reflect state changes
+ * - wait_for_interaction: No replacement needed - interactions are automatically converted to messages
+ *
+ * The new approach:
+ * 1. Use send_interactive_message to send interactive cards
+ * 2. User interactions are automatically converted to prompts
+ * 3. Process the prompts like regular messages
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';

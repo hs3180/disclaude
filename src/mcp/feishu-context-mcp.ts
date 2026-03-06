@@ -12,6 +12,8 @@ import {
   update_card,
   wait_for_interaction,
   setMessageSentCallback,
+  send_interactive_message,
+  SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
 } from './tools/index.js';
 
 // Re-export for backward compatibility
@@ -21,6 +23,10 @@ export { resolvePendingInteraction } from './tools/card-interaction.js';
 export { send_user_feedback } from './tools/send-message.js';
 export { send_file_to_feishu } from './tools/send-file.js';
 export { update_card, wait_for_interaction } from './tools/card-interaction.js';
+export {
+  send_interactive_message,
+  SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
+} from './tools/interactive-message.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -83,7 +89,7 @@ export const feishuContextTools = {
     handler: send_file_to_feishu,
   },
   update_card: {
-    description: 'Update an existing interactive card message.',
+    description: '[DEPRECATED] Update an existing interactive card message. Use send_interactive_message instead.',
     parameters: {
       type: 'object',
       properties: { messageId: { type: 'string' }, card: { type: 'object' }, chatId: { type: 'string' } },
@@ -92,13 +98,27 @@ export const feishuContextTools = {
     handler: update_card,
   },
   wait_for_interaction: {
-    description: 'Wait for the user to interact with a card.',
+    description: '[DEPRECATED] Wait for the user to interact with a card. Interactions are now automatically converted to messages - no need to wait.',
     parameters: {
       type: 'object',
       properties: { messageId: { type: 'string' }, chatId: { type: 'string' }, timeoutSeconds: { type: 'number' } },
       required: ['messageId', 'chatId'],
     },
     handler: wait_for_interaction,
+  },
+  send_interactive_message: {
+    description: SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
+    parameters: {
+      type: 'object',
+      properties: {
+        card: { type: 'object' },
+        chatId: { type: 'string' },
+        parentMessageId: { type: 'string' },
+        description: { type: 'string' },
+      },
+      required: ['card', 'chatId'],
+    },
+    handler: send_interactive_message,
   },
 };
 
@@ -179,7 +199,7 @@ When \`format: "card"\`, content MUST include:
   },
   {
     name: 'update_card',
-    description: 'Update an existing interactive card message.',
+    description: '[DEPRECATED] Update an existing interactive card message. Use send_interactive_message instead.',
     parameters: z.object({ messageId: z.string(), card: z.object({}).passthrough(), chatId: z.string() }),
     handler: async ({ messageId, card, chatId }) => {
       try {
@@ -192,7 +212,7 @@ When \`format: "card"\`, content MUST include:
   },
   {
     name: 'wait_for_interaction',
-    description: 'Wait for the user to interact with a card.',
+    description: '[DEPRECATED] Wait for the user to interact with a card. Interactions are now automatically converted to messages - no need to wait.',
     parameters: z.object({ messageId: z.string(), chatId: z.string(), timeoutSeconds: z.number().optional() }),
     handler: async ({ messageId, chatId, timeoutSeconds }) => {
       try {
@@ -202,6 +222,26 @@ When \`format: "card"\`, content MUST include:
           : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'send_interactive_message',
+    description: SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
+    parameters: z.object({
+      card: z.object({}).passthrough(),
+      chatId: z.string(),
+      parentMessageId: z.string().optional(),
+      description: z.string().optional(),
+    }),
+    handler: async ({ card, chatId, parentMessageId, description }) => {
+      try {
+        const result = await send_interactive_message({ card, chatId, parentMessageId, description });
+        return toolSuccess(result.success
+          ? `${result.message}${result.messageId ? `\nMessage ID: ${result.messageId}` : ''}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

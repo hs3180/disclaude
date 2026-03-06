@@ -27,6 +27,7 @@ import type {
 } from '../../types/platform.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import { buildInteractionPrompt } from './interaction-prompt-builder.js';
 
 const logger = createLogger('MessageHandler');
 
@@ -566,8 +567,14 @@ export class MessageHandler {
 
     // Always emit card action as a message to the agent
     try {
-      const buttonText = action.text || action.value;
-      const messageContent = `User clicked '${buttonText}' button`;
+      // Use the new interaction prompt builder for better messages
+      const messageContent = buildInteractionPrompt({
+        action,
+        messageId: message_id,
+        chatId: chat_id,
+        userId: user?.sender_id?.open_id,
+        wasPendingInteraction: resolved,
+      });
 
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
@@ -599,8 +606,13 @@ export class MessageHandler {
     try {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-        const buttonText = defaultEvent.action.text || defaultEvent.action.value;
-        const messageContent = `The user clicked '${buttonText}' button`;
+        // Use the new interaction prompt builder for better messages
+        const messageContent = buildInteractionPrompt({
+          action: defaultEvent.action,
+          messageId: defaultEvent.message_id,
+          chatId: defaultEvent.chat_id,
+          userId: defaultEvent.user?.sender_id?.open_id,
+        });
 
         await this.callbacks.emitMessage({
           messageId: `${defaultEvent.message_id}-${defaultEvent.action.value}`,

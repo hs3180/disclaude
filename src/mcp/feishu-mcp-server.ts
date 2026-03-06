@@ -8,8 +8,9 @@
  * Tools provided:
  * - send_user_feedback: Send a message to a Feishu chat
  * - send_file_to_feishu: Send a file to a Feishu chat
- * - update_card: Update an existing interactive card
- * - wait_for_interaction: Wait for user to interact with a card
+ * - update_card: Update an existing interactive card (deprecated, use send_interactive_message instead)
+ * - wait_for_interaction: Wait for user to interact with a card (deprecated)
+ * - send_interactive_message: Send an interactive card with buttons/menus (recommended)
  *
  * Environment Variables Required:
  * - FEISHU_APP_ID: Feishu app ID
@@ -21,7 +22,14 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import { send_user_feedback, send_file_to_feishu, update_card, wait_for_interaction } from './feishu-context-mcp.js';
+import {
+  send_user_feedback,
+  send_file_to_feishu,
+  update_card,
+  wait_for_interaction,
+  send_interactive_message,
+  SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
+} from './feishu-context-mcp.js';
 
 const logger = createLogger('FeishuMCPServer');
 
@@ -84,6 +92,32 @@ async function handleMessage(message: unknown) {
                     },
                   },
                   required: ['filePath', 'chatId'],
+                },
+              },
+              {
+                name: 'send_interactive_message',
+                description: SEND_INTERACTIVE_MESSAGE_TOOL_DESCRIPTION,
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    card: {
+                      type: 'object',
+                      description: 'The interactive card JSON structure (Feishu card format). Use this for cards with buttons, menus, or other interactive components.',
+                    },
+                    chatId: {
+                      type: 'string',
+                      description: 'Feishu chat ID to send the message to',
+                    },
+                    parentMessageId: {
+                      type: 'string',
+                      description: 'Optional parent message ID for thread replies',
+                    },
+                    description: {
+                      type: 'string',
+                      description: 'Optional description of what this card is for (for logging)',
+                    },
+                  },
+                  required: ['card', 'chatId'],
                 },
               },
               {
@@ -205,6 +239,29 @@ async function handleMessage(message: unknown) {
                 type: 'text',
                 text: result.success
                   ? `${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'send_interactive_message') {
+          const args = toolArgs as {
+            card: Record<string, unknown>;
+            chatId: string;
+            parentMessageId?: string;
+            description?: string;
+          };
+          const result = await send_interactive_message(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? `${result.message}${result.messageId ? `\nMessage ID: ${result.messageId}` : ''}`
                   : `⚠️ ${result.message}`,
               }],
             },
