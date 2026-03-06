@@ -8,6 +8,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getTTFRTracker } from '../../metrics/index.js';
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import type { SendFeedbackResult, MessageSentCallback } from './types.js';
@@ -103,6 +104,17 @@ export async function send_user_feedback(params: {
     }
 
     invokeMessageSentCallback(chatId);
+
+    // Record TTFR (Issue #855)
+    const ttfrTracker = getTTFRTracker();
+    const ttfrResult = ttfrTracker.recordFirstResponse(chatId);
+    if (ttfrResult) {
+      logger.debug(
+        { chatId, userMessageId: ttfrResult.userMessageId, ttfrMs: ttfrResult.ttfrMs },
+        'TTFR recorded'
+      );
+    }
+
     return { success: true, message: `✅ Feedback sent (format: ${format})` };
 
   } catch (error) {

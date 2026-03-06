@@ -16,6 +16,7 @@ import type { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import { attachmentManager } from '../file-transfer/inbound/index.js';
+import { initTTFRTracker } from '../metrics/index.js';
 import { BaseChannel } from './base-channel.js';
 import {
   PassiveModeManager,
@@ -119,6 +120,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Initialize TTFR tracker (Issue #855)
+    initTTFRTracker();
 
     // Get bot info for mention detection
     await this.mentionDetector.fetchBotInfo(this.appId, this.appSecret);

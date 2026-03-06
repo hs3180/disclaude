@@ -19,6 +19,7 @@ import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
+import { getTTFRTracker } from '../../metrics/index.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -522,6 +523,10 @@ export class MessageHandler {
       threadId,
       metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
     });
+
+    // Record user message for TTFR tracking (Issue #855)
+    const ttfrTracker = getTTFRTracker();
+    ttfrTracker.recordUserMessage(chat_id, message_id, create_time || Date.now());
   }
 
   /**

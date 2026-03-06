@@ -44,6 +44,8 @@ import {
   TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
+  TtfrStatsCommand,
+  TtfrClearCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -68,6 +70,8 @@ export {
   TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
+  TtfrStatsCommand,
+  TtfrClearCommand,
 };
 
 /**
@@ -101,4 +105,7 @@ export function registerDefaultCommands(
   registry.register(new TopicGroupCommand());
   // Issue #535: Expert registration and skill management
   registry.register(new ExpertCommand());
+  // Issue #855: TTFR statistics command
+  registry.register(new TtfrStatsCommand());
+  registry.register(new TtfrClearCommand());
 }

@@ -39,3 +39,6 @@ export { TopicGroupCommand } from './topic-group-command.js';
 
 // Expert commands (Issue #535)
 export { ExpertCommand } from './expert-commands.js';
+
+// Metrics commands (Issue #855)
+export { TtfrStatsCommand, TtfrClearCommand } from './metrics-commands.js';
