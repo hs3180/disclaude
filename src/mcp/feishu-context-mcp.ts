@@ -14,6 +14,10 @@ import {
   send_interactive_message,
   setMessageSentCallback,
 } from './tools/index.js';
+import {
+  generate_mindmap,
+  generate_mindmap_from_outline,
+} from './tools/mindmap-generator.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
 // Re-export for backward compatibility
@@ -28,6 +32,10 @@ export {
   generateInteractionPrompt,
   getActionPrompts,
 } from './tools/interactive-message.js';
+export {
+  generate_mindmap,
+  generate_mindmap_from_outline,
+} from './tools/mindmap-generator.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -335,6 +343,148 @@ In actionPrompts, you can use these placeholders:
       required: ['card', 'actionPrompts', 'chatId'],
     },
     handler: send_interactive_message,
+  },
+  generate_mindmap: {
+    description: `Generate a mindmap from structured content. Part of NotebookLM features.
+
+Supports two output formats:
+- **mermaid**: Mermaid mindmap syntax (renderable in GitHub, GitLab, etc.)
+- **markmap**: Markdown format (visualizable with markmap.js.org)
+
+---
+
+## Usage Example
+
+\`\`\`json
+{
+  "topic": "Project Planning",
+  "branches": [
+    {
+      "text": "Phase 1",
+      "children": [
+        { "text": "Research" },
+        { "text": "Design" }
+      ]
+    },
+    {
+      "text": "Phase 2",
+      "children": [
+        { "text": "Development" },
+        { "text": "Testing" }
+      ]
+    }
+  ],
+  "format": "mermaid"
+}
+\`\`\`
+
+---
+
+## Output Example (Mermaid)
+
+\`\`\`mermaid
+mindmap
+  root((Project Planning))
+    Phase 1
+      Research
+      Design
+    Phase 2
+      Development
+      Testing
+\`\`\`
+
+---
+
+## Parameters
+
+- **topic**: Root topic/title of the mindmap (required)
+- **branches**: Array of main branches, each with text and optional children (required)
+- **format**: Output format - "mermaid" (default) or "markmap"
+- **saveToFile**: Optional file path to save the mindmap
+
+---
+
+## Tips
+
+- Use descriptive branch names
+- Keep nesting to 2-4 levels for readability
+- For complex topics, create multiple mindmaps`,
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Root topic/title of the mindmap' },
+        branches: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+              children: {
+                type: 'array',
+                items: { type: 'object', properties: { text: { type: 'string' }, children: { type: 'array' } } }
+              }
+            }
+          },
+          description: 'Array of main branches with optional nested children'
+        },
+        format: { type: 'string', enum: ['mermaid', 'markmap'], description: 'Output format (default: mermaid)' },
+        saveToFile: { type: 'string', description: 'Optional file path to save the mindmap' }
+      },
+      required: ['topic', 'branches'],
+    },
+    handler: generate_mindmap,
+  },
+  generate_mindmap_from_outline: {
+    description: `Generate a mindmap from a text outline. Part of NotebookLM features.
+
+Parses a simple text outline and converts it to a mindmap format.
+
+---
+
+## Outline Format
+
+\`\`\`
+# Main Topic 1
+## Subtopic 1.1
+- Point 1.1.1
+- Point 1.1.2
+## Subtopic 1.2
+- Point 1.2.1
+# Main Topic 2
+- Point 2.1 (directly under topic)
+\`\`\`
+
+---
+
+## Usage Example
+
+\`\`\`json
+{
+  "title": "Meeting Notes",
+  "outline": "# Discussion\\n## Decisions\\n- Use TypeScript\\n- Adopt microservices\\n## Action Items\\n- Create architecture doc\\n- Set up CI/CD",
+  "format": "mermaid"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **title**: Title of the mindmap (required)
+- **outline**: Text outline content (required)
+- **format**: Output format - "mermaid" (default) or "markmap"
+- **saveToFile**: Optional file path to save the mindmap`,
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Title of the mindmap' },
+        outline: { type: 'string', description: 'Text outline content' },
+        format: { type: 'string', enum: ['mermaid', 'markmap'], description: 'Output format (default: mermaid)' },
+        saveToFile: { type: 'string', description: 'Optional file path to save the mindmap' }
+      },
+      required: ['title', 'outline'],
+    },
+    handler: generate_mindmap_from_outline,
   },
 };
 
@@ -664,6 +814,123 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'generate_mindmap',
+    description: `Generate a mindmap from structured content. Part of NotebookLM features.
+
+Supports two output formats:
+- **mermaid**: Mermaid mindmap syntax (renderable in GitHub, GitLab, etc.)
+- **markmap**: Markdown format (visualizable with markmap.js.org)
+
+---
+
+## Usage Example
+
+\`\`\`json
+{
+  "topic": "Project Planning",
+  "branches": [
+    {
+      "text": "Phase 1",
+      "children": [
+        { "text": "Research" },
+        { "text": "Design" }
+      ]
+    },
+    {
+      "text": "Phase 2",
+      "children": [
+        { "text": "Development" },
+        { "text": "Testing" }
+      ]
+    }
+  ],
+  "format": "mermaid"
+}
+\`\`\`
+
+---
+
+## Output Example (Mermaid)
+
+\`\`\`mermaid
+mindmap
+  root((Project Planning))
+    Phase 1
+      Research
+      Design
+    Phase 2
+      Development
+      Testing
+\`\`\`
+
+---
+
+## Tips
+
+- Use descriptive branch names
+- Keep nesting to 2-4 levels for readability
+- For complex topics, create multiple mindmaps`,
+    parameters: z.object({
+      topic: z.string().describe('Root topic/title of the mindmap'),
+      branches: z.array(z.object({
+        text: z.string(),
+        children: z.array(z.object({
+          text: z.string(),
+          children: z.array(z.any()).optional(),
+        })).optional(),
+      })).describe('Array of main branches with optional nested children'),
+      format: z.enum(['mermaid', 'markmap']).optional().default('mermaid').describe('Output format'),
+      saveToFile: z.string().optional().describe('Optional file path to save the mindmap'),
+    }),
+    handler: async ({ topic, branches, format, saveToFile }) => {
+      try {
+        const result = await generate_mindmap({ topic, branches, format, saveToFile });
+        return toolSuccess(result.success
+          ? `${result.message}\n\n${result.mindmap}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Mindmap generation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'generate_mindmap_from_outline',
+    description: `Generate a mindmap from a text outline. Part of NotebookLM features.
+
+Parses a simple text outline and converts it to a mindmap format.
+
+---
+
+## Outline Format
+
+\`\`\`
+# Main Topic 1
+## Subtopic 1.1
+- Point 1.1.1
+- Point 1.1.2
+## Subtopic 1.2
+- Point 1.2.1
+# Main Topic 2
+- Point 2.1 (directly under topic)
+\`\`\``,
+    parameters: z.object({
+      title: z.string().describe('Title of the mindmap'),
+      outline: z.string().describe('Text outline content'),
+      format: z.enum(['mermaid', 'markmap']).optional().default('mermaid').describe('Output format'),
+      saveToFile: z.string().optional().describe('Optional file path to save the mindmap'),
+    }),
+    handler: async ({ title, outline, format, saveToFile }) => {
+      try {
+        const result = await generate_mindmap_from_outline({ title, outline, format, saveToFile });
+        return toolSuccess(result.success
+          ? `${result.message}\n\n${result.mindmap}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Mindmap generation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

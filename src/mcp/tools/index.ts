@@ -27,3 +27,13 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+
+export {
+  generate_mindmap,
+  generate_mindmap_from_outline,
+} from './mindmap-generator.js';
+export type {
+  MindmapNode,
+  GenerateMindmapParams,
+  GenerateMindmapResult,
+} from './mindmap-generator.js';
