@@ -88,3 +88,28 @@ export {
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
+
+// Master-Workers multi-agent collaboration (Issue #897 Phase 1)
+export { WorkerPool } from './worker-pool.js';
+export { TaskDispatcher } from './task-dispatcher.js';
+
+export type {
+  // Task types
+  SubTask,
+  SubTaskStatus,
+  TaskPriority,
+  TaskResult,
+  TaskHandle,
+  // Worker types
+  Worker,
+  WorkerStatus,
+  WorkerOptions,
+  // Pool types
+  WorkerPoolConfig,
+  WorkerPoolStats,
+  TaskCompletionCallback,
+  WorkerStatusCallback,
+  // Dispatcher types
+  TaskDispatcherConfig,
+  DispatchStrategy,
+} from './worker-types.js';
