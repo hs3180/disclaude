@@ -46,6 +46,11 @@ export interface WebSocketServerServiceConfig {
   getCapabilities: () => NodeCapabilities;
   /** Get channels callback */
   getChannelIds: () => string[];
+  /**
+   * Register card context for routing callbacks to Worker Nodes.
+   * Issue #935: Called when a Worker Node sends a card message.
+   */
+  registerCardContext?: (chatId: string, nodeId: string, isRemote: boolean) => void;
 }
 
 /**
@@ -65,6 +70,8 @@ export class WebSocketServerService extends EventEmitter {
   private readonly getCapabilities: () => NodeCapabilities;
   private readonly getChannelIds: () => string[];
   private readonly fileStorageConfig?: FileStorageConfig;
+  // Issue #935: Card context registration callback
+  private readonly registerCardContext?: (chatId: string, nodeId: string, isRemote: boolean) => void;
 
   private httpServer?: http.Server;
   private wss?: WebSocketServer;
@@ -81,6 +88,7 @@ export class WebSocketServerService extends EventEmitter {
     this.handleFeedback = config.handleFeedback;
     this.getCapabilities = config.getCapabilities;
     this.getChannelIds = config.getChannelIds;
+    this.registerCardContext = config.registerCardContext;
   }
 
   /**
@@ -174,6 +182,17 @@ export class WebSocketServerService extends EventEmitter {
 
         // Handle feedback message (from Worker Nodes)
         const feedbackMsg = message as FeedbackMessage;
+
+        // Issue #935: Register card context for remote Worker Nodes
+        // This enables routing card action callbacks back to the correct Worker Node
+        if (feedbackMsg.type === 'card' && currentNodeId && this.registerCardContext) {
+          this.registerCardContext(feedbackMsg.chatId, currentNodeId, true);
+          logger.debug(
+            { chatId: feedbackMsg.chatId, nodeId: currentNodeId },
+            'Card context registered for remote Worker Node'
+          );
+        }
+
         this.handleFeedback(feedbackMsg);
       } catch (error) {
         logger.error({ err: error }, 'Failed to parse message');

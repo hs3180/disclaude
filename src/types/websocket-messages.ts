@@ -89,3 +89,48 @@ export interface FeedbackMessage {
   /** MIME type */
   mimeType?: string;
 }
+
+/**
+ * Message sent from Communication Node to Execution Node when a card action occurs.
+ * This enables Worker Node to receive card interaction callbacks from Primary Node.
+ *
+ * Issue #935: WebSocket bidirectional communication for card actions.
+ */
+export interface CardActionMessage {
+  type: 'card_action';
+  /** Chat ID where the card was displayed */
+  chatId: string;
+  /** The card message ID in Feishu */
+  cardMessageId: string;
+  /** Action type (button, select_static, etc.) */
+  actionType: string;
+  /** Action value from the button/menu */
+  actionValue: string;
+  /** Display text of the action (optional) */
+  actionText?: string;
+  /** User who triggered the action */
+  userId?: string;
+  /** Full action data for complex interactions */
+  action?: {
+    type: string;
+    value: string;
+    text?: string;
+    trigger?: string;
+  };
+}
+
+/**
+ * Message sent from Communication Node to Execution Node for card context registration.
+ * After a card is sent successfully, Primary Node notifies Worker Node of the message ID.
+ *
+ * Issue #935: WebSocket bidirectional communication for card actions.
+ */
+export interface CardContextMessage {
+  type: 'card_context';
+  /** Chat ID where the card was sent */
+  chatId: string;
+  /** The card message ID returned by Feishu */
+  cardMessageId: string;
+  /** Node ID that sent the card (for routing callbacks) */
+  nodeId: string;
+}

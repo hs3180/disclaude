@@ -270,6 +270,23 @@ export class ExecNodeRegistry extends EventEmitter {
   }
 
   /**
+   * Check if a remote node is connected.
+   * Issue #935: Used by CardActionRouter to check node availability.
+   */
+  isNodeConnected(nodeId: string): boolean {
+    const node = this.execNodes.get(nodeId);
+    if (!node) {
+      return false;
+    }
+    // Local node is always "connected" if enabled
+    if (node.isLocal) {
+      return this.localExecEnabled;
+    }
+    // Remote node is connected if WebSocket is open
+    return node.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
    * Get the local node ID.
    */
   getLocalNodeId(): string {
