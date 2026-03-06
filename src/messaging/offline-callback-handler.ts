@@ -160,7 +160,7 @@ export class OfflineCallbackHandler {
   /**
    * Trigger the callback action for an offline message.
    */
-  private async triggerCallback(
+  private triggerCallback(
     context: OfflineMessageContext,
     replyContent: string,
     userId: string
@@ -176,7 +176,7 @@ export class OfflineCallbackHandler {
         return this.recordKnowledge(context, replyContent, userId);
 
       default:
-        return { success: false, error: `Unknown callback action: ${context.callbackAction}` };
+        return Promise.resolve({ success: false, error: `Unknown callback action: ${context.callbackAction}` });
     }
   }
 
@@ -304,7 +304,7 @@ Please process the user's response and take appropriate action.
       await fs.mkdir(knowledgeDir, { recursive: true });
 
       // Create a knowledge entry
-      const timestamp = new Date().toISOString().split('T')[0];
+      const [timestamp] = new Date().toISOString().split('T');
       const knowledgeFile = path.join(knowledgeDir, `offline-replies-${timestamp}.md`);
 
       const entry = `

@@ -97,6 +97,7 @@ export class OfflineMessageStore {
   private messages: Map<string, OfflineMessageContext> = new Map();
   private filePath: string;
   private defaultTtl: number;
+  private cleanupInterval: number;
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private initialized = false;
 
@@ -104,10 +105,7 @@ export class OfflineMessageStore {
     const workspaceDir = Config.getWorkspaceDir();
     this.filePath = config.filePath ?? path.join(workspaceDir, '.offline-messages.json');
     this.defaultTtl = config.defaultTtl ?? DEFAULT_TTL;
-
-    // Start cleanup timer
-    const cleanupInterval = config.cleanupInterval ?? CLEANUP_INTERVAL;
-    this.cleanupTimer = setInterval(() => this.cleanupExpired(), cleanupInterval);
+    this.cleanupInterval = config.cleanupInterval ?? CLEANUP_INTERVAL;
 
     logger.debug({ filePath: this.filePath }, 'OfflineMessageStore created');
   }
@@ -136,6 +134,9 @@ export class OfflineMessageStore {
       }
       // File doesn't exist yet, that's fine
     }
+
+    // Start cleanup timer after initialization
+    this.cleanupTimer = setInterval(() => this.cleanupExpired(), this.cleanupInterval);
 
     this.initialized = true;
   }
