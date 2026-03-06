@@ -23,6 +23,7 @@ import type { ExecNodeRegistry } from './exec-node-registry.js';
 import type { DebugGroupService } from './debug-group-service.js';
 import type { ScheduleManagement } from './schedule-management.js';
 import type { CommandServices, ManagedGroupInfo } from './commands/types.js';
+import type { SkillAgentManager } from '../agents/skill-agent-manager.js';
 
 /**
  * Dependencies needed for building command services.
@@ -50,6 +51,8 @@ export interface CommandServicesDeps {
   getChannelStatus: () => string;
   /** Get channels for passive mode operations */
   getChannels: () => Array<{ id: string; name: string; setPassiveModeDisabled?: (chatId: string, disabled: boolean) => void; isPassiveModeDisabled?: (chatId: string) => boolean }>;
+  /** Skill Agent manager (optional, Issue #455) */
+  skillAgentManager?: SkillAgentManager;
 }
 
 /**
@@ -71,6 +74,7 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     taskStateManager,
     getChannelStatus,
     getChannels,
+    skillAgentManager,
   } = deps;
 
   return {
@@ -149,5 +153,24 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     markAsTopicGroup: (chatId: string, isTopic: boolean) => groupService.markAsTopicGroup(chatId, isTopic),
     isTopicGroup: (chatId: string) => groupService.isTopicGroup(chatId),
     listTopicGroups: () => groupService.listTopicGroups(),
+
+    // Skill Agent management (Issue #455)
+    listSkills: skillAgentManager ? () => skillAgentManager.discoverSkills() : undefined,
+    startSkillAgent: skillAgentManager
+      ? async (options) => {
+          return skillAgentManager.startAgent(options);
+        }
+      : undefined,
+    stopSkillAgent: skillAgentManager
+      ? async (agentId) => {
+          return skillAgentManager.stopAgent(agentId);
+        }
+      : undefined,
+    getSkillAgentInfo: skillAgentManager
+      ? (agentId) => skillAgentManager.getAgentInfo(agentId)
+      : undefined,
+    listSkillAgents: skillAgentManager
+      ? () => skillAgentManager.listRunningAgents()
+      : undefined,
   };
 }

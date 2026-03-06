@@ -39,3 +39,6 @@ export { TopicGroupCommand } from './topic-group-command.js';
 
 // Expert commands (Issue #535)
 export { ExpertCommand } from './expert-commands.js';
+
+// Skill Agent commands (Issue #455)
+export { SkillCommand } from './skill-command.js';
