@@ -705,11 +705,11 @@ Part of NotebookLM features - generates summaries in different styles.
     handler: (options) => {
       try {
         const result = generate_summary(options);
-        return toolSuccess(result.success
+        return Promise.resolve(toolSuccess(result.success
           ? `Summary (${result.wordCount} words):\n\n${result.summary}`
-          : `⚠️ ${result.error}`);
+          : `⚠️ ${result.error}`));
       } catch (error) {
-        return toolSuccess(`⚠️ Summary generation failed: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolSuccess(`⚠️ Summary generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
@@ -743,11 +743,11 @@ Part of NotebookLM features - creates question-answer pairs for study.
     handler: (options) => {
       try {
         const result = generate_qa_pairs(options);
-        return toolSuccess(result.success
+        return Promise.resolve(toolSuccess(result.success
           ? `Q&A Generation (${result.count} pairs):\n\n${result.qaPairs[0]?.question || 'No pairs generated'}`
-          : `⚠️ ${result.error}`);
+          : `⚠️ ${result.error}`));
       } catch (error) {
-        return toolSuccess(`⚠️ Q&A generation failed: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolSuccess(`⚠️ Q&A generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
@@ -787,7 +787,7 @@ Part of NotebookLM features - creates flashcards for spaced repetition learning.
       try {
         const result = generate_flashcards(options);
         if (!result.success) {
-          return toolSuccess(`⚠️ ${result.error}`);
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
         }
         let output = `Flashcards (${result.count} cards, Deck: "${result.flashcards[0]?.deck || 'Study Deck'}"):\n\n`;
         if (options.format === 'anki' && result.ankiOutput) {
@@ -797,9 +797,9 @@ Part of NotebookLM features - creates flashcards for spaced repetition learning.
         } else {
           output += result.flashcards[0]?.front || 'No flashcards generated';
         }
-        return toolSuccess(output);
+        return Promise.resolve(toolSuccess(output));
       } catch (error) {
-        return toolSuccess(`⚠️ Flashcard generation failed: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolSuccess(`⚠️ Flashcard generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
@@ -840,11 +840,11 @@ Part of NotebookLM features - creates quiz questions for assessment.
       try {
         const result = generate_quiz(options);
         if (!result.success) {
-          return toolSuccess(`⚠️ ${result.error}`);
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
         }
-        return toolSuccess(`Quiz (${result.count} questions, ${result.totalPoints} points):\n\n${result.markdownQuiz || 'No quiz generated'}`);
+        return Promise.resolve(toolSuccess(`Quiz (${result.count} questions, ${result.totalPoints} points):\n\n${result.markdownQuiz || 'No quiz generated'}`));
       } catch (error) {
-        return toolSuccess(`⚠️ Quiz generation failed: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolSuccess(`⚠️ Quiz generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
@@ -896,16 +896,16 @@ Part of NotebookLM features - generates comprehensive study materials including:
       try {
         const result = create_study_guide(options);
         if (!result.success) {
-          return toolSuccess(`⚠️ ${result.error}`);
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
         }
         let output = 'Study Guide created successfully!\n';
         if (result.outputPath) {
           output += `Saved to: ${result.outputPath}\n\n`;
         }
         output += result.studyGuide;
-        return toolSuccess(output);
+        return Promise.resolve(toolSuccess(output));
       } catch (error) {
-        return toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`);
+        return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
