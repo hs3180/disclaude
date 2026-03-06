@@ -14,6 +14,8 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  AskUserOptions,
+  AskUserResult,
 } from './types.js';
 
 export { send_user_feedback, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -27,3 +29,4 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+export { ask_user } from './ask-user.js';
