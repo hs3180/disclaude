@@ -2,6 +2,7 @@
  * Tests for MessageBuilder class.
  *
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
+ * Issue #893: Tests for next-step guidance section.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -119,6 +120,97 @@ describe('MessageBuilder', () => {
         const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
         expect(result).toContain('analyze_image');
       }
+    });
+  });
+
+  describe('buildNextStepGuidance (Issue #893)', () => {
+    it('should include next-step guidance in enhanced content by default', () => {
+      const msg = {
+        text: 'Hello',
+        messageId: 'msg-123',
+      };
+      const chatId = 'oc_test';
+
+      const result = messageBuilder.buildEnhancedContent(msg, chatId);
+
+      expect(result).toContain('Next Steps After Task Completion');
+      expect(result).toContain('proactively suggest');
+    });
+
+    it('should include interactive card format when cards are supported', () => {
+      const msg = {
+        text: 'Hello',
+        messageId: 'msg-123',
+      };
+      const chatId = 'oc_test';
+      const capabilities = {
+        supportsCard: true,
+      };
+
+      const result = messageBuilder.buildEnhancedContent(msg, chatId, capabilities);
+
+      expect(result).toContain('Interactive Card Format');
+      expect(result).toContain('接下来您可以...');
+    });
+
+    it('should not include interactive card format when cards are not supported', () => {
+      const msg = {
+        text: 'Hello',
+        messageId: 'msg-123',
+      };
+      const chatId = 'oc_test';
+      const capabilities = {
+        supportsCard: false,
+      };
+
+      const result = messageBuilder.buildEnhancedContent(msg, chatId, capabilities);
+
+      expect(result).toContain('Next Steps After Task Completion');
+      expect(result).not.toContain('Interactive Card Format');
+    });
+
+    it('should not include next-step guidance when disabled', () => {
+      const builder = new MessageBuilder({ enabled: false });
+      const msg = {
+        text: 'Hello',
+        messageId: 'msg-123',
+      };
+      const chatId = 'oc_test';
+
+      const result = builder.buildEnhancedContent(msg, chatId);
+
+      expect(result).not.toContain('Next Steps After Task Completion');
+    });
+
+    it('should not include interactive card format when suggestInteractiveCards is false', () => {
+      const builder = new MessageBuilder({ suggestInteractiveCards: false });
+      const msg = {
+        text: 'Hello',
+        messageId: 'msg-123',
+      };
+      const chatId = 'oc_test';
+      const capabilities = {
+        supportsCard: true,
+      };
+
+      const result = builder.buildEnhancedContent(msg, chatId, capabilities);
+
+      expect(result).toContain('Next Steps After Task Completion');
+      expect(result).not.toContain('Interactive Card Format');
+    });
+
+    it('should not include next-step guidance for skill commands', () => {
+      const msg = {
+        text: '/help',
+        messageId: 'msg-123',
+        senderOpenId: 'user-123',
+      };
+      const chatId = 'oc_test';
+
+      const result = messageBuilder.buildEnhancedContent(msg, chatId);
+
+      // Skill commands should not have next-step guidance
+      expect(result).not.toContain('Next Steps After Task Completion');
     });
   });
 });
