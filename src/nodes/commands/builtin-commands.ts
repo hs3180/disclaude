@@ -43,6 +43,7 @@ import {
   ScheduleCommand,
   TaskCommand,
   TopicGroupCommand,
+  ExpertCommand,
 } from './commands/index.js';
 
 // Re-export all command classes for backward compatibility
@@ -66,6 +67,7 @@ export {
   ScheduleCommand,
   TaskCommand,
   TopicGroupCommand,
+  ExpertCommand,
 };
 
 /**
@@ -97,4 +99,6 @@ export function registerDefaultCommands(
   registry.register(new TaskCommand());
   // Issue #721: Topic group command for BBS mode
   registry.register(new TopicGroupCommand());
+  // Issue #535: Expert registration and skill management
+  registry.register(new ExpertCommand());
 }
