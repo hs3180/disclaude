@@ -8,6 +8,7 @@
  * Available Channels:
  * - FeishuChannel: Feishu/Lark messaging via WebSocket
  * - RestChannel: RESTful API for direct agent interaction
+ * - RuliuChannel: Ruliu (如流) messaging via HTTP Webhook
  *
  * Platform Adapters:
  * - IMessageSender: Platform-agnostic message sending
@@ -15,7 +16,7 @@
  *
  * Usage:
  * ```typescript
- * import { IChannel, FeishuChannel, RestChannel } from './channels/index.js';
+ * import { IChannel, FeishuChannel, RestChannel, RuliuChannel } from './channels/index.js';
  *
  * // Create a Feishu channel
  * const feishuChannel = new FeishuChannel({
@@ -26,6 +27,16 @@
  * // Create a REST channel
  * const restChannel = new RestChannel({
  *   port: 3000,
+ * });
+ *
+ * // Create a Ruliu channel
+ * const ruliuChannel = new RuliuChannel({
+ *   apiHost: 'https://apiin.im.baidu.com',
+ *   checkToken: '...',
+ *   encodingAESKey: '...',
+ *   appKey: '...',
+ *   appSecret: '...',
+ *   robotName: 'MyBot',
  * });
  *
  * // Register message handler
@@ -61,6 +72,7 @@ export { BaseChannel } from './base-channel.js';
 // Channel implementations
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 export { RestChannel, type RestChannelConfig } from './rest-channel.js';
+export { RuliuChannel, type RuliuChannelConfig } from './ruliu-channel.js';
 
 // Platform Adapters
 export type {

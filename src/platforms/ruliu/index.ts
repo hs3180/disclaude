@@ -25,6 +25,7 @@
 
 export { RuliuPlatformAdapter, type RuliuPlatformAdapterConfig } from './ruliu-adapter.js';
 export { RuliuMessageSender, type RuliuMessageSenderConfig } from './ruliu-message-sender.js';
+export { RuliuWebhookHandler, type WebhookCallbacks, type RuliuWebhookHandlerConfig } from './ruliu-webhook-handler.js';
 export {
   decryptMessage,
   encryptMessage,
