@@ -4,7 +4,11 @@
  * This tool sends interactive cards with pre-defined prompt templates
  * that are automatically converted to user messages when interactions occur.
  *
+ * Uses cross-process shared storage for interaction contexts to support
+ * scenarios where MCP and bot processes are separate.
+ *
  * @module mcp/tools/interactive-message
+ * @see Issue #894 - 飞书卡片按钮点击无响应
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
@@ -14,52 +18,44 @@ import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getMessageSentCallback } from './send-message.js';
-import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
+import {
+  registerInteractionContext,
+  getActionPrompts as getSharedActionPrompts,
+  unregisterInteractionContext,
+  cleanupExpiredContexts as cleanupSharedExpiredContexts,
+} from '../../utils/interaction-state.js';
+import type { SendInteractiveResult, ActionPromptMap } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
 /**
- * Store for interactive message contexts.
- * Maps message ID to its action prompts.
- */
-const interactiveContexts = new Map<string, InteractiveMessageContext>();
-
-/**
  * Register action prompts for a message.
  * Called after successfully sending an interactive message.
+ * Uses cross-process shared storage.
  */
 export function registerActionPrompts(
   messageId: string,
   chatId: string,
   actionPrompts: ActionPromptMap
 ): void {
-  interactiveContexts.set(messageId, {
-    messageId,
-    chatId,
-    actionPrompts,
-    createdAt: Date.now(),
-  });
-  logger.debug({ messageId, chatId, actions: Object.keys(actionPrompts) }, 'Action prompts registered');
+  registerInteractionContext(messageId, chatId, actionPrompts);
 }
 
 /**
  * Get action prompts for a message.
  * Returns undefined if no prompts are registered.
+ * Uses cross-process shared storage.
  */
 export function getActionPrompts(messageId: string): ActionPromptMap | undefined {
-  const context = interactiveContexts.get(messageId);
-  return context?.actionPrompts;
+  return getSharedActionPrompts(messageId);
 }
 
 /**
  * Remove action prompts for a message.
+ * Uses cross-process shared storage.
  */
 export function unregisterActionPrompts(messageId: string): boolean {
-  const removed = interactiveContexts.delete(messageId);
-  if (removed) {
-    logger.debug({ messageId }, 'Action prompts unregistered');
-  }
-  return removed;
+  return unregisterInteractionContext(messageId);
 }
 
 /**
@@ -122,24 +118,10 @@ export function generateInteractionPrompt(
 
 /**
  * Cleanup expired interactive contexts (older than 24 hours).
+ * Uses cross-process shared storage.
  */
 export function cleanupExpiredContexts(): number {
-  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  const now = Date.now();
-  let cleaned = 0;
-
-  for (const [messageId, context] of interactiveContexts) {
-    if (now - context.createdAt > maxAge) {
-      interactiveContexts.delete(messageId);
-      cleaned++;
-    }
-  }
-
-  if (cleaned > 0) {
-    logger.debug({ count: cleaned }, 'Cleaned up expired interactive contexts');
-  }
-
-  return cleaned;
+  return cleanupSharedExpiredContexts();
 }
 
 /**
