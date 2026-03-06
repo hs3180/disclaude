@@ -3,6 +3,8 @@
  *
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
  * Handles building enhanced content with Feishu context.
+ *
+ * Issue #893: Added in-prompt next-step guidance.
  */
 
 import { Config } from '../../config/index.js';
@@ -18,6 +20,7 @@ import type { MessageData } from './types.js';
  * - Capability-aware tools section
  * - Attachments info
  * - Chat history context
+ * - Next-step guidance (Issue #893)
  */
 export class MessageBuilder {
   /**
@@ -72,6 +75,9 @@ ${msg.chatHistoryContext}
     // Build capability-aware tools section (Issue #582)
     const toolsSection = this.buildToolsSection(chatId, msg.messageId || '', capabilities, msg.senderOpenId);
 
+    // Build next-step guidance section (Issue #893)
+    const nextStepGuidance = this.buildNextStepGuidance(capabilities);
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -100,6 +106,7 @@ ${chatHistorySection}${mentionSection}
 
 ## Tools
 ${toolsSection}
+${nextStepGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -112,6 +119,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 ${chatHistorySection}
 ## Tools
 ${toolsSection}
+${nextStepGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -245,5 +253,72 @@ You can read these files using the Read tool with the local paths above.`;
     // Check for common image analyzer MCP server names
     const imageAnalyzerNames = ['4_5v_mcp', 'glm-vision', 'image-analyzer', 'vision'];
     return imageAnalyzerNames.some(name => name in mcpServers);
+  }
+
+  /**
+   * Build next-step guidance section for the prompt.
+   *
+   * Issue #893: Simplifies next-step recommendation by using in-prompt guidance
+   * instead of a separate LLM call. This approach:
+   * - Eliminates the need for triggerNextStepRecommendation function
+   * - Reduces API calls and latency
+   * - Provides more context-aware suggestions
+   * - Supports interactive cards when the platform supports them
+   *
+   * @param capabilities - Channel capabilities to determine card support
+   */
+  private buildNextStepGuidance(capabilities?: ChannelCapabilities): string {
+    const supportsCards = capabilities?.supportsCard !== false;
+
+    if (supportsCards) {
+      return `
+
+---
+
+## Next Steps After Task Completion
+
+After completing the user's task, proactively suggest 2-3 relevant next steps the user might want to take. Present these suggestions as an **interactive card** with clickable options.
+
+### Card Template for Next Steps
+
+\`\`\`json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "接下来您可以...", "tag": "plain_text"}, "template": "blue"},
+  "elements": [
+    {"tag": "markdown", "content": "✅ 任务已完成"},
+    {"tag": "hr"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "选项1", "tag": "plain_text"}, "value": "action1", "type": "primary"},
+      {"tag": "button", "text": {"content": "选项2", "tag": "plain_text"}, "value": "action2"},
+      {"tag": "button", "text": {"content": "选项3", "tag": "plain_text"}, "value": "action3"}
+    ]}
+  ]
+}
+\`\`\`
+
+### Guidelines
+
+- Suggest 2-3 relevant next steps based on the conversation context
+- Make suggestions specific and actionable
+- Use primary button style for the most recommended option
+- If no clear next steps exist, skip this section`;
+    }
+
+    // Fallback for channels without card support
+    return `
+
+---
+
+## Next Steps After Task Completion
+
+After completing the user's task, proactively suggest 2-3 relevant next steps the user might want to take.
+
+### Guidelines
+
+- Suggest 2-3 relevant next steps based on the conversation context
+- Make suggestions specific and actionable
+- Format as a simple list
+- If no clear next steps exist, skip this section`;
   }
 }
