@@ -42,3 +42,13 @@ export {
   type CardHeaderConfig,
   type CardConfig,
 } from './interactive-card-builder.js';
+
+export {
+  buildReviewCard,
+  buildQuickReviewCard,
+  buildReviewStatsCard,
+  REVIEW_THEMES,
+  type ReviewCardConfig,
+  type ChangeItem,
+  type ReviewTheme,
+} from './review-card-builder.js';
