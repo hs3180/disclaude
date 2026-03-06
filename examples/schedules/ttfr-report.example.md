@@ -1,235 +1,159 @@
 ---
-name: "TTFR Report"
+name: "TTFR 统计报告"
 cron: "0 0 * * *"
 enabled: false
 blocking: true
-chatId: "REPLACE_WITH_ACTUAL_CHAT_ID"
-createdAt: "2026-03-06T00:00:00.000Z"
+chatId: "oc_REPLACE_WITH_YOUR_CHAT_ID"
 ---
 
-# TTFR (Time To First Response) Report
+# TTFR (Time To First Response) 统计报告
 
-每天凌晨统计用户消息的第一响应时间，生成 TTFR 报告。
+每天凌晨统计过去 24 小时的用户消息第一响应时间。
 
 ## 配置说明
 
 **重要**: 使用前请将 `chatId` 替换为实际的飞书 Chat ID，并将 `enabled` 设为 `true`。
 
-## TTFR 定义
+## 概念说明
 
-TTFR (Time To First Response) 是用户发送消息到 Bot 首次响应的时间差。用于衡量 Bot 的响应速度。
-
-**计算规则**:
-- 用户发送消息 (📥 User) -> Bot 首次响应 (📤 Bot) 的时间差
-- 如果用户连续发送多条消息，只计算第一条到首次响应的时间
-- 忽略 Bot 主动发起的对话
+- **TTFR (Time To First Response)**: 用户发送消息到 Bot 首次响应的时间间隔
+- 该指标反映了系统的响应速度，是用户体验的重要考核指标
 
 ## 执行步骤
 
-### 1. 获取聊天记录目录
+### 1. 确定分析范围
+
+分析过去 24 小时的聊天记录。
 
 ```bash
-ls -d workspace/chat/$(date -d "yesterday" +%Y-%m-%d)/*.md 2>/dev/null || echo "No chat logs found for yesterday"
+date -u +"%Y-%m-%dT%H:%M:%SZ"
 ```
 
-如果目录不存在，跳过本次执行。
+### 2. 获取所有聊天记录文件
 
-### 2. 读取每个聊天的记录
+聊天记录存储在 `workspace/logs/` 目录下，按日期分组。
 
-对于每个聊天记录文件：
-
-```
-Read workspace/chat/{YYYY-MM-DD}/{chatId}.md
+```bash
+find workspace/logs -name "*.md" -type f -mtime -1 2>/dev/null | head -20
 ```
 
-### 3. 解析消息时间戳
+如果返回为空，说明过去 24 小时内没有聊天记录，跳过本次执行。
 
-聊天记录格式示例：
-```markdown
-## [2026-03-05T10:30:15.123Z] 📥 User (message_id: cli-xxx)
+### 3. 分析每个聊天记录文件
+
+对于每个聊天记录文件，执行以下分析：
+
+#### 3.1 读取文件内容
+
+```
+Read workspace/logs/{date}/{chatId}.md
+```
+
+#### 3.2 解析消息格式
+
+聊天记录中的消息格式如下：
+
+**用户消息**:
+```
+## [2026-03-06T10:30:00.000Z] 📥 User (message_id: xxx)
 
 **Sender**: ou_xxx
 **Type**: text
 
-用户消息内容
+消息内容...
 
 ---
+```
 
-## [2026-03-05T10:30:45.456Z] 📤 Bot (message_id: cli-yyy)
+**Bot 消息**:
+```
+## [2026-03-06T10:30:05.000Z] 📤 Bot (message_id: xxx)
 
 **Sender**: bot
 **Type**: text
 
-Bot 响应内容
+响应内容...
 
 ---
 ```
 
-**解析逻辑**:
-1. 使用正则提取每条消息的时间戳和方向标记
-2. 时间戳格式: `[YYYY-MM-DDTHH:MM:SS.sssZ]`
-3. 方向标记: `📥 User` (用户消息) 或 `📤 Bot` (Bot 响应)
+#### 3.3 计算 TTFR
 
-### 4. 计算 TTFR
+对于每个用户消息：
+1. 提取消息时间戳 (ISO 格式)
+2. 找到该用户消息之后的第一条 Bot 消息
+3. 计算时间差 = Bot 消息时间 - 用户消息时间
+4. 记录结果
 
-**算法**:
-```
-1. 遍历消息序列
-2. 当遇到 📥 User 消息时，记录用户消息时间 (user_time)
-3. 当遇到 📤 Bot 消息时，如果有 pending 的 user_time:
-   - 计算 ttfr = bot_time - user_time
-   - 记录该次交互的 TTFR
-   - 清除 pending user_time
-4. 如果连续多条 📥 User 消息，只使用第一条的时间
-```
+**注意**: 如果用户消息后没有 Bot 响应，跳过该消息（不计入统计）。
 
-### 5. 统计指标计算
+### 4. 汇总统计结果
 
-对于每个聊天，计算：
+对收集到的所有 TTFR 数据进行统计：
+
+- **样本数量**: 响应次数
 - **平均 TTFR**: 所有 TTFR 的平均值
 - **最小 TTFR**: 最快响应时间
 - **最大 TTFR**: 最慢响应时间
-- **中位数 TTFR**: 排序后的中间值
-- **响应次数**: 统计周期内的交互次数
+- **P50/P90/P95**: 响应时间百分位数
 
-### 6. 生成报告
+### 5. 生成报告
 
-```markdown
-## ⏱️ TTFR Daily Report
-
-**统计日期**: {YYYY-MM-DD}
-**统计周期**: 24 小时
-
----
-
-### 📊 整体统计
-
-| 指标 | 数值 |
-|------|------|
-| 活跃聊天数 | {chat_count} |
-| 总交互次数 | {total_interactions} |
-| 平均 TTFR | {avg_ttfr} |
-| 最小 TTFR | {min_ttfr} |
-| 最大 TTFR | {max_ttfr} |
-| 中位数 TTFR | {median_ttfr} |
-
----
-
-### 📋 各聊天详情
-
-#### Chat: {chat_id}
-
-| 指标 | 数值 |
-|------|------|
-| 交互次数 | {interaction_count} |
-| 平均 TTFR | {avg_ttfr} |
-| 最小 TTFR | {min_ttfr} |
-| 最大 TTFR | {max_ttfr} |
-
----
-
-💡 提示：TTFR 目标建议 < 5 秒。如超过 10 秒，建议检查系统性能。
-```
-
-### 7. 发送报告
-
-使用 `send_user_feedback` 将报告发送到配置的 chatId。
-
-### 8. 记录历史数据
-
-将统计结果追加到 `workspace/data/ttfr-history.json`：
-
-```json
-{
-  "history": [
-    {
-      "date": "2026-03-05",
-      "generatedAt": "2026-03-06T00:00:00.000Z",
-      "summary": {
-        "chatCount": 5,
-        "totalInteractions": 42,
-        "avgTTFR": 3.2,
-        "minTTFR": 1.1,
-        "maxTTFR": 8.5,
-        "medianTTFR": 2.8
-      },
-      "details": [
-        {
-          "chatId": "oc_xxx",
-          "interactions": 10,
-          "avgTTFR": 2.5
-        }
-      ]
-    }
-  ]
-}
-```
-
-## 时间格式化
-
-将毫秒转换为易读格式：
-- `< 1s`: 显示毫秒，如 `450ms`
-- `< 60s`: 显示秒，如 `3.2s`
-- `< 1h`: 显示分钟，如 `2m 30s`
-- `>= 1h`: 显示小时，如 `1h 15m`
-
-## 错误处理
-
-1. 如果聊天记录目录不存在，跳过本次执行
-2. 如果单个聊天文件解析失败，记录错误并继续处理其他文件
-3. 如果 `send_user_feedback` 失败，记录日志但保留历史数据
-4. 如果历史文件损坏，创建新文件
-
-## 示例输出
+生成如下格式的报告：
 
 ```
-## ⏱️ TTFR Daily Report
+## TTFR 统计报告 (过去 24 小时)
 
-**统计日期**: 2026-03-05
-**统计周期**: 24 小时
+📅 统计时间范围: {start_time} - {end_time}
+📊 样本数量: {count} 次响应
 
----
+### 响应时间统计
 
-### 📊 整体统计
+| 指标 | 值 |
+|------|-----|
+| 平均响应时间 | {avg} 秒 |
+| 最快响应 | {min} 秒 |
+| 最慢响应 | {max} 秒 |
+| P50 (中位数) | {p50} 秒 |
+| P90 | {p90} 秒 |
+| P95 | {p95} 秒 |
 
-| 指标 | 数值 |
-|------|------|
-| 活跃聊天数 | 3 |
-| 总交互次数 | 15 |
-| 平均 TTFR | 2.8s |
-| 最小 TTFR | 850ms |
-| 最大 TTFR | 8.2s |
-| 中位数 TTFR | 2.1s |
+### 响应时间分布
 
----
+- < 5 秒: {count} 次 ({percent}%)
+- 5-10 秒: {count} 次 ({percent}%)
+- 10-30 秒: {count} 次 ({percent}%)
+- 30-60 秒: {count} 次 ({percent}%)
+- > 60 秒: {count} 次 ({percent}%)
 
-### 📋 各聊天详情
+### 慢响应详情 (超过 60 秒)
 
-#### Chat: oc_71e5f41a029f3a120988b7ecb76df314
-
-| 指标 | 数值 |
-|------|------|
-| 交互次数 | 8 |
-| 平均 TTFR | 2.1s |
-| 最小 TTFR | 850ms |
-| 最大 TTFR | 5.3s |
-
-#### Chat: oc_another_chat_id
-
-| 指标 | 数值 |
-|------|------|
-| 交互次数 | 7 |
-| 平均 TTFR | 3.6s |
-| 最小 TTFR | 1.2s |
-| 最大 TTFR | 8.2s |
-
----
-
-💡 提示：TTFR 目标建议 < 5 秒。如超过 10 秒，建议检查系统性能。
+列出响应时间超过 60 秒的消息：
+- 时间: {timestamp}, 聊天: {chatId}, 响应时间: {ttfr} 秒
 ```
 
-## 扩展建议
+### 6. 发送报告 (可选)
 
-1. **趋势分析**: 可以读取 `ttfr-history.json` 生成 7 天/30 天趋势图
-2. **告警机制**: 当平均 TTFR 超过阈值时发送告警
-3. **分时段统计**: 区分高峰/低谷时段的响应时间
+如果配置了 `chatId`，将统计报告发送到指定群聊。
+
+## 扩展选项
+
+### 多日趋势分析
+
+可以扩展此任务，分析过去 7 天或 30 天的 TTFR 趋势，生成趋势图。
+
+### 按聊天分组
+
+可以按不同聊天 ID 分组统计，识别响应较慢的会话。
+
+### 告警阈值
+
+设置 TTFR 阈值，当平均响应时间超过阈值时发送告警。
+
+## 注意事项
+
+- 聊天记录文件路径: `workspace/logs/{YYYY-MM-DD}/{chatId}.md`
+- 用户消息标识: `📥 User`
+- Bot 消息标识: `📤 Bot`
+- 时间戳格式: ISO 8601 (如 `2026-03-06T10:30:00.000Z`)
+- 如果用户连续发送多条消息，只计算第一条消息的 TTFR
