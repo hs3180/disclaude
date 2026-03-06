@@ -45,14 +45,14 @@ function formatProfile(profile: ReturnType<typeof getExpertService>['getExpert']
   }
 
   if (profile.skills.length > 0) {
-    lines.push(`   🎯 技能:`);
+    lines.push('   🎯 技能:');
     for (const skill of profile.skills) {
       const stars = '⭐'.repeat(skill.level);
       const tags = skill.tags?.length ? ` [${skill.tags.join(', ')}]` : '';
       lines.push(`      - ${skill.name} ${stars}${tags}`);
     }
   } else {
-    lines.push(`   🎯 技能: 暂无`);
+    lines.push('   🎯 技能: 暂无');
   }
 
   lines.push(`   📅 注册时间: ${new Date(profile.registeredAt).toLocaleDateString('zh-CN')}`);
@@ -158,8 +158,7 @@ export class ExpertCommand implements Command {
 
     switch (action) {
       case 'add': {
-        const skillName = args[2];
-        const levelStr = args[3];
+        const [, , skillName, levelStr] = args;
         const tags = args.slice(4);
 
         if (!skillName) {
@@ -184,7 +183,7 @@ export class ExpertCommand implements Command {
       }
 
       case 'remove': {
-        const skillName = args[2];
+        const [, , skillName] = args;
 
         if (!skillName) {
           return { success: false, error: '❌ 请指定要移除的技能名称\n\n用法: /expert skills remove <技能>' };
@@ -240,8 +239,7 @@ export class ExpertCommand implements Command {
     const { args } = context;
     const expertService = getExpertService();
 
-    const query = args[1];
-    const minLevelStr = args[2];
+    const [, query, minLevelStr] = args;
 
     if (!query) {
       return { success: false, error: '❌ 请指定搜索关键词\n\n用法: /expert search <技能> [最低等级]' };
