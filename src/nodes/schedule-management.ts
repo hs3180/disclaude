@@ -188,7 +188,7 @@ export class ScheduleManagement {
   } | null> {
     const scheduler = this.deps.schedulerService?.getScheduler();
     if (!scheduler) { return null; }
-    return scheduler.getCooldownStatus(taskId, cooldownPeriod);
+    return await scheduler.getCooldownStatus(taskId, cooldownPeriod);
   }
 
   /**
@@ -198,6 +198,6 @@ export class ScheduleManagement {
   async clearScheduleCooldown(taskId: string): Promise<boolean> {
     const scheduler = this.deps.schedulerService?.getScheduler();
     if (!scheduler) { return false; }
-    return scheduler.clearCooldown(taskId);
+    return await scheduler.clearCooldown(taskId);
   }
 }
