@@ -17,6 +17,7 @@ import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
+import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
@@ -567,13 +568,33 @@ export class MessageHandler {
 
     // Always emit card action as a message to the agent
     try {
-      // Try to get a pre-defined prompt template first
-      const promptFromTemplate = generateInteractionPrompt(
-        message_id,
-        action.value,
-        action.text,
-        action.type
-      );
+      // Try to get a pre-defined prompt template via IPC first (cross-process),
+      // then fall back to local function (same-process)
+      let promptFromTemplate: string | undefined;
+
+      const ipcClient = getIpcClient();
+      if (ipcClient.isConnected()) {
+        // Cross-process: query via IPC
+        promptFromTemplate = await ipcClient.generateInteractionPrompt(
+          message_id,
+          action.value,
+          action.text,
+          action.type
+        );
+        if (promptFromTemplate) {
+          logger.debug({ messageId: message_id }, 'Got prompt template via IPC');
+        }
+      }
+
+      // Fallback to local function (same-process)
+      if (!promptFromTemplate) {
+        promptFromTemplate = generateInteractionPrompt(
+          message_id,
+          action.value,
+          action.text,
+          action.type
+        );
+      }
 
       // Use the template prompt if available, otherwise use default message
       const messageContent = promptFromTemplate || (() => {
@@ -612,13 +633,30 @@ export class MessageHandler {
     try {
       // Try to handle via InteractionManager
       const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
-        // Try to get a pre-defined prompt template first
-        const promptFromTemplate = generateInteractionPrompt(
-          defaultEvent.message_id,
-          defaultEvent.action.value,
-          defaultEvent.action.text,
-          defaultEvent.action.type
-        );
+        // Try to get a pre-defined prompt template via IPC first (cross-process),
+        // then fall back to local function (same-process)
+        let promptFromTemplate: string | undefined;
+
+        const ipcClient = getIpcClient();
+        if (ipcClient.isConnected()) {
+          // Cross-process: query via IPC
+          promptFromTemplate = await ipcClient.generateInteractionPrompt(
+            defaultEvent.message_id,
+            defaultEvent.action.value,
+            defaultEvent.action.text,
+            defaultEvent.action.type
+          );
+        }
+
+        // Fallback to local function (same-process)
+        if (!promptFromTemplate) {
+          promptFromTemplate = generateInteractionPrompt(
+            defaultEvent.message_id,
+            defaultEvent.action.value,
+            defaultEvent.action.text,
+            defaultEvent.action.type
+          );
+        }
 
         // Use the template prompt if available, otherwise use default message
         const messageContent = promptFromTemplate || (() => {
