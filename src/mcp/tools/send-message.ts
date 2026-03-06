@@ -54,23 +54,13 @@ export async function send_user_feedback(params: {
     if (!format) { throw new Error('format is required (must be "text" or "card")'); }
     if (!chatId) { throw new Error('chatId is required'); }
 
-    if (chatId.startsWith('cli-')) {
-      const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      logger.info({ chatId, format }, 'CLI mode: User feedback');
-      console.log(`\n${displayContent}\n`);
-      invokeMessageSentCallback(chatId);
-      return { success: true, message: `✅ Feedback displayed (CLI mode, format: ${format})` };
-    }
-
     const appId = Config.FEISHU_APP_ID;
     const appSecret = Config.FEISHU_APP_SECRET;
 
     if (!appId || !appSecret) {
-      const displayContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      logger.info({ chatId, format, reason: 'Feishu credentials not configured' }, 'Feedback logged');
-      console.log(`\n[Feedback] ${displayContent}\n`);
-      invokeMessageSentCallback(chatId);
-      return { success: true, message: `✅ Feedback logged (Feishu not configured, format: ${format})` };
+      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
+      logger.error({ chatId, format }, errorMsg);
+      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
     const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });

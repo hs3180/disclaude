@@ -54,18 +54,15 @@ export async function update_card(params: {
       };
     }
 
-    if (chatId.startsWith('cli-')) {
-      return { success: true, message: '✅ Card updated (CLI mode)' };
-    }
-
     const appId = Config.FEISHU_APP_ID;
     const appSecret = Config.FEISHU_APP_SECRET;
 
     if (!appId || !appSecret) {
+      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
       return {
         success: false,
-        error: 'Feishu credentials not configured',
-        message: '⚠️ Card cannot be updated: Feishu is not configured.',
+        error: errorMsg,
+        message: `❌ ${errorMsg}`,
       };
     }
 
@@ -98,16 +95,6 @@ export async function wait_for_interaction(params: {
   try {
     if (!messageId) { throw new Error('messageId is required'); }
     if (!chatId) { throw new Error('chatId is required'); }
-
-    if (chatId.startsWith('cli-')) {
-      return {
-        success: true,
-        message: '✅ Interaction received (CLI mode - simulated)',
-        actionValue: 'simulated',
-        actionType: 'button',
-        userId: 'cli-user',
-      };
-    }
 
     if (pendingInteractions.has(messageId)) {
       return {

@@ -84,8 +84,10 @@ export interface SendMessageResult {
  *
  * Routes to the appropriate channel based on chatId:
  * - Feishu (oc_*, ou_*): Uses Feishu API
- * - CLI (cli-*): Logs to console
- * - REST (other): Graceful degradation
+ * - Other chatIds: Uses Feishu API (requires configured credentials)
+ *
+ * Note: CLI and unconfigured credential fallbacks have been removed (Issue #849).
+ * If Feishu credentials are not configured, an error is returned.
  *
  * @param params - Tool parameters
  * @returns Result with success status and channel info
@@ -166,21 +168,20 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 export const unifiedMessagingToolDefinitions: InlineToolDefinition[] = [
   {
     name: 'send_message',
-    description: `Send a message to a chat. Automatically routes to the correct channel based on chatId.
+    description: `Send a message to a chat via Feishu.
 
-**Channel Detection:**
-- Feishu (oc_*, ou_*): Full support for text and cards
-- CLI (cli-*): Logs to console
-- REST (other): Graceful degradation
+**Requirements:**
+- Feishu credentials must be configured (FEISHU_APP_ID and FEISHU_APP_SECRET)
+- If credentials are not configured, an error will be returned
 
 **Format Options:**
 - "text": Plain text message
-- "card": Interactive card (Feishu only, falls back to text on other channels)
+- "card": Interactive card (Feishu only)
 
 **Thread Support:**
 When parentMessageId is provided, the message is sent as a reply to that message.
 
-**Card Format (Feishu only):**
+**Card Format:**
 A valid card must include:
 - config: Object with optional "wide_screen_mode"
 - header: Object with "title" and "template" color
