@@ -36,3 +36,6 @@ export { TaskCommand } from './task-command.js';
 
 // Topic Group command
 export { TopicGroupCommand } from './topic-group-command.js';
+
+// Expert commands (Issue #535)
+export { ExpertCommand } from './expert-commands.js';
