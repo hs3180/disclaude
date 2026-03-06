@@ -14,6 +14,7 @@ const legacyMockTestFiles = [
   'src/channels/feishu-channel-bot-mention.test.ts',
   'src/channels/feishu-channel-mention.test.ts',
   'src/channels/feishu-channel-passive-mode.test.ts',
+  'src/channels/feishu-channel-watchdog.test.ts',
   'src/mcp/feishu-context-mcp.test.ts',
   'src/mcp/feishu-mcp-server.test.ts',
   'src/mcp/tools/interactive-message.test.ts',

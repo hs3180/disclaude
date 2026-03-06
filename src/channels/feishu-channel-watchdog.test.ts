@@ -148,7 +148,6 @@ describe('FeishuChannel - WebSocket Reconnection Watchdog (Issue #959)', () => {
     });
 
     it('should initialize lastWsReadyTime on start', async () => {
-      const beforeStart = Date.now();
       await channel.start();
 
       // Advance time and verify watchdog is running
