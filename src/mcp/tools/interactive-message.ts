@@ -19,10 +19,32 @@ import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext 
 const logger = createLogger('InteractiveMessage');
 
 /**
+ * Global symbol key for interactive contexts storage.
+ * Using globalThis ensures the Map is shared across all module instances
+ * within the same Node.js process, solving the cross-module state isolation issue.
+ *
+ * Issue #894: 飞书卡片按钮点击无响应
+ */
+const INTERACTIVE_CONTEXTS_SYMBOL = Symbol.for('disclaude.interactiveContexts');
+
+/**
+ * Get or create the global interactive contexts Map.
+ * This ensures a single shared instance across all module imports.
+ */
+function getInteractiveContexts(): Map<string, InteractiveMessageContext> {
+  if (!(globalThis as Record<symbol, Map<string, InteractiveMessageContext>>)[INTERACTIVE_CONTEXTS_SYMBOL]) {
+    (globalThis as Record<symbol, Map<string, InteractiveMessageContext>>)[INTERACTIVE_CONTEXTS_SYMBOL] = new Map();
+    logger.debug('Created new global interactive contexts Map');
+  }
+  return (globalThis as Record<symbol, Map<string, InteractiveMessageContext>>)[INTERACTIVE_CONTEXTS_SYMBOL];
+}
+
+/**
  * Store for interactive message contexts.
  * Maps message ID to its action prompts.
+ * Uses globalThis for cross-module state sharing (Issue #894).
  */
-const interactiveContexts = new Map<string, InteractiveMessageContext>();
+const interactiveContexts = getInteractiveContexts();
 
 /**
  * Register action prompts for a message.
@@ -48,7 +70,37 @@ export function registerActionPrompts(
  */
 export function getActionPrompts(messageId: string): ActionPromptMap | undefined {
   const context = interactiveContexts.get(messageId);
+  if (!context) {
+    logger.debug(
+      { messageId, totalContexts: interactiveContexts.size },
+      'No context found for message ID'
+    );
+  }
   return context?.actionPrompts;
+}
+
+/**
+ * Get the current number of stored interactive contexts.
+ * Useful for debugging cross-process state sharing issues.
+ */
+export function getInteractiveContextsSize(): number {
+  return interactiveContexts.size;
+}
+
+/**
+ * Check if the global interactive contexts Map is properly initialized.
+ * Returns debug information for troubleshooting Issue #894.
+ */
+export function getInteractiveContextsDebugInfo(): {
+  size: number;
+  hasGlobalInstance: boolean;
+  messageIds: string[];
+} {
+  return {
+    size: interactiveContexts.size,
+    hasGlobalInstance: (globalThis as Record<symbol, unknown>)[INTERACTIVE_CONTEXTS_SYMBOL] !== undefined,
+    messageIds: Array.from(interactiveContexts.keys()),
+  };
 }
 
 /**
@@ -81,6 +133,16 @@ export function generateInteractionPrompt(
 ): string | undefined {
   const prompts = getActionPrompts(messageId);
   if (!prompts) {
+    // Log detailed debug info for Issue #894 troubleshooting
+    logger.debug(
+      {
+        messageId,
+        actionValue,
+        contextsSize: interactiveContexts.size,
+        availableMessageIds: Array.from(interactiveContexts.keys()).slice(0, 5),
+      },
+      'No action prompts found for message - context not registered or cross-process issue'
+    );
     return undefined;
   }
 

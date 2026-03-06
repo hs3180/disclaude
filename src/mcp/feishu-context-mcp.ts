@@ -26,6 +26,8 @@ export {
   send_interactive_message,
   generateInteractionPrompt,
   getActionPrompts,
+  getInteractiveContextsSize,
+  getInteractiveContextsDebugInfo,
 } from './tools/interactive-message.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {

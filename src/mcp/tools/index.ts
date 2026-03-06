@@ -26,4 +26,6 @@ export {
   unregisterActionPrompts,
   generateInteractionPrompt,
   cleanupExpiredContexts,
+  getInteractiveContextsSize,
+  getInteractiveContextsDebugInfo,
 } from './interactive-message.js';
