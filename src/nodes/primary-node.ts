@@ -71,6 +71,7 @@ import { getTaskStateManager } from '../utils/task-state-manager.js';
 import { ScheduleManagement } from './schedule-management.js';
 import { triggerNextStepRecommendation } from './next-step-recommendation.js';
 import { buildCommandServices } from './command-services.js';
+import type { NextStepAssessment } from './next-step-assessor.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -159,7 +160,9 @@ export class PrimaryNode extends EventEmitter {
     this.messageRouter = new UnifiedMessageRouter({
       sendFileToUser: this.sendFileToUser.bind(this),
       onTaskDone: async (chatId: string, threadId?: string) => {
-        await triggerNextStepRecommendation(chatId, threadId);
+        await triggerNextStepRecommendation(chatId, threadId, {
+          promptNextSteps: this.promptNextSteps.bind(this),
+        });
       },
       // Admin chat can be configured via environment or config
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId,
@@ -741,6 +744,46 @@ export class PrimaryNode extends EventEmitter {
     // For now, broadcast file path as a message
     // TODO: Implement proper file handling through channels
     await this.messageRouter.sendMessage(chatId, `📎 文件: ${filePath}`, _threadId);
+  }
+
+  /**
+   * Prompt next steps to the user after task completion.
+   * Issue #834: Generates candidates using LLM and displays them via ChatAgent.
+   *
+   * @param chatId - Chat ID to send prompt to
+   * @param assessment - Assessment with candidates
+   * @param threadId - Optional thread ID for reply
+   */
+  async promptNextSteps(
+    chatId: string,
+    assessment: NextStepAssessment,
+    threadId?: string
+  ): Promise<void> {
+    // Build a simple card with the candidates as buttons
+    const card = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '✅ 任务完成' },
+        template: 'blue'
+      },
+      elements: [
+        {
+          tag: 'markdown',
+          content: `接下来您可以：`
+        },
+        {
+          tag: 'action',
+          actions: assessment.candidates.map((candidate) => ({
+            tag: 'button',
+            text: { tag: 'plain_text', content: candidate.title },
+            type: 'default',
+            value: candidate.action
+          }))
+        }
+      ]
+    };
+
+    await this.sendCard(chatId, card, 'Next step recommendations', threadId);
   }
 
   // ============================================================================

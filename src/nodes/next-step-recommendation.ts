@@ -1,16 +1,29 @@
 /**
  * Next Step Recommendation Module for PrimaryNode.
  *
- * Extracted from primary-node.ts (Issue #695) to improve maintainability.
- * Handles post-task completion recommendations using SkillAgent.
+ * Issue #834: Refactored to use simple LLM prompt instead of SkillAgent.
  *
- * Issue #657: 任务完成后推荐下一步
- * Issue #716: SkillAgent 应该在执行后销毁，不要存储
+ * Key Changes:
+ * - Uses NextStepAssessor (simple LLM prompt) instead of SkillAgent
+ * - Generates candidates and sends to ChatAgent for display
+ * - Removed skills/next-step/SKILL.md dependency
+ *
+ * Architecture:
+ * ```
+ * onTaskDone → triggerNextStepRecommendation
+ *                    ↓
+ *           NextStepAssessor (LLM prompt)
+ *                    ↓
+ *              candidates (JSON)
+ *                    ↓
+ *          ChatAgent.promptNextSteps(candidates)
+ *                    ↓
+ *         ChatAgent decides display method (card/text/etc)
+ * ```
  */
 
-import { AgentFactory } from '../agents/index.js';
-import { messageLogger } from '../feishu/message-logger.js';
 import { createLogger } from '../utils/logger.js';
+import { createNextStepAssessor, type NextStepAssessment } from './next-step-assessor.js';
 
 const logger = createLogger('NextStepRecommendation');
 
@@ -20,13 +33,17 @@ const logger = createLogger('NextStepRecommendation');
 export interface NextStepRecommendationDeps {
   /** Get chat history for a chat ID */
   getChatHistory: (chatId: string) => Promise<string | undefined>;
+  /** Prompt next steps via ChatAgent (Issue #834) */
+  promptNextSteps: (chatId: string, candidates: NextStepAssessment, threadId?: string) => Promise<void>;
 }
 
 /**
  * Default dependencies using messageLogger.
+ * Note: promptNextSteps must be provided by the caller (PrimaryNode).
  */
-const defaultDeps: NextStepRecommendationDeps = {
+const defaultDeps: Partial<NextStepRecommendationDeps> = {
   getChatHistory: async (chatId: string) => {
+    const { messageLogger } = await import('../feishu/message-logger.js');
     const history = await messageLogger.getChatHistory(chatId);
     return history && history.trim().length > 0 ? history : undefined;
   },
@@ -34,74 +51,70 @@ const defaultDeps: NextStepRecommendationDeps = {
 
 /**
  * Trigger next-step recommendations after task completion.
- * Uses SkillAgent to analyze chat history and suggest follow-up actions.
  *
- * Issue #716: SkillAgent should be disposed after execution, not stored.
- * Context is limited to recent messages to avoid context overflow.
+ * Issue #834: Uses simple LLM prompt instead of SkillAgent.
+ * Generates candidates and sends to ChatAgent for display decision.
  *
  * @param chatId - Chat ID to get history from
  * @param threadId - Optional thread ID for reply
- * @param deps - Optional dependencies for testing
+ * @param deps - Dependencies for testing
  */
 export async function triggerNextStepRecommendation(
   chatId: string,
   threadId?: string,
-  deps: NextStepRecommendationDeps = defaultDeps
+  deps: Partial<NextStepRecommendationDeps> = defaultDeps
 ): Promise<void> {
-  let nextStepAgent: Awaited<ReturnType<typeof AgentFactory.createSkillAgent>> | undefined;
+  const assessor = createNextStepAssessor();
 
   try {
     logger.info({ chatId }, 'Triggering next-step recommendations');
 
     // Get chat history for context
-    const chatHistory = await deps.getChatHistory(chatId);
+    const chatHistory = await deps.getChatHistory?.(chatId);
 
     if (!chatHistory) {
       logger.debug({ chatId }, 'No chat history available for recommendations');
       return;
     }
 
-    // Create SkillAgent for next-step recommendations using AgentFactory
-    nextStepAgent = await AgentFactory.createSkillAgent('next-step');
-
-    // Limit context to recent messages (Issue #716)
-    // Only use the last 10 messages to avoid context overflow
+    // Limit context to recent messages
     const recentHistory = extractRecentMessages(chatHistory, 10);
 
-    // Build prompt with chat history
-    const prompt = `## Context
+    // Use simple LLM prompt to generate candidates
+    const assessment = await assessor.assess(recentHistory);
 
-**Chat ID for Feishu tools**: \`${chatId}\`
-${threadId ? `**Thread ID**: \`${threadId}\`` : ''}
-
-## Chat History (last 10 messages)
-
-${recentHistory}`;
-
-    // Execute skill and handle responses
-    for await (const message of nextStepAgent.execute(prompt)) {
-      if (message.type === 'tool_use' || message.metadata?.toolName) {
-        logger.debug({ toolName: message.metadata?.toolName }, 'Next-step skill using tool');
-      } else if ((message.type === 'text' || message.messageType === 'text') && message.content) {
-        logger.debug({ contentLength: typeof message.content === 'string' ? message.content.length : 0 }, 'Next-step skill output');
-      }
+    if (!assessment || assessment.candidates.length === 0) {
+      logger.debug({ chatId }, 'No recommendations generated');
+      return;
     }
 
-    logger.info({ chatId }, 'Next-step recommendations completed');
+    logger.info({
+      chatId,
+      taskType: assessment.taskType,
+      candidateCount: assessment.candidates.length
+    }, 'Next-step assessment completed');
+
+    // Send candidates to ChatAgent for display
+    if (deps.promptNextSteps) {
+      await deps.promptNextSteps(chatId, assessment, threadId);
+    } else {
+      // Fallback: log candidates if no promptNextSteps provided
+      logger.warn(
+        { chatId, candidates: assessment.candidates },
+        'No promptNextSteps callback, candidates not displayed'
+      );
+    }
+
   } catch (error) {
     logger.error({ err: error, chatId }, 'Failed to trigger next-step recommendations');
   } finally {
-    // Issue #716: Dispose SkillAgent after execution (do not store)
-    if (nextStepAgent) {
-      nextStepAgent.dispose();
-      logger.debug({ chatId }, 'Next-step SkillAgent disposed');
-    }
+    assessor.dispose();
   }
 }
 
 /**
  * Extract recent messages from chat history.
- * Limits context size for SkillAgent execution.
+ * Limits context size for LLM execution.
  *
  * @param chatHistory - Full chat history
  * @param count - Number of recent messages to extract (lines)
