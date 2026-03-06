@@ -275,9 +275,9 @@ You can read these files using the Read tool with the local paths above.`;
 
 ---
 
-## Next Steps After Task Completion
+## Next Steps After Response
 
-After completing the user's task, proactively suggest 2-3 relevant next steps the user might want to take. Present these suggestions as an **interactive card** with clickable options.
+At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take. Present these suggestions as an **interactive card** with clickable options.
 
 ### Card Template for Next Steps
 
@@ -302,7 +302,7 @@ After completing the user's task, proactively suggest 2-3 relevant next steps th
 - Suggest 2-3 relevant next steps based on the conversation context
 - Make suggestions specific and actionable
 - Use primary button style for the most recommended option
-- If no clear next steps exist, skip this section`;
+- Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
     }
 
     // Fallback for channels without card support
@@ -310,15 +310,15 @@ After completing the user's task, proactively suggest 2-3 relevant next steps th
 
 ---
 
-## Next Steps After Task Completion
+## Next Steps After Response
 
-After completing the user's task, proactively suggest 2-3 relevant next steps the user might want to take.
+At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take.
 
 ### Guidelines
 
 - Suggest 2-3 relevant next steps based on the conversation context
 - Make suggestions specific and actionable
 - Format as a simple list
-- If no clear next steps exist, skip this section`;
+- Always include suggestions, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
   }
 }
