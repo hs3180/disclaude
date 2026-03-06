@@ -53,6 +53,24 @@ export interface MessageCallbacks {
     data: { args: string[]; rawText: string; senderOpenId?: string };
   }) => Promise<{ success: boolean; message?: string }>;
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
+  /**
+   * Route card action to Worker Node if applicable.
+   * Issue #935: Returns true if the action was routed to a Worker Node.
+   */
+  routeCardAction?: (message: {
+    chatId: string;
+    cardMessageId: string;
+    actionType: string;
+    actionValue: string;
+    actionText?: string;
+    userId?: string;
+    action?: {
+      type: string;
+      value: string;
+      text?: string;
+      trigger?: string;
+    };
+  }) => Promise<boolean>;
 }
 
 /**
@@ -553,6 +571,31 @@ export class MessageHandler {
       },
       'Card action received'
     );
+
+    // Issue #935: Try to route card action to Worker Node first
+    // If the card was sent by a Worker Node, forward the action to that node
+    if (this.callbacks.routeCardAction) {
+      const routed = await this.callbacks.routeCardAction({
+        chatId: chat_id,
+        cardMessageId: message_id,
+        actionType: action.type,
+        actionValue: action.value,
+        actionText: action.text,
+        userId: user?.sender_id?.open_id,
+        action: {
+          type: action.type,
+          value: action.value,
+          text: action.text,
+          trigger: action.trigger,
+        },
+      });
+
+      if (routed) {
+        logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action routed to Worker Node');
+        // The Worker Node will handle the action, we're done here
+        return;
+      }
+    }
 
     // First, try to resolve any pending wait_for_interaction calls
     const resolved = resolvePendingInteraction(

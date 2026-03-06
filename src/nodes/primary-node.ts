@@ -32,13 +32,14 @@
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
+import WebSocket from 'ws';
 import { Config } from '../config/index.js';
 import { AgentFactory, AgentPool } from '../agents/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, CardActionMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
@@ -71,6 +72,8 @@ import { getTaskStateManager } from '../utils/task-state-manager.js';
 import { ScheduleManagement } from './schedule-management.js';
 // Issue #893: Removed triggerNextStepRecommendation - now using in-prompt guidance
 import { buildCommandServices } from './command-services.js';
+// Issue #935: Card action routing to Worker Nodes
+import { CardActionRouter } from './card-action-router.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -114,6 +117,8 @@ export class PrimaryNode extends EventEmitter {
   private messageRouter: UnifiedMessageRouter;
   private wsServerService?: WebSocketServerService;
   private schedulerService?: SchedulerService;
+  // Issue #935: Card action routing to Worker Nodes
+  private cardActionRouter: CardActionRouter;
   // Schedule management (Issue #469, #695)
   private scheduleManager?: ScheduleManager;
   private scheduleFileScanner?: ScheduleFileScanner;
@@ -163,6 +168,16 @@ export class PrimaryNode extends EventEmitter {
       adminChatId: process.env.ADMIN_CHAT_ID || config.adminChatId
     });
 
+    // Issue #935: Initialize CardActionRouter for Worker Node card routing
+    this.cardActionRouter = new CardActionRouter({
+      sendToRemoteNode: async (nodeId: string, message: CardActionMessage) => {
+        return this.sendCardActionToRemoteNode(nodeId, message);
+      },
+      isNodeConnected: (nodeId: string) => {
+        return this.execNodeRegistry.isNodeConnected(nodeId);
+      },
+    });
+
     // Issue #463: Initialize CommandRegistry with default commands
     const commandRegistry = getCommandRegistry();
     registerDefaultCommands(commandRegistry, () => commandRegistry.generateHelpText());
@@ -182,6 +197,19 @@ export class PrimaryNode extends EventEmitter {
         id: 'feishu',
         appId,
         appSecret,
+        // Issue #935: Route card actions to Worker Nodes
+        routeCardAction: async (message) => {
+          return this.routeCardAction({
+            type: 'card_action',
+            chatId: message.chatId,
+            cardMessageId: message.cardMessageId,
+            actionType: message.actionType,
+            actionValue: message.actionValue,
+            actionText: message.actionText,
+            userId: message.userId,
+            action: message.action,
+          });
+        },
       });
 
       // Initialize TaskFlowOrchestrator for Feishu channel
@@ -710,6 +738,51 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
+  // Card Action Routing (Issue #935)
+  // ============================================================================
+
+  /**
+   * Route a card action to the appropriate handler.
+   * If the card was sent by a Worker Node, forward the action to that node.
+   *
+   * @param message - Card action message to route
+   * @returns True if the action was routed to a Worker Node, false otherwise
+   */
+  async routeCardAction(message: CardActionMessage): Promise<boolean> {
+    return this.cardActionRouter.routeCardAction(message);
+  }
+
+  /**
+   * Send a card action message to a remote Worker Node.
+   * Used by CardActionRouter to forward card actions.
+   *
+   * @param nodeId - Target Worker Node ID
+   * @param message - Card action message to send
+   * @returns True if the message was sent successfully
+   */
+  private async sendCardActionToRemoteNode(nodeId: string, message: CardActionMessage): Promise<boolean> {
+    const node = this.execNodeRegistry.getNode(nodeId);
+    if (!node || node.isLocal || !node.ws) {
+      logger.warn({ nodeId }, 'Remote node not found or not connected');
+      return false;
+    }
+
+    if (node.ws.readyState !== WebSocket.OPEN) {
+      logger.warn({ nodeId }, 'Remote node WebSocket not open');
+      return false;
+    }
+
+    try {
+      node.ws.send(JSON.stringify(message));
+      logger.debug({ nodeId, chatId: message.chatId }, 'Card action sent to remote Worker Node');
+      return true;
+    } catch (error) {
+      logger.error({ err: error, nodeId }, 'Failed to send card action to remote Worker Node');
+      return false;
+    }
+  }
+
+  // ============================================================================
   // Public Message API
   // ============================================================================
 
@@ -771,6 +844,10 @@ export class PrimaryNode extends EventEmitter {
       },
       getCapabilities: () => this.getCapabilities(),
       getChannelIds: () => this.messageRouter.getChannels().map(c => c.id),
+      // Issue #935: Register card context for Worker Node routing
+      registerCardContext: (chatId: string, nodeId: string, isRemote: boolean) => {
+        this.cardActionRouter.registerChatContext(chatId, nodeId, isRemote);
+      },
     });
 
     // Start WebSocket server

@@ -33,7 +33,7 @@ import {
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../file-transfer/node-transfer/file-client.js';
 import type { WorkerNodeConfig, NodeCapabilities } from './types.js';
 
@@ -363,7 +363,7 @@ export class WorkerNode {
 
     this.ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage;
+        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage;
 
         // Handle command messages
         if (message.type === 'command') {
@@ -421,6 +421,67 @@ export class WorkerNode {
             logger.error({ err, chatId }, 'Execution failed');
             sendFeedback({ type: 'error', chatId, error: err.message, threadId });
             sendFeedback({ type: 'done', chatId, threadId });
+          }
+          return;
+        }
+
+        // Issue #935: Handle card action messages from Primary Node
+        if (message.type === 'card_action') {
+          const cardActionMsg = message as CardActionMessage;
+          const { chatId, cardMessageId, actionType, actionValue, actionText, userId } = cardActionMsg;
+          logger.info(
+            { chatId, cardMessageId, actionType, actionValue, userId },
+            'Received card action from Primary Node'
+          );
+
+          // Import the necessary functions to handle card actions
+          const { resolvePendingInteraction } = await import('../mcp/feishu-context-mcp.js');
+          const { generateInteractionPrompt } = await import('../mcp/tools/interactive-message.js');
+
+          // Try to resolve any pending wait_for_interaction calls
+          const resolved = resolvePendingInteraction(
+            cardMessageId,
+            actionValue,
+            actionType,
+            userId || 'unknown'
+          );
+
+          if (resolved) {
+            logger.debug({ cardMessageId }, 'Card action resolved pending interaction');
+          }
+
+          // Get the agent for this chatId and process the card action
+          const ctx = this.activeFeedbackChannels.get(chatId);
+          if (ctx) {
+            // Generate prompt from template if available
+            const promptFromTemplate = generateInteractionPrompt(
+              cardMessageId,
+              actionValue,
+              actionText,
+              actionType
+            );
+
+            // Use the template prompt if available, otherwise use default message
+            const messageContent = promptFromTemplate || (() => {
+              const buttonText = actionText || actionValue;
+              return `User clicked '${buttonText}' button`;
+            })();
+
+            // Get the agent and process the card action as a message
+            const agent = this.agentPool?.getOrCreateChatAgent(chatId);
+            if (agent) {
+              agent.processMessage(
+                chatId,
+                messageContent,
+                `${cardMessageId}-${actionValue}`,
+                userId,
+                undefined, // no attachments
+                undefined  // no chat history context
+              );
+              logger.debug({ chatId, cardMessageId }, 'Card action processed by agent');
+            }
+          } else {
+            logger.warn({ chatId }, 'No active feedback channel for card action');
           }
           return;
         }

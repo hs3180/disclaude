@@ -48,6 +48,24 @@ export interface FeishuChannelConfig extends ChannelConfig {
   appId?: string;
   /** Feishu App Secret */
   appSecret?: string;
+  /**
+   * Route card action to Worker Node if applicable.
+   * Issue #935: Returns true if the action was routed to a Worker Node.
+   */
+  routeCardAction?: (message: {
+    chatId: string;
+    cardMessageId: string;
+    actionType: string;
+    actionValue: string;
+    actionText?: string;
+    userId?: string;
+    action?: {
+      type: string;
+      value: string;
+      text?: string;
+      trigger?: string;
+    };
+  }) => Promise<boolean>;
 }
 
 /**
@@ -100,6 +118,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       sendMessage: async (message) => {
         await this.sendMessage(message as OutgoingMessage);
       },
+      // Issue #935: Route card action to Worker Node if applicable
+      routeCardAction: config.routeCardAction,
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({
