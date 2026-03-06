@@ -34,7 +34,9 @@
 
 import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
+import { SESSION_RESTORE } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
+import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
 import type { ChatAgent, UserInput } from '../types.js';
 import type { AgentMessage } from '../../types/agent.js';
@@ -77,6 +79,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Session restoration (Issue #955)
+  private persistedHistoryContext?: string;
+  private historyLoaded = false;
+  private historyLoadPromise?: Promise<void>;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -108,6 +115,78 @@ export class Pilot extends BaseAgent implements ChatAgent {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Load persisted chat history from MessageLogger (Issue #955).
+   *
+   * This method loads recent chat history from the file-based message logs
+   * to restore context after service restart. The history is loaded once
+   * and cached for the lifetime of this Pilot instance.
+   *
+   * @returns Promise that resolves when history is loaded
+   */
+  private async loadPersistedHistory(): Promise<void> {
+    // If already loading, wait for the existing promise
+    if (this.historyLoadPromise) {
+      return this.historyLoadPromise;
+    }
+
+    // If already loaded, return immediately
+    if (this.historyLoaded) {
+      return;
+    }
+
+    // Start loading history
+    this.historyLoadPromise = this.doLoadPersistedHistory();
+    try {
+      await this.historyLoadPromise;
+    } finally {
+      this.historyLoadPromise = undefined;
+    }
+  }
+
+  /**
+   * Internal method to perform the actual history loading.
+   */
+  private async doLoadPersistedHistory(): Promise<void> {
+    try {
+      this.logger.info(
+        { chatId: this.boundChatId, days: SESSION_RESTORE.HISTORY_DAYS },
+        'Loading persisted chat history for session restoration'
+      );
+
+      const history = await messageLogger.getChatHistory(
+        this.boundChatId,
+        SESSION_RESTORE.HISTORY_DAYS
+      );
+
+      if (history && history.trim()) {
+        // Truncate if too long
+        this.persistedHistoryContext = history.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
+          ? history.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
+          : history;
+
+        this.logger.info(
+          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
+          'Persisted chat history loaded successfully'
+        );
+      } else {
+        this.logger.debug(
+          { chatId: this.boundChatId },
+          'No persisted chat history found'
+        );
+      }
+
+      this.historyLoaded = true;
+    } catch (error) {
+      this.logger.error(
+        { err: error, chatId: this.boundChatId },
+        'Failed to load persisted chat history'
+      );
+      // Mark as loaded even on error to prevent retry loops
+      this.historyLoaded = true;
+    }
   }
 
   /**
@@ -317,7 +396,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext },
       'processMessage called'
     );
 
@@ -334,8 +413,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
     // Build the user message using MessageBuilder (Issue #697)
+    // Issue #955: Include persisted history context for session restoration
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text, messageId, senderOpenId, attachments, chatHistoryContext
+      text, messageId, senderOpenId, attachments, chatHistoryContext,
+      persistedHistoryContext: this.persistedHistoryContext,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {
@@ -361,9 +442,17 @@ export class Pilot extends BaseAgent implements ChatAgent {
    *
    * Creates a MessageChannel and Query, using the channel's generator for streaming input.
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
+   * Issue #955: Triggers background loading of persisted chat history.
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
+
+    // Issue #955: Trigger background loading of persisted history
+    if (!this.historyLoaded) {
+      this.loadPersistedHistory().catch((err) => {
+        this.logger.error({ err, chatId }, 'Failed to load persisted history in background');
+      });
+    }
 
     // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
     const capabilities = this.callbacks.getCapabilities?.(chatId);
@@ -586,6 +675,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Reset restart state
     this.restartManager.reset(this.boundChatId);
+
+    // Clear persisted history context (Issue #955)
+    this.persistedHistoryContext = undefined;
+    this.historyLoaded = false;
   }
 
   /**

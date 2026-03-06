@@ -2,6 +2,7 @@
  * Tests for MessageBuilder class.
  *
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
+ * Issue #955: Tests for persisted history context in session restoration.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -23,6 +24,54 @@ describe('MessageBuilder', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('buildEnhancedContent with persistedHistoryContext (Issue #955)', () => {
+    it('should include persisted history section when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        persistedHistoryContext: 'Previous conversation content here...',
+      }, 'chat-123');
+
+      expect(result).toContain('Previous Session Context');
+      expect(result).toContain('service was recently restarted');
+      expect(result).toContain('Previous conversation content here...');
+    });
+
+    it('should not include persisted history section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Previous Session Context');
+    });
+
+    it('should include both persisted history and chat history when both are provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        persistedHistoryContext: 'Persisted history...',
+        chatHistoryContext: 'Chat history from passive mode...',
+      }, 'chat-123');
+
+      expect(result).toContain('Previous Session Context');
+      expect(result).toContain('Persisted history...');
+      expect(result).toContain('Recent Chat History');
+      expect(result).toContain('Chat history from passive mode...');
+    });
+
+    it('should not include persisted history for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        persistedHistoryContext: 'Previous conversation...',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Previous Session Context');
+      expect(result).toContain('/reset');
+    });
   });
 
   describe('buildAttachmentsInfo (Issue #809)', () => {
