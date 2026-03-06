@@ -3,6 +3,7 @@
  *
  * Handles incoming message events and card actions for Feishu channel.
  * Issue #694: Extracted from feishu-channel.ts
+ * Issue #846: Added support for quoted/reply messages and merged forward messages
  */
 
 import type * as lark from '@larksuiteoapi/node-sdk';
@@ -19,6 +20,7 @@ import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
+import { createMessageQuoteResolver } from '../../feishu/message-quote-resolver.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
 import type {
@@ -292,7 +294,9 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    // Issue #846: parent_id is used for quote reply support
+    // root_id is available for topic messages but not currently used
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -531,16 +535,55 @@ export class MessageHandler {
       );
     }
 
+    // Issue #846: Resolve quoted/referenced message content
+    // Key improvement: Append quote context directly to user's prompt (not just in metadata)
+    let finalContent = text;
+    if (parent_id && this.client) {
+      try {
+        const quoteResolver = createMessageQuoteResolver(this.client);
+        const quoteResult = await quoteResolver.resolveMessageQuote(
+          message_type,
+          parent_id,
+          message_id
+        );
+
+        if (quoteResult?.contextString) {
+          // CRITICAL: Append quote context to the prompt so Agent can see it
+          finalContent = text + quoteResult.contextString;
+          logger.info(
+            {
+              messageId: message_id,
+              hasParentId: !!parent_id,
+              originalLength: text.length,
+              finalLength: finalContent.length,
+            },
+            'Resolved and appended quoted message context to prompt'
+          );
+        }
+      } catch (error) {
+        logger.error(
+          { err: error, messageId: message_id, parentId: parent_id },
+          'Failed to resolve quote context'
+        );
+      }
+    }
+
+    // Build metadata with chat history (quote context is now in the prompt, not in metadata)
+    const metadata: Record<string, unknown> = {};
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+
     // Emit as incoming message
     await this.callbacks.emitMessage({
       messageId: message_id,
       chatId: chat_id,
       userId: this.extractOpenId(sender),
-      content: text,
+      content: finalContent,
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 
