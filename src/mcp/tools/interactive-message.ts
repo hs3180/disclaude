@@ -25,8 +25,35 @@ const logger = createLogger('InteractiveMessage');
 const interactiveContexts = new Map<string, InteractiveMessageContext>();
 
 /**
+ * Callback type for sending card context to Primary Node (Issue #935).
+ */
+export type CardContextSender = (messageId: string, chatId: string, actionPrompts: ActionPromptMap) => void;
+
+/**
+ * Global callback for sending card context to Primary Node.
+ * Used by Worker Nodes to register action prompts with the Primary Node.
+ */
+let cardContextSender: CardContextSender | undefined;
+
+/**
+ * Set the card context sender callback.
+ * Issue #935: Allows Worker Node to send card context to Primary Node.
+ */
+export function setCardContextSender(sender: CardContextSender | undefined): void {
+  cardContextSender = sender;
+}
+
+/**
+ * Get the card context sender callback.
+ */
+export function getCardContextSender(): CardContextSender | undefined {
+  return cardContextSender;
+}
+
+/**
  * Register action prompts for a message.
  * Called after successfully sending an interactive message.
+ * Issue #935: Also sends card context to Primary Node if callback is set.
  */
 export function registerActionPrompts(
   messageId: string,
@@ -40,6 +67,12 @@ export function registerActionPrompts(
     createdAt: Date.now(),
   });
   logger.debug({ messageId, chatId, actions: Object.keys(actionPrompts) }, 'Action prompts registered');
+
+  // Issue #935: Send card context to Primary Node if callback is set (Worker Node mode)
+  if (cardContextSender) {
+    cardContextSender(messageId, chatId, actionPrompts);
+    logger.debug({ messageId, chatId }, 'Card context sent to Primary Node');
+  }
 }
 
 /**

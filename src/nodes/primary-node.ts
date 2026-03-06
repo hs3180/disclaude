@@ -31,6 +31,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import { WebSocket } from 'ws';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Config } from '../config/index.js';
 import { AgentFactory, AgentPool } from '../agents/index.js';
@@ -38,7 +39,7 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, CardActionMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
@@ -47,6 +48,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { UnifiedMessageRouter } from './unified-message-router.js';
 import { WebSocketServerService } from './websocket-server-service.js';
+import { CardContextRegistry } from './card-context-registry.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 // Group management (Issue #486)
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
@@ -118,6 +120,8 @@ export class PrimaryNode extends EventEmitter {
   private scheduleManager?: ScheduleManager;
   private scheduleFileScanner?: ScheduleFileScanner;
   private scheduleManagement?: ScheduleManagement;
+  // Issue #935: Card context registry for Worker Node card routing
+  private cardContextRegistry!: CardContextRegistry;
 
   // Local execution
   private agentPool?: AgentPool;
@@ -561,6 +565,37 @@ export class PrimaryNode extends EventEmitter {
       'Processing channel message'
     );
 
+    // Issue #935: Check if this is a card action that should be forwarded to Worker Node
+    if (message.messageType === 'card' && message.metadata?.cardMessageId) {
+      const cardMessageId = message.metadata.cardMessageId as string;
+      const cardAction = message.metadata.cardAction as { value: string; text?: string; type?: string } | undefined;
+
+      if (cardMessageId && cardAction) {
+        // Check if this card was registered by a Worker Node
+        if (this.cardContextRegistry.has(cardMessageId)) {
+          // Forward to Worker Node
+          const cardActionMsg: CardActionMessage = {
+            type: 'card_action',
+            messageId: cardMessageId,
+            chatId: message.chatId,
+            actionValue: cardAction.value,
+            actionText: cardAction.text,
+            actionType: cardAction.type,
+            userId: message.userId,
+          };
+
+          const forwarded = this.forwardCardActionToWorker(cardActionMsg);
+          if (forwarded) {
+            logger.info(
+              { chatId: message.chatId, cardMessageId, actionValue: cardAction.value },
+              'Card action forwarded to Worker Node'
+            );
+            return; // Don't process locally
+          }
+        }
+      }
+    }
+
     // Process attachments if present
     let attachments: FileRef[] | undefined;
     const fileStorageService = this.wsServerService?.getFileStorageService();
@@ -766,6 +801,7 @@ export class PrimaryNode extends EventEmitter {
       localNodeId: this.localNodeId,
       fileStorageConfig: this.fileStorageConfig,
       execNodeRegistry: this.execNodeRegistry,
+      cardContextRegistry: this.cardContextRegistry,
       handleFeedback: (feedback) => {
         void this.handleFeedback(feedback);
       },
@@ -773,8 +809,8 @@ export class PrimaryNode extends EventEmitter {
       getChannelIds: () => this.messageRouter.getChannels().map(c => c.id),
     });
 
-    // Start WebSocket server
-    await this.wsServerService.start();
+    // Start CardContextRegistry for Worker Node card routing (Issue #935)
+    this.cardContextRegistry.start();
 
     // Initialize local execution capability
     await this.initLocalExecution();
@@ -808,6 +844,49 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Forward a card action to the appropriate Worker Node.
+   * Issue #935: Routes card action callbacks from Primary Node to Worker Node.
+   *
+   * @param message - Card action message to forward
+   * @returns true if the action was forwarded, false if no Worker Node found
+   */
+  forwardCardActionToWorker(message: CardActionMessage): boolean {
+    const context = this.cardContextRegistry.get(message.messageId);
+    if (!context) {
+      logger.debug(
+        { messageId: message.messageId },
+        'No card context found, card action not forwarded'
+      );
+      return false;
+    }
+
+    const node = this.execNodeRegistry.getNode(context.nodeId);
+    if (!node || node.isLocal) {
+      logger.debug(
+        { messageId: message.messageId, nodeId: context.nodeId },
+        'Worker Node not found or is local, card action not forwarded'
+      );
+      return false;
+    }
+
+    if (!node.ws || node.ws.readyState !== WebSocket.OPEN) {
+      logger.warn(
+        { messageId: message.messageId, nodeId: context.nodeId },
+        'Worker Node WebSocket not connected'
+      );
+      return false;
+    }
+
+    // Forward the card action to Worker Node
+    node.ws.send(JSON.stringify(message));
+    logger.info(
+      { messageId: message.messageId, chatId: message.chatId, nodeId: context.nodeId },
+      'Card action forwarded to Worker Node'
+    );
+    return true;
+  }
+
+  /**
    * Stop the Primary Node.
    */
   async stop(): Promise<void> {
@@ -818,6 +897,9 @@ export class PrimaryNode extends EventEmitter {
     // Stop scheduler service
     this.schedulerService?.stop();
     await this.taskFlowOrchestrator?.stop();
+
+    // Issue #935: Stop CardContextRegistry
+    this.cardContextRegistry.stop();
 
     // Stop WebSocket server
     await this.wsServerService?.stop();

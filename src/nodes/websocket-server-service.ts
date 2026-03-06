@@ -21,8 +21,9 @@ import { createLogger } from '../utils/logger.js';
 import type { FileStorageService, FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { createFileTransferAPIHandler } from '../file-transfer/node-transfer/file-api.js';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
-import type { FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
+import type { FeedbackMessage, RegisterMessage, CardContextMessage } from '../types/websocket-messages.js';
 import type { NodeCapabilities } from './types.js';
+import type { CardContextRegistry } from './card-context-registry.js';
 
 const logger = createLogger('WebSocketServerService');
 
@@ -40,6 +41,8 @@ export interface WebSocketServerServiceConfig {
   fileStorageConfig?: FileStorageConfig;
   /** Exec node registry */
   execNodeRegistry: ExecNodeRegistry;
+  /** Card context registry for Worker Node card routing (Issue #935) */
+  cardContextRegistry: CardContextRegistry;
   /** Feedback handler */
   handleFeedback: (feedback: FeedbackMessage) => void;
   /** Get capabilities callback */
@@ -61,6 +64,7 @@ export class WebSocketServerService extends EventEmitter {
   private readonly host: string;
   private readonly localNodeId: string;
   private readonly execNodeRegistry: ExecNodeRegistry;
+  private readonly cardContextRegistry: CardContextRegistry;
   private readonly handleFeedback: (feedback: FeedbackMessage) => void;
   private readonly getCapabilities: () => NodeCapabilities;
   private readonly getChannelIds: () => string[];
@@ -78,6 +82,7 @@ export class WebSocketServerService extends EventEmitter {
     this.localNodeId = config.localNodeId;
     this.fileStorageConfig = config.fileStorageConfig;
     this.execNodeRegistry = config.execNodeRegistry;
+    this.cardContextRegistry = config.cardContextRegistry;
     this.handleFeedback = config.handleFeedback;
     this.getCapabilities = config.getCapabilities;
     this.getChannelIds = config.getChannelIds;
@@ -169,6 +174,24 @@ export class WebSocketServerService extends EventEmitter {
         if (message.type === 'register') {
           const regMsg = message as RegisterMessage;
           currentNodeId = this.execNodeRegistry.registerNode(ws, regMsg, clientIp);
+          return;
+        }
+
+        // Handle card context message (Issue #935)
+        if (message.type === 'card_context') {
+          const ctxMsg = message as CardContextMessage;
+          if (currentNodeId) {
+            this.cardContextRegistry.register(
+              ctxMsg.messageId,
+              ctxMsg.chatId,
+              currentNodeId,
+              ctxMsg.actionPrompts
+            );
+            logger.debug(
+              { messageId: ctxMsg.messageId, chatId: ctxMsg.chatId, nodeId: currentNodeId },
+              'Card context registered from Worker Node'
+            );
+          }
           return;
         }
 

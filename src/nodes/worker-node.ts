@@ -33,7 +33,7 @@ import {
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../file-transfer/node-transfer/file-client.js';
 import type { WorkerNodeConfig, NodeCapabilities } from './types.js';
 
@@ -363,7 +363,7 @@ export class WorkerNode {
 
     this.ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage;
+        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage;
 
         // Handle command messages
         if (message.type === 'command') {
@@ -422,6 +422,17 @@ export class WorkerNode {
             sendFeedback({ type: 'error', chatId, error: err.message, threadId });
             sendFeedback({ type: 'done', chatId, threadId });
           }
+          return;
+        }
+
+        // Issue #935: Handle card_action messages from Primary Node
+        if (message.type === 'card_action') {
+          const cardActionMsg = message as CardActionMessage;
+          logger.info(
+            { chatId: cardActionMsg.chatId, messageId: cardActionMsg.messageId, actionValue: cardActionMsg.actionValue },
+            'Received card_action from Primary Node'
+          );
+          await this.handleCardAction(cardActionMsg);
           return;
         }
 
@@ -486,10 +497,89 @@ export class WorkerNode {
     // Initialize Pilot
     await this.initPilot();
 
+    // Issue #935: Set card context sender for Worker Node mode
+    // This allows the interactive message tool to send card context to Primary Node
+    const { setCardContextSender } = await import('../mcp/tools/interactive-message.js');
+    setCardContextSender((messageId: string, chatId: string, actionPrompts) => {
+      this.sendCardContext(messageId, chatId, actionPrompts);
+    });
+
     // Connect to Primary Node
     this.connectToPrimaryNode();
 
     logger.info('WorkerNode started');
+  }
+
+  /**
+   * Handle card action from Primary Node.
+   * Issue #935: Process card action callbacks routed from Primary Node.
+   */
+  private async handleCardAction(message: CardActionMessage): Promise<void> {
+    const { chatId, messageId, actionValue, actionText, actionType, userId } = message;
+
+    logger.info(
+      { chatId, messageId, actionValue, actionType },
+      'Processing card action'
+    );
+
+    // Get the feedback channel for this chat
+    const ctx = this.activeFeedbackChannels.get(chatId);
+    if (!ctx) {
+      logger.warn({ chatId, messageId }, 'No active feedback channel for card action');
+      return;
+    }
+
+    // Create a prompt from the card action
+    const buttonText = actionText || actionValue;
+    const prompt = `[User Action] User clicked '${buttonText}' button (action: ${actionValue}, type: ${actionType || 'button'})`;
+
+    try {
+      // Issue #644: Get ChatAgent for this chatId from AgentPool
+      const agent = this.agentPool?.getOrCreateChatAgent(chatId);
+      if (agent) {
+        // Process the card action as a user message
+        agent.processMessage(chatId, prompt, `${messageId}-${actionValue}`, userId, undefined, undefined);
+        logger.info({ chatId, actionValue }, 'Card action sent to agent');
+      } else {
+        logger.warn({ chatId }, 'No agent available to process card action');
+      }
+    } catch (error) {
+      const err = error as Error;
+      logger.error({ err, chatId, actionValue }, 'Failed to process card action');
+      ctx.sendFeedback({
+        type: 'error',
+        chatId,
+        error: `Failed to process card action: ${err.message}`,
+        threadId: ctx.threadId,
+      });
+    }
+  }
+
+  /**
+   * Send card context to Primary Node.
+   * Issue #935: Register action prompts with Primary Node for card routing.
+   */
+  private sendCardContext(
+    messageId: string,
+    chatId: string,
+    actionPrompts: { [actionValue: string]: string }
+  ): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      const message = {
+        type: 'card_context',
+        messageId,
+        chatId,
+        actionPrompts,
+        nodeId: this.nodeId,
+      };
+      this.ws.send(JSON.stringify(message));
+      logger.debug(
+        { messageId, chatId, nodeId: this.nodeId, actionCount: Object.keys(actionPrompts).length },
+        'Card context sent to Primary Node'
+      );
+    } else {
+      logger.warn({ messageId, chatId }, 'Cannot send card context: WebSocket not connected');
+    }
   }
 
   /**

@@ -89,3 +89,58 @@ export interface FeedbackMessage {
   /** MIME type */
   mimeType?: string;
 }
+
+/**
+ * Action prompt map for interactive cards.
+ * Maps action values to prompt templates.
+ */
+export interface ActionPromptMap {
+  [actionValue: string]: string;
+}
+
+/**
+ * Message sent from Execution Node to Communication Node to register card context.
+ * Issue #935: Enables Worker Node to receive card action callbacks through Primary Node.
+ */
+export interface CardContextMessage {
+  type: 'card_context';
+  /** The card message ID (assigned by Feishu) */
+  messageId: string;
+  chatId: string;
+  /** Map of action values to prompt templates */
+  actionPrompts: ActionPromptMap;
+  /** Worker Node ID that sent this context */
+  nodeId: string;
+}
+
+/**
+ * Message sent from Communication Node to Execution Node when a card action is triggered.
+ * Issue #935: Routes card action callbacks from Primary Node to Worker Node.
+ */
+export interface CardActionMessage {
+  type: 'card_action';
+  /** The card message ID */
+  messageId: string;
+  chatId: string;
+  /** Action value from the button/menu */
+  actionValue: string;
+  /** Display text of the action */
+  actionText?: string;
+  /** Action type (button, select_static, etc.) */
+  actionType?: string;
+  /** User who triggered the action */
+  userId?: string;
+  /** Form data if the action includes form inputs */
+  formData?: Record<string, unknown>;
+}
+
+/**
+ * Union type for all WebSocket message types.
+ */
+export type WebSocketMessage =
+  | PromptMessage
+  | CommandMessage
+  | RegisterMessage
+  | FeedbackMessage
+  | CardContextMessage
+  | CardActionMessage;
