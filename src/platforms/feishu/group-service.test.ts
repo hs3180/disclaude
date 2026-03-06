@@ -438,4 +438,160 @@ describe('GroupService', () => {
       expect(topicGroups.map(g => g.chatId).sort()).toEqual(['oc_topic1', 'oc_topic2']);
     });
   });
+
+  // Issue #873: Batch topic group operations
+  describe('markMultipleAsTopicGroups', () => {
+    it('should mark multiple groups as topic groups', () => {
+      // Register 3 groups
+      ['oc_batch1', 'oc_batch2', 'oc_batch3'].forEach(chatId => {
+        service.registerGroup({
+          chatId,
+          name: `Batch Test ${chatId}`,
+          createdAt: Date.now(),
+          initialMembers: [],
+        });
+      });
+
+      const result = service.markMultipleAsTopicGroups(['oc_batch1', 'oc_batch2', 'oc_batch3'], true);
+
+      expect(result.successCount).toBe(3);
+      expect(result.failedChatIds).toEqual([]);
+      expect(service.isTopicGroup('oc_batch1')).toBe(true);
+      expect(service.isTopicGroup('oc_batch2')).toBe(true);
+      expect(service.isTopicGroup('oc_batch3')).toBe(true);
+    });
+
+    it('should unmark multiple topic groups', () => {
+      // Register and mark 3 groups as topic groups
+      ['oc_unbatch1', 'oc_unbatch2', 'oc_unbatch3'].forEach(chatId => {
+        service.registerGroup({
+          chatId,
+          name: `Unbatch Test ${chatId}`,
+          createdAt: Date.now(),
+          initialMembers: [],
+          isTopicGroup: true,
+        });
+      });
+
+      const result = service.markMultipleAsTopicGroups(['oc_unbatch1', 'oc_unbatch2', 'oc_unbatch3'], false);
+
+      expect(result.successCount).toBe(3);
+      expect(result.failedChatIds).toEqual([]);
+      expect(service.isTopicGroup('oc_unbatch1')).toBe(false);
+      expect(service.isTopicGroup('oc_unbatch2')).toBe(false);
+      expect(service.isTopicGroup('oc_unbatch3')).toBe(false);
+    });
+
+    it('should report failed chat IDs for non-existent groups', () => {
+      service.registerGroup({
+        chatId: 'oc_exists',
+        name: 'Existing Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = service.markMultipleAsTopicGroups(['oc_exists', 'oc_nonexistent1', 'oc_nonexistent2'], true);
+
+      expect(result.successCount).toBe(1);
+      expect(result.failedChatIds).toEqual(['oc_nonexistent1', 'oc_nonexistent2']);
+      expect(service.isTopicGroup('oc_exists')).toBe(true);
+    });
+
+    it('should handle empty array', () => {
+      const result = service.markMultipleAsTopicGroups([], true);
+
+      expect(result.successCount).toBe(0);
+      expect(result.failedChatIds).toEqual([]);
+    });
+
+    it('should default to marking as topic group', () => {
+      service.registerGroup({
+        chatId: 'oc_default_batch',
+        name: 'Default Batch Test',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = service.markMultipleAsTopicGroups(['oc_default_batch']);
+
+      expect(result.successCount).toBe(1);
+      expect(service.isTopicGroup('oc_default_batch')).toBe(true);
+    });
+
+    it('should persist batch operations', () => {
+      service.registerGroup({
+        chatId: 'oc_persist_batch',
+        name: 'Persist Batch Test',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.markMultipleAsTopicGroups(['oc_persist_batch'], true);
+
+      // Create a new service instance to verify persistence
+      const newService = new GroupService({ filePath: testFilePath });
+      expect(newService.isTopicGroup('oc_persist_batch')).toBe(true);
+    });
+  });
+
+  describe('listNonTopicGroups', () => {
+    it('should return empty array when all groups are topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_all_topic',
+        name: 'All Topic',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      expect(service.listNonTopicGroups()).toEqual([]);
+    });
+
+    it('should return only non-topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_topic_group',
+        name: 'Topic Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        isTopicGroup: true,
+      });
+
+      service.registerGroup({
+        chatId: 'oc_regular1',
+        name: 'Regular Group 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.registerGroup({
+        chatId: 'oc_regular2',
+        name: 'Regular Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const nonTopicGroups = service.listNonTopicGroups();
+      expect(nonTopicGroups.length).toBe(2);
+      expect(nonTopicGroups.map(g => g.chatId).sort()).toEqual(['oc_regular1', 'oc_regular2']);
+    });
+
+    it('should return all groups when none are topic groups', () => {
+      service.registerGroup({
+        chatId: 'oc_nontopic1',
+        name: 'Non Topic 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.registerGroup({
+        chatId: 'oc_nontopic2',
+        name: 'Non Topic 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const nonTopicGroups = service.listNonTopicGroups();
+      expect(nonTopicGroups.length).toBe(2);
+    });
+  });
 });
