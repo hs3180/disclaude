@@ -298,13 +298,14 @@ interface PRScannerHistory {
 ### Ready to Implement (Phase 1)
 - [x] Scheduler infrastructure exists
 - [x] `send_user_feedback` available
-- [ ] Create schedule file `pr-scanner.md`
-- [ ] Create history file schema
-- [ ] Test with notification-only mode
+- [x] Create schedule file `pr-scanner.md`
+- [x] Create history file schema
+- [x] Test with notification-only mode
 
-### Blocked (Phase 2)
-- [ ] Wait for PR #423 (ChatOps) to merge
-- [ ] Add group chat creation
+### Phase 2 (ChatOps Available)
+- [x] PR #423 (ChatOps) merged
+- [ ] Add MCP tool for `createDiscussionChat`
+- [ ] Add group chat creation to schedule
 - [ ] Test group chat flow
 
 ### Blocked (Phase 3)
@@ -334,7 +335,7 @@ interface PRScannerHistory {
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| PR #423 not merged | Cannot create group chats | Phase 1 uses existing chat |
+| MCP tool not available | Cannot create group chats via schedule | Phase 1 uses existing chat |
 | GitHub API rate limits | Scan failures | Add rate limit handling |
 | History file corruption | Lost state | Backup before write |
 | Multiple PRs at once | Spam | Batch notifications |
@@ -343,6 +344,6 @@ interface PRScannerHistory {
 
 - Issue #393: feat: 定时扫描 PR 并创建讨论群聊
 - Issue #357: 智能定时任务推荐系统
-- PR #423: feat(feishu): add ChatOps utility (pending)
+- PR #423: feat(feishu): add ChatOps utility (merged)
 - PR #412: feat(feedback): add FeedbackController (pending)
 - PR #421: Previous attempt (closed - lacked design analysis)
