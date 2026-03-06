@@ -4,6 +4,8 @@
  * Issue #869: Cooldown period for scheduled tasks.
  */
 
+/// <reference types="vitest/globals" />
+
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';

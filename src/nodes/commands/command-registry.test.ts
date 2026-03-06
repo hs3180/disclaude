@@ -45,6 +45,14 @@ function createMockServices(): CommandServices {
     disableSchedule: () => Promise.resolve(false),
     runSchedule: () => Promise.resolve(false),
     isScheduleRunning: () => false,
+    // Cooldown management (Issue #869)
+    getScheduleCooldownStatus: () => Promise.resolve({
+      isInCooldown: false,
+      lastExecutionTime: null,
+      cooldownEndsAt: null,
+      remainingMs: 0,
+    }),
+    clearScheduleCooldown: () => Promise.resolve(false),
     // Task management methods (Issue #468)
     startTask: () => Promise.resolve({ id: 'task_test', prompt: 'test', status: 'running', progress: 0, chatId: 'oc_test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
     getCurrentTask: () => Promise.resolve(null),
