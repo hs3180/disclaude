@@ -17,6 +17,7 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  create_discussion_chat,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -877,6 +878,58 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Discussion Chat Creation (Issue #393)
+  {
+    name: 'create_discussion_chat',
+    description: `Create a new group chat for discussions.
+
+Use this tool to create a dedicated group chat for specific topics, such as PR discussions.
+
+---
+
+## Parameters
+
+- **topic**: The name/topic for the new chat (required)
+- **members**: Array of member open_ids to add (optional)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "topic": "PR #123: Fix authentication bug",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+---
+
+## Returns
+
+- **chatId**: The ID of the created chat
+- **success**: Whether creation was successful
+
+---
+
+## Use Cases
+
+- Creating discussion chats for new PRs
+- Creating topic-specific discussion groups
+- Creating temporary collaboration spaces`,
+    parameters: z.object({
+      topic: z.string(),
+      members: z.array(z.string()).optional(),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_discussion_chat({ topic, members });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.error || result.message}`);
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Discussion chat creation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },

@@ -27,6 +27,10 @@ export {
   cleanupExpiredContexts,
 } from './interactive-message.js';
 
+// Discussion Chat Creation (Issue #393)
+export { create_discussion_chat } from './create-discussion-chat.js';
+export type { CreateDiscussionChatResult } from './create-discussion-chat.js';
+
 // Study Guide Generator (NotebookLM M4)
 export {
   generate_summary,

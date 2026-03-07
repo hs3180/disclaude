@@ -89,9 +89,9 @@ This document covers:
 | Dependency | Status | PR/Issue | Blocking | Notes |
 |------------|--------|----------|----------|-------|
 | Scheduler | ✅ Ready | #357 | No | Already implemented |
-| ChatOps (createDiscussionChat) | ⏳ Pending | PR #423 | **Yes** | Group chat creation |
-| FeedbackController | ⏳ Pending | PR #412 | Partial | Interactive cards |
-| PR State Storage | ❓ Needed | This doc | No | Simple JSON file |
+| ChatOps (createDiscussionChat) | ✅ Ready | PR #423 | No | **Merged** - Group chat creation |
+| MCP Tool (create_discussion_chat) | ✅ Ready | Issue #393 | No | **Added** - MCP wrapper for ChatOps |
+| PR State Storage | ✅ Ready | This doc | No | Simple JSON file |
 
 ### 3.2 ChatOps API (PR #423)
 
@@ -180,19 +180,20 @@ Scan for new PRs and send notifications.
 5. Update history file
 ```
 
-### Phase 2: Group Chat Creation ⏳ Blocked by PR #423
+### Phase 2: Group Chat Creation ✅ Ready to implement
 
 **Goal**: Create dedicated group chat for each PR
 
 **Requirements**:
-- ⏳ ChatOps `createDiscussionChat()` (PR #423)
+- ✅ ChatOps `createDiscussionChat()` (PR #423 - Merged)
+- ✅ MCP Tool `create_discussion_chat` (Issue #393 - Added)
 
 **Additional Steps**:
-1. Call `createDiscussionChat()` for new PRs
+1. Call `create_discussion_chat` MCP tool for new PRs
 2. Store chat ID mapping in history
 3. Send PR info to new chat
 
-### Phase 3: Interactive Actions ⏳ Blocked by PR #412
+### Phase 3: Interactive Actions ❌ Not planned
 
 **Goal**: Support PR actions through interactive cards
 
