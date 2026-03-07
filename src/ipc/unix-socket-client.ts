@@ -407,6 +407,71 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Feishu API Operations (Issue #1035)
+  // ============================================================================
+
+  /**
+   * Send a text message via IPC.
+   */
+  async feishuSendMessage(
+    chatId: string,
+    text: string,
+    threadId?: string
+  ): Promise<{ success: boolean; messageId?: string }> {
+    try {
+      return await this.request('feishuSendMessage', { chatId, text, threadId });
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'feishuSendMessage failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Send a card message via IPC.
+   */
+  async feishuSendCard(
+    chatId: string,
+    card: Record<string, unknown>,
+    threadId?: string,
+    description?: string
+  ): Promise<{ success: boolean; messageId?: string }> {
+    try {
+      return await this.request('feishuSendCard', { chatId, card, threadId, description });
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'feishuSendCard failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Upload a file via IPC.
+   */
+  async feishuUploadFile(
+    chatId: string,
+    filePath: string,
+    threadId?: string
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+    try {
+      return await this.request('feishuUploadFile', { chatId, filePath, threadId });
+    } catch (error) {
+      logger.error({ err: error, chatId, filePath }, 'feishuUploadFile failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get bot info via IPC.
+   */
+  async feishuGetBotInfo(): Promise<{ openId: string; name?: string; avatarUrl?: string } | null> {
+    try {
+      return await this.request('feishuGetBotInfo', {});
+    } catch (error) {
+      logger.error({ err: error }, 'feishuGetBotInfo failed');
+      return null;
+    }
+  }
+
   /**
    * Handle incoming data.
    */
