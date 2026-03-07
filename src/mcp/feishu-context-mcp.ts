@@ -17,6 +17,10 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  create_discussion_chat,
+  get_bot_chats,
+  add_chat_members,
+  get_chat_members,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -886,6 +890,131 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // ChatOps Tools (Issue #393 - PR Scanner)
+  {
+    name: 'create_discussion_chat',
+    description: `Create a new discussion group chat.
+
+Use this tool to create a new Feishu group chat for discussions. Useful for:
+- Creating dedicated chats for PR discussions
+- Setting up topic-specific discussion groups
+- Creating temporary collaboration spaces
+
+## Parameters
+- **topic**: (Optional) Name/title for the chat. Auto-generated if not provided.
+- **members**: (Optional) Array of open_ids to add as initial members
+
+## Example
+\`\`\`json
+{
+  "topic": "PR #123: Feature Discussion",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+## Returns
+- **chatId**: The ID of the created chat (e.g., "oc_xxx")
+
+---
+
+**Note:** Requires FEISHU_APP_ID and FEISHU_APP_SECRET to be configured.`,
+    parameters: z.object({
+      topic: z.string().optional(),
+      members: z.array(z.string()).optional(),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_discussion_chat({ topic, members });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Chat creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_bot_chats',
+    description: `Get all chats the bot is a member of.
+
+Returns a list of all group chats where the bot has been added.
+
+## Returns
+Array of chat objects:
+- **chatId**: Chat ID
+- **name**: Chat name
+
+## Example Response
+\`\`\`json
+[
+  {"chatId": "oc_xxx", "name": "Project Discussion"},
+  {"chatId": "oc_yyy", "name": "Team Updates"}
+]
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      try {
+        const result = await get_bot_chats();
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        const chatList = result.chats?.map(c => `- ${c.name} (${c.chatId})`).join('\n') || 'No chats found';
+        return toolSuccess(`Bot is in ${result.chats?.length || 0} chats:\n${chatList}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to get bot chats: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'add_chat_members',
+    description: `Add members to an existing chat.
+
+## Parameters
+- **chatId**: Target chat ID
+- **members**: Array of open_ids to add
+
+## Example
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "members": ["ou_abc", "ou_def"]
+}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string(),
+      members: z.array(z.string()),
+    }),
+    handler: async ({ chatId, members }) => {
+      try {
+        const result = await add_chat_members({ chatId, members });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to add members: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_chat_members',
+    description: `Get the list of members in a chat.
+
+## Parameters
+- **chatId**: Target chat ID
+
+## Returns
+Array of member open_ids.`,
+    parameters: z.object({
+      chatId: z.string(),
+    }),
+    handler: async ({ chatId }) => {
+      try {
+        const result = await get_chat_members({ chatId });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        return toolSuccess(`Chat members (${result.members?.length || 0}):\n${result.members?.join('\n') || 'None'}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to get members: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

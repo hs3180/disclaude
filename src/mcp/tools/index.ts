@@ -51,3 +51,17 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// ChatOps Tools (Issue #393 - PR Scanner)
+export {
+  create_discussion_chat,
+  get_bot_chats,
+  add_chat_members,
+  get_chat_members,
+} from './chat-ops.js';
+
+export type {
+  CreateDiscussionChatResult,
+  GetBotChatsResult,
+  ChatMembersResult,
+} from './chat-ops.js';
