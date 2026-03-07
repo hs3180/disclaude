@@ -385,11 +385,22 @@ When \`format: "card"\`, content MUST include:
       parentMessageId: z.string().optional(),
     }),
     handler: async ({ content, format, chatId, parentMessageId }) => {
+      // For card format, try to parse string content as JSON (some MCP implementations serialize objects)
       if (format === 'card' && typeof content === 'string') {
-        return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
+        try {
+          const parsed = JSON.parse(content);
+          if (typeof parsed === 'object' && parsed !== null) {
+            content = parsed;
+          } else {
+            return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
+          }
+        } catch {
+          return toolSuccess('❌ Error: When format="card", content must be an OBJECT (or valid JSON string).');
+        }
       }
       if (format === 'text' && typeof content !== 'string') {
-        return toolSuccess('❌ Error: When format="text", content must be a STRING.');
+        // Convert object to string for text format
+        content = JSON.stringify(content);
       }
       try {
         const result = await send_user_feedback({ content, format, chatId, parentMessageId });

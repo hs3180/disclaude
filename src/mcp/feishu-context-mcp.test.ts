@@ -72,6 +72,7 @@ import {
   resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
+  feishuToolDefinitions,
 } from './feishu-context-mcp.js';
 import { uploadAndSendFile } from '../file-transfer/outbound/feishu-uploader.js';
 
@@ -773,6 +774,114 @@ describe('Feishu Context MCP Tools', () => {
       // Clean up first wait
       resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
       await firstWait;
+    });
+  });
+
+  describe('feishuToolDefinitions handlers', () => {
+    // Import the tool definitions for handler testing
+    // These tests verify the handler wrapper logic (Issue #990)
+    describe('send_user_feedback handler', () => {
+      it('should parse valid JSON string for card format', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+        const cardJson = JSON.stringify({
+          config: { wide_screen_mode: true },
+          header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
+          elements: [{ tag: 'markdown', content: '**Hello**' }],
+        });
+
+        const result = await handler({
+          content: cardJson,
+          format: 'card',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('✅');
+        expect(mockClient.im.message.create).toHaveBeenCalled();
+      });
+
+      it('should reject invalid JSON string for card format', async () => {
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+
+        const result = await handler({
+          content: 'not valid json',
+          format: 'card',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('❌');
+        expect(result.content[0].text).toContain('must be an OBJECT');
+      });
+
+      it('should reject JSON string that is not an object for card format', async () => {
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+
+        const result = await handler({
+          content: JSON.stringify(['array', 'not', 'object']),
+          format: 'card',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('❌');
+        // The parsed array fails validation in send_user_feedback
+        expect(result.content[0].text).toContain('Invalid content type');
+      });
+
+      it('should accept object content for card format', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+        const cardObject = {
+          config: { wide_screen_mode: true },
+          header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
+          elements: [{ tag: 'markdown', content: '**Hello**' }],
+        };
+
+        const result = await handler({
+          content: cardObject,
+          format: 'card',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('✅');
+      });
+
+      it('should convert object to string for text format', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+
+        const result = await handler({
+          content: { key: 'value' },
+          format: 'text',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('✅');
+        // Verify the content was stringified
+        expect(mockClient.im.message.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              content: JSON.stringify({ text: '{"key":"value"}' }),
+            }),
+          })
+        );
+      });
+
+      it('should accept string content for text format', async () => {
+        mockClient.im.message.create.mockResolvedValueOnce({});
+
+        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
+
+        const result = await handler({
+          content: 'plain text message',
+          format: 'text',
+          chatId: 'chat-123',
+        });
+
+        expect(result.content[0].text).toContain('✅');
+      });
     });
   });
 });
