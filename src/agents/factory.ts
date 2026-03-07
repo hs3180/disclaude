@@ -8,8 +8,10 @@
  * - createTaskAgent: Create task agents - short-lived, disposed after task
  * - createSkillAgent: Create skill agents using skill files - short-lived
  * - createSubagent: Create subagents (site-miner) - short-lived
+ * - spawnSubagent: Unified subagent creation (Issue #997)
  *
  * Issue #711: Agent Lifecycle Management Strategy
+ * Issue #997: Unified spawn subagent methods
  *
  * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
  * |----------------|----------------|--------------|------------------|
@@ -310,5 +312,52 @@ export class AgentFactory {
       return siteMinerFactory as unknown as Subagent;
     }
     throw new Error(`Unknown Subagent: ${name}`);
+  }
+
+  // ============================================================================
+  // Issue #997: Unified Subagent Spawning
+  // ============================================================================
+
+  /**
+   * Spawn a subagent using the unified SubagentManager.
+   *
+   * Issue #997: Provides a unified interface for spawning all types of subagents.
+   * This method delegates to the global SubagentManager for lifecycle management.
+   *
+   * @param options - Subagent options
+   * @returns Promise resolving to SubagentHandle
+   * @throws Error if SubagentManager is not initialized
+   *
+   * @example
+   * ```typescript
+   * // Spawn a schedule agent
+   * const handle = await AgentFactory.spawnSubagent({
+   *   type: 'schedule',
+   *   name: 'daily-report',
+   *   prompt: 'Generate daily report...',
+   *   chatId: 'chat-123',
+   * });
+   *
+   * // Spawn a skill agent with worktree isolation
+   * const handle2 = await AgentFactory.spawnSubagent({
+   *   type: 'skill',
+   *   name: 'site-miner',
+   *   prompt: 'Extract data from...',
+   *   skillName: 'site-miner',
+   *   isolation: 'worktree',
+   * });
+   *
+   * // Spawn a task agent
+   * const handle3 = await AgentFactory.spawnSubagent({
+   *   type: 'task',
+   *   name: 'code-review',
+   *   prompt: 'Review the code changes...',
+   *   chatId: 'chat-456',
+   * });
+   * ```
+   */
+  static async spawnSubagent(options: import('./subagent/types.js').SubagentOptions): Promise<import('./subagent/types.js').SubagentHandle> {
+    const { spawnSubagent } = await import('./subagent/manager.js');
+    return spawnSubagent(options);
   }
 }
