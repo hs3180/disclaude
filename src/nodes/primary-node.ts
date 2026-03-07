@@ -76,6 +76,8 @@ import { buildCommandServices } from './command-services.js';
 import { CardActionRouter } from './card-action-router.js';
 // Issue #455: Skill Agent System
 import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
+// Issue #1032: Unified Lark Client Service
+import { initLarkClientService, getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -153,6 +155,15 @@ export class PrimaryNode extends EventEmitter {
     // Store Feishu credentials for group management
     this.feishuAppId = config.appId || Config.FEISHU_APP_ID;
     this.feishuAppSecret = config.appSecret || Config.FEISHU_APP_SECRET;
+
+    // Issue #1032: Initialize unified LarkClientService
+    if (this.feishuAppId && this.feishuAppSecret) {
+      initLarkClientService({
+        appId: this.feishuAppId,
+        appSecret: this.feishuAppSecret,
+      });
+      logger.info('LarkClientService initialized in PrimaryNode');
+    }
 
     // Initialize ExecNodeRegistry
     this.execNodeRegistry = new ExecNodeRegistry({
@@ -278,8 +289,15 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Get or create Feishu client for group management with timeout configuration.
+   * Issue #1032: Now uses unified LarkClientService when available.
    */
   private getFeishuClient(): lark.Client {
+    // Prefer LarkClientService if initialized
+    if (isLarkClientServiceInitialized()) {
+      return getLarkClientService().getClient();
+    }
+
+    // Fallback to creating client directly (for backward compatibility)
     if (!this.feishuClient) {
       if (!this.feishuAppId || !this.feishuAppSecret) {
         throw new Error('Feishu credentials not configured');
