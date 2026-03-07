@@ -36,7 +36,9 @@ interface PendingRequest {
  */
 export type IpcAvailabilityStatus =
   | { available: true }
-  | { available: false; reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error'; error?: Error };
+  | { available: false; reason: IpcUnavailableReason; error?: Error };
+
+export type IpcUnavailableReason = 'socket_not_found' | 'connection_failed' | 'timeout' | 'error';
 
 /**
  * Unix Socket IPC Client.
@@ -244,7 +246,7 @@ export class UnixSocketIpcClient {
       return this.availabilityCache;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      let reason: IpcAvailabilityStatus['reason'] = 'connection_failed';
+      let reason: IpcUnavailableReason = 'connection_failed';
 
       if (err.message.includes('timeout')) {
         reason = 'timeout';
