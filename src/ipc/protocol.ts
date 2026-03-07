@@ -20,7 +20,11 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuGetBotInfo'
+  // Thread operations (Issue #873)
+  | 'feishuReplyInThread'
+  | 'feishuGetThreads'
+  | 'feishuGetThreadMessages';
 
 /**
  * IPC request payload types.
@@ -60,6 +64,22 @@ export interface IpcRequestPayloads {
     threadId?: string;
   };
   feishuGetBotInfo: Record<string, never>;
+  // Thread operations (Issue #873)
+  feishuReplyInThread: {
+    messageId: string;
+    content: string;
+    msgType?: string;
+  };
+  feishuGetThreads: {
+    chatId: string;
+    pageToken?: string;
+    pageSize?: number;
+  };
+  feishuGetThreadMessages: {
+    threadId: string;
+    pageToken?: string;
+    pageSize?: number;
+  };
 }
 
 /**
@@ -86,6 +106,37 @@ export interface IpcResponsePayloads {
     openId: string;
     name?: string;
     avatarUrl?: string;
+  };
+  // Thread operations (Issue #873)
+  feishuReplyInThread: {
+    success: boolean;
+    messageId?: string;
+  };
+  feishuGetThreads: {
+    success: boolean;
+    threads?: Array<{
+      threadId: string;
+      messageId: string;
+      content?: string;
+      senderId?: string;
+      createTime?: number;
+      replyCount?: number;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
+  };
+  feishuGetThreadMessages: {
+    success: boolean;
+    messages?: Array<{
+      messageId: string;
+      threadId?: string;
+      content?: string;
+      senderId?: string;
+      createTime?: number;
+      msgType?: string;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
   };
 }
 

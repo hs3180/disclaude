@@ -17,6 +17,9 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -877,6 +880,226 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Thread Operations (Issue #873 - 话题群扩展)
+  {
+    name: 'reply_in_thread',
+    description: `Reply to a thread in a topic group (跟帖).
+
+Creates a threaded reply to a specific message in topic groups.
+
+---
+
+## 🎯 Use Cases
+
+- Reply to an existing topic/thread in a topic group
+- Add comments to ongoing discussions
+- Follow up on specific threads
+
+---
+
+## Parameters
+
+- **messageId**: The ID of the message to reply to (root message of the thread)
+- **content**: The reply content
+- **msgType**: Message type - "text" (default), "post", "image", "file", "audio", "media"
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "messageId": "om_xxx",
+  "content": "This is my reply to the thread.",
+  "msgType": "text"
+}
+\`\`\`
+
+---
+
+## ⚠️ Important Notes
+
+- Works in topic groups (话题模式群)
+- Creates a threaded reply, not a new thread
+- Use \`send_message\` with \`parentMessageId\` for simple thread replies
+
+---
+
+**Reference:** https://open.larksuite.com/document/server-docs/im-v1/message/reply`,
+    parameters: z.object({
+      messageId: z.string(),
+      content: z.string(),
+      msgType: z.enum(['text', 'post', 'image', 'file', 'audio', 'media']).optional(),
+    }),
+    handler: async ({ messageId, content, msgType }) => {
+      try {
+        const result = await reply_in_thread({ messageId, content, msgType });
+        return toolSuccess(result.success
+          ? `✅ Thread reply sent. Message ID: ${result.messageId}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Thread reply failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_threads',
+    description: `Get threads (topics) from a topic group chat (获取话题列表).
+
+Retrieves the list of thread root messages from a chat.
+In topic groups, each message can be a thread root.
+
+---
+
+## 🎯 Use Cases
+
+- List all topics in a topic group
+- Browse discussion threads
+- Get overview of conversations
+
+---
+
+## Parameters
+
+- **chatId**: The chat ID to get threads from
+- **pageToken**: Pagination token (optional)
+- **pageSize**: Number of threads per page (default: 50, max: 50)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "pageSize": 20
+}
+\`\`\`
+
+---
+
+## Response
+
+Returns an array of threads with:
+- \`threadId\`: Thread ID (root message ID)
+- \`messageId\`: Message ID
+- \`content\`: Message content
+- \`senderId\`: Sender's open_id
+- \`createTime\`: Creation timestamp
+- \`replyCount\`: Number of replies
+
+---
+
+**Reference:** https://open.larksuite.com/document/server-docs/im-v1/message/list`,
+    parameters: z.object({
+      chatId: z.string(),
+      pageToken: z.string().optional(),
+      pageSize: z.number().optional(),
+    }),
+    handler: async ({ chatId, pageToken, pageSize }) => {
+      try {
+        const result = await get_threads({ chatId, pageToken, pageSize });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        let output = `✅ Found ${result.threads?.length || 0} threads\n`;
+        if (result.threads && result.threads.length > 0) {
+          output += '\n| Thread ID | Content Preview | Replies |\n';
+          output += '|-----------|-----------------|----------|\n';
+          for (const thread of result.threads.slice(0, 10)) {
+            const preview = (thread.content || '').substring(0, 30).replace(/\n/g, ' ');
+            output += `| ${thread.threadId.substring(0, 15)}... | ${preview}... | ${thread.replyCount || 0} |\n`;
+          }
+          if (result.threads.length > 10) {
+            output += `\n... and ${result.threads.length - 10} more threads`;
+          }
+        }
+        if (result.hasMore) {
+          output += `\n\nHas more: true. Use pageToken: ${result.pageToken} to get more.`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get threads failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_thread_messages',
+    description: `Get messages from a specific thread (获取话题详情).
+
+Retrieves all messages within a thread, including the root message
+and all replies.
+
+---
+
+## 🎯 Use Cases
+
+- Read all replies in a thread
+- Get full conversation history of a topic
+- Analyze thread discussions
+
+---
+
+## Parameters
+
+- **threadId**: The thread ID (root message ID)
+- **pageToken**: Pagination token (optional)
+- **pageSize**: Number of messages per page (default: 50, max: 50)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "threadId": "omt_xxx",
+  "pageSize": 20
+}
+\`\`\`
+
+---
+
+## Response
+
+Returns an array of messages with:
+- \`messageId\`: Message ID
+- \`threadId\`: Thread ID
+- \`content\`: Message content
+- \`senderId\`: Sender's open_id
+- \`createTime\`: Creation timestamp
+- \`msgType\`: Message type
+
+---
+
+**Reference:** https://open.larksuite.com/document/server-docs/im-v1/message/list`,
+    parameters: z.object({
+      threadId: z.string(),
+      pageToken: z.string().optional(),
+      pageSize: z.number().optional(),
+    }),
+    handler: async ({ threadId, pageToken, pageSize }) => {
+      try {
+        const result = await get_thread_messages({ threadId, pageToken, pageSize });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        let output = `✅ Found ${result.messages?.length || 0} messages in thread\n`;
+        if (result.messages && result.messages.length > 0) {
+          output += '\n**Messages:**\n';
+          for (const msg of result.messages) {
+            const preview = (msg.content || '').substring(0, 50).replace(/\n/g, ' ');
+            output += `- [${msg.senderId || 'unknown'}]: ${preview}${msg.content && msg.content.length > 50 ? '...' : ''}\n`;
+          }
+        }
+        if (result.hasMore) {
+          output += `\n\nHas more: true. Use pageToken: ${result.pageToken} to get more.`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get thread messages failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

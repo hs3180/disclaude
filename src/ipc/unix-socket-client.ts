@@ -244,7 +244,7 @@ export class UnixSocketIpcClient {
       return this.availabilityCache;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      let reason: IpcAvailabilityStatus['reason'] = 'connection_failed';
+      let reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error' = 'connection_failed';
 
       if (err.message.includes('timeout')) {
         reason = 'timeout';
@@ -469,6 +469,82 @@ export class UnixSocketIpcClient {
     } catch (error) {
       logger.error({ err: error }, 'feishuGetBotInfo failed');
       return null;
+    }
+  }
+
+  // ============================================================================
+  // Thread Operations (Issue #873)
+  // ============================================================================
+
+  /**
+   * Reply in thread via IPC.
+   */
+  async feishuReplyInThread(
+    messageId: string,
+    content: string,
+    msgType: string = 'text'
+  ): Promise<{ success: boolean; messageId?: string }> {
+    try {
+      return await this.request('feishuReplyInThread', { messageId, content, msgType });
+    } catch (error) {
+      logger.error({ err: error, messageId }, 'feishuReplyInThread failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get threads via IPC.
+   */
+  async feishuGetThreads(
+    chatId: string,
+    pageToken?: string,
+    pageSize?: number
+  ): Promise<{
+    success: boolean;
+    threads?: Array<{
+      threadId: string;
+      messageId: string;
+      content?: string;
+      senderId?: string;
+      createTime?: number;
+      replyCount?: number;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
+  }> {
+    try {
+      return await this.request('feishuGetThreads', { chatId, pageToken, pageSize });
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'feishuGetThreads failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get thread messages via IPC.
+   */
+  async feishuGetThreadMessages(
+    threadId: string,
+    pageToken?: string,
+    pageSize?: number
+  ): Promise<{
+    success: boolean;
+    messages?: Array<{
+      messageId: string;
+      threadId?: string;
+      content?: string;
+      senderId?: string;
+      createTime?: number;
+      msgType?: string;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
+  }> {
+    try {
+      return await this.request('feishuGetThreadMessages', { threadId, pageToken, pageSize });
+    } catch (error) {
+      logger.error({ err: error, threadId }, 'feishuGetThreadMessages failed');
+      return { success: false };
     }
   }
 
