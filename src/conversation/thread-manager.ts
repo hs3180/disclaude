@@ -117,7 +117,9 @@ export class ThreadManager {
    */
   private saveState(chatId: string): void {
     const state = this.chatStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      return;
+    }
 
     const data = {
       threads: Array.from(state.threads.values()),
@@ -137,10 +139,14 @@ export class ThreadManager {
    */
   private loadState(chatId: string): void {
     const state = this.chatStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      return;
+    }
 
     const filePath = this.getStoragePath(chatId);
-    if (!fs.existsSync(filePath)) return;
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
 
     try {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -256,7 +262,9 @@ export class ThreadManager {
    */
   getCurrentThread(chatId: string): Thread | undefined {
     const state = this.getOrCreateState(chatId);
-    if (!state.currentThreadId) return undefined;
+    if (!state.currentThreadId) {
+      return undefined;
+    }
     return state.threads.get(state.currentThreadId);
   }
 
@@ -327,7 +335,9 @@ export class ThreadManager {
       }
     }
 
-    if (!thread) return undefined;
+    if (!thread) {
+      return undefined;
+    }
 
     // Check if new name already exists
     for (const t of state.threads.values()) {
@@ -351,7 +361,9 @@ export class ThreadManager {
    */
   incrementMessageCount(chatId: string, threadId: string): void {
     const state = this.chatStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      return;
+    }
 
     const thread = state.threads.get(threadId);
     if (thread) {
@@ -370,7 +382,9 @@ export class ThreadManager {
    */
   setThreadSummary(chatId: string, threadId: string, summary: string): void {
     const state = this.chatStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      return;
+    }
 
     const thread = state.threads.get(threadId);
     if (thread) {
