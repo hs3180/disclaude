@@ -42,3 +42,6 @@ export { ExpertCommand } from './expert-commands.js';
 
 // Budget commands (Issue #538)
 export { BudgetCommand } from './budget-commands.js';
+
+// Skill command (Issue #455)
+export { SkillCommand } from './skill-command.js';

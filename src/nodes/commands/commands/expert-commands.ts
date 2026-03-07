@@ -257,7 +257,7 @@ export class ExpertCommand implements Command {
       };
     }
 
-    const priceStr = args[1];
+    const [, priceStr] = args;
 
     if (!priceStr) {
       return { success: false, error: '❌ 请指定咨询价格\n\n用法: /expert price <积分>\n\n示例: /expert price 100' };

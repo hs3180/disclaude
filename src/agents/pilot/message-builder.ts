@@ -5,6 +5,7 @@
  * Handles building enhanced content with Feishu context.
  *
  * Issue #893: Added in-prompt next-step guidance.
+ * Issue #962: Added output format guidance to prevent raw JSON in responses.
  */
 
 import { Config } from '../../config/index.js';
@@ -21,6 +22,7 @@ import type { MessageData } from './types.js';
  * - Attachments info
  * - Chat history context
  * - Next-step guidance (Issue #893)
+ * - Output format guidance (Issue #962)
  */
 export class MessageBuilder {
   /**
@@ -94,6 +96,9 @@ ${msg.persistedHistoryContext}
     // Build next-step guidance section (Issue #893)
     const nextStepGuidance = this.buildNextStepGuidance(capabilities);
 
+    // Build output format guidance section (Issue #962)
+    const outputFormatGuidance = this.buildOutputFormatGuidance();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -123,6 +128,7 @@ ${persistedHistorySection}${chatHistorySection}${mentionSection}
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}
+${outputFormatGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -136,6 +142,7 @@ ${persistedHistorySection}${chatHistorySection}
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}
+${outputFormatGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -336,5 +343,44 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 - Make suggestions specific and actionable
 - Format as a simple list
 - Always include suggestions, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
+  }
+
+  /**
+   * Build output format guidance section for the prompt.
+   *
+   * Issue #962: Prevents raw JSON objects from appearing in model output.
+   * Some models (like GLM-5) may output JSON objects directly instead of
+   * formatting them as readable Markdown. This guidance ensures structured
+   * data is always presented in a human-readable format.
+   *
+   * @returns Output format guidance string
+   */
+  private buildOutputFormatGuidance(): string {
+    return `
+
+---
+
+## Output Format Requirements
+
+**IMPORTANT: Never output raw JSON objects in your response.**
+
+When you need to present structured data (status, metrics, analysis results, etc.), always format it as **readable Markdown**:
+
+### ✅ Correct Format
+\`\`\`markdown
+> **储蓄率**: ❌ 入不敷出，储蓄率为负，建议审视支出结构
+\`\`\`
+
+### ❌ Wrong Format (Never do this)
+\`\`\`markdown
+> **储蓄率**: { "status": "bad", "comment": "入不敷出..." }
+\`\`\`
+
+### Guidelines
+
+- Convert JSON objects to readable text, tables, or formatted lists
+- Use emoji and formatting (bold, italic) to highlight important information
+- If you have structured data internally, extract and present the key values
+- For complex data, use Markdown tables instead of raw JSON`;
   }
 }
