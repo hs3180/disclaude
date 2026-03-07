@@ -385,14 +385,21 @@ When \`format: "card"\`, content MUST include:
       parentMessageId: z.string().optional(),
     }),
     handler: async ({ content, format, chatId, parentMessageId }) => {
+      // Try to parse string content as JSON for card format
+      // This handles cases where the SDK serializes objects to JSON strings
+      let processedContent: string | Record<string, unknown> = content;
       if (format === 'card' && typeof content === 'string') {
-        return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
+        try {
+          processedContent = JSON.parse(content);
+        } catch {
+          return toolSuccess('❌ Error: When format="card", content must be a valid JSON object or string.');
+        }
       }
       if (format === 'text' && typeof content !== 'string') {
-        return toolSuccess('❌ Error: When format="text", content must be a STRING.');
+        processedContent = JSON.stringify(content);
       }
       try {
-        const result = await send_user_feedback({ content, format, chatId, parentMessageId });
+        const result = await send_user_feedback({ content: processedContent, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
