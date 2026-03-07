@@ -39,7 +39,7 @@ import { createLogger } from '../utils/logger.js';
 import type { IChannel, IncomingMessage, ControlCommand, ControlResponse } from '../channels/index.js';
 import { FeishuChannel } from '../channels/feishu-channel.js';
 import { RestChannel } from '../channels/rest-channel.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, CardActionMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, CardActionMessage, FeishuApiRequestMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
@@ -819,6 +819,101 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
+  // Feishu API Request Routing (Issue #1036)
+  // ============================================================================
+
+  /**
+   * Handle Feishu API requests from Worker Nodes.
+   * Routes requests through LarkClientService.
+   *
+   * @param request - Feishu API request message
+   * @param sendResponse - Callback to send response back to Worker Node
+   */
+  private async handleFeishuApiRequest(
+    request: FeishuApiRequestMessage,
+    sendResponse: (response: FeishuApiResponseMessage) => void
+  ): Promise<void> {
+    const { requestId, action, params } = request;
+    logger.debug({ requestId, action, params }, 'Handling Feishu API request from Worker Node');
+
+    try {
+      // Check if LarkClientService is available
+      if (!isLarkClientServiceInitialized()) {
+        sendResponse({
+          type: 'feishu-api-response',
+          requestId,
+          success: false,
+          error: 'LarkClientService not initialized on Primary Node',
+        });
+        return;
+      }
+
+      const service = getLarkClientService();
+      let result: unknown;
+
+      switch (action) {
+        case 'sendMessage': {
+          const { chatId, text, threadId } = params;
+          if (!chatId || !text) {
+            throw new Error('Missing required params: chatId or text');
+          }
+          await service.sendMessage(chatId, text, threadId ? { threadId } : undefined);
+          result = { success: true };
+          break;
+        }
+
+        case 'sendCard': {
+          const { chatId, card, threadId, description } = params;
+          if (!chatId || !card) {
+            throw new Error('Missing required params: chatId or card');
+          }
+          await service.sendCard(
+            chatId,
+            card,
+            description ? { description, threadId } : threadId ? { threadId } : undefined
+          );
+          result = { success: true };
+          break;
+        }
+
+        case 'uploadFile': {
+          const { chatId, filePath, threadId } = params;
+          if (!chatId || !filePath) {
+            throw new Error('Missing required params: chatId or filePath');
+          }
+          result = await service.uploadFile(chatId, filePath, threadId ? { threadId } : undefined);
+          break;
+        }
+
+        case 'getBotInfo': {
+          result = await service.getBotInfo();
+          break;
+        }
+
+        default:
+          throw new Error(`Unknown action: ${action}`);
+      }
+
+      logger.debug({ requestId, action }, 'Feishu API request completed successfully');
+      sendResponse({
+        type: 'feishu-api-response',
+        requestId,
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      const err = error as Error;
+      logger.error({ err, requestId, action }, 'Feishu API request failed');
+      sendResponse({
+        type: 'feishu-api-response',
+        requestId,
+        success: false,
+        error: err.message,
+      });
+    }
+  }
+
+  // ============================================================================
   // Public Message API
   // ============================================================================
 
@@ -883,6 +978,10 @@ export class PrimaryNode extends EventEmitter {
       // Issue #935: Register card context for Worker Node routing
       registerCardContext: (chatId: string, nodeId: string, isRemote: boolean) => {
         this.cardActionRouter.registerChatContext(chatId, nodeId, isRemote);
+      },
+      // Issue #1036: Handle Feishu API requests from Worker Nodes
+      handleFeishuApiRequest: async (request, sendResponse) => {
+        await this.handleFeishuApiRequest(request, sendResponse);
       },
     });
 
