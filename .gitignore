@@ -11,6 +11,7 @@ disclaude.config.test.yaml
 # Node.js
 node_modules/
 dist/
+*.tsbuildinfo
 
 # Test coverage
 coverage/
