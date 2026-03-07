@@ -170,7 +170,7 @@ export async function reply_in_thread(params: {
         logger.info({ messageId, replyId: result.messageId }, 'Thread reply sent via IPC');
         return {
           success: true,
-          message: `✅ Thread reply sent successfully`,
+          message: '✅ Thread reply sent successfully',
           messageId: result.messageId,
         };
       }
@@ -221,7 +221,7 @@ export async function reply_in_thread(params: {
     logger.info({ messageId, replyId }, 'Thread reply sent');
     return {
       success: true,
-      message: `✅ Thread reply sent successfully`,
+      message: '✅ Thread reply sent successfully',
       messageId: replyId,
     };
 
