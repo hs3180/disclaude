@@ -260,21 +260,26 @@ export class FeishuAdapter implements IChannelAdapter {
           }[action.style || 'primary'] || 'primary',
         };
 
-      case 'select':
+      case 'select': {
+        const { label, options } = action;
         return {
           tag: 'select_static',
           placeholder: {
             tag: 'plain_text',
-            content: action.label,
+            content: label,
           },
-          options: action.options?.map((opt) => ({
-            text: {
-              tag: 'plain_text',
-              content: opt.label,
-            },
-            value: opt.value,
-          })) || [],
+          options: options?.map((opt) => {
+            const { label: optLabel, value } = opt;
+            return {
+              text: {
+                tag: 'plain_text',
+                content: optLabel,
+              },
+              value,
+            };
+          }) || [],
         };
+      }
 
       case 'link':
         return {
