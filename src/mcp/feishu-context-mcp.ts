@@ -17,6 +17,7 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  generate_mindmap,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -877,6 +878,83 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // NotebookLM Mind Map Tool (Issue #950 M3)
+  {
+    name: 'generate_mindmap',
+    description: `Generate a mind map from content.
+
+Part of NotebookLM features - creates visual mind maps to organize information.
+
+## Parameters
+- **content**: The text content to generate mind map from
+- **format**: Output format - "mermaid", "markmap", or "both" (default: "mermaid")
+- **title**: Title for the mind map root (optional)
+- **maxDepth**: Maximum depth of the mind map (default: 3)
+- **maxNodesPerLevel**: Maximum nodes per level (default: 6)
+
+## Output Formats
+
+### Mermaid (for rendering in Markdown)
+\`\`\`mermaid
+mindmap
+  root((Central Idea))
+    Branch1
+      Sub-topic 1
+      Sub-topic 2
+    Branch2
+      Sub-topic 1
+\`\`\`
+
+### Markmap (for interactive Markdown mind maps)
+\`\`\`markdown
+# Central Idea
+## Branch1
+### Sub-topic 1
+### Sub-topic 2
+## Branch2
+### Sub-topic 1
+\`\`\`
+
+## Example
+\`\`\`json
+{
+  "content": "# Project Overview\\n## Feature A\\n## Feature B\\n### Sub-feature B1",
+  "format": "mermaid",
+  "title": "My Project",
+  "maxDepth": 3
+}
+\`\`\`
+
+## Tips
+- Use markdown headings (# ## ###) in content for best structure extraction
+- Keep titles short and descriptive
+- The tool extracts structure from headings and lists`,
+    parameters: z.object({
+      content: z.string(),
+      format: z.enum(['mermaid', 'markmap', 'both']).optional(),
+      title: z.string().optional(),
+      maxDepth: z.number().optional(),
+      maxNodesPerLevel: z.number().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_mindmap(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        let output = `Mind Map generated successfully!\n\n`;
+        if (result.mermaid) {
+          output += `### Mermaid Format\n\`\`\`mermaid\n${result.mermaid}\`\`\`\n\n`;
+        }
+        if (result.markmap) {
+          output += `### Markmap Format (Markdown)\n${result.markmap}\n`;
+        }
+        return Promise.resolve(toolSuccess(output));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Mind map generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
