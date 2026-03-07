@@ -4,6 +4,9 @@
   "description": "Multi-platform agent bot supporting Feishu/Lark and CLI",
   "main": "dist/cli-entry.js",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "disclaude": "./dist/cli-entry.js"
   },
