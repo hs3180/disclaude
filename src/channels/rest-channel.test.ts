@@ -13,8 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestChannel } from './rest-channel.js';
-import http from 'node:http';
-import type { IncomingMessage, ServerResponse, Server } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EventEmitter } from 'node:events';
 
 // Mock logger
@@ -61,12 +60,16 @@ vi.mock('../file-transfer/index.js', () => ({
 class MockServer extends EventEmitter {
   listen = vi.fn((_port: number, _host: string, callback?: () => void) => {
     // Call callback immediately (synchronously) to avoid timer dependency
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 
   close = vi.fn((callback?: () => void) => {
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 }

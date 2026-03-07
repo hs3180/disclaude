@@ -657,7 +657,7 @@ export class WorkerNode {
     this.activeFeedbackChannels.clear();
 
     // Issue #1036: Clear pending Feishu API requests
-    for (const [requestId, pending] of this.pendingFeishuApiRequests) {
+    for (const [_requestId, pending] of this.pendingFeishuApiRequests) {
       clearTimeout(pending.timeout);
       pending.reject(new Error('WorkerNode is shutting down'));
     }
@@ -685,7 +685,7 @@ export class WorkerNode {
    * @param params - Action parameters
    * @returns Promise that resolves with the response data
    */
-  async sendFeishuApiRequest(
+  sendFeishuApiRequest(
     action: 'sendMessage' | 'sendCard' | 'uploadFile' | 'getBotInfo',
     params: {
       chatId?: string;

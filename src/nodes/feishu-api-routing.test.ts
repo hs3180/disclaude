@@ -4,8 +4,7 @@
  * Tests the WebSocket-based Feishu API routing between Worker Node and Primary Node.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { describe, it, expect, vi } from 'vitest';
 import type { FeishuApiRequestMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 
 describe('Feishu API Request Routing (Issue #1036)', () => {
@@ -79,7 +78,7 @@ describe('Feishu API Request Routing (Issue #1036)', () => {
   });
 
   describe('WebSocketServerService Feishu API handling', () => {
-    it('should handle feishu-api-request message type', async () => {
+    it('should handle feishu-api-request message type', () => {
       // This test verifies that the WebSocketServerService can handle feishu-api-request messages
       // The actual implementation is tested through integration tests
       const handleFeishuApiRequest = vi.fn();
@@ -103,7 +102,7 @@ describe('Feishu API Request Routing (Issue #1036)', () => {
       );
     });
 
-    it('should send response back through WebSocket', async () => {
+    it('should send response back through WebSocket', () => {
       const sendResponse = vi.fn();
 
       const response: FeishuApiResponseMessage = {
@@ -237,7 +236,7 @@ describe('Feishu API Request Routing (Issue #1036)', () => {
       vi.useRealTimers();
     });
 
-    it('should clear timeout on successful response', async () => {
+    it('should clear timeout on successful response', () => {
       vi.useFakeTimers();
 
       const timeoutMs = 5000;
@@ -250,21 +249,16 @@ describe('Feishu API Request Routing (Issue #1036)', () => {
       }>();
 
       const requestId = 'test-success';
-      let resolveFunc: (data: unknown) => void;
 
-      const promise = new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          pendingRequests.delete(requestId);
-          reject(new Error('Timeout'));
-        }, timeoutMs);
+      // Create a pending request entry
+      const timeout = setTimeout(() => {
+        pendingRequests.delete(requestId);
+      }, timeoutMs);
 
-        resolveFunc = resolve;
-
-        pendingRequests.set(requestId, {
-          resolve,
-          reject,
-          timeout,
-        });
+      pendingRequests.set(requestId, {
+        resolve: vi.fn(),
+        reject: vi.fn(),
+        timeout,
       });
 
       // Simulate successful response
