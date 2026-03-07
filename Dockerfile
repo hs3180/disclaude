@@ -39,8 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --omit=dev && \
+# Configure npm mirror and install dependencies
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm ci --omit=dev && \
     npm cache clean --force
 
 # -----------------------------------------------------------------------------
@@ -59,8 +60,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install all dependencies (including devDependencies for building)
-RUN npm ci
+# Configure npm mirror and install all dependencies (including devDependencies for building)
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm ci
 
 # Copy source code
 COPY . .
@@ -108,7 +110,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     rm -rf /var/lib/apt/lists/*
 
 # Install PM2 globally for process management and logging
-RUN npm install -g pm2@latest
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g pm2@latest
 
 # Create non-root user for running the application
 RUN groupadd -g 1001 disclaude && \

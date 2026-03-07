@@ -39,6 +39,11 @@ export type IpcAvailabilityStatus =
   | { available: false; reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error'; error?: Error };
 
 /**
+ * Extract the reason type from IpcAvailabilityStatus (only available when available is false)
+ */
+export type IpcUnavailableReason = Extract<IpcAvailabilityStatus, { available: false }>['reason'];
+
+/**
  * Unix Socket IPC Client.
  */
 export class UnixSocketIpcClient {
@@ -244,7 +249,7 @@ export class UnixSocketIpcClient {
       return this.availabilityCache;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      let reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error' = 'connection_failed';
+      let reason: IpcUnavailableReason = 'connection_failed';
 
       if (err.message.includes('timeout')) {
         reason = 'timeout';

@@ -81,8 +81,8 @@ export async function send_file(params: {
 
     if (useIpc) {
       logger.debug({ chatId, filePath }, 'Using IPC for file upload');
-      const result = await uploadFileViaIpc(chatId, resolvedPath);
-      fileSize = result.fileSize;
+      const { fileSize: ipcFileSize } = await uploadFileViaIpc(chatId, resolvedPath);
+      fileSize = ipcFileSize;
     } else {
       // Fallback: Create client directly
       const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
