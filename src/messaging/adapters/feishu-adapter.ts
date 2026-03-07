@@ -10,7 +10,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import type {
   IChannelAdapter,
   ChannelCapabilities,
@@ -66,14 +66,23 @@ export class FeishuAdapter implements IChannelAdapter {
 
   /**
    * Get or create the Lark client.
+   * Issue #1034: Prefer unified LarkClientService if available.
    */
   private getClient(): lark.Client {
+    // Prefer unified LarkClientService if initialized
+    if (isLarkClientServiceInitialized()) {
+      return getLarkClientService().getClient();
+    }
+
+    // Fallback to creating client directly (for backward compatibility)
     if (!this.client) {
       const appId = Config.FEISHU_APP_ID;
       const appSecret = Config.FEISHU_APP_SECRET;
       if (!appId || !appSecret) {
         throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be configured');
       }
+      // Dynamic import to avoid circular dependency
+      const { createFeishuClient } = require('../../platforms/feishu/create-feishu-client.js');
       this.client = createFeishuClient(appId, appSecret, {
         domain: lark.Domain.Feishu,
       });

@@ -11,6 +11,7 @@ import type { IPlatformAdapter } from '../../channels/adapters/types.js';
 import { FeishuMessageSender, type FeishuMessageSenderConfig } from './feishu-message-sender.js';
 import { FeishuFileHandler, type FeishuFileHandlerConfig } from './feishu-file-handler.js';
 import { createFeishuClient } from './create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 
 /**
  * Feishu Platform Adapter Configuration.
@@ -87,8 +88,14 @@ export class FeishuPlatformAdapter implements IPlatformAdapter {
 
   /**
    * Create a new Lark client with timeout configuration.
+   * Issue #1034: Prefer unified LarkClientService if available.
    */
   private createClient(appId: string, appSecret: string): lark.Client {
+    // Prefer unified LarkClientService if initialized
+    if (isLarkClientServiceInitialized()) {
+      return getLarkClientService().getClient();
+    }
+    // Fallback to creating client directly
     return createFeishuClient(appId, appSecret);
   }
 }
