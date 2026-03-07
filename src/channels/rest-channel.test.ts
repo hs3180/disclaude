@@ -60,12 +60,16 @@ vi.mock('../file-transfer/index.js', () => ({
 class MockServer extends EventEmitter {
   listen = vi.fn((_port: number, _host: string, callback?: () => void) => {
     // Call callback immediately (synchronously) to avoid timer dependency
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 
   close = vi.fn((callback?: () => void) => {
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 }

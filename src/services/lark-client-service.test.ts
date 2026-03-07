@@ -63,7 +63,7 @@ vi.mock('../utils/error-handler.js', () => ({
 }));
 
 vi.mock('../utils/retry.js', () => ({
-  retry: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+  retry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
 
 vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
