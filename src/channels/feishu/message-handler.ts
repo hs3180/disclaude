@@ -26,6 +26,7 @@ import type {
   FeishuMessageEvent,
   FeishuCardActionEvent,
   FeishuCardActionEventData,
+  FeishuChatRecordContent,
 } from '../../types/platform.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -273,6 +274,98 @@ export class MessageHandler {
   }
 
   /**
+   * Parse chat_record message content to extract forwarded conversation.
+   * Issue #846: Support reading packed conversation records
+   * @param content - JSON string content from chat_record message
+   * @returns Formatted text representation of the conversation, or null if parsing fails
+   */
+  private parseChatRecordContent(content: string): string | null {
+    try {
+      const parsed = JSON.parse(content) as FeishuChatRecordContent;
+
+      if (!parsed.messages || !Array.isArray(parsed.messages)) {
+        logger.debug({ content }, 'chat_record content missing messages array');
+        return null;
+      }
+
+      const formattedMessages: string[] = [];
+
+      for (const msg of parsed.messages) {
+        // Try to extract text from each message
+        let msgText = '';
+        try {
+          const msgContent = JSON.parse(msg.content);
+          if (msg.message_type === 'text') {
+            msgText = msgContent.text?.trim() || '';
+          } else if (msg.message_type === 'post') {
+            // Extract text from post content
+            if (msgContent.content && Array.isArray(msgContent.content)) {
+              for (const row of msgContent.content) {
+                if (Array.isArray(row)) {
+                  for (const segment of row) {
+                    if (segment?.tag === 'text' && segment.text) {
+                      msgText += segment.text;
+                    }
+                  }
+                }
+              }
+              msgText = msgText.trim();
+            }
+          }
+        } catch {
+          // If parsing fails, use raw content
+          msgText = msg.content;
+        }
+
+        if (msgText) {
+          const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || '未知用户';
+          const timestamp = msg.create_time ? new Date(msg.create_time).toLocaleString('zh-CN') : '';
+          formattedMessages.push(`[${senderId}] ${timestamp}\n${msgText}`);
+        }
+      }
+
+      return formattedMessages.join('\n\n---\n\n');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to parse chat_record content');
+      return null;
+    }
+  }
+
+  /**
+   * Extract reply context from message's root_id and parent_id fields.
+   * Issue #846: Support reading quoted/reply message content
+   * @param message - The Feishu message object
+   * @returns Reply context info or undefined if not a reply
+   */
+  private extractReplyContext(message: FeishuMessageEvent['message']): { rootId: string; parentId?: string } | undefined {
+    if (!message.root_id && !message.parent_id) {
+      return undefined;
+    }
+
+    return {
+      rootId: message.root_id || message.parent_id!,
+      parentId: message.parent_id,
+    };
+  }
+
+  /**
+   * Format reply context prefix for AI understanding.
+   * Issue #846: Support reading quoted/reply message content
+   * @param replyContext - The extracted reply context
+   * @returns Formatted prefix string
+   */
+  private formatReplyContextPrefix(replyContext: { rootId: string; parentId?: string } | undefined): string {
+    if (!replyContext) {
+      return '';
+    }
+
+    if (replyContext.parentId && replyContext.rootId !== replyContext.parentId) {
+      return `[此消息是对话中的回复，根消息ID: ${replyContext.rootId}，父消息ID: ${replyContext.parentId}]\n`;
+    }
+    return `[此消息是对话中的回复，回复的消息ID: ${replyContext.rootId}]\n`;
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -292,7 +385,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, root_id, parent_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -377,6 +470,47 @@ export class MessageHandler {
           }],
         });
       }
+      return;
+    }
+
+    // Handle chat_record (packed/forwarded conversation) messages
+    // Issue #846: Support reading packed conversation records
+    if (message_type === 'chat_record') {
+      logger.info(
+        { chatId: chat_id, messageType: message_type, messageId: message_id },
+        'Processing chat_record message'
+      );
+
+      const parsedChatRecord = this.parseChatRecordContent(content);
+      if (!parsedChatRecord) {
+        logger.warn({ messageId: message_id }, 'Failed to parse chat_record content');
+        await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+        return;
+      }
+
+      await messageLogger.logIncomingMessage(
+        message_id,
+        this.extractOpenId(sender) || 'unknown',
+        chat_id,
+        `[聊天记录转发]\n${parsedChatRecord}`,
+        message_type,
+        create_time
+      );
+
+      // Add typing reaction
+      await this.addTypingReaction(message_id);
+
+      // Emit as incoming message with chat record content
+      await this.callbacks.emitMessage({
+        messageId: message_id,
+        chatId: chat_id,
+        userId: this.extractOpenId(sender),
+        content: `[用户转发了一段聊天记录]\n\n${parsedChatRecord}`,
+        messageType: message_type,
+        timestamp: create_time,
+        threadId,
+        metadata: { isChatRecord: true },
+      });
       return;
     }
 
@@ -519,6 +653,10 @@ export class MessageHandler {
     // Add typing reaction only for messages that will be processed
     await this.addTypingReaction(message_id);
 
+    // Issue #846: Extract reply context if this is a reply message
+    const replyContext = this.extractReplyContext({ root_id, parent_id } as FeishuMessageEvent['message']);
+    const replyPrefix = this.formatReplyContextPrefix(replyContext);
+
     // Get chat history context for passive mode
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
@@ -531,16 +669,26 @@ export class MessageHandler {
       );
     }
 
+    // Build metadata object
+    const metadata: Record<string, unknown> = {};
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+    if (replyContext) {
+      metadata.replyContext = replyContext;
+    }
+
     // Emit as incoming message
+    // Issue #846: Include reply context prefix in content if this is a reply
     await this.callbacks.emitMessage({
       messageId: message_id,
       chatId: chat_id,
       userId: this.extractOpenId(sender),
-      content: text,
+      content: replyPrefix + text,
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 

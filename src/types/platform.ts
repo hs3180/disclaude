@@ -10,6 +10,18 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /**
+     * Root message ID for reply threads.
+     * Present when this message is a reply to another message.
+     * Issue #846: Support reading quoted/reply message content
+     */
+    root_id?: string;
+    /**
+     * Parent message ID for nested replies.
+     * Present when this message is a reply to another message.
+     * Issue #846: Support reading quoted/reply message content
+     */
+    parent_id?: string;
     mentions?: Array<{
       key: string;
       id: {
@@ -30,6 +42,41 @@ export interface FeishuMessageEvent {
     };
     tenant_key?: string;
   };
+}
+
+/**
+ * Chat record message structure for forwarded/packed conversations.
+ * Issue #846: Support reading packed conversation records
+ */
+export interface FeishuChatRecordContent {
+  /** List of messages in the packed conversation */
+  messages: Array<{
+    message_id: string;
+    content: string;
+    message_type: string;
+    create_time?: number;
+    sender?: {
+      sender_id?: {
+        open_id?: string;
+        user_id?: string;
+      };
+    };
+  }>;
+}
+
+/**
+ * Parsed chat record message with extracted text content.
+ * Issue #846: Support reading packed conversation records
+ */
+export interface ParsedChatRecord {
+  /** Original messages from the packed conversation */
+  messages: Array<{
+    senderId?: string;
+    content: string;
+    timestamp?: number;
+  }>;
+  /** Formatted text representation for AI context */
+  formattedText: string;
 }
 
 /**
