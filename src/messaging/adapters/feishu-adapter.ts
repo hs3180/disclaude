@@ -87,7 +87,8 @@ export class FeishuAdapter implements IChannelAdapter {
         domain: lark.Domain.Feishu,
       });
     }
-    return this.client;
+    // Client is guaranteed to be initialized at this point
+    return this.client!;
   }
 
   /**

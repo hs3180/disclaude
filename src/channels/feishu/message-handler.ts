@@ -106,8 +106,10 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.appId = options.appId;
-    this.appSecret = options.appSecret;
+    // Issue #1033: appId and appSecret are no longer stored,
+    // as client is managed by LarkClientService
+    void options.appId; // Acknowledge but don't store
+    void options.appSecret; // Acknowledge but don't store
     this.passiveModeManager = options.passiveModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
