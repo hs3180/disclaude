@@ -412,7 +412,7 @@ export class WorkerNode {
 
     this.ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage;
+        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage | FeishuApiResponseMessage;
 
         // Handle command messages
         if (message.type === 'command') {
