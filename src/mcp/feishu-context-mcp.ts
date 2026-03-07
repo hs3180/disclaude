@@ -18,6 +18,11 @@ import {
   generate_quiz,
   create_study_guide,
 } from './tools/index.js';
+import {
+  request_review,
+  request_quick_review,
+  request_batch_review,
+} from './tools/request-review.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
 // Re-export
@@ -877,6 +882,194 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Review Tools (Issue #946: 御书房批奏折体验)
+  {
+    name: 'request_review',
+    description: `Request user review with a streamlined "御书房批奏折" (Imperial Study) experience.
+
+This tool provides a beautiful, intuitive review card with pre-configured action prompts.
+Users can quickly approve, reject, or request changes with one click.
+
+---
+
+## 🎯 主题风格
+
+| 主题 | 风格 | 批准按钮 | 拒绝按钮 | 修改按钮 |
+|------|------|----------|----------|----------|
+| \`imperial\` | 🏛️ 御书房 | 👑 准奏 | ❌ 驳回 | 📝 再议 |
+| \`modern\` | 📋 审批中心 | ✅ 批准 | ❌ 拒绝 | 🔄 需要修改 |
+| \`minimal\` | 简洁 | 同意 | 拒绝 | 修改 |
+
+---
+
+## 使用场景
+
+### 1. 代码变更 Review
+\`\`\`json
+{
+  "title": "PR #123: 修复用户认证 bug",
+  "summary": "修复了 token 过期后无法自动刷新的问题",
+  "chatId": "oc_xxx",
+  "theme": "imperial",
+  "changes": [
+    { "path": "src/auth.ts", "type": "modified", "additions": 10, "deletions": 5 },
+    { "path": "tests/auth.test.ts", "type": "added", "additions": 30 }
+  ],
+  "diffContent": "diff --git a/src/auth.ts...",
+  "context": "PR #123"
+}
+\`\`\`
+
+### 2. 任务完成 Review
+\`\`\`json
+{
+  "title": "任务完成确认",
+  "summary": "已完成用户数据导出功能，共导出 1000 条记录",
+  "chatId": "oc_xxx",
+  "theme": "modern",
+  "details": "- 导出格式: CSV\\n- 文件大小: 2.3MB\\n- 耗时: 5秒"
+}
+\`\`\`
+
+### 3. 配置变更 Review
+\`\`\`json
+{
+  "title": "配置变更请求",
+  "summary": "将 API 超时时间从 30s 调整为 60s",
+  "chatId": "oc_xxx",
+  "theme": "minimal",
+  "changes": [
+    { "path": "config/api.yaml", "type": "modified", "description": "timeout: 30 -> 60" }
+  ]
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **title**: Review title/subject
+- **summary**: Brief description of what needs review
+- **chatId**: Target chat ID
+- **theme**: Visual style - "imperial", "modern", or "minimal" (default: "modern")
+- **changes**: Optional list of file changes with type, additions, deletions
+- **diffContent**: Optional diff content to display
+- **maxDiffLines**: Max diff lines to show (default: 20)
+- **details**: Additional context
+- **context**: Context for action prompts (e.g., "PR #123")
+- **footerNote**: Optional footer note
+
+---
+
+## 用户操作提示
+
+When user interacts, you receive a message like:
+- \`[用户操作] 用户批准。请执行批准后的操作。\`
+- \`[用户操作] 用户拒绝。请执行拒绝后的处理。\`
+- \`[用户操作] 用户请求修改。请根据用户反馈进行修改。\`
+
+---
+
+**Best Practice:** Use "imperial" theme for important decisions to make users feel like an emperor reviewing memorials! 👑`,
+    parameters: z.object({
+      title: z.string(),
+      summary: z.string(),
+      chatId: z.string(),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional(),
+      parentMessageId: z.string().optional(),
+      changes: z.array(z.object({
+        path: z.string(),
+        type: z.enum(['added', 'modified', 'deleted', 'renamed']),
+        description: z.string().optional(),
+        additions: z.number().optional(),
+        deletions: z.number().optional(),
+      })).optional(),
+      diffContent: z.string().optional(),
+      maxDiffLines: z.number().optional(),
+      details: z.string().optional(),
+      context: z.string().optional(),
+      footerNote: z.string().optional(),
+    }),
+    handler: async (params) => {
+      try {
+        const result = await request_review(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Review request failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'request_quick_review',
+    description: `Request a quick review with just title and message.
+
+Simplified version of request_review for simple approve/reject scenarios.
+
+## Example
+\`\`\`json
+{
+  "title": "确认操作",
+  "message": "是否继续执行删除操作？",
+  "chatId": "oc_xxx",
+  "theme": "imperial"
+}
+\`\`\``,
+    parameters: z.object({
+      title: z.string(),
+      message: z.string(),
+      chatId: z.string(),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional(),
+      parentMessageId: z.string().optional(),
+      context: z.string().optional(),
+    }),
+    handler: async (params) => {
+      try {
+        const result = await request_quick_review(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Quick review failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'request_batch_review',
+    description: `Request batch review for multiple items.
+
+Use this when you have multiple items that need approval together.
+
+## Example
+\`\`\`json
+{
+  "title": "批量文件审批",
+  "items": [
+    { "name": "feature-1.ts", "description": "新增用户功能" },
+    { "name": "feature-2.ts", "description": "新增订单功能" },
+    { "name": "test.ts", "description": "单元测试" }
+  ],
+  "chatId": "oc_xxx",
+  "theme": "imperial"
+}
+\`\`\``,
+    parameters: z.object({
+      title: z.string(),
+      items: z.array(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+      })),
+      chatId: z.string(),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional(),
+      parentMessageId: z.string().optional(),
+      context: z.string().optional(),
+    }),
+    handler: async (params) => {
+      try {
+        const result = await request_batch_review(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Batch review failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
