@@ -18,14 +18,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "composite": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "packages"],
+  "exclude": ["node_modules", "dist"],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/primary-node" },
-    { "path": "./packages/worker-node" },
-    { "path": "./packages/mcp-server" }
+    { "path": "../core" }
   ]
 }
