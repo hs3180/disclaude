@@ -99,7 +99,7 @@ function generateMermaidMindmap(topic: string, branches: MindmapNode[]): string 
  */
 function nodeToMarkmapLines(node: MindmapNode, level: number = 1): string[] {
   const lines: string[] = [];
-  const prefix = '  '.repeat(level) + '-';
+  const prefix = `${'  '.repeat(level)}-`;
 
   if (node.children && node.children.length > 0) {
     lines.push(`${prefix} ${node.text}`);
@@ -266,7 +266,9 @@ export async function generate_mindmap_from_outline(params: {
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
+      if (!trimmed) {
+        continue;
+      }
 
       if (trimmed.startsWith('# ')) {
         // Main topic - save previous branch and start new one
@@ -308,7 +310,7 @@ export async function generate_mindmap_from_outline(params: {
     }
 
     // Generate mindmap using the parsed structure
-    return generate_mindmap({
+    return await generate_mindmap({
       topic: title,
       branches,
       format,

@@ -4,7 +4,7 @@
  * @module mcp/tools/mindmap-generator.test
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { generate_mindmap, generate_mindmap_from_outline } from './mindmap-generator.js';
@@ -97,7 +97,7 @@ describe('generate_mindmap', () => {
   });
 
   it('should save to file when saveToFile is specified', async () => {
-    const tempDir = '/tmp/mindmap-test-' + Date.now();
+    const tempDir = `/tmp/mindmap-test-${Date.now()}`;
     await fs.mkdir(tempDir, { recursive: true });
     const filePath = path.join(tempDir, 'test-mindmap.md');
 
