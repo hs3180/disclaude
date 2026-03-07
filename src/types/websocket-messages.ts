@@ -134,3 +134,49 @@ export interface CardContextMessage {
   /** Node ID that sent the card (for routing callbacks) */
   nodeId: string;
 }
+
+/**
+ * Feishu API action types supported by the WS routing.
+ * Issue #1036: WebSocket request routing (WorkerNode → PrimaryNode)
+ */
+export type FeishuApiAction = 'sendMessage' | 'sendCard' | 'uploadFile' | 'getBotInfo';
+
+/**
+ * Message sent from Worker Node to Primary Node for Feishu API requests.
+ * Enables Worker Node to make Feishu API calls via Primary Node's LarkClientService.
+ *
+ * Issue #1036: WebSocket request routing (WorkerNode → PrimaryNode)
+ */
+export interface FeishuApiRequestMessage {
+  type: 'feishu-api-request';
+  /** Unique request ID for response matching */
+  requestId: string;
+  /** Action to perform */
+  action: FeishuApiAction;
+  /** Action parameters */
+  params: {
+    chatId?: string;
+    text?: string;
+    card?: Record<string, unknown>;
+    filePath?: string;
+    threadId?: string;
+    description?: string;
+  };
+}
+
+/**
+ * Message sent from Primary Node to Worker Node for Feishu API responses.
+ *
+ * Issue #1036: WebSocket request routing (WorkerNode → PrimaryNode)
+ */
+export interface FeishuApiResponseMessage {
+  type: 'feishu-api-response';
+  /** Request ID matching the original request */
+  requestId: string;
+  /** Whether the request was successful */
+  success: boolean;
+  /** Response data (on success) */
+  data?: unknown;
+  /** Error message (on failure) */
+  error?: string;
+}

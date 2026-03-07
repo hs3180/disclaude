@@ -21,7 +21,7 @@ import { createLogger } from '../utils/logger.js';
 import type { FileStorageService, FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { createFileTransferAPIHandler } from '../file-transfer/node-transfer/file-api.js';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
-import type { FeedbackMessage, RegisterMessage } from '../types/websocket-messages.js';
+import type { FeedbackMessage, RegisterMessage, FeishuApiRequestMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 import type { NodeCapabilities } from './types.js';
 
 const logger = createLogger('WebSocketServerService');
@@ -51,6 +51,14 @@ export interface WebSocketServerServiceConfig {
    * Issue #935: Called when a Worker Node sends a card message.
    */
   registerCardContext?: (chatId: string, nodeId: string, isRemote: boolean) => void;
+  /**
+   * Handle Feishu API requests from Worker Nodes.
+   * Issue #1036: Called when a Worker Node requests a Feishu API call.
+   */
+  handleFeishuApiRequest?: (
+    request: FeishuApiRequestMessage,
+    sendResponse: (response: FeishuApiResponseMessage) => void
+  ) => Promise<void>;
 }
 
 /**
@@ -72,6 +80,11 @@ export class WebSocketServerService extends EventEmitter {
   private readonly fileStorageConfig?: FileStorageConfig;
   // Issue #935: Card context registration callback
   private readonly registerCardContext?: (chatId: string, nodeId: string, isRemote: boolean) => void;
+  // Issue #1036: Feishu API request handler
+  private readonly handleFeishuApiRequest?: (
+    request: FeishuApiRequestMessage,
+    sendResponse: (response: FeishuApiResponseMessage) => void
+  ) => Promise<void>;
 
   private httpServer?: http.Server;
   private wss?: WebSocketServer;
@@ -89,6 +102,7 @@ export class WebSocketServerService extends EventEmitter {
     this.getCapabilities = config.getCapabilities;
     this.getChannelIds = config.getChannelIds;
     this.registerCardContext = config.registerCardContext;
+    this.handleFeishuApiRequest = config.handleFeishuApiRequest;
   }
 
   /**
@@ -177,6 +191,36 @@ export class WebSocketServerService extends EventEmitter {
         if (message.type === 'register') {
           const regMsg = message as RegisterMessage;
           currentNodeId = this.execNodeRegistry.registerNode(ws, regMsg, clientIp);
+          return;
+        }
+
+        // Issue #1036: Handle Feishu API request from Worker Nodes
+        if (message.type === 'feishu-api-request') {
+          const apiRequest = message as FeishuApiRequestMessage;
+          if (this.handleFeishuApiRequest) {
+            const sendResponse = (response: FeishuApiResponseMessage) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(response));
+              }
+            };
+            this.handleFeishuApiRequest(apiRequest, sendResponse).catch((error) => {
+              logger.error({ err: error, requestId: apiRequest.requestId }, 'Failed to handle Feishu API request');
+              sendResponse({
+                type: 'feishu-api-response',
+                requestId: apiRequest.requestId,
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+          } else {
+            // No handler configured, send error response
+            ws.send(JSON.stringify({
+              type: 'feishu-api-response',
+              requestId: apiRequest.requestId,
+              success: false,
+              error: 'Feishu API routing not configured on this Primary Node',
+            }));
+          }
           return;
         }
 
