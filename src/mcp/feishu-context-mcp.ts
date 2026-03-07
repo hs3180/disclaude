@@ -1,5 +1,5 @@
 /**
- * Feishu Context MCP Tools - In-process tool implementation.
+ * Context MCP Tools - In-process tool implementation.
  *
  * @module mcp/feishu-context-mcp
  */
@@ -7,33 +7,40 @@
 import { z } from 'zod';
 import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import {
-  send_user_feedback,
-  send_file_to_feishu,
-  update_card,
+  send_message,
+  send_file,
   wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
+  generate_summary,
+  generate_qa_pairs,
+  generate_flashcards,
+  generate_quiz,
+  create_study_guide,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
-// Re-export for backward compatibility
+// Re-export
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
 export { resolvePendingInteraction } from './tools/card-interaction.js';
-export { send_user_feedback } from './tools/send-message.js';
-export { send_file_to_feishu } from './tools/send-file.js';
-export { update_card, wait_for_interaction } from './tools/card-interaction.js';
+export { send_message } from './tools/send-message.js';
+export { send_file } from './tools/send-file.js';
+export { wait_for_interaction } from './tools/card-interaction.js';
 export {
   send_interactive_message,
   generateInteractionPrompt,
   getActionPrompts,
+  startIpcServer,
+  stopIpcServer,
+  isIpcServerRunning,
 } from './tools/interactive-message.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
 startIpcServer().catch((error) => {
   // Log error but don't fail - IPC is optional enhancement
-  console.error('[feishu-context-mcp] Failed to start IPC server:', error);
+  console.error('[context-mcp] Failed to start IPC server:', error);
 });
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
@@ -41,28 +48,24 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 }
 
 export const feishuContextTools = {
-  send_user_feedback: {
-    description: `Send a message to a Feishu chat. Requires explicit format: "text" or "card".
+  send_message: {
+    description: `Send a simple message to a chat.
 
-**IMPORTANT: "format" parameter is REQUIRED for every call.**
+**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
 
 ---
 
-## Correct Usage Examples
+## Usage
 
-### Text Message
+### Text Message (Recommended)
 \`\`\`json
 {"content": "Hello world", "format": "text", "chatId": "oc_xxx"}
 \`\`\`
 
-### Card Message
+### Display-Only Card (No interactions)
 \`\`\`json
 {
-  "content": {
-    "config": {"wide_screen_mode": true},
-    "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},
-    "elements": [{"tag": "markdown", "content": "**Bold** text"}]
-  },
+  "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
   "format": "card",
   "chatId": "oc_xxx"
 }
@@ -70,9 +73,11 @@ export const feishuContextTools = {
 
 ---
 
-**Thread Support:** Use parentMessageId to reply to a specific message.
+## ⚠️ Important Notes
 
-⚠️ **Markdown Tables NOT Supported** - Use column_set instead.
+- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
+- **Card content**: Must be an OBJECT (not JSON string)
+- **Thread reply**: Use parentMessageId parameter
 
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
     parameters: {
@@ -85,25 +90,16 @@ export const feishuContextTools = {
       },
       required: ['content', 'format', 'chatId'],
     },
-    handler: send_user_feedback,
+    handler: send_message,
   },
-  send_file_to_feishu: {
-    description: 'Send a file to a Feishu chat.',
+  send_file: {
+    description: 'Send a file to a chat.',
     parameters: {
       type: 'object',
       properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
       required: ['filePath', 'chatId'],
     },
-    handler: send_file_to_feishu,
-  },
-  update_card: {
-    description: 'Update an existing interactive card message.',
-    parameters: {
-      type: 'object',
-      properties: { messageId: { type: 'string' }, card: { type: 'object' }, chatId: { type: 'string' } },
-      required: ['messageId', 'card', 'chatId'],
-    },
-    handler: update_card,
+    handler: send_file,
   },
   wait_for_interaction: {
     description: 'Wait for the user to interact with a card.',
@@ -192,7 +188,7 @@ export const feishuContextTools = {
 
 ## Parameters
 
-- **card**: The interactive card JSON structure (same as send_user_feedback with format="card")
+- **card**: The interactive card JSON structure (same as send_message with format="card")
 - **actionPrompts**: Map of action values to prompt templates
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
@@ -340,21 +336,21 @@ In actionPrompts, you can use these placeholders:
 
 export const feishuToolDefinitions: InlineToolDefinition[] = [
   {
-    name: 'send_user_feedback',
-    description: `Send a message to a Feishu chat. Requires explicit format: "text" or "card".
+    name: 'send_message',
+    description: `Send a simple message to a chat.
 
-**IMPORTANT: "format" parameter is REQUIRED for every call.**
+**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
 
 ---
 
-## Correct Usage Examples
+## Usage
 
-### Text Message
+### Text Message (Recommended)
 \`\`\`json
 {"content": "Hello", "format": "text", "chatId": "oc_xxx"}
 \`\`\`
 
-### Card Message
+### Display-Only Card (No interactions)
 \`\`\`json
 {
   "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
@@ -365,18 +361,11 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
 
 ---
 
-## Card Format Requirements
+## ⚠️ Important Notes
 
-When \`format: "card"\`, content MUST include:
-- \`config\`: Object
-- \`header\`: Object with \`title\`
-- \`elements\`: Array of card elements
-
----
-
-**Thread Support:** Use parentMessageId to reply to a specific message.
-
-⚠️ **Markdown Tables NOT Supported** - Use column_set instead.
+- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
+- **Card content**: Must be an OBJECT (not JSON string)
+- **Thread reply**: Use parentMessageId parameter
 
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
     parameters: z.object({
@@ -393,36 +382,23 @@ When \`format: "card"\`, content MUST include:
         return toolSuccess('❌ Error: When format="text", content must be a STRING.');
       }
       try {
-        const result = await send_user_feedback({ content, format, chatId, parentMessageId });
+        const result = await send_message({ content, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
-        return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolSuccess(`⚠️ Message send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
   {
-    name: 'send_file_to_feishu',
-    description: 'Send a file to a Feishu chat.',
+    name: 'send_file',
+    description: 'Send a file to a chat.',
     parameters: z.object({ filePath: z.string(), chatId: z.string() }),
     handler: async ({ filePath, chatId }) => {
       try {
-        const result = await send_file_to_feishu({ filePath, chatId });
+        const result = await send_file({ filePath, chatId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'update_card',
-    description: 'Update an existing interactive card message.',
-    parameters: z.object({ messageId: z.string(), card: z.object({}).passthrough(), chatId: z.string() }),
-    handler: async ({ messageId, card, chatId }) => {
-      try {
-        const result = await update_card({ messageId, card, chatId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Card update failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -520,7 +496,7 @@ When \`format: "card"\`, content MUST include:
 
 ## Parameters
 
-- **card**: The interactive card JSON structure (same as send_user_feedback with format="card")
+- **card**: The interactive card JSON structure (same as send_message with format="card")
 - **actionPrompts**: Map of action values to prompt templates
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
@@ -667,6 +643,243 @@ In actionPrompts, you can use these placeholders:
       }
     },
   },
+  // NotebookLM Study Guide Tools (Issue #950 M4)
+  {
+    name: 'generate_summary',
+    description: `Generate a structured summary from content.
+
+Part of NotebookLM features - generates summaries in different styles.
+
+## Parameters
+- **content**: The text content to summarize
+- **maxLength**: Maximum length in words (default: 200)
+- **style**: Summary style - "brief", "detailed", or "bullet" (default: "bullet")
+
+## Styles
+- **brief**: 2-3 sentence concise summary
+- **detailed**: Comprehensive summary with sections
+- **bullet**: Bullet-point summary of main topics
+
+## Example
+\`\`\`json
+{
+  "content": "Long text to summarize...",
+  "maxLength": 150,
+  "style": "bullet"
+}
+\`\`\``,
+    parameters: z.object({
+      content: z.string(),
+      maxLength: z.number().optional(),
+      style: z.enum(['brief', 'detailed', 'bullet']).optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_summary(options);
+        return Promise.resolve(toolSuccess(result.success
+          ? `Summary (${result.wordCount} words):\n\n${result.summary}`
+          : `⚠️ ${result.error}`));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Summary generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  {
+    name: 'generate_qa_pairs',
+    description: `Generate Q&A pairs from content.
+
+Part of NotebookLM features - creates question-answer pairs for study.
+
+## Parameters
+- **content**: The text content to generate Q&A from
+- **count**: Number of Q&A pairs to generate (default: 5)
+- **includeDifficulty**: Include difficulty ratings (default: true)
+- **focusTopics**: Optional topics to focus on
+
+## Example
+\`\`\`json
+{
+  "content": "Learning material...",
+  "count": 10,
+  "includeDifficulty": true,
+  "focusTopics": ["key concept 1", "key concept 2"]
+}
+\`\`\``,
+    parameters: z.object({
+      content: z.string(),
+      count: z.number().optional(),
+      includeDifficulty: z.boolean().optional(),
+      focusTopics: z.array(z.string()).optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_qa_pairs(options);
+        return Promise.resolve(toolSuccess(result.success
+          ? `Q&A Generation (${result.count} pairs):\n\n${result.qaPairs[0]?.question || 'No pairs generated'}`
+          : `⚠️ ${result.error}`));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Q&A generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  {
+    name: 'generate_flashcards',
+    description: `Generate flashcards from content.
+
+Part of NotebookLM features - creates flashcards for spaced repetition learning.
+
+## Parameters
+- **content**: The text content to generate flashcards from
+- **count**: Number of flashcards to generate (default: 10)
+- **deckName**: Name for the flashcard deck (default: "Study Deck")
+- **format**: Output format - "json", "anki", or "csv" (default: "json")
+
+## Example
+\`\`\`json
+{
+  "content": "Study material...",
+  "count": 20,
+  "deckName": "Machine Learning Basics",
+  "format": "anki"
+}
+\`\`\`
+
+## Formats
+- **json**: Returns structured flashcard data
+- **anki**: Returns tab-separated format for Anki import
+- **csv**: Returns CSV format`,
+    parameters: z.object({
+      content: z.string(),
+      count: z.number().optional(),
+      deckName: z.string().optional(),
+      format: z.enum(['json', 'anki', 'csv']).optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_flashcards(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        let output = `Flashcards (${result.count} cards, Deck: "${result.flashcards[0]?.deck || 'Study Deck'}"):\n\n`;
+        if (options.format === 'anki' && result.ankiOutput) {
+          output += result.ankiOutput;
+        } else if (options.format === 'csv' && result.csvOutput) {
+          output += result.csvOutput;
+        } else {
+          output += result.flashcards[0]?.front || 'No flashcards generated';
+        }
+        return Promise.resolve(toolSuccess(output));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Flashcard generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  {
+    name: 'generate_quiz',
+    description: `Generate quiz questions from content.
+
+Part of NotebookLM features - creates quiz questions for assessment.
+
+## Parameters
+- **content**: The text content to generate quiz from
+- **count**: Number of questions to generate (default: 10)
+- **questionTypes**: Types to include (default: all types)
+  - "multiple_choice": Multiple choice with 4 options
+  - "true_false": True/false statements
+  - "fill_blank": Fill in the blank questions
+- **includeExplanations**: Include answer explanations (default: true)
+- **totalPoints**: Total points for the quiz (default: 100)
+
+## Example
+\`\`\`json
+{
+  "content": "Course material...",
+  "count": 15,
+  "questionTypes": ["multiple_choice", "true_false"],
+  "includeExplanations": true,
+  "totalPoints": 50
+}
+\`\`\``,
+    parameters: z.object({
+      content: z.string(),
+      count: z.number().optional(),
+      questionTypes: z.array(z.enum(['multiple_choice', 'true_false', 'fill_blank'])).optional(),
+      includeExplanations: z.boolean().optional(),
+      totalPoints: z.number().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_quiz(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        return Promise.resolve(toolSuccess(`Quiz (${result.count} questions, ${result.totalPoints} points):\n\n${result.markdownQuiz || 'No quiz generated'}`));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Quiz generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  {
+    name: 'create_study_guide',
+    description: `Create a complete study guide with all learning materials.
+
+Part of NotebookLM features - generates comprehensive study materials including:
+- Summary of the content
+- Q&A pairs for review
+- Flashcards for memorization
+- Quiz for self-assessment
+
+## Parameters
+- **content**: The text content to create study guide from
+- **title**: Title for the study guide (default: "Study Guide")
+- **include**: Which components to include (default: all)
+  - summary: boolean
+  - qa: boolean
+  - flashcards: boolean
+  - quiz: boolean
+- **outputPath**: Optional file path to save the study guide
+
+## Example
+\`\`\`json
+{
+  "content": "Course material...",
+  "title": "Machine Learning Study Guide",
+  "include": {
+    "summary": true,
+    "qa": true,
+    "flashcards": true,
+    "quiz": true
+  }
+}
+\`\`\``,
+    parameters: z.object({
+      content: z.string(),
+      title: z.string().optional(),
+      include: z.object({
+        summary: z.boolean().optional(),
+        qa: z.boolean().optional(),
+        flashcards: z.boolean().optional(),
+        quiz: z.boolean().optional(),
+      }).optional(),
+      outputPath: z.string().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = create_study_guide(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        let output = 'Study Guide created successfully!\n';
+        if (result.outputPath) {
+          output += `Saved to: ${result.outputPath}\n\n`;
+        }
+        output += result.studyGuide;
+        return Promise.resolve(toolSuccess(output));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
 ];
 
 export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().createInlineTool(def));
@@ -674,7 +887,7 @@ export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().cre
 export function createFeishuSdkMcpServer() {
   return getProvider().createMcpServer({
     type: 'inline',
-    name: 'feishu-context',
+    name: 'context-mcp',
     version: '1.0.0',
     tools: feishuToolDefinitions,
   });

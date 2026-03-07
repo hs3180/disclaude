@@ -74,6 +74,10 @@ import { ScheduleManagement } from './schedule-management.js';
 import { buildCommandServices } from './command-services.js';
 // Issue #935: Card action routing to Worker Nodes
 import { CardActionRouter } from './card-action-router.js';
+// Issue #455: Skill Agent System
+import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
+// Issue #1032: Unified Lark Client Service
+import { initLarkClientService, getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -123,6 +127,8 @@ export class PrimaryNode extends EventEmitter {
   private scheduleManager?: ScheduleManager;
   private scheduleFileScanner?: ScheduleFileScanner;
   private scheduleManagement?: ScheduleManagement;
+  // Skill Agent management (Issue #455)
+  private skillAgentManager?: SkillAgentManager;
 
   // Local execution
   private agentPool?: AgentPool;
@@ -149,6 +155,15 @@ export class PrimaryNode extends EventEmitter {
     // Store Feishu credentials for group management
     this.feishuAppId = config.appId || Config.FEISHU_APP_ID;
     this.feishuAppSecret = config.appSecret || Config.FEISHU_APP_SECRET;
+
+    // Issue #1032: Initialize unified LarkClientService
+    if (this.feishuAppId && this.feishuAppSecret) {
+      initLarkClientService({
+        appId: this.feishuAppId,
+        appSecret: this.feishuAppSecret,
+      });
+      logger.info('LarkClientService initialized in PrimaryNode');
+    }
 
     // Initialize ExecNodeRegistry
     this.execNodeRegistry = new ExecNodeRegistry({
@@ -181,6 +196,12 @@ export class PrimaryNode extends EventEmitter {
     // Issue #463: Initialize CommandRegistry with default commands
     const commandRegistry = getCommandRegistry();
     registerDefaultCommands(commandRegistry, () => commandRegistry.generateHelpText());
+
+    // Issue #455: Initialize SkillAgentManager
+    this.skillAgentManager = initSkillAgentManager({
+      sendMessage: this.sendMessage.bind(this),
+      sendCard: this.sendCard.bind(this),
+    });
 
     // Register custom channels if provided
     if (config.channels) {
@@ -232,13 +253,20 @@ export class PrimaryNode extends EventEmitter {
 
     // Create REST channel if enabled
     if (config.enableRestChannel !== false) {
+      // Issue #1028: Use full REST channel config from config file if available
+      const restConfig = config.restChannelConfig || {};
       const restChannel = new RestChannel({
         id: 'rest',
-        port: config.restPort || 3000,
-        authToken: config.restAuthToken,
+        port: config.restPort || restConfig.port || 3000,
+        host: restConfig.host,
+        apiPrefix: restConfig.apiPrefix,
+        authToken: config.restAuthToken || restConfig.authToken,
+        enableCors: restConfig.enableCors,
+        fileStorageDir: restConfig.fileStorageDir,
+        maxFileSize: restConfig.maxFileSize,
       });
       this.registerChannel(restChannel);
-      logger.info({ port: config.restPort || 3000 }, 'REST channel registered');
+      logger.info({ port: config.restPort || restConfig.port || 3000 }, 'REST channel registered');
     }
 
     logger.info({
@@ -268,8 +296,15 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Get or create Feishu client for group management with timeout configuration.
+   * Issue #1032: Now uses unified LarkClientService when available.
    */
   private getFeishuClient(): lark.Client {
+    // Prefer LarkClientService if initialized
+    if (isLarkClientServiceInitialized()) {
+      return getLarkClientService().getClient();
+    }
+
+    // Fallback to creating client directly (for backward compatibility)
     if (!this.feishuClient) {
       if (!this.feishuAppId || !this.feishuAppSecret) {
         throw new Error('Feishu credentials not configured');
@@ -649,6 +684,7 @@ export class PrimaryNode extends EventEmitter {
       taskStateManager,
       getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
       getChannels: () => this.messageRouter.getChannels(),
+      skillAgentManager: this.skillAgentManager!,
     });
 
     const context = {

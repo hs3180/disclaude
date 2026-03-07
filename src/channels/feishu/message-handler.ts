@@ -13,7 +13,7 @@ import { messageLogger } from '../../feishu/message-logger.js';
 import { FeishuFileHandler } from '../../platforms/feishu/feishu-file-handler.js';
 import { FeishuMessageSender } from '../../platforms/feishu/feishu-message-sender.js';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
 import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
@@ -79,8 +79,7 @@ export interface MessageCallbacks {
  * Handles incoming Feishu messages and card actions.
  */
 export class MessageHandler {
-  private appId: string;
-  private appSecret: string;
+  // Issue #1033: appId and appSecret are no longer needed,  // kept for backward compatibility
   private client?: lark.Client;
   private messageSender?: FeishuMessageSender;
   private fileHandler: FeishuFileHandler;
@@ -107,8 +106,10 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.appId = options.appId;
-    this.appSecret = options.appSecret;
+    // Issue #1033: appId and appSecret are no longer stored,
+    // as client is managed by LarkClientService
+    void options.appId; // Acknowledge but don't store
+    void options.appSecret; // Acknowledge but don't store
     this.passiveModeManager = options.passiveModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
@@ -138,9 +139,14 @@ export class MessageHandler {
 
   /**
    * Initialize the handler (create client and message sender).
+   * Issue #1033: Use unified LarkClientService instead of creating own client
    */
   initialize(): void {
-    this.client = createFeishuClient(this.appId, this.appSecret);
+    if (!isLarkClientServiceInitialized()) {
+      logger.error('LarkClientService not initialized, MessageHandler cannot start');
+      return;
+    }
+    this.client = getLarkClientService().getClient();
     this.messageSender = new FeishuMessageSender({
       client: this.client,
       logger,
@@ -179,9 +185,12 @@ export class MessageHandler {
 
   /**
    * Clear the client (on stop).
+   * Issue #1033: No longer needed as client is managed by LarkClientService.
+   * Kept for API compatibility but does nothing.
    */
   clearClient(): void {
-    this.client = undefined;
+    // Client lifecycle is now managed by LarkClientService
+    // Clear message sender but keep client reference for type safety
     this.messageSender = undefined;
   }
 

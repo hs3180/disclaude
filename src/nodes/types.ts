@@ -6,6 +6,7 @@
 
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import type { IChannel } from '../channels/index.js';
+import type { RestChannelConfig } from '../channels/rest-channel.js';
 
 /**
  * Node type identifier.
@@ -44,6 +45,12 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
   enableRestChannel?: boolean;
   /** REST channel auth token */
   restAuthToken?: string;
+  /**
+   * Full REST channel configuration from config file.
+   * Takes precedence over restPort and restAuthToken if provided.
+   * @see Issue #1028
+   */
+  restChannelConfig?: RestChannelConfig;
   /** Feishu App ID */
   appId?: string;
   /** Feishu App Secret */

@@ -458,17 +458,17 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const capabilities = this.callbacks.getCapabilities?.(chatId);
     const supportedMcpTools = capabilities?.supportedMcpTools;
 
-    // Determine if we should include Feishu MCP server
-    const feishuTools = ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction'];
-    const shouldIncludeFeishuMcp = supportedMcpTools === undefined ||
-      feishuTools.some(tool => supportedMcpTools.includes(tool));
+    // Determine if we should include Context MCP server
+    const contextTools = ['send_message', 'send_file', 'wait_for_interaction'];
+    const shouldIncludeContextMcp = supportedMcpTools === undefined ||
+      contextTools.some(tool => supportedMcpTools.includes(tool));
 
     // Add MCP servers
     const mcpServers: Record<string, unknown> = {};
 
-    // Only add Feishu MCP server if channel supports any Feishu tools
-    if (shouldIncludeFeishuMcp) {
-      mcpServers['feishu-context'] = createFeishuSdkMcpServer();
+    // Only add Context MCP server if channel supports any context tools
+    if (shouldIncludeContextMcp) {
+      mcpServers['context-mcp'] = createFeishuSdkMcpServer();
     }
 
     // Merge configured external MCP servers from config file

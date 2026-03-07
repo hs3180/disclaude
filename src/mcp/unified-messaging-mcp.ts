@@ -31,7 +31,7 @@
 import { z } from 'zod';
 import { createLogger } from '../utils/logger.js';
 import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
-import { send_user_feedback, setMessageSentCallback, type MessageSentCallback } from './feishu-context-mcp.js';
+import { send_message as send_message_impl, setMessageSentCallback, type MessageSentCallback } from './feishu-context-mcp.js';
 
 const logger = createLogger('UnifiedMessagingMCP');
 
@@ -112,9 +112,9 @@ export async function send_message(params: {
   }, 'send_message called');
 
   try {
-    // Use the existing send_user_feedback implementation
+    // Use the existing send_message implementation
     // It already handles graceful degradation for non-Feishu channels
-    const result = await send_user_feedback({
+    const result = await send_message_impl({
       content,
       format,
       chatId,
