@@ -94,12 +94,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private taskTracker: TaskTracker;
   private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
-  // Issue #959: WebSocket reconnection watchdog
-  private lastWsActivityTime: number = 0;
-  private reconnectWatchdog: NodeJS.Timeout | null = null;
-  private readonly WATCHDOG_CHECK_INTERVAL = 60 * 1000; // Check every minute
-  private readonly WATCHDOG_TIMEOUT = 5 * 60 * 1000; // 5 minutes without activity
-
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
@@ -157,7 +151,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Create event dispatcher
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
-        this.updateWsActivityTime(); // Issue #959: Track WebSocket activity
         try {
           await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
@@ -165,7 +158,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'card.action.trigger': async (data: unknown) => {
-        this.updateWsActivityTime(); // Issue #959: Track WebSocket activity
         try {
           await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
@@ -173,10 +165,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': () => {
-        this.updateWsActivityTime(); // Issue #959: Track WebSocket activity
+        // No action needed for read receipts
       },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
-        this.updateWsActivityTime(); // Issue #959: Track WebSocket activity
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
         } catch (error) {
@@ -184,7 +175,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.chat.member.added_v1': async (data: unknown) => {
-        this.updateWsActivityTime(); // Issue #959: Track WebSocket activity
         try {
           await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
         } catch (error) {
@@ -211,9 +201,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     await this.wsClient.start({ eventDispatcher });
 
-    // Issue #959: Start WebSocket reconnection watchdog
-    this.startReconnectWatchdog();
-
     // Issue #992: Start IPC server for cross-process interactive contexts
     // This must be called during channel startup, not at module load time,
     // to avoid test timeouts (see PR #982)
@@ -228,9 +215,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected doStop(): Promise<void> {
-    // Issue #959: Stop WebSocket reconnection watchdog
-    this.stopReconnectWatchdog();
-
     this.wsClient = undefined;
     this.feishuMessageHandler.clearClient();
 
@@ -278,85 +262,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   protected checkHealth(): boolean {
     return this.wsClient !== undefined;
-  }
-
-  // Issue #959: WebSocket reconnection watchdog methods
-
-  /**
-   * Start the reconnection watchdog.
-   * Monitors WebSocket health and triggers reconnection if needed.
-   */
-  private startReconnectWatchdog(): void {
-    this.lastWsActivityTime = Date.now();
-
-    this.reconnectWatchdog = setInterval(() => {
-      const timeSinceLastActivity = Date.now() - this.lastWsActivityTime;
-
-      if (timeSinceLastActivity > this.WATCHDOG_TIMEOUT) {
-        logger.warn(
-          {
-            timeSinceLastActivity: Math.round(timeSinceLastActivity / 1000),
-            timeoutSeconds: this.WATCHDOG_TIMEOUT / 1000,
-          },
-          'WebSocket may be disconnected, no activity for extended period'
-        );
-
-        // Attempt to check reconnect status from SDK
-        this.checkAndLogReconnectStatus();
-      } else {
-        logger.debug(
-          {
-            secondsSinceLastActivity: Math.round(timeSinceLastActivity / 1000),
-          },
-          'WebSocket health check passed'
-        );
-      }
-    }, this.WATCHDOG_CHECK_INTERVAL);
-
-    logger.info(
-      {
-        checkIntervalSeconds: this.WATCHDOG_CHECK_INTERVAL / 1000,
-        timeoutSeconds: this.WATCHDOG_TIMEOUT / 1000,
-      },
-      'WebSocket reconnection watchdog started'
-    );
-  }
-
-  /**
-   * Stop the reconnection watchdog.
-   */
-  private stopReconnectWatchdog(): void {
-    if (this.reconnectWatchdog) {
-      clearInterval(this.reconnectWatchdog);
-      this.reconnectWatchdog = null;
-      logger.info('WebSocket reconnection watchdog stopped');
-    }
-  }
-
-  /**
-   * Update the last WebSocket activity time.
-   * Should be called when any WebSocket activity is detected.
-   */
-  updateWsActivityTime(): void {
-    this.lastWsActivityTime = Date.now();
-  }
-
-  /**
-   * Check and log the reconnection status from SDK.
-   */
-  private checkAndLogReconnectStatus(): void {
-    try {
-      // Try to get reconnect info from SDK if available
-      const reconnectInfo = (this.wsClient as unknown as { getReconnectInfo?: () => unknown })?.getReconnectInfo?.();
-      if (reconnectInfo) {
-        logger.info(
-          { reconnectInfo },
-          'SDK reconnection status'
-        );
-      }
-    } catch (error) {
-      logger.debug({ err: error }, 'Unable to get reconnect info from SDK');
-    }
   }
 
   /**
