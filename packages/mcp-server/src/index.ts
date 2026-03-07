@@ -3,13 +3,16 @@
  *
  * MCP Server process for disclaude.
  *
- * This package will contain:
- * - MCP tools
- * - IPC client
+ * This package contains:
+ * - MCP tool types
+ * - IPC client integration
  * - MCP resources
  *
- * Code will be migrated from src/ in subsequent PRs.
+ * Code is being migrated from src/mcp/ incrementally.
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Types
+export * from './types/index.js';
+
+// Version
 export const MCP_SERVER_VERSION = '0.0.1';
