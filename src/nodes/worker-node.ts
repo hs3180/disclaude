@@ -33,7 +33,7 @@ import {
 } from '../schedule/index.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage } from '../types/websocket-messages.js';
+import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../file-transfer/node-transfer/file-client.js';
 import type { WorkerNodeConfig, NodeCapabilities } from './types.js';
 
@@ -72,6 +72,14 @@ export class WorkerNode {
   private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
 
+  // Issue #1036: Pending Feishu API requests (requestId -> handlers)
+  private pendingFeishuApiRequests = new Map<string, {
+    resolve: (data: unknown) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+  }>();
+  private feishuApiRequestTimeout: number;
+
   // Scheduler
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
@@ -82,6 +90,7 @@ export class WorkerNode {
     this.nodeName = config.nodeName || `Worker-${this.nodeId.slice(0, 8)}`;
     this.primaryUrl = config.primaryUrl;
     this.reconnectInterval = config.reconnectInterval || 3000;
+    this.feishuApiRequestTimeout = config.feishuApiRequestTimeout || 30000; // Default 30 seconds
 
     // Create FileClient for file transfer with Primary Node
     const primaryHttpUrl = this.primaryUrl.replace(/^ws/, 'http');
@@ -526,6 +535,29 @@ export class WorkerNode {
           return;
         }
 
+        // Issue #1036: Handle Feishu API response from Primary Node
+        if (message.type === 'feishu-api-response') {
+          const apiResponse = message as FeishuApiResponseMessage;
+          const { requestId, success, data, error } = apiResponse;
+          const pending = this.pendingFeishuApiRequests.get(requestId);
+
+          if (pending) {
+            clearTimeout(pending.timeout);
+            this.pendingFeishuApiRequests.delete(requestId);
+
+            if (success) {
+              pending.resolve(data);
+              logger.debug({ requestId }, 'Feishu API request succeeded');
+            } else {
+              pending.reject(new Error(error || 'Unknown error'));
+              logger.debug({ requestId, error }, 'Feishu API request failed');
+            }
+          } else {
+            logger.warn({ requestId }, 'Received response for unknown Feishu API request');
+          }
+          return;
+        }
+
         // Unknown message type
         logger.warn({ type: (message as { type?: string }).type }, 'Unknown message type');
       } catch (error) {
@@ -624,6 +656,13 @@ export class WorkerNode {
     // Clear active feedback channels
     this.activeFeedbackChannels.clear();
 
+    // Issue #1036: Clear pending Feishu API requests
+    for (const [requestId, pending] of this.pendingFeishuApiRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('WorkerNode is shutting down'));
+    }
+    this.pendingFeishuApiRequests.clear();
+
     logger.info('WorkerNode stopped');
   }
 
@@ -632,5 +671,114 @@ export class WorkerNode {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  // ============================================================================
+  // Feishu API Request Routing (Issue #1036)
+  // ============================================================================
+
+  /**
+   * Send a Feishu API request to the Primary Node.
+   * This allows Worker Node to make Feishu API calls through the Primary Node's LarkClientService.
+   *
+   * @param action - The action to perform (sendMessage, sendCard, uploadFile, getBotInfo)
+   * @param params - Action parameters
+   * @returns Promise that resolves with the response data
+   */
+  async sendFeishuApiRequest(
+    action: 'sendMessage' | 'sendCard' | 'uploadFile' | 'getBotInfo',
+    params: {
+      chatId?: string;
+      text?: string;
+      card?: Record<string, unknown>;
+      filePath?: string;
+      threadId?: string;
+      description?: string;
+    }
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      // Check WebSocket connection
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected to Primary Node'));
+        return;
+      }
+
+      // Generate unique request ID
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Set up timeout
+      const timeout = setTimeout(() => {
+        this.pendingFeishuApiRequests.delete(requestId);
+        reject(new Error(`Feishu API request timeout after ${this.feishuApiRequestTimeout}ms`));
+      }, this.feishuApiRequestTimeout);
+
+      // Store pending request
+      this.pendingFeishuApiRequests.set(requestId, {
+        resolve: resolve as (data: unknown) => void,
+        reject,
+        timeout,
+      });
+
+      // Send request
+      const request = {
+        type: 'feishu-api-request',
+        requestId,
+        action,
+        params,
+      };
+
+      this.ws.send(JSON.stringify(request));
+      logger.debug({ requestId, action }, 'Feishu API request sent to Primary Node');
+    });
+  }
+
+  /**
+   * Send a text message through the Primary Node.
+   * Convenience wrapper for sendFeishuApiRequest.
+   *
+   * @param chatId - Target chat ID
+   * @param text - Message text
+   * @param threadId - Optional thread ID for threaded replies
+   */
+  async sendFeishuMessage(chatId: string, text: string, threadId?: string): Promise<void> {
+    await this.sendFeishuApiRequest('sendMessage', { chatId, text, threadId });
+  }
+
+  /**
+   * Send an interactive card through the Primary Node.
+   * Convenience wrapper for sendFeishuApiRequest.
+   *
+   * @param chatId - Target chat ID
+   * @param card - Card JSON object
+   * @param threadId - Optional thread ID for threaded replies
+   * @param description - Optional card description
+   */
+  async sendFeishuCard(
+    chatId: string,
+    card: Record<string, unknown>,
+    threadId?: string,
+    description?: string
+  ): Promise<void> {
+    await this.sendFeishuApiRequest('sendCard', { chatId, card, threadId, description });
+  }
+
+  /**
+   * Upload a file through the Primary Node.
+   * Convenience wrapper for sendFeishuApiRequest.
+   *
+   * @param chatId - Target chat ID
+   * @param filePath - Local file path
+   * @param threadId - Optional thread ID for threaded replies
+   */
+  async sendFeishuFile(chatId: string, filePath: string, threadId?: string): Promise<unknown> {
+    return await this.sendFeishuApiRequest('uploadFile', { chatId, filePath, threadId });
+  }
+
+  /**
+   * Get bot information through the Primary Node.
+   * Convenience wrapper for sendFeishuApiRequest.
+   */
+  async getFeishuBotInfo(): Promise<unknown> {
+    return await this.sendFeishuApiRequest('getBotInfo', {});
   }
 }

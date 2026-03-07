@@ -84,6 +84,11 @@ export interface WorkerNodeConfig extends BaseNodeConfig {
   primaryUrl: string;
   /** Reconnection interval in milliseconds (default: 3000) */
   reconnectInterval?: number;
+  /**
+   * Timeout for Feishu API requests in milliseconds (default: 30000).
+   * Issue #1036: WebSocket request routing (WorkerNode → PrimaryNode)
+   */
+  feishuApiRequestTimeout?: number;
 }
 
 /**
