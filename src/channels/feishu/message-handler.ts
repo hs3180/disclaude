@@ -21,6 +21,11 @@ import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
 import type { FilterReason } from '../../config/types.js';
 import { stripLeadingMentions } from '../../utils/mention-parser.js';
+import {
+  parseMessageContent,
+  buildQuoteContextPrompt,
+  type ParsedMessageContent,
+} from '../../platforms/feishu/message-content-parser.js';
 import type {
   FeishuEventData,
   FeishuMessageEvent,
@@ -292,7 +297,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id, root_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -380,35 +385,25 @@ export class MessageHandler {
       return;
     }
 
-    // Handle text and post messages
-    if (message_type !== 'text' && message_type !== 'post') {
+    // Handle text, post, and merge_forward messages
+    // Issue #846: Added support for merge_forward (packed conversation history)
+    if (message_type !== 'text' && message_type !== 'post' && message_type !== 'merge_forward') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
       await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
       return;
     }
 
-    // Parse content
-    let text = '';
+    // Parse content using the new message content parser
+    // Issue #846: Support for quote replies and merge forward messages
+    let parsedContent: ParsedMessageContent;
     try {
-      const parsed = JSON.parse(content);
-      if (message_type === 'text') {
-        text = parsed.text?.trim() || '';
-      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        for (const row of parsed.content) {
-          if (Array.isArray(row)) {
-            for (const segment of row) {
-              if (segment?.tag === 'text' && segment.text) {
-                text += segment.text;
-              }
-            }
-          }
-        }
-        text = text.trim();
-      }
-    } catch {
-      logger.error('Failed to parse content');
+      parsedContent = parseMessageContent(content, message_type, parent_id);
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to parse message content');
       return;
     }
+
+    let text = parsedContent.text;
 
     if (!text) {
       logger.debug('Skipped empty text');
@@ -531,16 +526,42 @@ export class MessageHandler {
       );
     }
 
+    // Issue #846: Build context for quote replies and merge forward messages
+    let finalContent = text;
+    if (parsedContent.hasSpecialContent) {
+      finalContent = buildQuoteContextPrompt(
+        text,
+        parsedContent.quotedMessage,
+        parsedContent.mergeForward
+      );
+      logger.debug(
+        {
+          messageId: message_id,
+          hasQuotedMessage: !!parsedContent.quotedMessage,
+          hasMergeForward: !!parsedContent.mergeForward,
+          mergeForwardMessageCount: parsedContent.mergeForward?.messages.length,
+        },
+        'Built context prompt for special message content'
+      );
+    }
+
     // Emit as incoming message
     await this.callbacks.emitMessage({
       messageId: message_id,
       chatId: chat_id,
       userId: this.extractOpenId(sender),
-      content: text,
+      content: finalContent,
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: {
+        ...(chatHistoryContext ? { chatHistoryContext } : {}),
+        // Issue #846: Include quote/merge forward metadata
+        ...(parsedContent.quotedMessage ? { quotedMessage: parsedContent.quotedMessage } : {}),
+        ...(parsedContent.mergeForward ? { mergeForward: parsedContent.mergeForward } : {}),
+        ...(parent_id ? { parentId: parent_id } : {}),
+        ...(root_id ? { rootId: root_id } : {}),
+      },
     });
   }
 

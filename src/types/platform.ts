@@ -1,6 +1,7 @@
 /**
  * Feishu message event structure.
  * @see https://open.feishu.cn/document/server-docs/im-v1/message/events/receive_v1
+ * Issue #846: Added support for quote replies (parent_id, root_id) and merge forward messages
  */
 export interface FeishuMessageEvent {
   message: {
@@ -10,6 +11,18 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /**
+     * Root message ID for threaded replies.
+     * Present when this message is a reply in a thread.
+     * Issue #846: Support for quote replies
+     */
+    root_id?: string;
+    /**
+     * Parent message ID for quote replies.
+     * Present when this message quotes/replies to another message.
+     * Issue #846: Support for quote replies
+     */
+    parent_id?: string;
     mentions?: Array<{
       key: string;
       id: {
