@@ -781,10 +781,12 @@ describe('Feishu Context MCP Tools', () => {
     // Import the tool definitions for handler testing
     // These tests verify the handler wrapper logic (Issue #990)
     describe('send_user_feedback handler', () => {
+      // Get handler once for all tests in this describe block
+      const { handler } = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!;
+
       it('should parse valid JSON string for card format', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
 
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
         const cardJson = JSON.stringify({
           config: { wide_screen_mode: true },
           header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
@@ -802,8 +804,6 @@ describe('Feishu Context MCP Tools', () => {
       });
 
       it('should reject invalid JSON string for card format', async () => {
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
-
         const result = await handler({
           content: 'not valid json',
           format: 'card',
@@ -815,8 +815,6 @@ describe('Feishu Context MCP Tools', () => {
       });
 
       it('should reject JSON string that is not an object for card format', async () => {
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
-
         const result = await handler({
           content: JSON.stringify(['array', 'not', 'object']),
           format: 'card',
@@ -831,7 +829,6 @@ describe('Feishu Context MCP Tools', () => {
       it('should accept object content for card format', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
 
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
         const cardObject = {
           config: { wide_screen_mode: true },
           header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
@@ -849,8 +846,6 @@ describe('Feishu Context MCP Tools', () => {
 
       it('should convert object to string for text format', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
-
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
 
         const result = await handler({
           content: { key: 'value' },
@@ -871,8 +866,6 @@ describe('Feishu Context MCP Tools', () => {
 
       it('should accept string content for text format', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
-
-        const handler = feishuToolDefinitions.find(d => d.name === 'send_user_feedback')!.handler;
 
         const result = await handler({
           content: 'plain text message',
