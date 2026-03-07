@@ -484,20 +484,7 @@ export class WorkerNode {
           );
 
           // Import the necessary functions to handle card actions
-          const { resolvePendingInteraction } = await import('../mcp/feishu-context-mcp.js');
           const { generateInteractionPrompt } = await import('../mcp/tools/interactive-message.js');
-
-          // Try to resolve any pending wait_for_interaction calls
-          const resolved = resolvePendingInteraction(
-            cardMessageId,
-            actionValue,
-            actionType,
-            userId || 'unknown'
-          );
-
-          if (resolved) {
-            logger.debug({ cardMessageId }, 'Card action resolved pending interaction');
-          }
 
           // Get the agent for this chatId and process the card action
           const ctx = this.activeFeedbackChannels.get(chatId);
