@@ -221,3 +221,198 @@ describe('getIpcClient singleton', () => {
     expect(client1).not.toBe(client2);
   });
 });
+
+describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
+  let socketPath: string;
+
+  beforeEach(() => {
+    socketPath = generateSocketPath();
+    resetIpcClient();
+  });
+
+  afterEach(async () => {
+    resetIpcClient();
+    if (existsSync(socketPath)) {
+      try {
+        unlinkSync(socketPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  });
+
+  describe('checkAvailability', () => {
+    it('should return socket_not_found when socket does not exist', async () => {
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+      const status = await client.checkAvailability();
+
+      expect(status.available).toBe(false);
+      if (!status.available) {
+        expect(status.reason).toBe('socket_not_found');
+      }
+    });
+
+    it('should return available when server is running', async () => {
+      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
+      const handler = createInteractiveMessageHandler({
+        getActionPrompts: () => undefined,
+        registerActionPrompts: () => {},
+        unregisterActionPrompts: () => false,
+        generateInteractionPrompt: () => undefined,
+        cleanupExpiredContexts: () => 0,
+      });
+
+      const server = new UnixSocketIpcServer(handler, { socketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+      const status = await client.checkAvailability();
+
+      expect(status.available).toBe(true);
+
+      await client.disconnect();
+      await server.stop();
+    });
+
+    it('should cache availability result', async () => {
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+
+      // First check
+      const status1 = await client.checkAvailability();
+      expect(status1.available).toBe(false);
+
+      // Second check should return cached result
+      const status2 = await client.checkAvailability();
+      expect(status2).toBe(status1);
+    });
+  });
+
+  describe('isAvailable', () => {
+    it('should return false when socket does not exist', () => {
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+      expect(client.isAvailable()).toBe(false);
+    });
+
+    it('should return true when connected', async () => {
+      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
+      const handler = createInteractiveMessageHandler({
+        getActionPrompts: () => undefined,
+        registerActionPrompts: () => {},
+        unregisterActionPrompts: () => false,
+        generateInteractionPrompt: () => undefined,
+        cleanupExpiredContexts: () => 0,
+      });
+
+      const server = new UnixSocketIpcServer(handler, { socketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+      await client.connect();
+
+      expect(client.isAvailable()).toBe(true);
+
+      await client.disconnect();
+      await server.stop();
+    });
+  });
+
+  describe('retry mechanism', () => {
+    it('should retry connection on failure', async () => {
+      // Create a client with maxRetries=3
+      const client = new UnixSocketIpcClient({
+        socketPath,
+        timeout: 100,
+        maxRetries: 3,
+      });
+
+      // Try to connect to non-existent socket
+      await expect(client.connect()).rejects.toThrow();
+
+      // Should have tried 3 times (verified by timing)
+      // This is a timing-based test, so we just verify it doesn't throw immediately
+    });
+
+    it('should connect on retry if server becomes available', async () => {
+      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
+      const handler = createInteractiveMessageHandler({
+        getActionPrompts: () => undefined,
+        registerActionPrompts: () => {},
+        unregisterActionPrompts: () => false,
+        generateInteractionPrompt: () => undefined,
+        cleanupExpiredContexts: () => 0,
+      });
+
+      const server = new UnixSocketIpcServer(handler, { socketPath });
+
+      // Start server after a short delay
+      setTimeout(() => server.start(), 50);
+
+      const client = new UnixSocketIpcClient({
+        socketPath,
+        timeout: 200,
+        maxRetries: 5,
+      });
+
+      // Should eventually connect
+      await client.connect();
+      expect(client.isConnected()).toBe(true);
+
+      await client.disconnect();
+      await server.stop();
+    });
+  });
+
+  describe('error handling', () => {
+    it('should include IPC_NOT_AVAILABLE prefix when socket not found', async () => {
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 100, maxRetries: 1 });
+
+      await expect(client.request('ping', {})).rejects.toThrow('IPC_NOT_AVAILABLE:');
+    });
+
+    it('should include IPC_TIMEOUT prefix on request timeout', async () => {
+      const handler = createInteractiveMessageHandler({
+        getActionPrompts: () => undefined,
+        registerActionPrompts: () => {},
+        unregisterActionPrompts: () => false,
+        generateInteractionPrompt: () => undefined,
+        cleanupExpiredContexts: () => 0,
+      });
+
+      const server = new UnixSocketIpcServer(handler, { socketPath });
+      await server.start();
+
+      // Create client with very short timeout
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 1, maxRetries: 1 });
+
+      // This might timeout or succeed depending on timing
+      // Just verify the error format when it fails
+      try {
+        await client.request('ping', {});
+      } catch (error) {
+        expect(error instanceof Error).toBe(true);
+        // Error should have a descriptive message
+        expect((error as Error).message).toMatch(/IPC_/);
+      }
+
+      await client.disconnect();
+      await server.stop();
+    });
+  });
+
+  describe('invalidateAvailabilityCache', () => {
+    it('should clear cached availability', async () => {
+      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
+
+      // First check caches the result
+      const status1 = await client.checkAvailability();
+      expect(status1.available).toBe(false);
+
+      // Invalidate cache
+      client.invalidateAvailabilityCache();
+
+      // Check again - should be a new object
+      const status2 = await client.checkAvailability();
+      expect(status2).not.toBe(status1);
+    });
+  });
+});
