@@ -51,3 +51,7 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Group Management
+export { create_group } from './create-group.js';
+export type { CreateGroupResult } from './create-group.js';

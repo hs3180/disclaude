@@ -17,6 +17,7 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  create_group,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -877,6 +878,49 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Group Management (Issue #393)
+  {
+    name: 'create_group',
+    description: `Create a new Feishu group chat.
+
+Use this tool to create a new group chat for discussions, notifications, or collaboration.
+
+## Parameters
+- **name**: Group name/topic (optional, auto-generated if not provided)
+- **members**: Initial member open_ids (optional)
+- **description**: Purpose/description (optional, for your reference only)
+
+## Example
+\`\`\`json
+{
+  "name": "PR #123 Discussion",
+  "members": ["ou_xxx", "ou_yyy"],
+  "description": "Discussing the implementation of feature X"
+}
+\`\`\`
+
+## Returns
+- **chatId**: The created group's chat ID (can be used with send_message)
+- **name**: The group name
+
+## Use Cases
+- Create discussion groups for new PRs
+- Create topic groups for specific topics
+- Create ad-hoc collaboration groups`,
+    parameters: z.object({
+      name: z.string().optional(),
+      members: z.array(z.string()).optional(),
+      description: z.string().optional(),
+    }),
+    handler: async ({ name, members, description }) => {
+      try {
+        const result = await create_group({ name, members, description });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.error || 'Failed to create group'}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Group creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
