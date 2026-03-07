@@ -7,10 +7,8 @@
  * @module mcp/tools/interactive-message
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
-import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getMessageSentCallback } from './send-message.js';
@@ -216,18 +214,15 @@ export async function send_interactive_message(params: {
       };
     }
 
-    // Get Feishu credentials
-    const appId = Config.FEISHU_APP_ID;
-    const appSecret = Config.FEISHU_APP_SECRET;
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
+    // Issue #1030: Use unified LarkClientService instead of creating own client
+    if (!isLarkClientServiceInitialized()) {
+      const errorMsg = 'LarkClientService not initialized. Cannot send interactive message.';
       logger.error({ chatId }, errorMsg);
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
     // Send the message
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+    const client = getLarkClientService().getClient();
     const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
 
     // Register action prompts if message was sent successfully

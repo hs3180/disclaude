@@ -21,12 +21,12 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
   },
 }));
 
-// Mock config
-vi.mock('../../config/index.js', () => ({
-  Config: {
-    FEISHU_APP_ID: 'test-app-id',
-    FEISHU_APP_SECRET: 'test-app-secret',
-  },
+// Mock LarkClientService (Issue #1030)
+vi.mock('../../services/index.js', () => ({
+  getLarkClientService: vi.fn(() => ({
+    getClient: () => mockClient,
+  })),
+  isLarkClientServiceInitialized: vi.fn(() => true),
 }));
 
 // Mock logger
