@@ -252,22 +252,24 @@ export async function send_interactive_message(params: {
     }
 
     // Issue #1035: Try IPC first if available
+    // Issue #1088: Add fallback when IPC fails (socket exists but connection unavailable)
     const useIpc = isIpcAvailable();
     let messageId: string | undefined;
 
     if (useIpc) {
       logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
       const result = await sendCardViaIpc(chatId, card, parentMessageId);
-      if (!result.success) {
-        return {
-          success: false,
-          error: 'Failed to send interactive message via IPC',
-          message: '❌ Failed to send interactive message via IPC.',
-        };
+      if (result.success) {
+        messageId = result.messageId;
+        logger.debug({ chatId, parentMessageId, messageId }, 'Interactive message sent (via IPC)');
+      } else {
+        // Issue #1088: IPC failed, fallback to direct client
+        logger.warn({ chatId, parentMessageId }, 'IPC failed, falling back to direct client');
       }
-      messageId = result.messageId;
-    } else {
-      // Fallback: Create client directly
+    }
+
+    // Direct client (fallback or IPC not available/successful)
+    if (!messageId) {
       const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
       const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
       messageId = result.messageId;

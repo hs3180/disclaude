@@ -102,6 +102,7 @@ export async function send_message(params: {
     }
 
     // Issue #1035: Try IPC first if available
+    // Issue #1088: Add fallback when IPC fails (socket exists but connection unavailable)
     const useIpc = isIpcAvailable();
 
     if (format === 'text') {
@@ -110,18 +111,18 @@ export async function send_message(params: {
       if (useIpc) {
         logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
         const result = await sendMessageViaIpc(chatId, textContent, parentMessageId);
-        if (!result.success) {
-          return {
-            success: false,
-            error: 'Failed to send message via IPC',
-            message: '❌ Failed to send message via IPC.',
-          };
+        if (result.success) {
+          logger.debug({ chatId, parentMessageId }, 'User feedback sent (text via IPC)');
+          invokeMessageSentCallback(chatId);
+          return { success: true, message: '✅ Message sent (format: text)' };
         }
-      } else {
-        // Fallback: Create client directly
-        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-        await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+        // Issue #1088: IPC failed, fallback to direct client
+        logger.warn({ chatId, parentMessageId }, 'IPC failed, falling back to direct client');
       }
+
+      // Direct client (fallback or IPC not available)
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
       logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
     } else {
       // Card format
@@ -160,18 +161,18 @@ export async function send_message(params: {
       if (useIpc) {
         logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
         const result = await sendCardViaIpc(chatId, cardContent, parentMessageId);
-        if (!result.success) {
-          return {
-            success: false,
-            error: 'Failed to send card via IPC',
-            message: '❌ Failed to send card via IPC.',
-          };
+        if (result.success) {
+          logger.debug({ chatId, parentMessageId }, 'User card sent (via IPC)');
+          invokeMessageSentCallback(chatId);
+          return { success: true, message: '✅ Message sent (format: card)' };
         }
-      } else {
-        // Fallback: Create client directly
-        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent), parentMessageId);
+        // Issue #1088: IPC failed, fallback to direct client
+        logger.warn({ chatId, parentMessageId }, 'IPC failed, falling back to direct client');
       }
+
+      // Direct client (fallback or IPC not available)
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent), parentMessageId);
       logger.debug({ chatId, parentMessageId }, 'User card sent');
     }
 
