@@ -37,7 +37,7 @@ import { Config } from '../../config/index.js';
 import { SESSION_RESTORE } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
-import { BaseAgent, type IteratorYieldResult } from '../base-agent.js';
+import { BaseAgent } from '../base-agent.js';
 import type { ChatAgent, UserInput } from '../types.js';
 import type { AgentMessage } from '../../types/agent.js';
 import { MessageChannel } from '../message-channel.js';
@@ -45,8 +45,6 @@ import { RestartManager } from '../restart-manager.js';
 import { ConversationOrchestrator } from '../../conversation/index.js';
 import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
-// Issue #963: Loop detection for infinite tool call loops
-import { LoopDetector } from '../../utils/loop-detector.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -81,9 +79,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
-  // Loop detector (Issue #963)
-  private readonly loopDetector: LoopDetector;
-
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -107,13 +102,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
-
-    // Initialize loop detector (Issue #963)
-    this.loopDetector = new LoopDetector({
-      maxConsecutiveCalls: 5,   // Max 5 identical calls in a row
-      maxTotalCalls: 500,      // Max 500 total calls per session
-      maxFileReads: 10,        // Max 10 reads of the same file
-    });
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -542,11 +530,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * - Limit consecutive restarts (max 3 by default)
    * - Apply exponential backoff between restarts
    * - Open circuit breaker after max restarts exceeded
-   *
-   * Issue #963: Added loop detection to prevent infinite tool call loops.
    */
   private async processIterator(
-    iterator: AsyncGenerator<IteratorYieldResult>
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
@@ -556,48 +542,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
       for await (const { parsed } of iterator) {
         messageCount++;
         this.logger.debug(
-          { chatId, messageCount, type: parsed.type, toolName: parsed.metadata?.toolName },
+          { chatId, messageCount, type: parsed.type },
           'SDK message received'
         );
-
-        // Issue #963: Check for tool use loops
-        const { metadata } = parsed;
-        if (parsed.type === 'tool_use' && metadata?.toolName && metadata?.toolInput) {
-          const { toolName, toolInput } = metadata;
-          const loopResult = this.loopDetector.checkToolCall(String(toolName), toolInput);
-
-          if (loopResult.isLoop) {
-            this.logger.error({
-              chatId,
-              messageCount,
-              loopType: loopResult.loopType,
-              toolName: loopResult.toolName,
-              message: loopResult.message,
-            }, 'Loop detected in tool calls');
-
-            // Notify user about the loop
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-            const loopMessage = '🚫 检测到无限循环\n\n' +
-              `**问题**: ${loopResult.message}\n\n` +
-              `**建议**: ${loopResult.suggestedAction}\n\n` +
-              '请发送 /reset 重置会话或简化您的任务。';
-            await this.callbacks.sendMessage(chatId, loopMessage, threadRoot);
-
-            // Close the session to break the loop
-            this.isSessionActive = false;
-            if (this.channel) {
-              this.channel.close();
-            }
-            if (this.queryHandle) {
-              this.queryHandle.close();
-            }
-
-            if (this.callbacks.onDone) {
-              await this.callbacks.onDone(chatId, threadRoot);
-            }
-            return;
-          }
-        }
 
         // Send message content to callback
         if (parsed.content) {
@@ -611,9 +558,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
-
-          // Issue #963: Reset loop detector on successful completion
-          this.loopDetector.reset();
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -731,9 +675,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Reset restart state
     this.restartManager.reset(this.boundChatId);
-
-    // Reset loop detector (Issue #963)
-    this.loopDetector.reset();
 
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
