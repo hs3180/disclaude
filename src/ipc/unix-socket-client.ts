@@ -36,7 +36,9 @@ interface PendingRequest {
  */
 export type IpcAvailabilityStatus =
   | { available: true }
-  | { available: false; reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error'; error?: Error };
+  | { available: false; reason: IpcUnavailableReason; error?: Error };
+
+export type IpcUnavailableReason = 'socket_not_found' | 'connection_failed' | 'timeout' | 'error';
 
 /**
  * Extract the reason type from IpcAvailabilityStatus (only available when available is false)
