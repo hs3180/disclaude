@@ -167,9 +167,6 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
         if (toolName === 'send_file') {
           return capabilities?.supportsFile !== false;
         }
-        if (toolName === 'wait_for_interaction') {
-          return capabilities?.supportsCard !== false;
-        }
         return true; // send_message is always available
       }
       return supportedTools.includes(toolName);
@@ -179,16 +176,9 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     if (hasTool('send_message')) {
       parts.push(`When using send_message, use:
 - Chat ID: \`${chatId}\`
-- parentMessageId: \`${messageId}\` (for thread replies)`);
+- parentMessageId: \`${messageId}\` (for thread replies)
 
-      // Include card support note if supported
-      if (hasTool('wait_for_interaction')) {
-        parts.push(`
 - For rich content, use format: "card" with a valid Feishu card structure`);
-      } else {
-        parts.push(`
-- Note: This channel does not support interactive cards. Use text format only.`);
-      }
     }
 
     // send_file tool
@@ -198,12 +188,6 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     } else if (supportedTools !== undefined) {
       parts.push(`
 - Note: send_file is NOT supported on this channel. Files will not be sent.`);
-    }
-
-    // wait_for_interaction tool
-    if (hasTool('wait_for_interaction')) {
-      parts.push(`
-- wait_for_interaction is available for waiting for user card interactions`);
     }
 
     // Include thread support note

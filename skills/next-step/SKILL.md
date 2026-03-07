@@ -1,7 +1,7 @@
 ---
 name: next-step
 description: Analyze completed task and recommend follow-up actions
-allowed-tools: [send_user_feedback, wait_for_interaction]
+allowed-tools: [send_user_feedback]
 ---
 
 # Next Step Recommender

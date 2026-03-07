@@ -279,8 +279,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportedMcpTools: [
         'send_message',
         'send_file',
-        
-        'wait_for_interaction',
       ],
     };
   }

@@ -9,7 +9,6 @@ import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import {
   send_message,
   send_file,
-  wait_for_interaction,
   send_interactive_message,
   setMessageSentCallback,
   generate_summary,
@@ -23,10 +22,8 @@ import { startIpcServer } from './tools/interactive-message.js';
 // Re-export
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
-export { resolvePendingInteraction } from './tools/card-interaction.js';
 export { send_message } from './tools/send-message.js';
 export { send_file } from './tools/send-file.js';
-export { wait_for_interaction } from './tools/card-interaction.js';
 export {
   send_interactive_message,
   generateInteractionPrompt,
@@ -100,15 +97,6 @@ export const feishuContextTools = {
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
-  },
-  wait_for_interaction: {
-    description: 'Wait for the user to interact with a card.',
-    parameters: {
-      type: 'object',
-      properties: { messageId: { type: 'string' }, chatId: { type: 'string' }, timeoutSeconds: { type: 'number' } },
-      required: ['messageId', 'chatId'],
-    },
-    handler: wait_for_interaction,
   },
   send_interactive_message: {
     description: `Send an interactive card message with pre-defined action prompts.
@@ -399,21 +387,6 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'wait_for_interaction',
-    description: 'Wait for the user to interact with a card.',
-    parameters: z.object({ messageId: z.string(), chatId: z.string(), timeoutSeconds: z.number().optional() }),
-    handler: async ({ messageId, chatId, timeoutSeconds }) => {
-      try {
-        const result = await wait_for_interaction({ messageId, chatId, timeoutSeconds });
-        return toolSuccess(result.success
-          ? `${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`
-          : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
