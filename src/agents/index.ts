@@ -105,3 +105,18 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// Subagent Manager (Issue #997)
+export {
+  SubagentManager,
+  getSubagentManager,
+  initSubagentManager,
+  resetSubagentManager,
+  type SubagentType,
+  type SubagentStatus,
+  type IsolationMode,
+  type SubagentOptions,
+  type SubagentHandle,
+  type SubagentEventCallbacks,
+  type SubagentManagerConfig,
+} from './subagent-manager.js';
