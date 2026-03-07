@@ -105,3 +105,21 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// Task Progress Service (Issue #857)
+export {
+  TaskProgressService,
+  createTaskProgressService,
+  type ProgressCardConfig,
+  type ProgressUpdate,
+} from './task-progress-service.js';
+
+// Task Execution Service (Issue #857)
+export {
+  TaskExecutionService,
+  createTaskExecutionService,
+  type TaskExecutionCallbacks,
+  type TaskExecutionContext,
+  type TaskExecutionServiceOptions,
+  type TaskAnalysisResult,
+} from './task-execution-service.js';
