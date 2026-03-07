@@ -105,3 +105,15 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// SubagentManager - Unified interface for spawning subagents (Issue #997)
+export {
+  SubagentManager,
+  getSubagentManager,
+  resetSubagentManager,
+  type SubagentType,
+  type IsolationMode,
+  type SubagentStatus,
+  type SubagentOptions,
+  type SubagentHandle,
+} from './subagent-manager.js';
