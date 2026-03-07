@@ -15,7 +15,11 @@ export type IpcRequestType =
   | 'registerActionPrompts'
   | 'unregisterActionPrompts'
   | 'generateInteractionPrompt'
-  | 'cleanupExpiredContexts';
+  | 'cleanupExpiredContexts'
+  // Issue #631: 离线消息相关
+  | 'getOfflineContext'
+  | 'generateFollowUpPrompt'
+  | 'unregisterOfflineContext';
 
 /**
  * IPC request payload types.
@@ -37,6 +41,15 @@ export interface IpcRequestPayloads {
     formData?: Record<string, unknown>;
   };
   cleanupExpiredContexts: Record<string, never>;
+  // Issue #631: 离线消息相关
+  getOfflineContext: { messageId: string };
+  generateFollowUpPrompt: {
+    messageId: string;
+    actionValue: string;
+    actionText?: string;
+    formData?: Record<string, unknown>;
+  };
+  unregisterOfflineContext: { messageId: string };
 }
 
 /**
@@ -49,6 +62,18 @@ export interface IpcResponsePayloads {
   unregisterActionPrompts: { success: boolean };
   generateInteractionPrompt: { prompt: string | null };
   cleanupExpiredContexts: { cleaned: number };
+  // Issue #631: 离线消息相关
+  getOfflineContext: {
+    context: {
+      id: string;
+      messageId: string;
+      chatId: string;
+      taskContext: string;
+      followUpPrompt: string;
+    } | null;
+  };
+  generateFollowUpPrompt: { prompt: string | null };
+  unregisterOfflineContext: { success: boolean };
 }
 
 /**

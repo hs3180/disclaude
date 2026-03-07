@@ -45,6 +45,21 @@ export interface InteractiveMessageHandlers {
     formData?: Record<string, unknown>
   ) => string | undefined;
   cleanupExpiredContexts: () => number;
+  // Issue #631: 离线消息相关
+  getOfflineContext: (messageId: string) => {
+    id: string;
+    messageId: string;
+    chatId: string;
+    taskContext: string;
+    followUpPrompt: string;
+  } | undefined;
+  generateFollowUpPrompt: (
+    messageId: string,
+    actionValue: string,
+    actionText?: string,
+    formData?: Record<string, unknown>
+  ) => string | undefined;
+  unregisterOfflineContext: (messageId: string) => boolean;
 }
 
 /**
@@ -103,6 +118,39 @@ export function createInteractiveMessageHandler(
         case 'cleanupExpiredContexts': {
           const cleaned = handlers.cleanupExpiredContexts();
           return { id: request.id, success: true, payload: { cleaned } };
+        }
+
+        // Issue #631: 离线消息相关
+        case 'getOfflineContext': {
+          const { messageId } = request.payload as IpcRequestPayloads['getOfflineContext'];
+          const context = handlers.getOfflineContext(messageId);
+          return {
+            id: request.id,
+            success: true,
+            payload: { context: context ?? null },
+          };
+        }
+
+        case 'generateFollowUpPrompt': {
+          const { messageId, actionValue, actionText, formData } =
+            request.payload as IpcRequestPayloads['generateFollowUpPrompt'];
+          const prompt = handlers.generateFollowUpPrompt(
+            messageId,
+            actionValue,
+            actionText,
+            formData
+          );
+          return {
+            id: request.id,
+            success: true,
+            payload: { prompt: prompt ?? null },
+          };
+        }
+
+        case 'unregisterOfflineContext': {
+          const { messageId } = request.payload as IpcRequestPayloads['unregisterOfflineContext'];
+          const success = handlers.unregisterOfflineContext(messageId);
+          return { id: request.id, success: true, payload: { success } };
         }
 
         default:
