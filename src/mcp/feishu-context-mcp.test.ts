@@ -87,7 +87,7 @@ describe('MCP Tools', () => {
   describe('Tool Definitions', () => {
     it('should have send_message tool definition', () => {
       expect(feishuContextTools.send_message).toBeDefined();
-      expect(feishuContextTools.send_message.description).toContain('Send a message to a chat');
+      expect(feishuContextTools.send_message.description).toContain('Send a simple message to a chat');
       expect(feishuContextTools.send_message.handler).toBe(send_message);
     });
 

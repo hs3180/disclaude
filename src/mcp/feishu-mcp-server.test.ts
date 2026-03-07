@@ -78,9 +78,9 @@ describe('Feishu MCP Server', () => {
       expect(sendMessageTool).toBeDefined();
 
       // Verify description mentions key features
-      expect(sendMessageTool?.description).toContain('Send a message');
-      expect(sendMessageTool?.description).toContain('Thread Support');
-      expect(sendMessageTool?.description).toContain('Card Format Requirements');
+      expect(sendMessageTool?.description).toContain('Send a simple message');
+      expect(sendMessageTool?.description).toContain('send_interactive_message');
+      expect(sendMessageTool?.description).toContain('Important Notes');
     });
 
     it('should define send_file tool with correct schema', async () => {

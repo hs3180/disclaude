@@ -49,27 +49,23 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 
 export const feishuContextTools = {
   send_message: {
-    description: `Send a message to a chat. Requires explicit format: "text" or "card".
+    description: `Send a simple message to a chat.
 
-**IMPORTANT: "format" parameter is REQUIRED for every call.**
+**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
 
 ---
 
-## Correct Usage Examples
+## Usage
 
-### Text Message
+### Text Message (Recommended)
 \`\`\`json
 {"content": "Hello world", "format": "text", "chatId": "oc_xxx"}
 \`\`\`
 
-### Card Message
+### Display-Only Card (No interactions)
 \`\`\`json
 {
-  "content": {
-    "config": {"wide_screen_mode": true},
-    "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},
-    "elements": [{"tag": "markdown", "content": "**Bold** text"}]
-  },
+  "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
   "format": "card",
   "chatId": "oc_xxx"
 }
@@ -77,9 +73,11 @@ export const feishuContextTools = {
 
 ---
 
-**Thread Support:** Use parentMessageId to reply to a specific message.
+## ⚠️ Important Notes
 
-⚠️ **Markdown Tables NOT Supported** - Use column_set instead.
+- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
+- **Card content**: Must be an OBJECT (not JSON string)
+- **Thread reply**: Use parentMessageId parameter
 
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
     parameters: {
@@ -339,20 +337,20 @@ In actionPrompts, you can use these placeholders:
 export const feishuToolDefinitions: InlineToolDefinition[] = [
   {
     name: 'send_message',
-    description: `Send a message to a chat. Requires explicit format: "text" or "card".
+    description: `Send a simple message to a chat.
 
-**IMPORTANT: "format" parameter is REQUIRED for every call.**
+**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
 
 ---
 
-## Correct Usage Examples
+## Usage
 
-### Text Message
+### Text Message (Recommended)
 \`\`\`json
 {"content": "Hello", "format": "text", "chatId": "oc_xxx"}
 \`\`\`
 
-### Card Message
+### Display-Only Card (No interactions)
 \`\`\`json
 {
   "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
@@ -363,18 +361,11 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
 
 ---
 
-## Card Format Requirements
+## ⚠️ Important Notes
 
-When \`format: "card"\`, content MUST include:
-- \`config\`: Object
-- \`header\`: Object with \`title\`
-- \`elements\`: Array of card elements
-
----
-
-**Thread Support:** Use parentMessageId to reply to a specific message.
-
-⚠️ **Markdown Tables NOT Supported** - Use column_set instead.
+- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
+- **Card content**: Must be an OBJECT (not JSON string)
+- **Thread reply**: Use parentMessageId parameter
 
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
     parameters: z.object({
