@@ -241,14 +241,26 @@ export class PrimaryNode extends EventEmitter {
     }
 
     // Create REST channel if enabled
-    if (config.enableRestChannel !== false) {
+    // Priority: PrimaryNodeConfig > Config file > Defaults
+    const restChannelConfig = Config.getRestChannelConfig();
+    const isRestEnabled = config.enableRestChannel ?? restChannelConfig.enabled ?? true;
+
+    if (isRestEnabled) {
       const restChannel = new RestChannel({
         id: 'rest',
-        port: config.restPort || 3000,
-        authToken: config.restAuthToken,
+        port: config.restPort ?? restChannelConfig.port ?? 3000,
+        host: restChannelConfig.host,
+        apiPrefix: restChannelConfig.apiPrefix,
+        authToken: config.restAuthToken ?? restChannelConfig.authToken,
+        enableCors: restChannelConfig.enableCors,
+        fileStorageDir: restChannelConfig.fileStorageDir,
+        maxFileSize: restChannelConfig.maxFileSize,
       });
       this.registerChannel(restChannel);
-      logger.info({ port: config.restPort || 3000 }, 'REST channel registered');
+      logger.info(
+        { port: config.restPort ?? restChannelConfig.port ?? 3000 },
+        'REST channel registered'
+      );
     }
 
     logger.info({

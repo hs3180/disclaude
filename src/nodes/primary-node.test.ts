@@ -14,6 +14,7 @@ vi.mock('../config/index.js', () => ({
     getWorkspaceDir: () => '/tmp/test-workspace',
     getAgentConfig: () => ({ model: 'test-model' }),
     getChannelsConfig: () => ({ rest: { port: 3000, enabled: true } }),
+    getRestChannelConfig: () => ({ port: 3000, enabled: true }),
   },
 }));
 

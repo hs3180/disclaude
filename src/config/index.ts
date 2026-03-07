@@ -307,6 +307,15 @@ export class Config {
   }
 
   /**
+   * Get REST channel configuration.
+   *
+   * @returns REST channel configuration object
+   */
+  static getRestChannelConfig(): import('./types.js').RestChannelConfig {
+    return fileConfigOnly.channels?.rest || {};
+  }
+
+  /**
    * Get logging configuration.
    *
    * @returns Logging configuration object
