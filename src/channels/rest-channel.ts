@@ -397,7 +397,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_user_feedback'],
+      supportedMcpTools: ['send_message'],
     };
   }
 

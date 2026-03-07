@@ -164,25 +164,25 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     const hasTool = (toolName: string): boolean => {
       if (supportedTools === undefined) {
         // Legacy behavior: check individual capability flags
-        if (toolName === 'send_file_to_feishu') {
+        if (toolName === 'send_file') {
           return capabilities?.supportsFile !== false;
         }
-        if (toolName === 'update_card' || toolName === 'wait_for_interaction') {
+        if (toolName === 'wait_for_interaction') {
           return capabilities?.supportsCard !== false;
         }
-        return true; // send_user_feedback is always available
+        return true; // send_message is always available
       }
       return supportedTools.includes(toolName);
     };
 
-    // send_user_feedback tool
-    if (hasTool('send_user_feedback')) {
-      parts.push(`When using send_user_feedback, use:
+    // send_message tool
+    if (hasTool('send_message')) {
+      parts.push(`When using send_message, use:
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${messageId}\` (for thread replies)`);
 
       // Include card support note if supported
-      if (hasTool('update_card') || hasTool('wait_for_interaction')) {
+      if (hasTool('wait_for_interaction')) {
         parts.push(`
 - For rich content, use format: "card" with a valid Feishu card structure`);
       } else {
@@ -191,19 +191,13 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
       }
     }
 
-    // send_file_to_feishu tool
-    if (hasTool('send_file_to_feishu')) {
+    // send_file tool
+    if (hasTool('send_file')) {
       parts.push(`
-- send_file_to_feishu is available for sending files`);
+- send_file is available for sending files`);
     } else if (supportedTools !== undefined) {
       parts.push(`
-- Note: send_file_to_feishu is NOT supported on this channel. Files will not be sent.`);
-    }
-
-    // update_card tool
-    if (hasTool('update_card')) {
-      parts.push(`
-- update_card is available for updating existing cards`);
+- Note: send_file is NOT supported on this channel. Files will not be sent.`);
     }
 
     // wait_for_interaction tool

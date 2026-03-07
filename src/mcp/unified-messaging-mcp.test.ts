@@ -32,9 +32,9 @@ describe('detectChannel', () => {
 });
 
 describe('send_message', () => {
-  // Mock send_user_feedback from feishu-context-mcp
+  // Mock send_message from feishu-context-mcp
   vi.mock('./feishu-context-mcp.js', () => ({
-    send_user_feedback: vi.fn(),
+    send_message: vi.fn(),
     setMessageSentCallback: vi.fn(),
   }));
 
@@ -47,8 +47,8 @@ describe('send_message', () => {
   });
 
   it('should route CLI messages correctly', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: true,
       message: '✅ Feedback displayed (CLI mode)',
     });
@@ -61,7 +61,7 @@ describe('send_message', () => {
 
     expect(result.success).toBe(true);
     expect(result.channel).toBe('cli');
-    expect(mockSendUserFeedback).toHaveBeenCalledWith({
+    expect(mockSendMessage).toHaveBeenCalledWith({
       content: 'Hello CLI',
       format: 'text',
       chatId: 'cli-test',
@@ -70,8 +70,8 @@ describe('send_message', () => {
   });
 
   it('should route Feishu messages correctly', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: true,
       message: '✅ Feedback sent',
     });
@@ -84,7 +84,7 @@ describe('send_message', () => {
 
     expect(result.success).toBe(true);
     expect(result.channel).toBe('feishu');
-    expect(mockSendUserFeedback).toHaveBeenCalledWith({
+    expect(mockSendMessage).toHaveBeenCalledWith({
       content: 'Hello Feishu',
       format: 'text',
       chatId: 'oc_test123',
@@ -93,8 +93,8 @@ describe('send_message', () => {
   });
 
   it('should route REST messages correctly', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: true,
       message: '✅ Feedback logged (Feishu not configured)',
     });
@@ -107,7 +107,7 @@ describe('send_message', () => {
 
     expect(result.success).toBe(true);
     expect(result.channel).toBe('rest');
-    expect(mockSendUserFeedback).toHaveBeenCalledWith({
+    expect(mockSendMessage).toHaveBeenCalledWith({
       content: 'Hello REST',
       format: 'text',
       chatId: 'rest-chat-1',
@@ -116,8 +116,8 @@ describe('send_message', () => {
   });
 
   it('should pass parentMessageId for thread replies', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: true,
       message: '✅ Feedback sent',
     });
@@ -130,7 +130,7 @@ describe('send_message', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockSendUserFeedback).toHaveBeenCalledWith({
+    expect(mockSendMessage).toHaveBeenCalledWith({
       content: 'Reply',
       format: 'text',
       chatId: 'oc_test',
@@ -139,8 +139,8 @@ describe('send_message', () => {
   });
 
   it('should handle card format', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: true,
       message: '✅ Card sent',
     });
@@ -162,8 +162,8 @@ describe('send_message', () => {
   });
 
   it('should handle errors gracefully', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockResolvedValue({
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockResolvedValue({
       success: false,
       message: '❌ Failed: Invalid card',
       error: 'Invalid card structure',
@@ -180,8 +180,8 @@ describe('send_message', () => {
   });
 
   it('should handle exceptions', async () => {
-    const mockSendUserFeedback = vi.mocked(await import('./feishu-context-mcp.js')).send_user_feedback;
-    mockSendUserFeedback.mockRejectedValue(new Error('Network error'));
+    const mockSendMessage = vi.mocked(await import('./feishu-context-mcp.js')).send_message;
+    mockSendMessage.mockRejectedValue(new Error('Network error'));
 
     const result = await send_message({
       content: 'test',

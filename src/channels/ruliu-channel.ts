@@ -207,7 +207,7 @@ export class RuliuChannel extends BaseChannel<RuliuChannelConfig> {
       supportsMarkdown: true,
       supportsMention: true,
       supportsUpdate: false,
-      supportedMcpTools: ['send_user_feedback'],
+      supportedMcpTools: ['send_message'],
     };
   }
 

@@ -1,20 +1,20 @@
 /**
- * Shared type definitions for Feishu MCP tools.
+ * Shared type definitions for MCP tools.
  *
  * @module mcp/tools/types
  */
 
 /**
- * Result type for send_user_feedback tool.
+ * Result type for send_message tool.
  */
-export interface SendFeedbackResult {
+export interface SendMessageResult {
   success: boolean;
   message: string;
   error?: string;
 }
 
 /**
- * Result type for send_file_to_feishu tool.
+ * Result type for send_file tool.
  */
 export interface SendFileResult {
   success: boolean;
@@ -23,19 +23,10 @@ export interface SendFileResult {
   fileSize?: number;
   sizeMB?: string;
   error?: string;
-  feishuCode?: string | number;
-  feishuMsg?: string;
-  feishuLogId?: string;
+  platformCode?: string | number;
+  platformMsg?: string;
+  platformLogId?: string;
   troubleshooterUrl?: string;
-}
-
-/**
- * Result type for update_card tool.
- */
-export interface UpdateCardResult {
-  success: boolean;
-  message: string;
-  error?: string;
 }
 
 /**

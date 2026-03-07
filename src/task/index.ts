@@ -44,11 +44,11 @@ export {
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';
 export { parseBaseToolName, isUserFeedbackTool } from './mcp-utils.js';
 
-// Feishu context MCP tools
+// Context MCP tools
 export {
   feishuContextTools,
-  send_user_feedback,
-  send_file_to_feishu,
+  send_message,
+  send_file,
 } from '../mcp/feishu-context-mcp.js';
 
 // Note: task_done has been removed - completion is now detected via final_result.md

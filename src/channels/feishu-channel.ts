@@ -276,9 +276,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsMention: true,
       supportsUpdate: true,
       supportedMcpTools: [
-        'send_user_feedback',
-        'send_file_to_feishu',
-        'update_card',
+        'send_message',
+        'send_file',
+        
         'wait_for_interaction',
       ],
     };

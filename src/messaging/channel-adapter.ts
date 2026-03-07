@@ -104,7 +104,7 @@ export const FEISHU_CAPABILITIES: ChannelCapabilities = {
   supportsDelete: true,
   supportsMention: true,
   supportsReactions: true,
-  supportedMcpTools: ['send_user_feedback', 'send_file_to_feishu', 'update_card', 'wait_for_interaction'],
+  supportedMcpTools: ['send_message', 'send_file', 'wait_for_interaction'],
 };
 
 /**
@@ -138,7 +138,7 @@ export const REST_CAPABILITIES: ChannelCapabilities = {
   supportsDelete: false,
   supportsMention: false,
   supportsReactions: false,
-  supportedMcpTools: ['send_user_feedback'], // REST channel only supports basic messaging
+  supportedMcpTools: ['send_message'], // REST channel only supports basic messaging
 };
 
 // ============================================================================

@@ -1,15 +1,11 @@
 /**
- * Card interaction tools: update_card and wait_for_interaction.
+ * Card interaction tools: wait_for_interaction.
  *
  * @module mcp/tools/card-interaction
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
-import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
-import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import type { UpdateCardResult, WaitForInteractionResult, PendingInteraction } from './types.js';
+import type { WaitForInteractionResult, PendingInteraction } from './types.js';
 
 const logger = createLogger('CardInteraction');
 
@@ -30,57 +26,6 @@ export function resolvePendingInteraction(
     return true;
   }
   return false;
-}
-
-export async function update_card(params: {
-  messageId: string;
-  card: Record<string, unknown>;
-  chatId: string;
-}): Promise<UpdateCardResult> {
-  const { messageId, card, chatId } = params;
-
-  logger.info({ messageId, chatId }, 'update_card called');
-
-  try {
-    if (!messageId) { throw new Error('messageId is required'); }
-    if (!card) { throw new Error('card is required'); }
-    if (!chatId) { throw new Error('chatId is required'); }
-
-    if (!isValidFeishuCard(card)) {
-      return {
-        success: false,
-        error: `Invalid card structure: ${getCardValidationError(card)}`,
-        message: `❌ Card validation failed. ${getCardValidationError(card)}`,
-      };
-    }
-
-    const appId = Config.FEISHU_APP_ID;
-    const appSecret = Config.FEISHU_APP_SECRET;
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      return {
-        success: false,
-        error: errorMsg,
-        message: `❌ ${errorMsg}`,
-      };
-    }
-
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-
-    await client.im.message.patch({
-      path: { message_id: messageId },
-      data: { content: JSON.stringify(card) },
-    });
-
-    logger.debug({ messageId, chatId }, 'Card updated successfully');
-    return { success: true, message: '✅ Card updated successfully' };
-
-  } catch (error) {
-    logger.error({ err: error, messageId, chatId }, 'update_card failed');
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return { success: false, error: errorMessage, message: `❌ Failed to update card: ${errorMessage}` };
-  }
 }
 
 export async function wait_for_interaction(params: {

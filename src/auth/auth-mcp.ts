@@ -113,7 +113,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
   },
   {
     name: 'auth_generate_url',
-    description: 'Generate an OAuth authorization URL for a service. Returns the URL and state. The user must visit this URL to authorize. Use with send_user_feedback to send the URL to the user.',
+    description: 'Generate an OAuth authorization URL for a service. Returns the URL and state. The user must visit this URL to authorize. Use with send_message to send the URL to the user.',
     parameters: z.object({
       providerName: z.string().describe('Provider name (e.g., "github", "gitlab")'),
       authUrl: z.string().describe('OAuth authorization endpoint URL'),
