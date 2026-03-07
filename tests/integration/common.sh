@@ -33,8 +33,9 @@ _COMMON_SH_LOADED=1
 REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
-# Timeout for API requests - increased to 60s for AI processing
-TIMEOUT="${TIMEOUT:-30}"
+# Timeout for API requests - increased to 180s for AI processing (Issue #1017)
+# AI models (especially GLM) can take significant time to respond
+TIMEOUT="${TIMEOUT:-180}"
 # Default to test config file for integration tests (no MCP servers)
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""

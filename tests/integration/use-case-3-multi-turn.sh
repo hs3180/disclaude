@@ -14,7 +14,7 @@
 #   ./use-case-3-multi-turn.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Maximum wait time for response (default: 60)
+#   --timeout SECONDS   Maximum wait time for response (default: 180)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VERBOSE=false
 DRY_RUN=false
-TIMEOUT="${TIMEOUT:-60}"
+TIMEOUT="${TIMEOUT:-180}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
