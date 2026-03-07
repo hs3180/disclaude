@@ -12,11 +12,19 @@
     "skills",
     "README.md"
   ],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "tsx watch src/cli-entry.ts",
     "start": "node dist/cli-entry.js --help",
     "cli": "tsx src/cli-entry.ts",
-    "build": "tsup",
+    "build": "npm run build:packages && tsup",
+    "build:packages": "npm run build -w @disclaude/core -w @disclaude/primary-node -w @disclaude/worker-node -w @disclaude/mcp-server",
+    "build:core": "npm run build -w @disclaude/core",
+    "build:primary-node": "npm run build -w @disclaude/primary-node",
+    "build:worker-node": "npm run build -w @disclaude/worker-node",
+    "build:mcp-server": "npm run build -w @disclaude/mcp-server",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

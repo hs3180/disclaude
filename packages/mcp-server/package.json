@@ -1,0 +1,25 @@
+{
+  "name": "@disclaude/mcp-server",
+  "version": "0.0.1",
+  "description": "MCP Server process for disclaude - provides MCP tools and resources",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@disclaude/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
