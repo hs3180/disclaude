@@ -385,9 +385,9 @@ When \`format: "card"\`, content MUST include:
       parentMessageId: z.string().optional(),
     }),
     handler: async ({ content, format, chatId, parentMessageId }) => {
-      if (format === 'card' && typeof content === 'string') {
-        return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
-      }
+      // Note: We allow string content for format="card" because the underlying
+      // send_user_feedback function can parse JSON strings and validate card structure.
+      // This fixes issue #990 where MCP/function-calling layers serialize objects to strings.
       if (format === 'text' && typeof content !== 'string') {
         return toolSuccess('❌ Error: When format="text", content must be a STRING.');
       }
