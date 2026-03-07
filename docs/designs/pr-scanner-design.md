@@ -89,9 +89,10 @@ This document covers:
 | Dependency | Status | PR/Issue | Blocking | Notes |
 |------------|--------|----------|----------|-------|
 | Scheduler | ✅ Ready | #357 | No | Already implemented |
-| ChatOps (createDiscussionChat) | ⏳ Pending | PR #423 | **Yes** | Group chat creation |
+| ChatOps (createDiscussionChat) | ✅ Ready | PR #423 | No | Merged |
+| create_chat MCP Tool | ✅ Ready | This PR | No | Exposes ChatOps to Agent |
 | FeedbackController | ⏳ Pending | PR #412 | Partial | Interactive cards |
-| PR State Storage | ❓ Needed | This doc | No | Simple JSON file |
+| PR State Storage | ✅ Ready | This doc | No | Simple JSON file |
 
 ### 3.2 ChatOps API (PR #423)
 
@@ -180,12 +181,13 @@ Scan for new PRs and send notifications.
 5. Update history file
 ```
 
-### Phase 2: Group Chat Creation ⏳ Blocked by PR #423
+### Phase 2: Group Chat Creation ✅ Ready
 
 **Goal**: Create dedicated group chat for each PR
 
 **Requirements**:
-- ⏳ ChatOps `createDiscussionChat()` (PR #423)
+- ✅ ChatOps `createDiscussionChat()` (PR #423 merged)
+- ✅ `create_chat` MCP tool (this PR)
 
 **Additional Steps**:
 1. Call `createDiscussionChat()` for new PRs
@@ -302,10 +304,11 @@ interface PRScannerHistory {
 - [ ] Create history file schema
 - [ ] Test with notification-only mode
 
-### Blocked (Phase 2)
-- [ ] Wait for PR #423 (ChatOps) to merge
-- [ ] Add group chat creation
-- [ ] Test group chat flow
+### Ready to Implement (Phase 2)
+- [x] ChatOps `createDiscussionChat()` merged (PR #423)
+- [x] `create_chat` MCP tool added
+- [ ] Update schedule file to use `create_chat`
+- [ ] Test group chat creation flow
 
 ### Blocked (Phase 3)
 - [ ] Wait for PR #412 (FeedbackController) to merge

@@ -19,6 +19,7 @@ import {
   generate_quiz,
   create_study_guide,
 } from './tools/index.js';
+import { create_chat } from './tools/create-chat.js';
 // Re-export for backward compatibility
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
@@ -900,6 +901,47 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Chat creation tool (Issue #393 Phase 2)
+  {
+    name: 'create_chat',
+    description: `Create a new group chat in Feishu.
+
+Use this tool to create a new discussion group for specific topics like PR discussions, project discussions, etc.
+
+## Parameters
+- **topic**: Chat name/topic (optional, auto-generated if not provided)
+- **members**: Initial member open_ids (optional, bot will be auto-added as member)
+
+## Example
+\`\`\`json
+{
+  "topic": "PR #123: Fix authentication bug",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\`
+
+## Returns
+- **chatId**: The ID of the created chat (can be used with send_user_feedback)
+
+## Use Cases
+- Create dedicated chat for PR discussion (Issue #393)
+- Create project-specific discussion groups
+- Create temporary discussion groups for specific tasks`,
+    parameters: z.object({
+      topic: z.string().optional(),
+      members: z.array(z.string()).optional(),
+    }),
+    handler: async ({ topic, members }) => {
+      try {
+        const result = await create_chat({ topic, members });
+        return toolSuccess(result.success
+          ? `${result.message}\nChat ID: ${result.chatId}`
+          : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Chat creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

@@ -50,10 +50,17 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
    gh pr view {number} --repo hs3180/disclaude --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
    ```
 
-2. **尝试创建群聊** (Phase 2):
-   - 如果有 `create_discussion_chat` MCP 工具可用，为该 PR 创建独立群聊
+2. **创建群聊** (Phase 2):
+   - 使用 `create_chat` MCP 工具为该 PR 创建独立群聊
    - 群聊名称: `PR #{number}: {title 前30字符}`
-   - 如果创建失败或工具不可用，使用配置的 `chatId` 发送通知
+   - 示例调用:
+     ```json
+     {
+       "topic": "PR #123: Fix authentication bug",
+       "members": []
+     }
+     ```
+   - 如果创建失败，使用配置的 `chatId` 发送通知
 
 3. 发送 PR 信息通知：
    - PR 标题和编号
@@ -64,7 +71,7 @@ gh pr list --repo hs3180/disclaude --state open --json number,title,author,updat
    - 变更统计 (+additions/-deletions, changedFiles files)
    - 链接
 
-4. 更新历史记录
+4. 更新历史记录（将 PR 编号和对应的 chatId 存入 `prChats`）
 
 ### 5. 更新历史文件
 
@@ -91,24 +98,24 @@ PR #{number}: {title}
 
 ## 群聊创建说明 (Phase 2)
 
-当前 MCP 工具暂不支持创建群聊，因此使用 Phase 1 模式（发送到配置的 chatId）。
+使用 `create_chat` MCP 工具为每个新 PR 创建独立群聊：
 
-未来当 `create_discussion_chat` MCP 工具可用时，可以：
-1. 为每个新 PR 创建独立群聊
-2. 邀请 PR 作者和相关人员
-3. 在群聊中发送 PR 信息卡片
-4. 支持通过命令执行 PR 操作
+1. 调用 `create_chat` 工具，传入 PR 标题作为 topic
+2. 获取返回的 chatId
+3. 使用 `send_user_feedback` 工具向新创建的群聊发送 PR 信息卡片
+4. 将 chatId 存入历史记录的 `prChats` 字段
 
 ## 错误处理
 
 - 如果 `gh` 命令失败，记录错误并发送错误通知到 chatId
 - 如果历史文件损坏，重置并重新开始
+- 如果群聊创建失败，回退到使用配置的 chatId 发送通知
 - 如果发送通知失败，记录错误但继续处理其他 PR
 
 ## 使用说明
 
 1. 复制此文件到 `workspace/schedules/pr-scanner.md`
-2. 将 `chatId` 替换为实际的飞书群聊 ID（用于接收通知）
+2. 将 `chatId` 替换为实际的飞书群聊 ID（用于接收错误通知）
 3. 设置 `enabled: true`
 4. 调度器将自动加载并执行
 
@@ -117,7 +124,7 @@ PR #{number}: {title}
 | Phase | 功能 | 状态 |
 |-------|------|------|
 | Phase 1 | 基本扫描 + 通知 | ✅ 可用 |
-| Phase 2 | 为每个 PR 创建群聊 | ⏳ 需要 MCP 工具 |
+| Phase 2 | 为每个 PR 创建群聊 | ✅ 可用 |
 | Phase 3 | 交互式操作按钮 | ❌ 不计划实现 |
 
 详见: `docs/designs/pr-scanner-design.md`
