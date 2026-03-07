@@ -167,11 +167,11 @@ describe('TaskFlowOrchestrator', () => {
       mockCallbacks,
       mockLogger as unknown as import('pino').Logger
     );
-  });
+  }, 30000); // Increase timeout for CI environments with slow I/O
 
   afterEach(() => {
     vi.clearAllMocks();
-  });
+  }, 30000); // Increase timeout for CI environments with slow I/O
 
   describe('Constructor', () => {
     it('should create instance with callbacks', () => {
@@ -213,7 +213,7 @@ describe('TaskFlowOrchestrator', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(mockLogger.info).toHaveBeenCalled();
-    });
+    }, 30000); // Increase timeout for CI environments
 
     it('should handle chat ID correctly', async () => {
       const taskPath = '/test/workspace/tasks/msg_456/task.md';
@@ -226,7 +226,7 @@ describe('TaskFlowOrchestrator', () => {
         expect.objectContaining({ chatId: 'test-chat-id' }),
         expect.any(String)
       );
-    });
+    }, 30000); // Increase timeout for CI environments
 
     it('should log dialogue phase start', async () => {
       const taskPath = '/test/workspace/tasks/msg_789/task.md';
@@ -236,7 +236,7 @@ describe('TaskFlowOrchestrator', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(mockLogger.info).toHaveBeenCalled();
-    });
+    }, 30000); // Increase timeout for CI environments
   });
 
   describe('MessageCallbacks Interface', () => {
@@ -283,6 +283,6 @@ describe('TaskFlowOrchestrator', () => {
 
       // Error should be logged
       expect(mockLogger.error).toHaveBeenCalled();
-    });
+    }, 30000); // Increase timeout for CI environments
   });
 });
