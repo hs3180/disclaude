@@ -3,14 +3,19 @@
  *
  * Shared core utilities, types, and interfaces for disclaude.
  *
- * This package will contain:
- * - Type definitions
- * - Utility functions
- * - Constants
- * - Public interfaces
+ * This package contains:
+ * - Type definitions (platform, websocket, file)
+ * - Constants (deduplication, dialogue, api config)
  *
- * Code will be migrated from src/ in subsequent PRs.
+ * Note: Utility functions (logger, error-handler, retry) will be migrated
+ * in a subsequent PR after resolving their dependencies.
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Types
+export * from './types/index.js';
+
+// Constants
+export * from './constants/index.js';
+
+// Version
 export const CORE_VERSION = '0.0.1';
