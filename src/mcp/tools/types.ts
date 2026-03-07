@@ -88,3 +88,27 @@ export interface SendInteractiveResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Option for ask_user tool.
+ */
+export interface AskUserOptions {
+  /** Display text for the option (shown on button) */
+  text: string;
+  /** Value returned when this option is selected (defaults to option_N if not provided) */
+  value?: string;
+  /** Visual style of the button */
+  style?: 'primary' | 'default' | 'danger';
+  /** Action description for the agent to execute when this option is selected */
+  action?: string;
+}
+
+/**
+ * Result type for ask_user tool.
+ */
+export interface AskUserResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  error?: string;
+}
