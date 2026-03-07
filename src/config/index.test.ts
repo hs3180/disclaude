@@ -209,6 +209,48 @@ describe('Config', () => {
     });
   });
 
+  describe('getRestChannelConfig()', () => {
+    it('should return an object', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(typeof restConfig).toBe('object');
+    });
+
+    it('should have optional port property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.port === undefined || typeof restConfig.port === 'number').toBe(true);
+    });
+
+    it('should have optional host property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.host === undefined || typeof restConfig.host === 'string').toBe(true);
+    });
+
+    it('should have optional apiPrefix property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.apiPrefix === undefined || typeof restConfig.apiPrefix === 'string').toBe(true);
+    });
+
+    it('should have optional authToken property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.authToken === undefined || typeof restConfig.authToken === 'string').toBe(true);
+    });
+
+    it('should have optional enableCors property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.enableCors === undefined || typeof restConfig.enableCors === 'boolean').toBe(true);
+    });
+
+    it('should have optional fileStorageDir property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.fileStorageDir === undefined || typeof restConfig.fileStorageDir === 'string').toBe(true);
+    });
+
+    it('should have optional maxFileSize property', () => {
+      const restConfig = Config.getRestChannelConfig();
+      expect(restConfig.maxFileSize === undefined || typeof restConfig.maxFileSize === 'number').toBe(true);
+    });
+  });
+
   describe('getAgentConfig()', () => {
     it('should throw error when no API key is configured', () => {
       // This test assumes no API keys are set in the test environment
