@@ -79,7 +79,7 @@ export interface MessageCallbacks {
  * Handles incoming Feishu messages and card actions.
  */
 export class MessageHandler {
-  // Issue #1033: appId and appSecret are no longer needed,  // kept for backward compatibility
+  // Issue #1033: Use unified LarkClientService
   private client?: lark.Client;
   private messageSender?: FeishuMessageSender;
   private fileHandler: FeishuFileHandler;
@@ -97,8 +97,8 @@ export class MessageHandler {
    * Create a MessageHandler.
    */
   constructor(options: {
-    appId: string;
-    appSecret: string;
+    appId: string;  // Kept for backward compatibility
+    appSecret: string;  // Kept for backward compatibility
     passiveModeManager: PassiveModeManager;
     mentionDetector: MentionDetector;
     interactionManager: InteractionManager;
@@ -106,8 +106,7 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.appId = options.appId;
-    this.appSecret = options.appSecret;
+    // appId and appSecret are no longer stored - using LarkClientService
     this.passiveModeManager = options.passiveModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;

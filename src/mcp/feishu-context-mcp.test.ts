@@ -36,6 +36,15 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
   },
 }));
 
+// Mock LarkClientService (Issue #1030)
+vi.mock('../services/index.js', () => ({
+  getLarkClientService: vi.fn(() => ({
+    getClient: vi.fn(() => mockClient),
+  })),
+  isLarkClientServiceInitialized: vi.fn(() => true),
+  initLarkClientService: vi.fn(),
+}));
+
 // Mock config
 vi.mock('../config/index.js', () => ({
   Config: {

@@ -6,10 +6,9 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
@@ -23,15 +22,14 @@ export async function send_file(params: {
   try {
     if (!chatId) { throw new Error('chatId is required'); }
 
-    const appId = Config.FEISHU_APP_ID;
-    const appSecret = Config.FEISHU_APP_SECRET;
-
-    if (!appId || !appSecret) {
-      logger.warn({ filePath, chatId }, 'File send skipped (platform not configured)');
+    // Issue #1030: Use unified LarkClientService instead of creating client directly
+    if (!isLarkClientServiceInitialized()) {
+      const errorMsg = 'LarkClientService not initialized. Please ensure the application is properly configured.';
+      logger.error({ filePath, chatId }, errorMsg);
       return {
         success: false,
-        error: 'Platform credentials not configured',
-        message: '⚠️ File cannot be sent: Platform is not configured.',
+        error: errorMsg,
+        message: `⚠️ ${errorMsg}`,
       };
     }
 
@@ -44,7 +42,7 @@ export async function send_file(params: {
     if (!stats.isFile()) { throw new Error(`Path is not a file: ${filePath}`); }
 
     const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+    const client = getLarkClientService().getClient();
     const fileSize = await uploadAndSendFile(client, resolvedPath, chatId);
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);

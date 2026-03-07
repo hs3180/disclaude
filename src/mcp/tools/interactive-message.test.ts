@@ -26,7 +26,17 @@ vi.mock('../../config/index.js', () => ({
   Config: {
     FEISHU_APP_ID: 'test-app-id',
     FEISHU_APP_SECRET: 'test-app-secret',
+    getWorkspaceDir: vi.fn(() => '/test/workspace'),
   },
+}));
+
+// Mock LarkClientService (Issue #1030)
+vi.mock('../../services/index.js', () => ({
+  getLarkClientService: vi.fn(() => ({
+    getClient: vi.fn(() => mockClient),
+  })),
+  isLarkClientServiceInitialized: vi.fn(() => true),
+  initLarkClientService: vi.fn(),
 }));
 
 // Mock logger
