@@ -289,11 +289,9 @@ export class LarkClientService {
 
     try {
       const response = await retry(
-        () => this.client.authen.v3.appAccessToken.internal.appAccessToken.create({
-          data: {
-            app_id: '',  // Will be filled by SDK
-            app_secret: '',  // Will be filled by SDK
-          },
+        () => this.client.request({
+          method: 'GET',
+          url: '/open-apis/bot/v3/info',
         }),
         {
           maxRetries: 3,
@@ -304,15 +302,20 @@ export class LarkClientService {
         }
       );
 
-      // Get bot info from the client's internal tenant access token
-      const botId = response?.app_access_token ? 'bot_info' : 'unknown';
-
-      // For now, return a basic bot info
-      // In a full implementation, this would call the bot info API
-      this.botInfo = {
-        openId: botId,
-        name: 'Disclaude Bot',
-      };
+      const bot = response.data?.bot;
+      if (bot?.open_id) {
+        this.botInfo = {
+          openId: bot.open_id,
+          name: bot.app_name || 'Disclaude Bot',
+          avatarUrl: bot.icon_url,
+        };
+      } else {
+        // Fallback to basic bot info
+        this.botInfo = {
+          openId: 'unknown',
+          name: 'Disclaude Bot',
+        };
+      }
 
       logger.debug({ botInfo: this.botInfo }, 'Bot info retrieved');
       return this.botInfo;

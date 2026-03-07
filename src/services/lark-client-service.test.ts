@@ -24,17 +24,7 @@ const mockClient = vi.hoisted(() => ({
       create: vi.fn(),
     },
   },
-  authen: {
-    v3: {
-      appAccessToken: {
-        internal: {
-          appAccessToken: {
-            create: vi.fn(),
-          },
-        },
-      },
-    },
-  },
+  request: vi.fn(),
 }));
 
 const mockLogger = vi.hoisted(() => ({
@@ -73,7 +63,7 @@ vi.mock('../utils/error-handler.js', () => ({
 }));
 
 vi.mock('../utils/retry.js', () => ({
-  retry: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+  retry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
 
 vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
@@ -287,16 +277,24 @@ describe('LarkClientService', () => {
 
   describe('getBotInfo', () => {
     it('should return cached bot info on subsequent calls', async () => {
-      mockClient.authen.v3.appAccessToken.internal.appAccessToken.create.mockResolvedValue({
-        app_access_token: 'token123',
+      mockClient.request.mockResolvedValue({
+        data: {
+          bot: {
+            open_id: 'bot_open_id',
+            app_id: 'bot_app_id',
+            app_name: 'Test Bot',
+          },
+        },
       });
 
       const info1 = await service.getBotInfo();
       const info2 = await service.getBotInfo();
 
       // Should only call API once (caching)
-      expect(mockClient.authen.v3.appAccessToken.internal.appAccessToken.create).toHaveBeenCalledTimes(1);
+      expect(mockClient.request).toHaveBeenCalledTimes(1);
       expect(info1).toBe(info2);
+      expect(info1.openId).toBe('bot_open_id');
+      expect(info1.name).toBe('Test Bot');
     });
   });
 });

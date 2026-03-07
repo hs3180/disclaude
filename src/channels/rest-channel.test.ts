@@ -13,8 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestChannel } from './rest-channel.js';
-import http from 'node:http';
-import type { IncomingMessage, ServerResponse, Server } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EventEmitter } from 'node:events';
 
 // Mock logger
@@ -61,12 +60,16 @@ vi.mock('../file-transfer/index.js', () => ({
 class MockServer extends EventEmitter {
   listen = vi.fn((_port: number, _host: string, callback?: () => void) => {
     // Call callback immediately (synchronously) to avoid timer dependency
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 
   close = vi.fn((callback?: () => void) => {
-    if (callback) callback();
+    if (callback) {
+      callback();
+    }
     return this;
   });
 }
@@ -157,26 +160,28 @@ function createMockResponse(): ServerResponse & {
   res._statusCode = 200;
   res._ended = false;
 
-  res.writeHead = vi.fn().mockImplementation((statusCode: number, headers?: Record<string, string>) => {
+  // Use type assertion to bypass strict type checking for mock methods
+  // The mock returns `res` with extra properties for testing purposes
+  (res as unknown as Record<string, unknown>).writeHead = vi.fn().mockImplementation((statusCode: number, headers?: Record<string, string>) => {
     res._statusCode = statusCode;
     if (headers) {
       Object.assign(res._headers, headers);
     }
     return res;
-  }) as ServerResponse['writeHead'];
+  });
 
-  res.setHeader = vi.fn().mockImplementation((name: string, value: string | number | string[]) => {
+  (res as unknown as Record<string, unknown>).setHeader = vi.fn().mockImplementation((name: string, value: string | number | string[]) => {
     res._headers[name.toLowerCase()] = String(value);
     return res;
-  }) as ServerResponse['setHeader'];
+  });
 
-  res.getHeader = vi.fn().mockImplementation((name: string) => {
+  (res as unknown as Record<string, unknown>).getHeader = vi.fn().mockImplementation((name: string) => {
     return res._headers[name.toLowerCase()];
-  }) as ServerResponse['getHeader'];
+  });
 
-  res.removeHeader = vi.fn() as ServerResponse['removeHeader'];
+  (res as unknown as Record<string, unknown>).removeHeader = vi.fn();
 
-  res.end = vi.fn().mockImplementation((data?: string | Buffer | unknown) => {
+  (res as unknown as Record<string, unknown>).end = vi.fn().mockImplementation((data?: string | Buffer | unknown) => {
     if (data && typeof data === 'string') {
       res._body = data;
     } else if (data && Buffer.isBuffer(data)) {
@@ -185,7 +190,7 @@ function createMockResponse(): ServerResponse & {
     res._ended = true;
     res.emit('finish');
     return res;
-  }) as ServerResponse['end'];
+  });
 
   return res;
 }
