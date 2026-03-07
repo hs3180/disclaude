@@ -28,6 +28,7 @@ function createMockServices(): CommandServices {
     removeMembers: () => Promise.resolve(),
     getMembers: () => Promise.resolve([]),
     dissolveChat: () => Promise.resolve(),
+    updateChatName: () => Promise.resolve(),
     registerGroup: () => {},
     unregisterGroup: () => false,
     listGroups: () => [],

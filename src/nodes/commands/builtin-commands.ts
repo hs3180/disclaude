@@ -36,6 +36,7 @@ import {
   ListGroupMembersCommand,
   ListGroupCommand,
   DissolveGroupCommand,
+  NameGroupCommand,
   PassiveCommand,
   SetDebugCommand,
   ShowDebugCommand,
@@ -60,6 +61,7 @@ export {
   ListGroupMembersCommand,
   ListGroupCommand,
   DissolveGroupCommand,
+  NameGroupCommand,
   PassiveCommand,
   SetDebugCommand,
   ShowDebugCommand,
@@ -89,6 +91,8 @@ export function registerDefaultCommands(
   registry.register(new ListGroupMembersCommand());
   registry.register(new ListGroupCommand());
   registry.register(new DissolveGroupCommand());
+  // Issue #1072: Name group command for easy identification
+  registry.register(new NameGroupCommand());
   registry.register(new PassiveCommand());
   registry.register(new SetDebugCommand());
   registry.register(new ShowDebugCommand());

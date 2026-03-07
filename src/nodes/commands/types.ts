@@ -185,6 +185,9 @@ export interface CommandServices {
   /** Dissolve a chat */
   dissolveChat: (client: lark.Client, chatId: string) => Promise<void>;
 
+  /** Update chat name */
+  updateChatName: (client: lark.Client, chatId: string, name: string) => Promise<void>;
+
   /** Register a group */
   registerGroup: (group: ManagedGroupInfo) => void;
 

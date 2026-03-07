@@ -256,3 +256,41 @@ export class DissolveGroupCommand implements Command {
     }
   }
 }
+
+/**
+ * Name Group Command - Set or update the current group chat name.
+ *
+ * Issue #1072: Thread Management (建群+自动命名 MVP)
+ * Allows users to quickly rename the current group for easy identification.
+ */
+export class NameGroupCommand implements Command {
+  readonly name = 'name';
+  readonly category = 'group' as const;
+  readonly description = '设置当前群名称';
+  readonly usage = 'name <群名称>';
+
+  async execute(context: CommandContext): Promise<CommandResult> {
+    const { services, args, chatId } = context;
+
+    if (args.length < 1) {
+      return {
+        success: false,
+        error: '用法: `/name <群名称>`\n\n示例: `/name 财报分析`',
+      };
+    }
+
+    const name = args.join(' ');
+
+    try {
+      const client = services.getFeishuClient();
+      await services.updateChatName(client, chatId, name);
+
+      return {
+        success: true,
+        message: `✅ **群名称已更新**\n\n新名称: ${name}`,
+      };
+    } catch (error) {
+      return { success: false, error: `设置群名称失败: ${(error as Error).message}` };
+    }
+  }
+}

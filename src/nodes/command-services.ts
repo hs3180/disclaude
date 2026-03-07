@@ -16,6 +16,7 @@ import {
   removeMembers,
   getMembers,
   getBotChats,
+  updateChatName,
 } from '../platforms/feishu/chat-ops.js';
 import type { GroupService } from '../platforms/feishu/group-service.js';
 import type { TaskStateManager } from '../utils/task-state-manager.js';
@@ -99,6 +100,7 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     getMembers,
     dissolveChat,
     getBotChats,
+    updateChatName,
 
     // Group management
     registerGroup: (group: ManagedGroupInfo) => groupService.registerGroup(group),

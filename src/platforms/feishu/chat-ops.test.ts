@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers, getBotChats } from './chat-ops.js';
+import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers, getBotChats, updateChatName } from './chat-ops.js';
 
 // Mock lark client
 const mockClient = {
@@ -16,6 +16,7 @@ const mockClient = {
       create: vi.fn(),
       delete: vi.fn(),
       list: vi.fn(),
+      update: vi.fn(),
     },
     chatMembers: {
       create: vi.fn(),
@@ -326,6 +327,30 @@ describe('ChatOps', () => {
       mockList.mockRejectedValue(new Error('API error'));
 
       await expect(getBotChats(mockClient)).rejects.toThrow('API error');
+    });
+  });
+
+  describe('updateChatName', () => {
+    it('should update chat name successfully', async () => {
+      const mockUpdate = mockClient.im.chat.update as ReturnType<typeof vi.fn>;
+      mockUpdate.mockResolvedValue({});
+
+      await updateChatName(mockClient, 'oc_chat_123', 'New Group Name');
+
+      expect(mockUpdate).toHaveBeenCalledWith({
+        path: { chat_id: 'oc_chat_123' },
+        params: { user_id_type: 'open_id' },
+        data: { name: 'New Group Name' },
+      });
+    });
+
+    it('should throw on update error', async () => {
+      const mockUpdate = mockClient.im.chat.update as ReturnType<typeof vi.fn>;
+      mockUpdate.mockRejectedValue(new Error('Permission denied'));
+
+      await expect(
+        updateChatName(mockClient, 'oc_chat_123', 'New Name')
+      ).rejects.toThrow('Permission denied');
     });
   });
 });

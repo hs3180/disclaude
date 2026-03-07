@@ -211,6 +211,33 @@ export interface BotChatInfo {
 }
 
 /**
+ * Update chat name.
+ *
+ * @param client - Feishu API client
+ * @param chatId - Target chat ID
+ * @param name - New chat name
+ *
+ * @see Issue #1072 - Thread Management (建群+自动命名 MVP)
+ */
+export async function updateChatName(
+  client: lark.Client,
+  chatId: string,
+  name: string
+): Promise<void> {
+  try {
+    await client.im.chat.update({
+      path: { chat_id: chatId },
+      params: { user_id_type: 'open_id' },
+      data: { name },
+    });
+    logger.info({ chatId, name }, 'Chat name updated');
+  } catch (error) {
+    logger.error({ err: error, chatId, name }, 'Failed to update chat name');
+    throw error;
+  }
+}
+
+/**
  * Get all chats the bot is in.
  *
  * Uses Feishu API to get all groups where the bot is a member.
