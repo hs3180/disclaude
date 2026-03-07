@@ -62,3 +62,6 @@ disclaude-test-server.log
 *_ANALYSIS.md
 *_REPORT.md
 *_SUMMARY.md
+
+# TypeScript build info
+*.tsbuildinfo

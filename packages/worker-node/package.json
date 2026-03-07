@@ -1,0 +1,24 @@
+{
+  "name": "@disclaude/worker-node",
+  "version": "0.3.2",
+  "description": "Worker Node for disclaude - handles agent execution and task processing",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@disclaude/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
