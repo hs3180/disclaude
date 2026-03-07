@@ -24,6 +24,8 @@ import {
   MessageHandler as FeishuMessageHandler,
   type MessageCallbacks,
 } from './feishu/index.js';
+// Issue #992: Import IPC server for cross-process interactive contexts
+import { startIpcServer, stopIpcServer } from '../mcp/tools/interactive-message.js';
 import type {
   FeishuEventData,
   FeishuCardActionEventData,
@@ -212,6 +214,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #959: Start WebSocket reconnection watchdog
     this.startReconnectWatchdog();
 
+    // Issue #992: Start IPC server for cross-process interactive contexts
+    // This must be called during channel startup, not at module load time,
+    // to avoid test timeouts (see PR #982)
+    try {
+      await startIpcServer();
+      logger.info('IPC server started for cross-process interactive contexts');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to start IPC server, interactive cards may not work across processes');
+    }
+
     logger.info('FeishuChannel started');
   }
 
@@ -227,6 +239,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
+
+    // Issue #992: Stop IPC server
+    stopIpcServer();
 
     logger.info('FeishuChannel stopped');
     return Promise.resolve();
