@@ -130,6 +130,9 @@ export class PrimaryNode extends EventEmitter {
   // Skill Agent management (Issue #455)
   private skillAgentManager?: SkillAgentManager;
 
+  // Thread management (Issue #1072)
+  private threadManager?: import('../conversation/thread-manager.js').ThreadManager;
+
   // Local execution
   private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
@@ -201,6 +204,11 @@ export class PrimaryNode extends EventEmitter {
     this.skillAgentManager = initSkillAgentManager({
       sendMessage: this.sendMessage.bind(this),
       sendCard: this.sendCard.bind(this),
+    });
+
+    // Issue #1072: Initialize ThreadManager for multi-conversation support
+    this.threadManager = new (require('../conversation/thread-manager.js')).ThreadManager({
+      logger: logger.child({ module: 'thread-manager' }),
     });
 
     // Register custom channels if provided
@@ -685,6 +693,13 @@ export class PrimaryNode extends EventEmitter {
       getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
       getChannels: () => this.messageRouter.getChannels(),
       skillAgentManager: this.skillAgentManager!,
+      // Thread management (Issue #1072)
+      threadManager: this.threadManager!,
+      getCurrentThreadRootId: (_chatId: string) => {
+        // Get from active agent sessions or return undefined
+        // This is a placeholder - actual implementation would get from session manager
+        return undefined;
+      },
     });
 
     const context = {

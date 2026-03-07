@@ -42,3 +42,6 @@ export { ExpertCommand } from './expert-commands.js';
 
 // Skill command (Issue #455)
 export { SkillCommand } from './skill-command.js';
+
+// Thread commands (Issue #1072)
+export { ThreadCommand } from './thread-commands.js';

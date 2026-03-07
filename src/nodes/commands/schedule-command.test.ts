@@ -100,6 +100,14 @@ describe('ScheduleCommand', () => {
     getSkillAgent: () => undefined,
     listSkillAgents: () => [],
     stopAllSkillAgents: () => Promise.resolve(0),
+    // Thread management (Issue #1072)
+    saveThread: () => ({ id: 'thread_test', name: 'Test', chatId: 'oc_test', createdAt: Date.now(), updatedAt: Date.now(), messageCount: 0, threadRootId: 'root_test' }),
+    switchThread: () => undefined,
+    listThreads: () => [],
+    deleteThread: () => false,
+    renameThread: () => undefined,
+    getCurrentThread: () => undefined,
+    getCurrentThreadRootId: () => undefined,
   });
 
   const createContext = (args: string[], services: CommandServices = createMockServices()): CommandContext => ({

@@ -24,6 +24,7 @@ import type { DebugGroupService } from './debug-group-service.js';
 import type { ScheduleManagement } from './schedule-management.js';
 import type { SkillAgentManager } from '../agents/skill-agent-manager.js';
 import type { CommandServices, ManagedGroupInfo, StartSkillAgentOptions } from './commands/types.js';
+import type { ThreadManager, Thread } from '../conversation/thread-manager.js';
 
 /**
  * Dependencies needed for building command services.
@@ -53,6 +54,10 @@ export interface CommandServicesDeps {
   getChannels: () => Array<{ id: string; name: string; setPassiveModeDisabled?: (chatId: string, disabled: boolean) => void; isPassiveModeDisabled?: (chatId: string) => boolean }>;
   /** Skill agent manager (Issue #455) */
   skillAgentManager: SkillAgentManager;
+  /** Thread manager (Issue #1072) */
+  threadManager: ThreadManager;
+  /** Get current thread root ID for a chat (Issue #1072) */
+  getCurrentThreadRootId: (chatId: string) => string | undefined;
 }
 
 /**
@@ -75,6 +80,8 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     getChannelStatus,
     getChannels,
     skillAgentManager,
+    threadManager,
+    getCurrentThreadRootId,
   } = deps;
 
   return {
@@ -166,5 +173,23 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
       await skillAgentManager.stopAll();
       return count;
     },
+
+    // Thread management (Issue #1072)
+    saveThread: (chatId: string, name: string): Thread => {
+      const currentRootId = getCurrentThreadRootId(chatId);
+      if (!currentRootId) {
+        throw new Error('无法保存: 当前没有活跃的对话');
+      }
+      return threadManager.saveCurrentAsThread(chatId, name, currentRootId);
+    },
+    switchThread: (chatId: string, nameOrId: string): Thread | undefined =>
+      threadManager.switchThread(chatId, nameOrId),
+    listThreads: (chatId: string): Thread[] => threadManager.listThreads(chatId),
+    deleteThread: (chatId: string, nameOrId: string): boolean =>
+      threadManager.deleteThread(chatId, nameOrId),
+    renameThread: (chatId: string, oldName: string, newName: string): Thread | undefined =>
+      threadManager.renameThread(chatId, oldName, newName),
+    getCurrentThread: (chatId: string): Thread | undefined => threadManager.getCurrentThread(chatId),
+    getCurrentThreadRootId,
   };
 }

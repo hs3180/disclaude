@@ -75,3 +75,11 @@ export type {
   SessionStats,
   MessageContext,
 } from './types.js';
+
+// Thread management (Issue #1072)
+export {
+  ThreadManager,
+  type Thread,
+  type ChatThreadState,
+  type ThreadManagerConfig,
+} from './thread-manager.js';

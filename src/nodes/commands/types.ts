@@ -12,7 +12,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 /**
  * Command category for grouping related commands.
  */
-export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill';
+export type CommandCategory = 'session' | 'group' | 'debug' | 'node' | 'task' | 'schedule' | 'skill' | 'thread';
 
 /**
  * Schedule task info for display.
@@ -300,6 +300,28 @@ export interface CommandServices {
 
   /** Stop all skill agents */
   stopAllSkillAgents: () => Promise<number>;
+
+  // Thread management (Issue #1072)
+  /** Save current conversation as a new thread */
+  saveThread: (chatId: string, name: string) => import('../../conversation/thread-manager.js').Thread;
+
+  /** Switch to a different thread */
+  switchThread: (chatId: string, nameOrId: string) => import('../../conversation/thread-manager.js').Thread | undefined;
+
+  /** List all threads for a chat */
+  listThreads: (chatId: string) => import('../../conversation/thread-manager.js').Thread[];
+
+  /** Delete a thread */
+  deleteThread: (chatId: string, nameOrId: string) => boolean;
+
+  /** Rename a thread */
+  renameThread: (chatId: string, oldName: string, newName: string) => import('../../conversation/thread-manager.js').Thread | undefined;
+
+  /** Get current thread */
+  getCurrentThread: (chatId: string) => import('../../conversation/thread-manager.js').Thread | undefined;
+
+  /** Get current thread root ID for replies */
+  getCurrentThreadRootId: (chatId: string) => string | undefined;
 }
 
 /**
@@ -392,10 +414,11 @@ export interface CategoryInfo {
  */
 export const CATEGORY_CONFIG: Record<CommandCategory, CategoryInfo> = {
   session: { label: '对话', emoji: '💬', order: 1 },
-  debug: { label: '调试', emoji: '🔧', order: 2 },
-  group: { label: '群管理', emoji: '👥', order: 3 },
-  node: { label: '节点', emoji: '🖥️', order: 4 },
-  task: { label: '任务', emoji: '📋', order: 5 },
-  schedule: { label: '定时', emoji: '⏰', order: 6 },
-  skill: { label: '技能', emoji: '🎯', order: 7 },
+  thread: { label: '线程', emoji: '🧵', order: 2 },
+  debug: { label: '调试', emoji: '🔧', order: 3 },
+  group: { label: '群管理', emoji: '👥', order: 4 },
+  node: { label: '节点', emoji: '🖥️', order: 5 },
+  task: { label: '任务', emoji: '📋', order: 6 },
+  schedule: { label: '定时', emoji: '⏰', order: 7 },
+  skill: { label: '技能', emoji: '🎯', order: 8 },
 };
