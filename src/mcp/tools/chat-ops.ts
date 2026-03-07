@@ -72,8 +72,12 @@ export async function create_discussion_chat(params: {
     const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
 
     const options: CreateDiscussionOptions = {};
-    if (topic) options.topic = topic;
-    if (members && members.length > 0) options.members = members;
+    if (topic) {
+      options.topic = topic;
+    }
+    if (members && members.length > 0) {
+      options.members = members;
+    }
 
     const chatId = await createDiscussionChat(client, options);
 
