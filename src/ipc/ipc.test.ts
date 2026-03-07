@@ -230,7 +230,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     resetIpcClient();
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     resetIpcClient();
     if (existsSync(socketPath)) {
       try {
@@ -253,7 +253,6 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should return available when server is running', async () => {
-      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
       const handler = createInteractiveMessageHandler({
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
@@ -294,7 +293,6 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should return true when connected', async () => {
-      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
       const handler = createInteractiveMessageHandler({
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
@@ -333,7 +331,6 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should connect on retry if server becomes available', async () => {
-      const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
       const handler = createInteractiveMessageHandler({
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
