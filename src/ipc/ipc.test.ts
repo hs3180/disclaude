@@ -52,6 +52,10 @@ describe('UnixSocketIpcServer', () => {
         }
         return cleaned;
       },
+      // Issue #631: 离线消息相关
+      getOfflineContext: () => undefined,
+      generateFollowUpPrompt: () => undefined,
+      unregisterOfflineContext: () => false,
     });
 
     server = new UnixSocketIpcServer(handler, { socketPath });
@@ -127,6 +131,10 @@ describe('UnixSocketIpcClient', () => {
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
+      // Issue #631: 离线消息相关
+      getOfflineContext: () => undefined,
+      generateFollowUpPrompt: () => undefined,
+      unregisterOfflineContext: () => false,
     });
 
     server = new UnixSocketIpcServer(handler, { socketPath });
@@ -259,6 +267,10 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
+        // Issue #631: 离线消息相关
+        getOfflineContext: () => undefined,
+        generateFollowUpPrompt: () => undefined,
+        unregisterOfflineContext: () => false,
       });
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
@@ -299,6 +311,10 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
+        // Issue #631: 离线消息相关
+        getOfflineContext: () => undefined,
+        generateFollowUpPrompt: () => undefined,
+        unregisterOfflineContext: () => false,
       });
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
@@ -337,6 +353,10 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
+        // Issue #631: 离线消息相关
+        getOfflineContext: () => undefined,
+        generateFollowUpPrompt: () => undefined,
+        unregisterOfflineContext: () => false,
       });
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
@@ -373,6 +393,10 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
+        // Issue #631: 离线消息相关
+        getOfflineContext: () => undefined,
+        generateFollowUpPrompt: () => undefined,
+        unregisterOfflineContext: () => false,
       });
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
