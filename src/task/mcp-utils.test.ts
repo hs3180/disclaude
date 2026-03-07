@@ -8,11 +8,11 @@ import type { AgentMessage } from '../types/agent.js';
 
 describe('parseBaseToolName', () => {
   it('should extract base name from prefixed tool name', () => {
-    expect(parseBaseToolName('feishu-context-mcp__send_user_feedback')).toBe('send_user_feedback');
+    expect(parseBaseToolName('context-mcp__send_message')).toBe('send_message');
   });
 
   it('should return original name when no prefix', () => {
-    expect(parseBaseToolName('send_user_feedback')).toBe('send_user_feedback');
+    expect(parseBaseToolName('send_message')).toBe('send_message');
   });
 
   it('should handle empty string', () => {
@@ -32,9 +32,9 @@ describe('isUserFeedbackTool', () => {
     metadata: { toolName, toolInputRaw: {} },
   });
 
-  it('should return true for send_user_feedback tool', () => {
-    expect(isUserFeedbackTool(createMessage('send_user_feedback'))).toBe(true);
-    expect(isUserFeedbackTool(createMessage('mcp__send_user_feedback'))).toBe(true);
+  it('should return true for send_message tool', () => {
+    expect(isUserFeedbackTool(createMessage('send_message'))).toBe(true);
+    expect(isUserFeedbackTool(createMessage('mcp__send_message'))).toBe(true);
   });
 
   it('should return false for other tools', () => {

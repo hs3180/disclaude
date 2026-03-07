@@ -8,7 +8,7 @@
  */
 
 import { createLogger } from '../../utils/logger.js';
-import { send_user_feedback } from './send-message.js';
+import { send_message } from './send-message.js';
 import type { LeaveMessageResult } from './types.js';
 import { getOfflineMessageStore } from '../../messaging/offline-message-store.js';
 
@@ -109,7 +109,7 @@ export async function leave_message(params: {
     // Build and send the message card
     const card = buildOfflineMessageCard(message, context);
 
-    const sendResult = await send_user_feedback({
+    const sendResult = await send_message({
       content: card,
       format: 'card',
       chatId,

@@ -15,6 +15,7 @@ import type {
   OutgoingMessage,
   ChannelCapabilities,
   IncomingMessage,
+  ControlCommandType,
 } from './types.js';
 import {
   RuliuMessageSender,
@@ -206,7 +207,7 @@ export class RuliuChannel extends BaseChannel<RuliuChannelConfig> {
       supportsMarkdown: true,
       supportsMention: true,
       supportsUpdate: false,
-      supportedMcpTools: ['send_user_feedback'],
+      supportedMcpTools: ['send_message'],
     };
   }
 
@@ -306,6 +307,87 @@ export class RuliuChannel extends BaseChannel<RuliuChannelConfig> {
         { chatId, replyMode: this.config.replyMode },
         'Skipping message based on reply mode'
       );
+      return;
+    }
+
+    // Handle control commands (Issue #725 Phase 3)
+    const text = event.mes?.trim() || '';
+    if (text.startsWith('/')) {
+      const [command, ...args] = text.slice(1).split(/\s+/);
+      const cmd = command.toLowerCase();
+
+      // Try to handle as control command
+      if (this.controlHandler) {
+        const response = await this.emitControl({
+          type: cmd as ControlCommandType,
+          chatId,
+          data: { args, rawText: text, senderId: event.fromuser },
+        });
+
+        if (response.success) {
+          if (response.message) {
+            await this.sendMessage({
+              chatId,
+              type: 'text',
+              text: response.message,
+            });
+          }
+          return;
+        }
+
+        // Command not found - show help message
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+        });
+        return;
+      }
+
+      // Default command handling if no control handler registered
+      if (cmd === 'reset') {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
+        });
+        return;
+      }
+
+      if (cmd === 'status') {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: '📊 **状态**\n\nChannel: Ruliu\nStatus: running',
+        });
+        return;
+      }
+
+      if (cmd === 'help') {
+        await this.sendMessage({
+          chatId,
+          type: 'text',
+          text: `📋 **可用命令**
+
+/session - 会话管理
+- /reset - 重置对话，清除上下文
+- /status - 查看当前状态
+
+/node - 节点管理
+- /nodes - 列出可用节点
+- /switch <node> - 切换到指定节点
+
+💡 直接发送消息即可与 AI 对话！`,
+        });
+        return;
+      }
+
+      // Unknown command without control handler
+      await this.sendMessage({
+        chatId,
+        type: 'text',
+        text: `❓ **未知命令**: /${cmd}\n\n使用 /help 查看可用命令列表。`,
+      });
       return;
     }
 

@@ -22,7 +22,8 @@ import type { TaskStateManager } from '../utils/task-state-manager.js';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
 import type { DebugGroupService } from './debug-group-service.js';
 import type { ScheduleManagement } from './schedule-management.js';
-import type { CommandServices, ManagedGroupInfo } from './commands/types.js';
+import type { SkillAgentManager } from '../agents/skill-agent-manager.js';
+import type { CommandServices, ManagedGroupInfo, StartSkillAgentOptions } from './commands/types.js';
 
 /**
  * Dependencies needed for building command services.
@@ -50,6 +51,8 @@ export interface CommandServicesDeps {
   getChannelStatus: () => string;
   /** Get channels for passive mode operations */
   getChannels: () => Array<{ id: string; name: string; setPassiveModeDisabled?: (chatId: string, disabled: boolean) => void; isPassiveModeDisabled?: (chatId: string) => boolean }>;
+  /** Skill agent manager (Issue #455) */
+  skillAgentManager: SkillAgentManager;
 }
 
 /**
@@ -71,6 +74,7 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     taskStateManager,
     getChannelStatus,
     getChannels,
+    skillAgentManager,
   } = deps;
 
   return {
@@ -151,5 +155,16 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     markAsTopicGroup: (chatId: string, isTopic: boolean) => groupService.markAsTopicGroup(chatId, isTopic),
     isTopicGroup: (chatId: string) => groupService.isTopicGroup(chatId),
     listTopicGroups: () => groupService.listTopicGroups(),
+
+    // Skill Agent management (Issue #455)
+    startSkillAgent: (options: StartSkillAgentOptions) => skillAgentManager.start(options),
+    stopSkillAgent: (agentId: string) => skillAgentManager.stop(agentId),
+    getSkillAgent: (agentId: string) => skillAgentManager.get(agentId),
+    listSkillAgents: () => skillAgentManager.list(),
+    stopAllSkillAgents: async () => {
+      const count = skillAgentManager.listRunning().length;
+      await skillAgentManager.stopAll();
+      return count;
+    },
   };
 }

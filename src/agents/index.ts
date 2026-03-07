@@ -88,3 +88,20 @@ export {
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
+
+// Task Complexity Agent (Issue #857)
+export {
+  TaskComplexityAgent,
+  createTaskComplexityAgent,
+  type TaskComplexityAgentConfig,
+  type TaskComplexityResult,
+  type ComplexityLevel,
+} from './task-complexity-agent.js';
+
+// Task History Storage (Issue #857)
+export {
+  TaskHistoryStorage,
+  taskHistoryStorage,
+  type TaskRecord,
+  type TaskTypeStats,
+} from './task-history.js';

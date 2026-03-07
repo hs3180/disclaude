@@ -24,6 +24,8 @@ import {
   MessageHandler as FeishuMessageHandler,
   type MessageCallbacks,
 } from './feishu/index.js';
+// Issue #992: Import IPC server for cross-process interactive contexts
+import { startIpcServer, stopIpcServer } from '../mcp/tools/interactive-message.js';
 import type {
   FeishuEventData,
   FeishuCardActionEventData,
@@ -162,7 +164,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle card action');
         }
       },
-      'im.message.message_read_v1': async () => {},
+      'im.message.message_read_v1': () => {
+        // No action needed for read receipts
+      },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
@@ -196,6 +200,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     });
 
     await this.wsClient.start({ eventDispatcher });
+
+    // Issue #992: Start IPC server for cross-process interactive contexts
+    // This must be called during channel startup, not at module load time,
+    // to avoid test timeouts (see PR #982)
+    try {
+      await startIpcServer();
+      logger.info('IPC server started for cross-process interactive contexts');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to start IPC server, interactive cards may not work across processes');
+    }
+
     logger.info('FeishuChannel started');
   }
 
@@ -208,6 +223,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
+
+    // Issue #992: Stop IPC server
+    stopIpcServer();
 
     logger.info('FeishuChannel stopped');
     return Promise.resolve();
@@ -258,9 +276,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsMention: true,
       supportsUpdate: true,
       supportedMcpTools: [
-        'send_user_feedback',
-        'send_file_to_feishu',
-        'update_card',
+        'send_message',
+        'send_file',
+        
         'wait_for_interaction',
       ],
     };

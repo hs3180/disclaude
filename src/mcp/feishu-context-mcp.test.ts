@@ -1,12 +1,11 @@
 /**
- * Tests for Feishu Context MCP Tools
+ * Tests for MCP Tools
  *
  * Tests the following functionality:
  * - isValidFeishuCard: Card structure validation (via behavior testing)
  * - getCardValidationError: Detailed validation error messages (via behavior testing)
- * - send_user_feedback: Message sending to Feishu
- * - send_file_to_feishu: File sending to Feishu
- * - update_card: Update existing card message
+ * - send_message: Message sending
+ * - send_file: File sending
  * - wait_for_interaction: Wait for user card interaction
  * - resolvePendingInteraction: Resolve pending interaction
  * - setMessageSentCallback: Callback management
@@ -65,9 +64,8 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
 import * as fs from 'fs/promises';
 import type * as fsStats from 'fs';
 import {
-  send_user_feedback,
-  send_file_to_feishu,
-  update_card,
+  send_message,
+  send_file,
   wait_for_interaction,
   resolvePendingInteraction,
   setMessageSentCallback,
@@ -75,7 +73,7 @@ import {
 } from './feishu-context-mcp.js';
 import { uploadAndSendFile } from '../file-transfer/outbound/feishu-uploader.js';
 
-describe('Feishu Context MCP Tools', () => {
+describe('MCP Tools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset console.log mock
@@ -87,16 +85,16 @@ describe('Feishu Context MCP Tools', () => {
   });
 
   describe('Tool Definitions', () => {
-    it('should have send_user_feedback tool definition', () => {
-      expect(feishuContextTools.send_user_feedback).toBeDefined();
-      expect(feishuContextTools.send_user_feedback.description).toContain('Send a message to a Feishu chat');
-      expect(feishuContextTools.send_user_feedback.handler).toBe(send_user_feedback);
+    it('should have send_message tool definition', () => {
+      expect(feishuContextTools.send_message).toBeDefined();
+      expect(feishuContextTools.send_message.description).toContain('Send a simple message to a chat');
+      expect(feishuContextTools.send_message.handler).toBe(send_message);
     });
 
-    it('should have send_file_to_feishu tool definition', () => {
-      expect(feishuContextTools.send_file_to_feishu).toBeDefined();
-      expect(feishuContextTools.send_file_to_feishu.description).toContain('Send a file to a Feishu chat');
-      expect(feishuContextTools.send_file_to_feishu.handler).toBe(send_file_to_feishu);
+    it('should have send_file tool definition', () => {
+      expect(feishuContextTools.send_file).toBeDefined();
+      expect(feishuContextTools.send_file.description).toContain('Send a file to a chat');
+      expect(feishuContextTools.send_file.handler).toBe(send_file);
     });
   });
 
@@ -105,7 +103,7 @@ describe('Feishu Context MCP Tools', () => {
       const mockCallback = vi.fn();
       setMessageSentCallback(mockCallback);
 
-      const result = await send_user_feedback({
+      const result = await send_message({
         content: 'Hello',
         format: 'text',
         chatId: 'cli-test-chat',
@@ -118,7 +116,7 @@ describe('Feishu Context MCP Tools', () => {
     it('should handle null callback gracefully', async () => {
       setMessageSentCallback(null);
 
-      const result = await send_user_feedback({
+      const result = await send_message({
         content: 'Hello',
         format: 'text',
         chatId: 'cli-test-chat',
@@ -133,7 +131,7 @@ describe('Feishu Context MCP Tools', () => {
       });
       setMessageSentCallback(mockCallback);
 
-      const result = await send_user_feedback({
+      const result = await send_message({
         content: 'Hello',
         format: 'text',
         chatId: 'cli-test-chat',
@@ -144,14 +142,14 @@ describe('Feishu Context MCP Tools', () => {
     });
   });
 
-  describe('send_user_feedback', () => {
+  describe('send_message', () => {
     describe('CLI ChatId (now sends to Feishu)', () => {
       // Note: CLI fallback has been removed (Issue #849)
       // CLI chatIds now send to Feishu API like any other chatId
       it('should send message to Feishu even with cli- prefix', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Test message',
           format: 'text',
           chatId: 'cli-test',
@@ -165,7 +163,7 @@ describe('Feishu Context MCP Tools', () => {
       it('should send content with cli- prefix chatId', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Test content',
           format: 'text',
           chatId: 'cli-test',
@@ -179,7 +177,7 @@ describe('Feishu Context MCP Tools', () => {
       it('should send text message successfully', async () => {
         mockClient.im.message.create.mockResolvedValueOnce({});
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Hello Feishu',
           format: 'text',
           chatId: 'chat-123',
@@ -201,7 +199,7 @@ describe('Feishu Context MCP Tools', () => {
       it('should send text message with thread reply', async () => {
         mockClient.im.message.reply.mockResolvedValueOnce({});
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Thread reply',
           format: 'text',
           chatId: 'chat-123',
@@ -228,7 +226,7 @@ describe('Feishu Context MCP Tools', () => {
           elements: [{ tag: 'markdown', content: '**Hello**' }],
         };
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: cardContent,
           format: 'card',
           chatId: 'chat-123',
@@ -256,7 +254,7 @@ describe('Feishu Context MCP Tools', () => {
           elements: [{ tag: 'markdown', content: '**Hello**' }],
         });
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: cardContent,
           format: 'card',
           chatId: 'chat-123',
@@ -273,7 +271,7 @@ describe('Feishu Context MCP Tools', () => {
           elements: [],
         });
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -289,7 +287,7 @@ describe('Feishu Context MCP Tools', () => {
           elements: [],
         });
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -305,7 +303,7 @@ describe('Feishu Context MCP Tools', () => {
           header: { title: { tag: 'plain_text', content: 'Test' } },
         });
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -322,7 +320,7 @@ describe('Feishu Context MCP Tools', () => {
           elements: [],
         });
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -333,7 +331,7 @@ describe('Feishu Context MCP Tools', () => {
       });
 
       it('should reject card with invalid JSON string', async () => {
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'not valid json',
           format: 'card',
           chatId: 'chat-123',
@@ -350,7 +348,7 @@ describe('Feishu Context MCP Tools', () => {
           { elements: [] },
         ]);
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -368,7 +366,7 @@ describe('Feishu Context MCP Tools', () => {
           // missing header and elements
         };
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: invalidCard,
           format: 'card',
           chatId: 'chat-123',
@@ -382,7 +380,7 @@ describe('Feishu Context MCP Tools', () => {
 
     describe('Input Validation', () => {
       it('should require content (empty string)', async () => {
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: '',
           format: 'text',
           chatId: 'chat-123',
@@ -393,7 +391,7 @@ describe('Feishu Context MCP Tools', () => {
       });
 
       it('should require format', async () => {
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Hello',
           format: '' as 'text' | 'card',
           chatId: 'chat-123',
@@ -404,7 +402,7 @@ describe('Feishu Context MCP Tools', () => {
       });
 
       it('should require chatId', async () => {
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Hello',
           format: 'text',
           chatId: '',
@@ -419,7 +417,7 @@ describe('Feishu Context MCP Tools', () => {
       it('should handle Feishu API errors', async () => {
         mockClient.im.message.create.mockRejectedValueOnce(new Error('API Error'));
 
-        const result = await send_user_feedback({
+        const result = await send_message({
           content: 'Hello',
           format: 'text',
           chatId: 'chat-123',
@@ -431,11 +429,11 @@ describe('Feishu Context MCP Tools', () => {
     });
   });
 
-  describe('send_file_to_feishu', () => {
+  describe('send_file', () => {
     it('should require chatId', async () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/test/file.txt',
         chatId: '',
       });
@@ -448,7 +446,7 @@ describe('Feishu Context MCP Tools', () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(1024);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: 'relative/path/file.txt',
         chatId: 'chat-123',
       });
@@ -465,7 +463,7 @@ describe('Feishu Context MCP Tools', () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(1024);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/absolute/path/file.txt',
         chatId: 'chat-123',
       });
@@ -482,7 +480,7 @@ describe('Feishu Context MCP Tools', () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockResolvedValueOnce(2048);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/test/document.pdf',
         chatId: 'chat-123',
       });
@@ -496,7 +494,7 @@ describe('Feishu Context MCP Tools', () => {
     it('should handle file not found error', async () => {
       vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT: no such file'));
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/nonexistent/file.txt',
         chatId: 'chat-123',
       });
@@ -508,7 +506,7 @@ describe('Feishu Context MCP Tools', () => {
     it('should handle directory path error', async () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => false, size: 0 } as fsStats.Stats);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/some/directory',
         chatId: 'chat-123',
       });
@@ -521,7 +519,7 @@ describe('Feishu Context MCP Tools', () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
       vi.mocked(uploadAndSendFile).mockRejectedValueOnce(new Error('Upload failed'));
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/test/file.txt',
         chatId: 'chat-123',
       });
@@ -530,7 +528,7 @@ describe('Feishu Context MCP Tools', () => {
       expect(result.error).toContain('Upload failed');
     });
 
-    it('should extract Feishu API error details', async () => {
+    it('should extract Platform API error details', async () => {
       vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 } as fsStats.Stats);
 
       const apiError = new Error('API Error') as Error & {
@@ -546,131 +544,15 @@ describe('Feishu Context MCP Tools', () => {
 
       vi.mocked(uploadAndSendFile).mockRejectedValueOnce(apiError);
 
-      const result = await send_file_to_feishu({
+      const result = await send_file({
         filePath: '/test/file.txt',
         chatId: 'chat-123',
       });
 
       expect(result.success).toBe(false);
-      expect(result.feishuCode).toBe(99991663);
-      expect(result.feishuMsg).toBe('permission denied');
-      expect(result.feishuLogId).toBe('log-123');
-    });
-  });
-
-  describe('update_card', () => {
-    it('should have update_card tool definition', () => {
-      expect(feishuContextTools.update_card).toBeDefined();
-      expect(feishuContextTools.update_card.description).toContain('Update an existing interactive card');
-      expect(feishuContextTools.update_card.handler).toBe(update_card);
-    });
-
-    it('should require messageId', async () => {
-      const result = await update_card({
-        messageId: '',
-        card: { config: {}, header: {}, elements: [] },
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('messageId is required');
-    });
-
-    it('should require card', async () => {
-      const result = await update_card({
-        messageId: 'msg-123',
-        card: null as unknown as Record<string, unknown>,
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('card is required');
-    });
-
-    it('should require chatId', async () => {
-      const result = await update_card({
-        messageId: 'msg-123',
-        card: { config: {}, header: {}, elements: [] },
-        chatId: '',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('chatId is required');
-    });
-
-    it('should validate card structure', async () => {
-      const result = await update_card({
-        messageId: 'msg-123',
-        card: { invalid: 'structure' },
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Invalid card structure');
-    });
-
-    it('should update card with cli- prefix via Feishu API', async () => {
-      mockClient.im.message.patch.mockResolvedValueOnce({});
-
-      const result = await update_card({
-        messageId: 'msg-123',
-        card: {
-          config: { wide_screen_mode: true },
-          header: {
-            title: { tag: 'plain_text', content: 'Updated Card' },
-            template: 'blue',
-          },
-          elements: [{ tag: 'markdown', content: '**Updated**' }],
-        },
-        chatId: 'cli-test',
-      });
-
-      // CLI fallback removed (Issue #849) - now sends to Feishu API
-      expect(result.success).toBe(true);
-      expect(mockClient.im.message.patch).toHaveBeenCalled();
-    });
-
-    it('should call Feishu API patch endpoint', async () => {
-      mockClient.im.message.patch.mockResolvedValueOnce({});
-
-      const card = {
-        config: { wide_screen_mode: true },
-        header: {
-          title: { tag: 'plain_text', content: 'Updated Card' },
-          template: 'blue',
-        },
-        elements: [{ tag: 'markdown', content: '**Updated**' }],
-      };
-
-      const result = await update_card({
-        messageId: 'msg-123',
-        card,
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(true);
-      expect(mockClient.im.message.patch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: { message_id: 'msg-123' },
-        })
-      );
-    });
-
-    it('should handle API errors', async () => {
-      mockClient.im.message.patch.mockRejectedValueOnce(new Error('Patch failed'));
-
-      const result = await update_card({
-        messageId: 'msg-123',
-        card: {
-          config: { wide_screen_mode: true },
-          header: { title: { tag: 'plain_text', content: 'Test' }, template: 'blue' },
-          elements: [],
-        },
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Patch failed');
+      expect(result.platformCode).toBe(99991663);
+      expect(result.platformMsg).toBe('permission denied');
+      expect(result.platformLogId).toBe('log-123');
     });
   });
 
