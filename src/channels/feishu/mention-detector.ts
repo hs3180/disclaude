@@ -5,10 +5,11 @@
  * Issue #600: Correctly identify bot mentions in group chats
  * Issue #681: Improve bot mention detection reliability
  * Issue #694: Extracted from feishu-channel.ts
+ * Issue #1033: Use unified LarkClientService
  */
 
 import { createLogger } from '../../utils/logger.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import type { FeishuMessageEvent } from '../../types/platform.js';
 
 const logger = createLogger('MentionDetector');
@@ -37,10 +38,16 @@ export class MentionDetector {
   /**
    * Fetch bot's info from Feishu API.
    * This is used to correctly identify when the bot is mentioned.
+   * Issue #1033: Use unified LarkClientService instead of creating own client
    */
-  async fetchBotInfo(appId: string, appSecret: string): Promise<void> {
+  async fetchBotInfo(): Promise<void> {
     try {
-      const client = createFeishuClient(appId, appSecret);
+      if (!isLarkClientServiceInitialized()) {
+        logger.warn('LarkClientService not initialized, mention detection may be less accurate');
+        return;
+      }
+
+      const client = getLarkClientService().getClient();
       // Use bot info API to get bot's open_id and app_id
       const response = await client.request({
         method: 'GET',
