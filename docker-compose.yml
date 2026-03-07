@@ -96,12 +96,11 @@ services:
       - TZ=Asia/Shanghai
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - DISCLAUDE_MODE=worker
-      - COMM_URL=ws://localhost:3001
+      - COMM_URL=${COMM_URL:-ws://localhost:3001}
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
       - ./workspace:/app/workspace
-      - ./logs:/app/logs
 
     deploy:
       resources:
