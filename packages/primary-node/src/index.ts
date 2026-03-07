@@ -13,5 +13,15 @@
  * Code will be migrated from src/ in subsequent PRs.
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Re-export types from @disclaude/core
+export type {
+  NodeType,
+  BaseNodeConfig,
+  PrimaryNodeConfigBase,
+  NodeCapabilities,
+} from '@disclaude/core';
+
+export { getNodeCapabilities } from '@disclaude/core';
+
+// Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
