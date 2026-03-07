@@ -7,6 +7,15 @@
  */
 
 /**
+ * Feishu API action types for IPC routing.
+ * Issue #1035: IPC request routing for MCP Tools
+ */
+export type FeishuApiAction =
+  | 'sendMessage'
+  | 'sendCard'
+  | 'uploadFile';
+
+/**
  * IPC request types.
  */
 export type IpcRequestType =
@@ -15,7 +24,8 @@ export type IpcRequestType =
   | 'registerActionPrompts'
   | 'unregisterActionPrompts'
   | 'generateInteractionPrompt'
-  | 'cleanupExpiredContexts';
+  | 'cleanupExpiredContexts'
+  | 'feishuApi';
 
 /**
  * IPC request payload types.
@@ -37,6 +47,21 @@ export interface IpcRequestPayloads {
     formData?: Record<string, unknown>;
   };
   cleanupExpiredContexts: Record<string, never>;
+  /**
+   * Issue #1035: Feishu API request payload.
+   * Allows MCP tools to send Feishu API requests via IPC.
+   */
+  feishuApi: {
+    action: FeishuApiAction;
+    params: {
+      chatId: string;
+      content?: string;
+      card?: Record<string, unknown>;
+      filePath?: string;
+      threadId?: string;
+      description?: string;
+    };
+  };
 }
 
 /**
@@ -49,6 +74,16 @@ export interface IpcResponsePayloads {
   unregisterActionPrompts: { success: boolean };
   generateInteractionPrompt: { prompt: string | null };
   cleanupExpiredContexts: { cleaned: number };
+  /**
+   * Issue #1035: Feishu API response payload.
+   */
+  feishuApi: {
+    success: boolean;
+    messageId?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+  };
 }
 
 /**
@@ -88,5 +123,15 @@ export interface IpcConfig {
 export const DEFAULT_IPC_CONFIG: IpcConfig = {
   socketPath: '/tmp/disclaude-interactive.ipc',
   timeout: 5000,
+  maxRetries: 3,
+};
+
+/**
+ * Issue #1035: IPC configuration for Feishu API routing.
+ * Used by PrimaryNode to receive Feishu API requests from MCP tools.
+ */
+export const FEISHU_API_IPC_CONFIG: IpcConfig = {
+  socketPath: '/tmp/disclaude-feishu-api.ipc',
+  timeout: 30000, // Longer timeout for file uploads
   maxRetries: 3,
 };

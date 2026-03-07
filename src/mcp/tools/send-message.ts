@@ -1,6 +1,9 @@
 /**
  * send_message tool implementation.
  *
+ * Issue #1035: Now supports IPC routing to PrimaryNode for unified LarkClientService.
+ * Falls back to direct client creation if IPC is not available.
+ *
  * @module mcp/tools/send-message
  */
 
@@ -11,8 +14,36 @@ import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import type { SendMessageResult, MessageSentCallback } from './types.js';
+// Issue #1035: IPC routing for unified LarkClientService
+import {
+  isFeishuApiIpcAvailable,
+  sendMessageViaIpc,
+  sendCardViaIpc,
+} from '../../ipc/feishu-api-client.js';
 
 const logger = createLogger('SendMessage');
+
+// Cache for IPC availability check
+let ipcAvailable: boolean | null = null;
+let ipcCheckTime = 0;
+const IPC_CHECK_INTERVAL = 30000; // Re-check every 30 seconds
+
+/**
+ * Check if IPC is available, with caching.
+ */
+async function checkIpcAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (ipcAvailable !== null && now - ipcCheckTime < IPC_CHECK_INTERVAL) {
+    return ipcAvailable;
+  }
+
+  ipcAvailable = await isFeishuApiIpcAvailable();
+  ipcCheckTime = now;
+  if (ipcAvailable) {
+    logger.debug('IPC available for Feishu API requests');
+  }
+  return ipcAvailable;
+}
 
 let messageSentCallback: MessageSentCallback | null = null;
 
@@ -63,21 +94,38 @@ export async function send_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+    // Issue #1035: Try IPC first if available
+    const useIpc = await checkIpcAvailable();
 
     if (format === 'text') {
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
+
+      if (useIpc) {
+        // Use IPC to route through PrimaryNode's LarkClientService
+        const result = await sendMessageViaIpc(chatId, textContent, parentMessageId);
+        if (result.success) {
+          logger.debug({ chatId, parentMessageId, via: 'IPC' }, 'User feedback sent (text)');
+          invokeMessageSentCallback(chatId);
+          return { success: true, message: `✅ Message sent (format: ${format})` };
+        }
+        logger.warn({ error: result.error }, 'IPC send failed, falling back to direct client');
+      }
+
+      // Fallback to direct client
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
       await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
-      logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
+      logger.debug({ chatId, parentMessageId, via: 'direct' }, 'User feedback sent (text)');
     } else {
+      // Card format
+      let cardContent: Record<string, unknown>;
+
       if (typeof content === 'object' && isValidFeishuCard(content)) {
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, parentMessageId }, 'User card sent');
+        cardContent = content;
       } else if (typeof content === 'string') {
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            cardContent = parsed;
           } else {
             return {
               success: false,
@@ -100,6 +148,22 @@ export async function send_message(params: {
           message: '❌ Invalid content type.',
         };
       }
+
+      if (useIpc) {
+        // Use IPC to route through PrimaryNode's LarkClientService
+        const result = await sendCardViaIpc(chatId, cardContent, parentMessageId);
+        if (result.success) {
+          logger.debug({ chatId, parentMessageId, via: 'IPC' }, 'User card sent');
+          invokeMessageSentCallback(chatId);
+          return { success: true, message: `✅ Message sent (format: ${format})` };
+        }
+        logger.warn({ error: result.error }, 'IPC send failed, falling back to direct client');
+      }
+
+      // Fallback to direct client
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent), parentMessageId);
+      logger.debug({ chatId, parentMessageId, via: 'direct' }, 'User card sent');
     }
 
     invokeMessageSentCallback(chatId);

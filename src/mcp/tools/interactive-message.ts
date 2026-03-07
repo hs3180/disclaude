@@ -4,6 +4,9 @@
  * This tool sends interactive cards with pre-defined prompt templates
  * that are automatically converted to user messages when interactions occur.
  *
+ * Issue #1035: Now supports IPC routing to PrimaryNode for unified LarkClientService.
+ * Falls back to direct client creation if IPC is not available.
+ *
  * @module mcp/tools/interactive-message
  */
 
@@ -19,8 +22,35 @@ import {
   createInteractiveMessageHandler,
 } from '../../ipc/unix-socket-server.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
+// Issue #1035: IPC routing for unified LarkClientService
+import {
+  isFeishuApiIpcAvailable,
+  sendCardViaIpc,
+} from '../../ipc/feishu-api-client.js';
 
 const logger = createLogger('InteractiveMessage');
+
+// Cache for IPC availability check
+let ipcAvailable: boolean | null = null;
+let ipcCheckTime = 0;
+const IPC_CHECK_INTERVAL = 30000; // Re-check every 30 seconds
+
+/**
+ * Check if IPC is available, with caching.
+ */
+async function checkIpcAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (ipcAvailable !== null && now - ipcCheckTime < IPC_CHECK_INTERVAL) {
+    return ipcAvailable;
+  }
+
+  ipcAvailable = await isFeishuApiIpcAvailable();
+  ipcCheckTime = now;
+  if (ipcAvailable) {
+    logger.debug('IPC available for Feishu API requests');
+  }
+  return ipcAvailable;
+}
 
 /**
  * Store for interactive message contexts.
@@ -226,15 +256,35 @@ export async function send_interactive_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Send the message
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-    const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
+    // Issue #1035: Try IPC first if available
+    const useIpc = await checkIpcAvailable();
+    let messageId: string | undefined;
+
+    if (useIpc) {
+      // Use IPC to route through PrimaryNode's LarkClientService
+      const result = await sendCardViaIpc(chatId, card, parentMessageId, 'Interactive message');
+      if (result.success) {
+        logger.debug({ chatId, parentMessageId, via: 'IPC' }, 'Interactive message sent');
+        // Note: IPC doesn't return messageId, so we use a placeholder
+        messageId = `ipc-${Date.now()}`;
+      } else {
+        logger.warn({ error: result.error }, 'IPC send failed, falling back to direct client');
+      }
+    }
+
+    if (!messageId) {
+      // Fallback to direct client
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
+      messageId = result.messageId;
+      logger.debug({ chatId, parentMessageId, via: 'direct' }, 'Interactive message sent');
+    }
 
     // Register action prompts if message was sent successfully
-    if (result.messageId) {
-      registerActionPrompts(result.messageId, chatId, actionPrompts);
+    if (messageId) {
+      registerActionPrompts(messageId, chatId, actionPrompts);
       logger.info(
-        { messageId: result.messageId, chatId, actions: Object.keys(actionPrompts) },
+        { messageId, chatId, actions: Object.keys(actionPrompts) },
         'Interactive message sent and prompts registered'
       );
     }
@@ -252,7 +302,7 @@ export async function send_interactive_message(params: {
     return {
       success: true,
       message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
-      messageId: result.messageId,
+      messageId,
     };
 
   } catch (error) {

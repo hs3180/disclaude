@@ -78,6 +78,11 @@ import { CardActionRouter } from './card-action-router.js';
 import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
 // Issue #1032: Unified Lark Client Service
 import { initLarkClientService, getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
+// Issue #1035: Feishu API IPC Server for MCP tools
+import {
+  startFeishuApiIpcServer,
+  stopFeishuApiIpcServer,
+} from '../ipc/feishu-api-server.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -882,6 +887,14 @@ export class PrimaryNode extends EventEmitter {
     // Start WebSocket server
     await this.wsServerService.start();
 
+    // Issue #1035: Start Feishu API IPC server for MCP tools
+    try {
+      await startFeishuApiIpcServer();
+      logger.info('Feishu API IPC server started for MCP tools');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to start Feishu API IPC server, MCP tools will use direct client');
+    }
+
     // Initialize local execution capability
     await this.initLocalExecution();
 
@@ -937,6 +950,9 @@ export class PrimaryNode extends EventEmitter {
         logger.error({ err: error, channelId: channel.id }, 'Failed to stop channel');
       }
     }
+
+    // Issue #1035: Stop Feishu API IPC server
+    await stopFeishuApiIpcServer();
 
     // Clear execution nodes
     this.execNodeRegistry.clear();
