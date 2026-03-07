@@ -385,14 +385,27 @@ When \`format: "card"\`, content MUST include:
       parentMessageId: z.string().optional(),
     }),
     handler: async ({ content, format, chatId, parentMessageId }) => {
+      // Normalize content: if format="card" and content is a string, try to parse it as JSON
+      // This handles cases where LLM serializes objects to JSON strings during function calling
+      let normalizedContent: string | Record<string, unknown> = content;
       if (format === 'card' && typeof content === 'string') {
-        return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
+        try {
+          const parsed = JSON.parse(content);
+          if (typeof parsed === 'object' && parsed !== null) {
+            normalizedContent = parsed;
+          } else {
+            return toolSuccess('❌ Error: When format="card", content must be an OBJECT (parsed to non-object).');
+          }
+        } catch {
+          return toolSuccess('❌ Error: When format="card", content must be an OBJECT (invalid JSON).');
+        }
       }
       if (format === 'text' && typeof content !== 'string') {
-        return toolSuccess('❌ Error: When format="text", content must be a STRING.');
+        // Convert object to string for text format
+        normalizedContent = JSON.stringify(content);
       }
       try {
-        const result = await send_user_feedback({ content, format, chatId, parentMessageId });
+        const result = await send_user_feedback({ content: normalizedContent, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Feedback failed: ${error instanceof Error ? error.message : String(error)}`);
