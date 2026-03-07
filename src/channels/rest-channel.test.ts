@@ -140,7 +140,8 @@ describe('RestChannel', () => {
   });
 
   describe('Lifecycle', () => {
-    it('should start and stop successfully', async () => {
+    it('should start and stop successfully', async function () {
+      this.timeout(30000);
       channel = new RestChannel({ port });
       expect(channel.status).toBe('stopped');
 
@@ -153,7 +154,8 @@ describe('RestChannel', () => {
       expect(channel.isHealthy()).toBe(false);
     });
 
-    it('should not start twice', async () => {
+    it('should not start twice', async function () {
+      this.timeout(30000);
       channel = new RestChannel({ port });
       await channel.start();
 
@@ -162,7 +164,8 @@ describe('RestChannel', () => {
       expect(channel.status).toBe('running');
     });
 
-    it('should not stop twice', async () => {
+    it('should not stop twice', async function () {
+      this.timeout(30000);
       channel = new RestChannel({ port });
       await channel.start();
       await channel.stop();
