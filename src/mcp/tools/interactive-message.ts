@@ -272,6 +272,8 @@ let ipcServer: UnixSocketIpcServer | null = null;
  * Start the IPC server for cross-process communication.
  * This allows other processes (e.g., the main bot process) to query
  * the interactive contexts stored in this process.
+ *
+ * Issue #1035: Also handles Feishu API requests via LarkClientService.
  */
 export async function startIpcServer(): Promise<void> {
   if (ipcServer) {
@@ -279,19 +281,56 @@ export async function startIpcServer(): Promise<void> {
     return;
   }
 
-  const handler = createInteractiveMessageHandler({
-    getActionPrompts,
-    registerActionPrompts,
-    unregisterActionPrompts,
-    generateInteractionPrompt,
-    cleanupExpiredContexts,
-  });
+  // Import LarkClientService for Feishu API operations (Issue #1035)
+  const { isLarkClientServiceInitialized, getLarkClientService } = await import('../../services/index.js');
+
+  // Create Feishu API handlers if LarkClientService is available
+  const feishuHandlers = isLarkClientServiceInitialized()
+    ? {
+        sendMessage: async (chatId: string, text: string, threadId?: string) => {
+          const service = getLarkClientService();
+          await service.sendMessage(chatId, text, threadId ? { threadId } : undefined);
+        },
+        sendCard: async (
+          chatId: string,
+          card: Record<string, unknown>,
+          threadId?: string,
+          description?: string
+        ) => {
+          const service = getLarkClientService();
+          await service.sendCard(chatId, card, { threadId, description });
+        },
+        uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
+          const service = getLarkClientService();
+          const result = await service.uploadFile(chatId, filePath, threadId ? { threadId } : undefined);
+          return result;
+        },
+        getBotInfo: async () => {
+          const service = getLarkClientService();
+          return await service.getBotInfo();
+        },
+      }
+    : undefined;
+
+  const handler = createInteractiveMessageHandler(
+    {
+      getActionPrompts,
+      registerActionPrompts,
+      unregisterActionPrompts,
+      generateInteractionPrompt,
+      cleanupExpiredContexts,
+    },
+    feishuHandlers
+  );
 
   ipcServer = new UnixSocketIpcServer(handler);
 
   try {
     await ipcServer.start();
-    logger.info({ path: ipcServer.getSocketPath() }, 'IPC server started for cross-process communication');
+    logger.info(
+      { path: ipcServer.getSocketPath(), hasFeishuHandlers: !!feishuHandlers },
+      'IPC server started for cross-process communication'
+    );
   } catch (error) {
     logger.error({ err: error }, 'Failed to start IPC server');
     ipcServer = null;
