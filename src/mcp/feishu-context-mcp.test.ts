@@ -60,6 +60,21 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
+// Mock IPC client - IPC not available in tests
+vi.mock('../ipc/unix-socket-client.js', () => ({
+  getIpcClient: vi.fn(() => ({
+    feishuSendMessage: vi.fn(),
+    feishuSendCard: vi.fn(),
+    feishuUploadFile: vi.fn(),
+    feishuGetBotInfo: vi.fn(),
+  })),
+}));
+
+// Mock fs existsSync for IPC check - IPC socket not available
+vi.mock('fs', () => ({
+  existsSync: vi.fn(() => false),
+}));
+
 // Import after mocks
 import * as fs from 'fs/promises';
 import type * as fsStats from 'fs';

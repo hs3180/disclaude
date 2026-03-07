@@ -48,10 +48,30 @@ export interface InteractiveMessageHandlers {
 }
 
 /**
+ * Handler functions for Feishu API operations (Issue #1035).
+ */
+export interface FeishuApiHandlers {
+  sendMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
+  sendCard: (
+    chatId: string,
+    card: Record<string, unknown>,
+    threadId?: string,
+    description?: string
+  ) => Promise<void>;
+  uploadFile: (
+    chatId: string,
+    filePath: string,
+    threadId?: string
+  ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
+  getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+}
+
+/**
  * Create an IPC request handler from interactive message handlers.
  */
 export function createInteractiveMessageHandler(
-  handlers: InteractiveMessageHandlers
+  handlers: InteractiveMessageHandlers,
+  feishuHandlers?: FeishuApiHandlers
 ): IpcRequestHandler {
   // eslint-disable-next-line require-await
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -103,6 +123,81 @@ export function createInteractiveMessageHandler(
         case 'cleanupExpiredContexts': {
           const cleaned = handlers.cleanupExpiredContexts();
           return { id: request.id, success: true, payload: { cleaned } };
+        }
+
+        // Feishu API operations (Issue #1035)
+        case 'feishuSendMessage': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, text, threadId } =
+            request.payload as IpcRequestPayloads['feishuSendMessage'];
+          try {
+            await feishuHandlers.sendMessage(chatId, text, threadId);
+            return { id: request.id, success: true, payload: { success: true } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'feishuSendCard': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, card, threadId, description } =
+            request.payload as IpcRequestPayloads['feishuSendCard'];
+          try {
+            await feishuHandlers.sendCard(chatId, card, threadId, description);
+            return { id: request.id, success: true, payload: { success: true } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'feishuUploadFile': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, filePath, threadId } =
+            request.payload as IpcRequestPayloads['feishuUploadFile'];
+          try {
+            const result = await feishuHandlers.uploadFile(chatId, filePath, threadId);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'feishuGetBotInfo': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          try {
+            const botInfo = await feishuHandlers.getBotInfo();
+            return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
         }
 
         default:
