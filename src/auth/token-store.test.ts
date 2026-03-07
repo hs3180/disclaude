@@ -18,12 +18,18 @@ describe('TokenStore', () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'token-store-test-'));
     const storagePath = path.join(tempDir, 'tokens.json');
     store = new TokenStore(storagePath);
-  });
+  }, 30000); // Increase timeout for CI environments with slow file I/O
 
   afterEach(async () => {
-    // Clean up temp directory
-    await fs.rm(tempDir, { recursive: true, force: true });
-  });
+    // Clean up temp directory with retry logic to handle ENOTEMPTY errors
+    // This can happen when the file system hasn't fully released file handles
+    await fs.rm(tempDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  }, 30000); // Increase timeout for CI environments with slow file I/O
 
   describe('setToken and getToken', () => {
     it('should store and retrieve a token', async () => {
