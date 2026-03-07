@@ -31,6 +31,23 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
   Domain: { Feishu: 'https://open.feishu.cn' },
 }));
 
+// Issue #1033: Mock LarkClientService
+vi.mock('../services/index.js', () => ({
+  getLarkClientService: vi.fn(() => ({
+    getClient: vi.fn(() => ({
+      request: vi.fn().mockResolvedValue({
+        data: {
+          bot: {
+            open_id: 'ou_bot_open_id',
+            app_id: 'cli_test_app_id',
+          },
+        },
+      }),
+    })),
+  })),
+  isLarkClientServiceInitialized: vi.fn(() => true),
+}));
+
 vi.mock('../utils/logger.js', () => ({
   createLogger: vi.fn(() => ({
     debug: vi.fn(),

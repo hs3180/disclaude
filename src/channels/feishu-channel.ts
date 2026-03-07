@@ -143,7 +143,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     await messageLogger.init();
 
     // Get bot info for mention detection
-    await this.mentionDetector.fetchBotInfo(this.appId, this.appSecret);
+    // Issue #1033: fetchBotInfo now uses unified LarkClientService
+    await this.mentionDetector.fetchBotInfo();
 
     // Initialize message handler
     this.feishuMessageHandler.initialize();
