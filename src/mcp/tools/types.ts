@@ -88,3 +88,37 @@ export interface SendInteractiveResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Context for an offline message (non-blocking interaction).
+ * Issue #631: 离线提问 - Agent 不阻塞工作的留言机制
+ */
+export interface OfflineMessageContext {
+  /** Unique identifier for this offline message */
+  id: string;
+  /** The card message ID */
+  messageId: string;
+  /** Target chat ID */
+  chatId: string;
+  /** Action prompts for card interactions */
+  actionPrompts: ActionPromptMap;
+  /** Context about the original task */
+  taskContext: string;
+  /** Prompt template for the follow-up task */
+  followUpPrompt: string;
+  /** Creation timestamp */
+  createdAt: number;
+  /** Expiration timestamp */
+  expiresAt: number;
+}
+
+/**
+ * Result type for leave_message tool.
+ */
+export interface LeaveMessageResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  offlineId?: string;
+  error?: string;
+}

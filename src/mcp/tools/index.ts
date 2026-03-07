@@ -13,6 +13,8 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  OfflineMessageContext,
+  LeaveMessageResult,
 } from './types.js';
 
 export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -26,6 +28,15 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+export {
+  leave_message,
+  registerOfflineContext,
+  getOfflineContext,
+  unregisterOfflineContext,
+  generateFollowUpPrompt,
+  cleanupExpiredOfflineContexts,
+  getAllOfflineContexts,
+} from './leave-message.js';
 
 // Study Guide Generator (NotebookLM M4)
 export {
