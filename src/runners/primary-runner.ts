@@ -16,14 +16,17 @@ const logger = createLogger('PrimaryRunner');
  * Get Primary Node configuration from CLI args.
  */
 export function getPrimaryNodeConfig(globalArgs: GlobalArgs): PrimaryNodeConfig {
-  const channelsConfig = Config.getChannelsConfig();
+  // Issue #1028: Get full REST channel config from config file
+  const restChannelConfig = Config.getRestChannelConfig();
   return {
     type: 'primary',
     port: globalArgs.port,
     host: globalArgs.host,
     restPort: globalArgs.restPort,
     enableRestChannel: globalArgs.enableRestChannel,
-    restAuthToken: channelsConfig?.rest?.authToken,
+    restAuthToken: restChannelConfig?.authToken,
+    // Pass full REST channel config for all options (port, host, apiPrefix, etc.)
+    restChannelConfig,
     enableLocalExec: true, // Primary node always has local execution
   };
 }
