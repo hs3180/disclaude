@@ -170,6 +170,10 @@ export interface RestChannelConfig extends ConfigChannelConfig {
   authToken?: string;
   /** Enable CORS */
   enableCors?: boolean;
+  /** File storage directory (default: ./data/rest-files) */
+  fileStorageDir?: string;
+  /** Maximum file size in bytes (default: 100MB) */
+  maxFileSize?: number;
 }
 
 /**

@@ -346,4 +346,14 @@ export class Config {
   static getDebugConfig(): import('./types.js').DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
   }
+
+  /**
+   * Get REST channel configuration from config file.
+   * @see Issue #1028
+   *
+   * @returns REST channel configuration object
+   */
+  static getRestChannelConfig(): import('./types.js').RestChannelConfig {
+    return fileConfigOnly.channels?.rest || {};
+  }
 }
