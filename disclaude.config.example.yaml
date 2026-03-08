@@ -63,6 +63,45 @@ feishu:
     maxAgeMs: 60000
 
 # -----------------------------------------------------------------------------
+# Ruliu (如流) Platform Configuration
+# -----------------------------------------------------------------------------
+# Ruliu is Baidu's enterprise instant messaging platform.
+# Enable this section to integrate with Ruliu bots.
+ruliu:
+  # Enable/disable Ruliu integration
+  # Default: false
+  enabled: false
+
+  # API host (usually no need to change)
+  apiHost: "https://apiin.im.baidu.com"
+
+  # Verification token from Ruliu bot settings
+  checkToken: "your_ruliu_check_token_here"
+
+  # Message encryption key (Base64 encoded, 43 characters)
+  encodingAESKey: "your_ruliu_encoding_aes_key_here"
+
+  # Application credentials from Ruliu bot settings
+  appKey: "your_ruliu_app_key_here"
+  appSecret: "your_ruliu_app_secret_here"
+
+  # Robot name for @mention detection
+  robotName: "MyBot"
+
+  # Reply mode
+  # Options: ignore, record, mention-only, mention-and-watch, proactive
+  # Default: mention-and-watch
+  replyMode: "mention-and-watch"
+
+  # Follow-up mode settings
+  followUp: true
+  followUpWindow: 300  # seconds
+
+  # Webhook path for receiving messages
+  # Default: /webhook/ruliu
+  webhookPath: "/webhook/ruliu"
+
+# -----------------------------------------------------------------------------
 # GLM (Zhipu AI) API Configuration
 # -----------------------------------------------------------------------------
 glm:

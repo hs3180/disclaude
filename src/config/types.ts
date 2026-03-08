@@ -81,6 +81,49 @@ export interface GlmConfig {
 }
 
 /**
+ * Ruliu reply mode.
+ * Controls how the bot responds to messages.
+ */
+export type RuliuReplyMode =
+  | 'ignore'           // Discard messages
+  | 'record'           // Only record, no reply
+  | 'mention-only'     // Reply only when @mentioned
+  | 'mention-and-watch' // @ + watch list + follow-up window (default)
+  | 'proactive';       // Proactive participation
+
+/**
+ * Ruliu (如流) platform configuration section.
+ * Baidu's enterprise instant messaging platform integration.
+ * @see Issue #725
+ */
+export interface RuliuConfig {
+  /** Enable/disable Ruliu integration */
+  enabled?: boolean;
+  /** API host (e.g., https://apiin.im.baidu.com) */
+  apiHost?: string;
+  /** Verification token from Ruliu bot settings */
+  checkToken?: string;
+  /** Message encryption key (Base64 encoded, 43 characters) */
+  encodingAESKey?: string;
+  /** Application key from Ruliu bot settings */
+  appKey?: string;
+  /** Application secret from Ruliu bot settings */
+  appSecret?: string;
+  /** Robot name for @mention detection */
+  robotName?: string;
+  /** Reply mode (default: mention-and-watch) */
+  replyMode?: RuliuReplyMode;
+  /** Enable follow-up mode */
+  followUp?: boolean;
+  /** Follow-up window in seconds */
+  followUpWindow?: number;
+  /** Users to watch for mentions */
+  watchMentions?: string[];
+  /** Webhook path for receiving messages */
+  webhookPath?: string;
+}
+
+/**
  * Logging configuration section.
  */
 export interface LoggingConfig {
@@ -279,6 +322,8 @@ export interface DisclaudeConfig {
   agent?: AgentConfig;
   /** Feishu platform settings */
   feishu?: FeishuConfig;
+  /** Ruliu (如流) platform settings */
+  ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
   /** Logging settings */
