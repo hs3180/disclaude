@@ -10,10 +10,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies before importing
-vi.mock('@larksuiteoapi/node-sdk', () => ({
-  Client: vi.fn(() => ({})),
-}));
-
 vi.mock('../../utils/logger.js', () => ({
   createLogger: vi.fn(() => ({
     debug: vi.fn(),
@@ -187,7 +183,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should indicate this is a forwarded conversation
       expect(emittedMessage.content).toContain('转发了一段聊天记录');
@@ -228,7 +224,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should include sender ID
       expect(emittedMessage.content).toContain('specific_user_id');
@@ -266,7 +262,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should include a formatted date (the exact format depends on locale)
       expect(emittedMessage.content).toContain('2023');
@@ -305,7 +301,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       expect(emittedMessage.content).toContain('Rich text content');
     });
@@ -341,7 +337,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should show default "未知用户" for missing sender
       expect(emittedMessage.content).toContain('未知用户');
@@ -378,7 +374,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should still include the message
       expect(emittedMessage.content).toContain('Message without timestamp');
@@ -479,7 +475,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Should include text and post content
       expect(emittedMessage.content).toContain('Text message');
@@ -526,7 +522,7 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       });
 
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
-      const emittedMessage = mockCallbacks.emitMessage.mock.calls[0][0];
+      const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
       // Messages should be separated by divider
       expect(emittedMessage.content).toContain('---');
