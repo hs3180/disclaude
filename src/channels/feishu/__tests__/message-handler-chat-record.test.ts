@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MessageHandler } from '../message-handler.js';
 import type { FeishuEventData } from '../../../types/platform.js';
+import type { PassiveModeManager } from '../passive-mode.js';
+import type { MentionDetector } from '../mention-detector.js';
+import type { InteractionManager } from '../../../platforms/feishu/interaction-manager.js';
 
 vi.mock('../../../services/index.js', () => ({
   getLarkClientService: vi.fn(() => ({ getClient: vi.fn(() => ({})), getMessage: vi.fn() })),
@@ -36,11 +39,11 @@ describe('MessageHandler - chat_record metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     emitMessageMock = vi.fn();
-    const passiveModeManager = { isPassiveModeDisabled: vi.fn(() => false) } as unknown as { isPassiveModeDisabled: (chatId: string) => boolean };
-    const mentionDetector = { isBotMentioned: vi.fn(() => false) } as unknown as { isBotMentioned: (mentions: unknown) => boolean };
+    const passiveModeManager = { isPassiveModeDisabled: vi.fn(() => false) } as unknown as PassiveModeManager;
+    const mentionDetector = { isBotMentioned: vi.fn(() => false) } as unknown as MentionDetector;
     handler = new MessageHandler({
       appId: 'test-app-id', appSecret: 'test-app-secret', passiveModeManager, mentionDetector,
-      interactionManager: {} as unknown as { handleAction: () => Promise<boolean> },
+      interactionManager: { handleAction: vi.fn() } as unknown as InteractionManager,
       callbacks: { emitMessage: emitMessageMock, emitControl: vi.fn(), sendMessage: vi.fn() },
       isRunning: () => true, hasControlHandler: () => false,
     });
