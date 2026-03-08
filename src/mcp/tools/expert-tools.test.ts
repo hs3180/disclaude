@@ -4,7 +4,7 @@
  * @see Issue #536 - 专家查询与匹配
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the expert-service module before any imports
 const mockSearchBySkill = vi.fn();
