@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ruliu Platform Adapter** - Complete implementation of Baidu Ruliu (如流) platform integration (#725)
+  - `RuliuPlatformAdapter` - Platform adapter implementing IPlatformAdapter interface
+  - `RuliuChannel` - HTTP Webhook-based channel for message handling
+  - `RuliuMessageSender` - Message sending with text, markdown, card, and file support
+  - `RuliuWebhookHandler` - Webhook event handling with URL verification
+  - `RuliuCrypto` - AES encryption/decryption and signature verification
+  - Multiple reply modes: ignore, record, mention-only, mention-and-watch, proactive
+  - Follow-up mode for conversation context tracking
+  - Command handling support (/reset, /status, /help)
+
 ## [0.3.2] - 2026-03-02
 
 ### Added
