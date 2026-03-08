@@ -15,7 +15,6 @@ import { FeishuMessageSender } from '../../platforms/feishu/feishu-message-sende
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
-import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
@@ -604,18 +603,6 @@ export class MessageHandler {
         // The Worker Node will handle the action, we're done here
         return;
       }
-    }
-
-    // First, try to resolve any pending wait_for_interaction calls
-    const resolved = resolvePendingInteraction(
-      message_id,
-      action.value,
-      action.type,
-      user?.sender_id?.open_id || 'unknown'
-    );
-
-    if (resolved) {
-      logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
     }
 
     // Always emit card action as a message to the agent

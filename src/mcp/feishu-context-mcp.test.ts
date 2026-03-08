@@ -6,8 +6,6 @@
  * - getCardValidationError: Detailed validation error messages (via behavior testing)
  * - send_message: Message sending
  * - send_file: File sending
- * - wait_for_interaction: Wait for user card interaction
- * - resolvePendingInteraction: Resolve pending interaction
  * - setMessageSentCallback: Callback management
  */
 
@@ -81,8 +79,6 @@ import type * as fsStats from 'fs';
 import {
   send_message,
   send_file,
-  wait_for_interaction,
-  resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
 } from './feishu-context-mcp.js';
@@ -568,108 +564,6 @@ describe('MCP Tools', () => {
       expect(result.platformCode).toBe(99991663);
       expect(result.platformMsg).toBe('permission denied');
       expect(result.platformLogId).toBe('log-123');
-    });
-  });
-
-  describe('wait_for_interaction', () => {
-    it('should have wait_for_interaction tool definition', () => {
-      expect(feishuContextTools.wait_for_interaction).toBeDefined();
-      expect(feishuContextTools.wait_for_interaction.description).toContain('Wait for the user to interact');
-      expect(feishuContextTools.wait_for_interaction.handler).toBe(wait_for_interaction);
-    });
-
-    it('should require messageId', async () => {
-      const result = await wait_for_interaction({
-        messageId: '',
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('messageId is required');
-    });
-
-    it('should require chatId', async () => {
-      const result = await wait_for_interaction({
-        messageId: 'msg-123',
-        chatId: '',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('chatId is required');
-    });
-
-    it('should wait for interaction with cli- prefix chatId (no CLI fallback)', async () => {
-      // CLI fallback removed (Issue #849) - now waits for real interaction
-      const waitPromise = wait_for_interaction({
-        messageId: 'msg-cli-test',
-        chatId: 'cli-test',
-        timeoutSeconds: 1,
-      });
-
-      // Simulate interaction being received
-      setTimeout(() => {
-        resolvePendingInteraction('msg-cli-test', 'test-action', 'button', 'user-123');
-      }, 50);
-
-      const result = await waitPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.actionValue).toBe('test-action');
-    });
-
-    it('should resolve when interaction is received', async () => {
-      // Start waiting for interaction
-      const waitPromise = wait_for_interaction({
-        messageId: 'msg-456',
-        chatId: 'chat-123',
-        timeoutSeconds: 5,
-      });
-
-      // Simulate interaction being received
-      setTimeout(() => {
-        resolvePendingInteraction('msg-456', 'confirm', 'button', 'user-789');
-      }, 50);
-
-      const result = await waitPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.actionValue).toBe('confirm');
-      expect(result.actionType).toBe('button');
-      expect(result.userId).toBe('user-789');
-    });
-
-    it('should timeout if no interaction received', async () => {
-      const result = await wait_for_interaction({
-        messageId: 'msg-timeout',
-        chatId: 'chat-123',
-        timeoutSeconds: 1,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('timeout');
-    });
-
-    it('should reject duplicate wait for same message', async () => {
-      // Start first wait
-      const firstWait = wait_for_interaction({
-        messageId: 'msg-dup',
-        chatId: 'chat-123',
-        timeoutSeconds: 5,
-      });
-
-      // Try to wait again for same message
-      const secondResult = await wait_for_interaction({
-        messageId: 'msg-dup',
-        chatId: 'chat-123',
-        timeoutSeconds: 1,
-      });
-
-      expect(secondResult.success).toBe(false);
-      expect(secondResult.error).toContain('Already waiting');
-
-      // Clean up first wait
-      resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
-      await firstWait;
     });
   });
 });

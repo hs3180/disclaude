@@ -8,7 +8,6 @@
  * Tools provided:
  * - send_message: Send a message to a chat
  * - send_file: Send a file to a chat
- * - wait_for_interaction: Wait for user to interact with a card
  *
  * Environment Variables Required:
  * - FEISHU_APP_ID: Platform app ID
@@ -20,7 +19,7 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import { send_message, send_file, wait_for_interaction } from './feishu-context-mcp.js';
+import { send_message, send_file } from './feishu-context-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -85,28 +84,6 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
-              {
-                name: 'wait_for_interaction',
-                description: 'Wait for user to interact with a card. Blocks until interaction or timeout.',
-                inputSchema: {
-                  type: 'object',
-                  properties: {
-                    messageId: {
-                      type: 'string',
-                      description: 'The message ID of the card to wait for',
-                    },
-                    chatId: {
-                      type: 'string',
-                      description: 'Chat ID where the card was sent',
-                    },
-                    timeoutSeconds: {
-                      type: 'number',
-                      description: 'Maximum time to wait in seconds (default: 300)',
-                    },
-                  },
-                  required: ['messageId', 'chatId'],
-                },
-              },
             ],
           },
         };
@@ -146,24 +123,6 @@ async function handleMessage(message: unknown) {
                 type: 'text',
                 text: result.success
                   ? result.message
-                  : `⚠️ ${result.message}`,
-              }],
-            },
-          };
-        }
-
-        if (name === 'wait_for_interaction') {
-          const args = toolArgs as { messageId: string; chatId: string; timeoutSeconds?: number };
-          const result = await wait_for_interaction(args);
-
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{
-                type: 'text',
-                text: result.success
-                  ? `${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`
                   : `⚠️ ${result.message}`,
               }],
             },

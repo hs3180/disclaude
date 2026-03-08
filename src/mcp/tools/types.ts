@@ -30,33 +30,10 @@ export interface SendFileResult {
 }
 
 /**
- * Result type for wait_for_interaction tool.
- */
-export interface WaitForInteractionResult {
-  success: boolean;
-  message: string;
-  actionValue?: string;
-  actionType?: string;
-  userId?: string;
-  error?: string;
-}
-
-/**
  * Message sent callback type.
  * Called when a message is successfully sent to track user communication.
  */
 export type MessageSentCallback = (chatId: string) => void;
-
-/**
- * Pending interaction tracker for wait_for_interaction tool.
- */
-export interface PendingInteraction {
-  messageId: string;
-  chatId: string;
-  resolve: (action: { actionValue: string; actionType: string; userId: string }) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-}
 
 /**
  * Map of action values to prompt templates.

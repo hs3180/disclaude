@@ -104,7 +104,7 @@ export const FEISHU_CAPABILITIES: ChannelCapabilities = {
   supportsDelete: true,
   supportsMention: true,
   supportsReactions: true,
-  supportedMcpTools: ['send_message', 'send_file', 'wait_for_interaction'],
+  supportedMcpTools: ['send_message', 'send_file'],
 };
 
 /**
