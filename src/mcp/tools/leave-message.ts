@@ -319,7 +319,7 @@ export async function leave_message(params: {
 
       return {
         success: true,
-        message: `✅ 离线留言已发送。用户回复后将触发新任务。`,
+        message: '✅ 离线留言已发送。用户回复后将触发新任务。',
         messageId: result.messageId,
         offlineId: context.id,
       };

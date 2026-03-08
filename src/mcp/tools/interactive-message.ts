@@ -293,7 +293,9 @@ export async function startIpcServer(): Promise<void> {
     // Issue #631: 离线消息相关
     getOfflineContext: (messageId: string) => {
       const context = getOfflineContext(messageId);
-      if (!context) return undefined;
+      if (!context) {
+        return undefined;
+      }
       return {
         id: context.id,
         messageId: context.messageId,
@@ -309,7 +311,9 @@ export async function startIpcServer(): Promise<void> {
       formData?: Record<string, unknown>
     ) => {
       const context = getOfflineContext(messageId);
-      if (!context) return undefined;
+      if (!context) {
+        return undefined;
+      }
       return generateFollowUpPrompt(context, actionValue, actionText, formData);
     },
     unregisterOfflineContext,
