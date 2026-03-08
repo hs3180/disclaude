@@ -17,6 +17,9 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -1071,6 +1074,137 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Thread Tools (Issue #873: 话题群扩展 - 发帖跟帖接口)
+  {
+    name: 'reply_in_thread',
+    description: `Reply to a message in thread mode (creates a follow-up post in topic groups).
+
+In a topic group, this creates a reply within the thread/topic instead of a new top-level message.
+
+## Parameters
+- **messageId**: The parent message ID to reply to
+- **content**: Message content (string for text, object for card)
+- **format**: "text" or "card"
+
+## Example
+\`\`\`json
+{
+  "messageId": "om_xxx",
+  "content": "This is a follow-up comment",
+  "format": "text"
+}
+\`\`\`
+
+## Use Cases
+- Reply to a topic in a topic group
+- Add comments to a discussion thread
+- Follow up on announcements`,
+    parameters: z.object({
+      messageId: z.string(),
+      content: z.union([z.string(), z.object({})]),
+      format: z.enum(['text', 'card']),
+    }),
+    handler: async (options) => {
+      try {
+        const result = await reply_in_thread(options);
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.error}`);
+        }
+        return toolSuccess(result.message || '✅ Thread reply sent');
+      } catch (error) {
+        return toolSuccess(`⚠️ Thread reply failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_threads',
+    description: `Get list of threads (topics) in a chat.
+
+In a topic group, each root message is a thread/topic. This tool fetches all root messages.
+
+## Parameters
+- **chatId**: The chat ID to fetch threads from
+- **pageSize**: Number of threads to fetch (default 20, max 50)
+- **pageToken**: Pagination token for next page
+
+## Example
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "pageSize": 20
+}
+\`\`\`
+
+## Returns
+- List of threads with message IDs and thread IDs
+- Pagination info if more results available`,
+    parameters: z.object({
+      chatId: z.string(),
+      pageSize: z.number().min(1).max(50).optional(),
+      pageToken: z.string().optional(),
+    }),
+    handler: async (options) => {
+      try {
+        const result = await get_threads(options);
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.error}`);
+        }
+        const data = result.data as { formatted?: string; hasMore?: boolean; pageToken?: string };
+        let output = data.formatted || result.message || 'No threads found';
+        if (data.hasMore) {
+          output += `\n\n📄 More results available. Use pageToken: ${data.pageToken}`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get threads failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_thread_messages',
+    description: `Get messages in a specific thread/topic.
+
+Fetches all messages (posts/replies) within a specific thread.
+
+## Parameters
+- **threadId**: The thread ID (starts with 'omt_')
+- **pageSize**: Number of messages to fetch (default 50)
+- **pageToken**: Pagination token for next page
+
+## Example
+\`\`\`json
+{
+  "threadId": "omt_xxx",
+  "pageSize": 50
+}
+\`\`\`
+
+## Returns
+- List of messages in the thread
+- Message content, sender info, timestamps
+- Pagination info if more results available`,
+    parameters: z.object({
+      threadId: z.string(),
+      pageSize: z.number().min(1).max(100).optional(),
+      pageToken: z.string().optional(),
+    }),
+    handler: async (options) => {
+      try {
+        const result = await get_thread_messages(options);
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.error}`);
+        }
+        const data = result.data as { formatted?: string; hasMore?: boolean; pageToken?: string };
+        let output = data.formatted || result.message || 'No messages found';
+        if (data.hasMore) {
+          output += `\n\n📄 More results available. Use pageToken: ${data.pageToken}`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get thread messages failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
