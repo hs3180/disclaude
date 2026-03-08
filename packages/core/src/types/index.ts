@@ -39,3 +39,25 @@ export type {
   CardActionMessage,
   CardContextMessage,
 } from './websocket-messages.js';
+
+// MCP Server types
+export type {
+  SendMessageResult,
+  SendFileResult,
+  MessageSentCallback,
+  ActionPromptMap,
+  InteractiveMessageContext,
+  SendInteractiveResult,
+  AskUserOption,
+  AskUserResult,
+  StudyGuideOptions,
+  StudyGuideResult,
+  McpToolDefinition,
+  McpToolContext,
+  NodeType,
+  BaseNodeConfig,
+  McpServerConfig,
+  NodeCapabilities,
+} from './mcp-server.js';
+
+export { getNodeCapabilities } from './mcp-server.js';
