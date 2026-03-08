@@ -52,3 +52,18 @@ export type {
 } from './primary-node.js';
 
 export { getNodeCapabilities } from './primary-node.js';
+
+// MCP Server types (Issue #1042)
+export type {
+  SendMessageResult,
+  SendFileResult,
+  MessageSentCallback,
+  ActionPromptMap,
+  InteractiveMessageContext,
+  SendInteractiveResult,
+  AskUserOptions,
+  AskUserResult,
+  McpServerConfig,
+  McpToolDefinition,
+  McpServerCapabilities,
+} from './mcp-server.js';

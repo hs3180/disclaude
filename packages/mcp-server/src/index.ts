@@ -3,13 +3,31 @@
  *
  * MCP Server process for disclaude.
  *
- * This package will contain:
- * - MCP tools
- * - IPC client
+ * This package contains:
+ * - MCP tools (send_message, send_file, interactive_message, ask_user)
+ * - IPC client for communication with Primary Node
  * - MCP resources
  *
- * Code will be migrated from src/ in subsequent PRs.
+ * @see Issue #1042 - Separate MCP Server code to @disclaude/mcp-server
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Re-export types from @disclaude/core
+export type {
+  // Tool result types
+  SendMessageResult,
+  SendFileResult,
+  SendInteractiveResult,
+  AskUserResult,
+  // Tool option types
+  AskUserOptions,
+  ActionPromptMap,
+  InteractiveMessageContext,
+  MessageSentCallback,
+  // Server types
+  McpServerConfig,
+  McpToolDefinition,
+  McpServerCapabilities,
+} from '@disclaude/core';
+
+// Version
 export const MCP_SERVER_VERSION = '0.0.1';
