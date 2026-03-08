@@ -412,7 +412,7 @@ export class WorkerNode {
 
     this.ws.on('message', async (data) => {
       try {
-        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage;
+        const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage | FeishuApiResponseMessage;
 
         // Handle command messages
         if (message.type === 'command') {
@@ -474,7 +474,7 @@ export class WorkerNode {
           return;
         }
 
-        // Issue #935: Handle card action messages from Primary Node
+        // Handle card action messages from Primary Node
         if (message.type === 'card_action') {
           const cardActionMsg = message as CardActionMessage;
           const { chatId, cardMessageId, actionType, actionValue, actionText, userId } = cardActionMsg;
@@ -484,20 +484,7 @@ export class WorkerNode {
           );
 
           // Import the necessary functions to handle card actions
-          const { resolvePendingInteraction } = await import('../mcp/feishu-context-mcp.js');
           const { generateInteractionPrompt } = await import('../mcp/tools/interactive-message.js');
-
-          // Try to resolve any pending wait_for_interaction calls
-          const resolved = resolvePendingInteraction(
-            cardMessageId,
-            actionValue,
-            actionType,
-            userId || 'unknown'
-          );
-
-          if (resolved) {
-            logger.debug({ cardMessageId }, 'Card action resolved pending interaction');
-          }
 
           // Get the agent for this chatId and process the card action
           const ctx = this.activeFeedbackChannels.get(chatId);

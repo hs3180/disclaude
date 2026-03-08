@@ -39,6 +39,11 @@ export type IpcAvailabilityStatus =
   | { available: false; reason: 'socket_not_found' | 'connection_failed' | 'timeout' | 'error'; error?: Error };
 
 /**
+ * Extract the reason type from IpcAvailabilityStatus (only available when available is false)
+ */
+export type IpcUnavailableReason = Extract<IpcAvailabilityStatus, { available: false }>['reason'];
+
+/**
  * Unix Socket IPC Client.
  */
 export class UnixSocketIpcClient {
@@ -244,7 +249,7 @@ export class UnixSocketIpcClient {
       return this.availabilityCache;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      let reason: IpcAvailabilityStatus['reason'] = 'connection_failed';
+      let reason: IpcUnavailableReason = 'connection_failed';
 
       if (err.message.includes('timeout')) {
         reason = 'timeout';
@@ -413,34 +418,56 @@ export class UnixSocketIpcClient {
 
   /**
    * Send a text message via IPC.
+   * Issue #1088: Return detailed error information for better troubleshooting.
    */
   async feishuSendMessage(
     chatId: string,
     text: string,
     threadId?: string
-  ): Promise<{ success: boolean; messageId?: string }> {
+  ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
       return await this.request('feishuSendMessage', { chatId, text, threadId });
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'feishuSendMessage failed');
-      return { success: false };
+
+      // Determine error type for better error handling
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
     }
   }
 
   /**
    * Send a card message via IPC.
+   * Issue #1088: Return detailed error information for better troubleshooting.
    */
   async feishuSendCard(
     chatId: string,
     card: Record<string, unknown>,
     threadId?: string,
     description?: string
-  ): Promise<{ success: boolean; messageId?: string }> {
+  ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
       return await this.request('feishuSendCard', { chatId, card, threadId, description });
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'feishuSendCard failed');
-      return { success: false };
+
+      // Determine error type for better error handling
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
     }
   }
 

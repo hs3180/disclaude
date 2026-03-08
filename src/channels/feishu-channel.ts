@@ -25,7 +25,17 @@ import {
   type MessageCallbacks,
 } from './feishu/index.js';
 // Issue #992: Import IPC server for cross-process interactive contexts
-import { startIpcServer, stopIpcServer } from '../mcp/tools/interactive-message.js';
+// Issue #1116: Also import FeishuApiHandlers type
+// Issue #1120: Import registerFeishuHandlers for dynamic handler registration
+import {
+  startIpcServer,
+  stopIpcServer,
+  registerFeishuHandlers,
+  unregisterFeishuHandlers,
+} from '../mcp/tools/interactive-message.js';
+import type { FeishuApiHandlers } from '../ipc/unix-socket-server.js';
+// Issue #1032: Use LarkClientService for IPC handlers
+import { getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 import type {
   FeishuEventData,
   FeishuCardActionEventData,
@@ -205,9 +215,33 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #992: Start IPC server for cross-process interactive contexts
     // This must be called during channel startup, not at module load time,
     // to avoid test timeouts (see PR #982)
+    // Issue #1120: Use registerFeishuHandlers for dynamic handler registration
     try {
+      // Start IPC server first (may already be running from feishu-context-mcp.ts)
       await startIpcServer();
-      logger.info('IPC server started for cross-process interactive contexts');
+
+      // Register Feishu API handlers dynamically
+      if (isLarkClientServiceInitialized()) {
+        const service = getLarkClientService();
+        const feishuHandlers: FeishuApiHandlers = {
+          sendMessage: async (chatId, text, threadId) => {
+            await service.sendMessage(chatId, text, threadId ? { threadId } : undefined);
+          },
+          sendCard: async (chatId, card, threadId, description) => {
+            await service.sendCard(chatId, card, description ? { description, threadId } : { threadId });
+          },
+          uploadFile: async (chatId, filePath, threadId) => {
+            return await service.uploadFile(chatId, filePath, threadId ? { threadId } : undefined);
+          },
+          getBotInfo: async () => {
+            return await service.getBotInfo();
+          },
+        };
+        registerFeishuHandlers(feishuHandlers);
+        logger.info('IPC server ready with Feishu API handlers');
+      } else {
+        logger.warn('LarkClientService not initialized, IPC Feishu API handlers not available');
+      }
     } catch (error) {
       logger.error({ err: error }, 'Failed to start IPC server, interactive cards may not work across processes');
     }
@@ -224,6 +258,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
+
+    // Issue #1120: Unregister Feishu handlers before stopping IPC server
+    unregisterFeishuHandlers();
 
     // Issue #992: Stop IPC server
     stopIpcServer();
@@ -279,8 +316,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportedMcpTools: [
         'send_message',
         'send_file',
-        
-        'wait_for_interaction',
       ],
     };
   }

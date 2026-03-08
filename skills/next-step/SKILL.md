@@ -1,7 +1,7 @@
 ---
 name: next-step
 description: Analyze completed task and recommend follow-up actions
-allowed-tools: [send_user_feedback, wait_for_interaction]
+allowed-tools: [send_user_feedback]
 ---
 
 # Next Step Recommender
@@ -120,8 +120,6 @@ Send an interactive card using `send_user_feedback`:
 When user clicks a button, the system will send a message to the agent:
 - The agent will receive: `User clicked '📋 提交 GitHub Issue'`
 - The agent should then process the request accordingly
-
-**DO NOT** use `wait_for_interaction` to block - let the system handle clicks asynchronously.
 
 ## Chat ID
 
