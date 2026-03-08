@@ -72,7 +72,7 @@ describe('request_review', () => {
     expect(result.messageId).toBe('msg_123');
     expect(interactiveMessage.send_interactive_message).toHaveBeenCalledTimes(1);
 
-    const callArgs = vi.mocked(interactiveMessage.send_interactive_message).mock.calls[0][0];
+    const [[callArgs]] = vi.mocked(interactiveMessage.send_interactive_message).mock.calls;
     expect(callArgs.chatId).toBe('oc_test');
     expect(callArgs.card).toBeDefined();
     expect(callArgs.actionPrompts).toBeDefined();
@@ -97,7 +97,7 @@ describe('request_review', () => {
 
     expect(result.success).toBe(true);
 
-    const callArgs = vi.mocked(interactiveMessage.send_interactive_message).mock.calls[0][0];
+    const [[callArgs]] = vi.mocked(interactiveMessage.send_interactive_message).mock.calls;
     expect(callArgs.actionPrompts.approve).toContain('准奏');
     expect(callArgs.actionPrompts.reject).toContain('驳回');
   });
