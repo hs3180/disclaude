@@ -2,9 +2,10 @@
 # Disclaude Docker Compose Configuration
 # =============================================================================
 #
-# Architecture: Two-node distributed system
+# Architecture: Multi-node distributed system
 # - Primary Node: Handles Feishu WebSocket connections + Agent execution
 # - Worker Node: Handles Pilot/Agent task execution (optional, for scaling)
+# - MCP Server: Provides MCP tools and resources (optional, for scaling)
 #
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
@@ -20,15 +21,23 @@
 #   # Start with worker node (for scaling)
 #   docker compose --profile worker up -d
 #
+#   # Start with MCP server (for scaling)
+#   docker compose --profile mcp up -d
+#
+#   # Start all services
+#   docker compose --profile worker --profile mcp up -d
+#
 # =============================================================================
 
 services:
+  # ===========================================================================
   # Primary Node (Comm + Exec)
+  # ===========================================================================
   # Self-contained node that handles both communication and execution
   primary:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.primary
     image: disclaude:primary
     container_name: disclaude-primary
     restart: unless-stopped
@@ -73,7 +82,9 @@ services:
       retries: 3
       start_period: 40s
 
+  # ===========================================================================
   # Worker Node (Exec only)
+  # ===========================================================================
   # Optional execution node for scaling - connects to Primary via WebSocket
   # Use --profile worker to start: docker compose --profile worker up -d
   worker:
@@ -133,7 +144,71 @@ services:
       primary:
         condition: service_healthy
 
+  # ===========================================================================
+  # MCP Server (Tools + Resources)
+  # ===========================================================================
+  # Optional MCP server for scaling - provides MCP tools and resources
+  # Use --profile mcp to start: docker compose --profile mcp up -d
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    image: disclaude:mcp
+    container_name: disclaude-mcp
+    restart: unless-stopped
+
+    # Command: run MCP Server with PM2
+    # PM2 provides process management and logging support
+    command: ["pm2-runtime", "start", "ecosystem.mcp.config.json"]
+
+    # Network mode: host for local connection to primary node
+    network_mode: host
+
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - DISCLAUDE_MODE=mcp
+
+    volumes:
+      - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
+      - ./workspace:/app/workspace
+      - ./logs:/app/logs
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # MCP is optional - only starts with --profile mcp
+    profiles:
+      - mcp
+
+    # Depends on primary node
+    depends_on:
+      primary:
+        condition: service_healthy
+
+  # ===========================================================================
   # Test Primary Node (optional)
+  # ===========================================================================
   # Minimal primary node for testing - only mounts test config
   # Use --profile test to start: docker compose --profile test up -d
   # Note: Uses different ports (3011/3010) to avoid conflict with primary container
