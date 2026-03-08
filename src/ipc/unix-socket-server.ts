@@ -64,6 +64,42 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  // Feishu Thread API operations (Issue #873)
+  replyInThread: (
+    messageId: string,
+    content: string,
+    msgType: string
+  ) => Promise<{ messageId: string; threadId: string }>;
+  getThreads: (
+    chatId: string,
+    pageToken?: string,
+    pageSize?: number
+  ) => Promise<{
+    threads: Array<{
+      messageId: string;
+      threadId: string;
+      content: string;
+      senderId: string;
+      createTime: string;
+    }>;
+    hasMore: boolean;
+    pageToken?: string;
+  }>;
+  getThreadMessages: (
+    threadId: string,
+    pageToken?: string,
+    pageSize?: number
+  ) => Promise<{
+    messages: Array<{
+      messageId: string;
+      content: string;
+      senderId: string;
+      createTime: string;
+      parent_id?: string;
+    }>;
+    hasMore: boolean;
+    pageToken?: string;
+  }>;
 }
 
 /**
@@ -194,6 +230,76 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu Thread API operations (Issue #873)
+        case 'feishuReplyInThread': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { messageId, content, msgType } =
+            request.payload as IpcRequestPayloads['feishuReplyInThread'];
+          try {
+            const result = await feishuHandlers.replyInThread(messageId, content, msgType);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, messageId: result.messageId, threadId: result.threadId },
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'feishuGetThreads': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, pageToken, pageSize } =
+            request.payload as IpcRequestPayloads['feishuGetThreads'];
+          try {
+            const result = await feishuHandlers.getThreads(chatId, pageToken, pageSize);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, ...result },
+            };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'feishuGetThreadMessages': {
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { threadId, pageToken, pageSize } =
+            request.payload as IpcRequestPayloads['feishuGetThreadMessages'];
+          try {
+            const result = await feishuHandlers.getThreadMessages(threadId, pageToken, pageSize);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, ...result },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
