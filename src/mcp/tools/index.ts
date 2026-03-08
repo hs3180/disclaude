@@ -1,6 +1,11 @@
 /**
  * Tool implementations for MCP.
  *
+ * Issue #1155: Consolidated tools to reduce token overhead.
+ * - send_message: Unified messaging (text, card, interactive, question)
+ * - send_file: File transfer
+ * - create_study_guide: Study materials generation
+ *
  * @module mcp/tools
  */
 
@@ -27,29 +32,14 @@ export {
 } from './interactive-message.js';
 
 // Ask User tool (Human-in-the-Loop)
+// Used internally by consolidated send_message
 export { ask_user } from './ask-user.js';
 
-// Study Guide Generator (NotebookLM M4)
-export {
-  generate_summary,
-  generate_qa_pairs,
-  generate_flashcards,
-  generate_quiz,
-  create_study_guide,
-} from './study-guide-generator.js';
+// Study Guide Generator (NotebookLM)
+// Issue #1155: Only export create_study_guide, individual generators are internal
+export { create_study_guide } from './study-guide-generator.js';
 
 export type {
-  SummaryOptions,
-  SummaryResult,
-  QAPair,
-  QAGeneratorOptions,
-  QAGeneratorResult,
-  Flashcard,
-  FlashcardGeneratorOptions,
-  FlashcardGeneratorResult,
-  QuizQuestion,
-  QuizGeneratorOptions,
-  QuizGeneratorResult,
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';

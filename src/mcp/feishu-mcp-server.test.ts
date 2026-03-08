@@ -77,10 +77,13 @@ describe('Feishu MCP Server', () => {
       const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
       expect(sendMessageTool).toBeDefined();
 
-      // Verify description mentions key features
-      expect(sendMessageTool?.description).toContain('Send a simple message');
-      expect(sendMessageTool?.description).toContain('send_interactive_message');
-      expect(sendMessageTool?.description).toContain('Important Notes');
+      // Issue #1155: Consolidated tool description
+      // Verify description mentions key modes
+      expect(sendMessageTool?.description).toContain('Send a message');
+      expect(sendMessageTool?.description).toContain('Text');
+      expect(sendMessageTool?.description).toContain('Card');
+      expect(sendMessageTool?.description).toContain('Interactive');
+      expect(sendMessageTool?.description).toContain('Question');
     });
 
     it('should define send_file tool with correct schema', async () => {
@@ -89,6 +92,16 @@ describe('Feishu MCP Server', () => {
       const sendFileTool = feishuToolDefinitions.find(t => t.name === 'send_file');
       expect(sendFileTool).toBeDefined();
       expect(sendFileTool?.description).toContain('Send a file');
+    });
+
+    // Issue #1155: Verify consolidated tool count (9 -> 4 tools)
+    it('should have exactly 3 consolidated tools', async () => {
+      const { feishuToolDefinitions } = await import('./feishu-context-mcp.js');
+
+      expect(feishuToolDefinitions.length).toBe(3);
+      expect(feishuToolDefinitions.map(t => t.name)).toEqual(
+        expect.arrayContaining(['send_message', 'send_file', 'create_study_guide'])
+      );
     });
   });
 
