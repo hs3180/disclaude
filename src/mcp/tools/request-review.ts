@@ -222,7 +222,7 @@ export async function request_quick_review(params: {
 
     return {
       success: true,
-      message: `✅ Quick review request sent`,
+      message: '✅ Quick review request sent',
       messageId: result.messageId,
     };
 
