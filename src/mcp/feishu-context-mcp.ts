@@ -17,6 +17,7 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  spawn_subagents,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -1071,6 +1072,107 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Master-Workers Multi-Agent Collaboration (Issue #897)
+  {
+    name: 'spawn_subagents',
+    description: `Spawn multiple subagents in parallel to execute tasks concurrently.
+
+This tool implements the master-workers pattern for parallel task execution.
+
+---
+
+## 🎯 Use Cases
+
+1. **Parallel File Processing**: Analyze multiple files simultaneously
+2. **Multi-source Information Gathering**: Search multiple sources in parallel
+3. **Task Decomposition**: Break complex tasks into smaller parallel tasks
+4. **Batch Operations**: Execute similar operations on multiple items
+
+---
+
+## Parameters
+
+- **tasks**: Array of tasks to execute in parallel
+  - **type**: Subagent type - "task", "skill", or "schedule"
+  - **name**: Identifier for this task
+  - **prompt**: The task prompt/instruction
+  - **templateVars**: Optional variables for skill agents
+- **maxParallel**: Maximum concurrent executions (default: 3)
+- **timeout**: Total timeout in ms (default: 300000 = 5 minutes)
+- **continueOnFailure**: Continue if a task fails (default: true)
+
+---
+
+## Example: Parallel File Analysis
+
+\`\`\`json
+{
+  "tasks": [
+    { "type": "task", "name": "analyze-src", "prompt": "Analyze the src/ directory structure" },
+    { "type": "task", "name": "analyze-tests", "prompt": "Analyze the test coverage" },
+    { "type": "task", "name": "analyze-docs", "prompt": "Review the documentation" }
+  ],
+  "maxParallel": 3,
+  "continueOnFailure": true
+}
+\`\`\`
+
+---
+
+## Example: Skill Agent Parallel Execution
+
+\`\`\`json
+{
+  "tasks": [
+    { "type": "skill", "name": "site-miner", "prompt": "Extract data from example.com" },
+    { "type": "skill", "name": "site-miner", "prompt": "Extract data from docs.example.com" }
+  ],
+  "maxParallel": 2
+}
+\`\`\`
+
+---
+
+## Result Format
+
+Returns a summary with:
+- Success/failure count
+- Duration statistics
+- Individual task results
+- Error details for failures
+
+---
+
+## Best Practices
+
+1. **Limit parallelism**: 2-4 concurrent tasks for best performance
+2. **Handle failures**: Use continueOnFailure for fault tolerance
+3. **Set appropriate timeouts**: Complex tasks may need longer timeouts
+4. **Use meaningful names**: Helps identify results in the summary`,
+    parameters: z.object({
+      tasks: z.array(z.object({
+        type: z.enum(['task', 'skill', 'schedule']),
+        name: z.string(),
+        prompt: z.string(),
+        templateVars: z.record(z.string(), z.string()).optional(),
+      })),
+      maxParallel: z.number().optional(),
+      timeout: z.number().optional(),
+      continueOnFailure: z.boolean().optional(),
+    }),
+    handler: async (options) => {
+      try {
+        const result = await spawn_subagents(options);
+        if (result.success) {
+          return toolSuccess(`${result.message}\n\n${result.summary || ''}`);
+        } else {
+          return toolSuccess(`⚠️ ${result.message}${result.summary ? `\n\n${result.summary}` : ''}`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Spawn subagents failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

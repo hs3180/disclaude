@@ -53,3 +53,13 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Spawn Subagents tool (Issue #897: Master-Workers pattern)
+export {
+  spawn_subagents,
+  disposeSpawnManager,
+  type SpawnSubagentsResult,
+  type SubagentResult,
+  type SpawnSubagentsOptions,
+  type SubagentTask,
+} from './spawn-subagents.js';
