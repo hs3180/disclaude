@@ -7,17 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-03-08
+
+### Highlights
+
+**Monorepo Architecture** - Major restructuring into packages directory for better modularity and code organization.
+
 ### Added
 
-- **Ruliu Platform Adapter** - Complete implementation of Baidu Ruliu (如流) platform integration (#725)
-  - `RuliuPlatformAdapter` - Platform adapter implementing IPlatformAdapter interface
-  - `RuliuChannel` - HTTP Webhook-based channel for message handling
-  - `RuliuMessageSender` - Message sending with text, markdown, card, and file support
-  - `RuliuWebhookHandler` - Webhook event handling with URL verification
-  - `RuliuCrypto` - AES encryption/decryption and signature verification
-  - Multiple reply modes: ignore, record, mention-only, mention-and-watch, proactive
-  - Follow-up mode for conversation context tracking
-  - Command handling support (/reset, /status, /help)
+- **SubagentManager** - Unified subagent spawning for background skill execution (#1121)
+- **SkillAgentManager** - Background skill execution support (#975)
+- **TaskComplexityAgent** - Complex task detection and routing (#974)
+- **ask_user Tool** - Human-in-the-Loop interactions with predefined options (#1012)
+- **Study Guide Generator** - NotebookLM-style study materials (summary, Q&A, flashcards, quiz) (#984)
+- **bbs-topic-initiator Skill** - AI BBS topic generation for community engagement (#976)
+- **feedback Skill** - Quick issue submission via /feedback command (#983)
+- **Ruliu Platform** - Command handling support (/reset, /status, /help) (#973, #1099)
+- **Review Card Builder** - Imperial theme review cards (#965)
+- **LarkClientService** - Unified Lark SDK management with IPC/WS routing (#1045, #1048, #1049, #1056, #1081, #1082)
+- **REST Channel** - File transfer and configuration support (#1047)
+- **Quoted Reply** - Support reading quoted reply and packed chat history (#1108)
+
+### Changed
+
+- **Monorepo Structure** - Created packages directory for better organization (#1046)
+- **Messaging Tools** - Decoupled from Feishu-specific naming, unified MCP tool (#988)
+- **IPC Architecture** - Dynamic Feishu API handlers registration, graceful fallback (#1080, #1118, #1122)
+- **Removed wait_for_interaction** - No longer used, replaced by ask_user (#1096)
+
+### Fixed
+
+- **Card Actions** - TypeScript errors and event parsing for Feishu card interactions (#1133)
+- **IPC Error Handling** - Detailed error information (#1113)
+- **TypeScript/ESLint** - Multiple type and lint error fixes (#1061, #1062, #1084, #1097, #1101, #1107)
+- **Tests** - Mock HTTP server, timeout adjustments for CI (#1029, #981, #982)
+- **WebSocket** - Fallback for Worker Node callbacks, reconnection watchdog (#967, #969)
+- **Pilot** - Output format guidance to prevent raw JSON (#970)
+- **next-step Skill** - Removed obsolete update_card from allowed-tools (#1077)
+
+### Documentation
+
+- **Ruliu Platform** - Complete documentation (#1112)
+- **BMAD-METHOD** - Integration research report (#977)
 
 ## [0.3.2] - 2026-03-02
 
@@ -31,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Agent Architecture** - Unified Agent type interfaces (#301, #334, #335, #336, #339, #345, #349, #353)
-- **Schedule Simplification** - Removed TypeScript Agent class, using generic Skill Agent (#429)
+- **Schedule Simplification** - Removed TypeScript Agent class, using generic Skill agent (#429)
 - **Reporter Removed** - Replaced with message level system (#422)
 - **PrimaryNode Split** - Refactored into focused services (#437)
 - **ReflectionController** - Replaced DialogueOrchestrator (#407)
@@ -134,13 +165,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+
 - Initial multi-agent architecture
 - Pilot, Executor, Evaluator, Reporter agents
-- Task flow orchestration
+- Task flow ortestration
 
 ## [0.1.0] - 2026-02-15
 
 ### Added
+
 
 - Initial release
 - Basic Feishu bot functionality
