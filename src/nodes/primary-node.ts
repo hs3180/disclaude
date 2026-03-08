@@ -78,6 +78,8 @@ import { CardActionRouter } from './card-action-router.js';
 import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
 // Issue #1032: Unified Lark Client Service
 import { initLarkClientService, getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
+// Issue #1085: IPC client for interaction prompt generation
+import { getIpcClient } from '../ipc/unix-socket-client.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -792,29 +794,66 @@ export class PrimaryNode extends EventEmitter {
    * Send a card action message to a remote Worker Node.
    * Used by CardActionRouter to forward card actions.
    *
+   * Issue #1085: Generate interaction prompt on Primary Node and send as regular prompt.
+   * Worker Node only receives processed prompts, not raw card actions.
+   *
    * @param nodeId - Target Worker Node ID
    * @param message - Card action message to send
    * @returns True if the message was sent successfully
    */
-  private sendCardActionToRemoteNode(nodeId: string, message: CardActionMessage): Promise<boolean> {
+  private async sendCardActionToRemoteNode(nodeId: string, message: CardActionMessage): Promise<boolean> {
     const node = this.execNodeRegistry.getNode(nodeId);
     if (!node || node.isLocal || !node.ws) {
       logger.warn({ nodeId }, 'Remote node not found or not connected');
-      return Promise.resolve(false);
+      return false;
     }
 
     if (node.ws.readyState !== WebSocket.OPEN) {
       logger.warn({ nodeId }, 'Remote node WebSocket not open');
-      return Promise.resolve(false);
+      return false;
     }
 
+    const { chatId, cardMessageId, actionValue, actionText, actionType, userId } = message;
+
     try {
-      node.ws.send(JSON.stringify(message));
-      logger.debug({ nodeId, chatId: message.chatId }, 'Card action sent to remote Worker Node');
-      return Promise.resolve(true);
+      // Issue #1085: Generate interaction prompt on Primary Node via IPC
+      const ipcClient = getIpcClient();
+      const promptContent = await ipcClient.generateInteractionPrompt(
+        cardMessageId,
+        actionValue,
+        actionText,
+        actionType
+      );
+
+      if (promptContent) {
+        // Send as regular prompt message to Worker Node
+        const promptMessage: PromptMessage = {
+          type: 'prompt',
+          chatId,
+          prompt: promptContent,
+          messageId: `${cardMessageId}-${actionValue}`,
+          senderOpenId: userId,
+        };
+
+        node.ws.send(JSON.stringify(promptMessage));
+        logger.info(
+          { nodeId, chatId, cardMessageId, actionValue },
+          'Interaction prompt sent to remote Worker Node'
+        );
+        return true;
+      } else {
+        // No prompt template found - this might be a legacy card without actionPrompts
+        // Fall back to sending raw card_action for backward compatibility
+        logger.debug(
+          { nodeId, chatId, cardMessageId, actionValue },
+          'No interaction prompt template found, sending raw card action'
+        );
+        node.ws.send(JSON.stringify(message));
+        return true;
+      }
     } catch (error) {
-      logger.error({ err: error, nodeId }, 'Failed to send card action to remote Worker Node');
-      return Promise.resolve(false);
+      logger.error({ err: error, nodeId, chatId }, 'Failed to send card action to remote Worker Node');
+      return false;
     }
   }
 

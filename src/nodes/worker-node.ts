@@ -474,7 +474,7 @@ export class WorkerNode {
           return;
         }
 
-        // Issue #935: Handle card action messages from Primary Node
+        // Handle card action messages from Primary Node
         if (message.type === 'card_action') {
           const cardActionMsg = message as CardActionMessage;
           const { chatId, cardMessageId, actionType, actionValue, actionText, userId } = cardActionMsg;
