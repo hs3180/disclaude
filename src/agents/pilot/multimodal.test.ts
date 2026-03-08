@@ -48,6 +48,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
     size,
     localPath: `/tmp/workspace/attachments/${fileName}`,
     source: 'user',
+    createdAt: Date.now(),
   });
 
   describe('Scenario 1: Single image with text query', () => {
@@ -328,6 +329,7 @@ console.log(data.value);
         size: 1024000,
         localPath: '/tmp/document.pdf',
         source: 'user',
+        createdAt: Date.now(),
       };
 
       const result = messageBuilder.buildEnhancedContent({
