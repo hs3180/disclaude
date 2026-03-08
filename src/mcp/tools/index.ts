@@ -29,6 +29,18 @@ export {
 // Ask User tool (Human-in-the-Loop)
 export { ask_user } from './ask-user.js';
 
+// Thread Tools (Issue #873: Topic group extension)
+export {
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
+} from './thread-tools.js';
+export type {
+  ReplyInThreadToolResult,
+  GetThreadsToolResult,
+  GetThreadMessagesToolResult,
+} from './thread-tools.js';
+
 // Study Guide Generator (NotebookLM M4)
 export {
   generate_summary,
