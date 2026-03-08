@@ -185,7 +185,7 @@ describe('WorkerPool', () => {
 
       await pool.executeAll(tasks);
 
-      const stats = pool.stats;
+      const { stats } = pool;
       expect(stats.totalCompleted).toBe(2);
     });
   });
@@ -197,7 +197,7 @@ describe('WorkerPool', () => {
 
       pool.dispose();
 
-      const stats = pool.stats;
+      const { stats } = pool;
       expect(stats.totalWorkers).toBe(0);
     });
   });
@@ -293,7 +293,7 @@ describe('TaskDispatcher', () => {
   });
 
   describe('cancel', () => {
-    it('should cancel pending tasks', async () => {
+    it('should cancel pending tasks', () => {
       const singlePool = new WorkerPool({
         maxWorkers: 1,
         workerFactory: (config) => new MockWorkerAgent(config, { executionTime: 100 }),
@@ -339,6 +339,7 @@ describe('SkillWorkerAgent', () => {
       ({
         type: 'skill' as const,
         name: 'mock-skill',
+        // eslint-disable-next-line object-shorthand -- Async generator shorthand causes TypeScript error
         execute: async function* () {
           yield { content: 'test', role: 'assistant' as const };
         },

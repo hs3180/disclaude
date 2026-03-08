@@ -141,7 +141,7 @@ export class WorkerPool implements IWorkerPool {
       return;
     }
 
-    const id = worker.id;
+    const { id } = worker;
     if (this.busyWorkers.has(id)) {
       this.busyWorkers.delete(id);
 
@@ -193,7 +193,9 @@ export class WorkerPool implements IWorkerPool {
       const batch: SubTask[] = [];
       while (batch.length < maxParallel && pendingTasks.length > 0) {
         const task = pendingTasks.shift();
-        if (task) batch.push(task);
+        if (task) {
+          batch.push(task);
+        }
       }
 
       // Execute batch in parallel

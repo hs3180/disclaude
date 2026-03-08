@@ -39,7 +39,7 @@
  */
 
 import type { AgentMessage } from '../../types/agent.js';
-import type { Disposable, SkillAgent } from '../types.js';
+import type { Disposable } from '../types.js';
 
 // ============================================================================
 // SubTask Types

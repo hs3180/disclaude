@@ -257,20 +257,20 @@ export async function send_interactive_message(params: {
 
     if (useIpc) {
       logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
-      const result = await sendCardViaIpc(chatId, card, parentMessageId);
-      if (!result.success) {
+      const { messageId: extractedMessageId, success } = await sendCardViaIpc(chatId, card, parentMessageId);
+      if (!success) {
         return {
           success: false,
           error: 'Failed to send interactive message via IPC',
           message: '❌ Failed to send interactive message via IPC.',
         };
       }
-      messageId = result.messageId;
+      messageId = extractedMessageId;
     } else {
       // Fallback: Create client directly
       const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-      const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
-      messageId = result.messageId;
+      const { messageId: extractedMessageId } = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
+      messageId = extractedMessageId;
     }
 
     // Register action prompts if message was sent successfully
