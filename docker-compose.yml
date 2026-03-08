@@ -4,7 +4,12 @@
 #
 # Architecture: Two-node distributed system
 # - Primary Node: Handles Feishu WebSocket connections + Agent execution
-# - Worker Node: Handles Pilot/Agent task execution (optional, for scaling)
+#   (Built from Dockerfile using node:20-alpine for optimized image size)
+# - Worker Node: Handles Pilot/Agent task execution with Python data analysis
+#   (Built from Dockerfile.worker, optional for scaling)
+#
+# Note: MCP Server runs as part of the Node process, not as a separate container.
+# It communicates via stdio and should be deployed together with the Node.
 #
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
@@ -19,6 +24,9 @@
 #
 #   # Start with worker node (for scaling)
 #   docker compose --profile worker up -d
+#
+#   # Build images
+#   docker compose build
 #
 # =============================================================================
 
