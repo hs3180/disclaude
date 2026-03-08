@@ -105,3 +105,30 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// Unified SubagentManager (Issue #997)
+export {
+  SubagentManager,
+  getSubagentManager,
+  initSubagentManager,
+  resetSubagentManager,
+  type SubagentType,
+  type SubagentStatus,
+  type IsolationMode,
+  type SubagentOptions,
+  type SubagentHandle,
+  type SubagentCallbacks,
+  type SubagentResult,
+} from './subagent-manager.js';
+
+// Re-export SkillAgentManager for backward compatibility
+export {
+  SkillAgentManager,
+  getSkillAgentManager,
+  initSkillAgentManager,
+  resetSkillAgentManager,
+  type AgentStatus,
+  type SkillAgentConfig,
+  type SkillAgentInfo,
+  type NotificationCallbacks,
+} from './skill-agent-manager.js';
