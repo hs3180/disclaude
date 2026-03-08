@@ -41,6 +41,7 @@ export type {
 } from './websocket-messages.js';
 
 // Primary Node types (Issue #1040)
+// These include shared types: NodeType, BaseNodeConfig, NodeCapabilities, getNodeCapabilities
 export type {
   NodeType,
   NodeCapabilities,
@@ -52,3 +53,7 @@ export type {
 } from './primary-node.js';
 
 export { getNodeCapabilities } from './primary-node.js';
+
+// Worker Node types (Issue #1041)
+// WorkerNodeConfig is specific to Worker Node, other types are re-exported from primary-node.js
+export type { WorkerNodeConfig } from './worker-node.js';
