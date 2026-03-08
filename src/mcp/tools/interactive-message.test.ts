@@ -39,6 +39,16 @@ vi.mock('../../utils/logger.js', () => ({
   })),
 }));
 
+// Mock IPC module to return IPC not available (so tests use fallback path)
+vi.mock('../../ipc/unix-socket-client.js', () => ({
+  getIpcClient: vi.fn(),
+}));
+
+// Mock fs/existsSync to return false (IPC not available)
+vi.mock('fs', () => ({
+  existsSync: vi.fn(() => false),
+}));
+
 // Import after mocks
 import {
   send_interactive_message,

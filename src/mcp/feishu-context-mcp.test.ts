@@ -6,8 +6,6 @@
  * - getCardValidationError: Detailed validation error messages (via behavior testing)
  * - send_message: Message sending
  * - send_file: File sending
- * - wait_for_interaction: Wait for user card interaction
- * - resolvePendingInteraction: Resolve pending interaction
  * - setMessageSentCallback: Callback management
  */
 
@@ -60,14 +58,27 @@ vi.mock('../file-transfer/outbound/feishu-uploader.js', () => ({
   uploadAndSendFile: vi.fn(),
 }));
 
+// Mock IPC client - IPC not available in tests
+vi.mock('../ipc/unix-socket-client.js', () => ({
+  getIpcClient: vi.fn(() => ({
+    feishuSendMessage: vi.fn(),
+    feishuSendCard: vi.fn(),
+    feishuUploadFile: vi.fn(),
+    feishuGetBotInfo: vi.fn(),
+  })),
+}));
+
+// Mock fs existsSync for IPC check - IPC socket not available
+vi.mock('fs', () => ({
+  existsSync: vi.fn(() => false),
+}));
+
 // Import after mocks
 import * as fs from 'fs/promises';
 import type * as fsStats from 'fs';
 import {
   send_message,
   send_file,
-  wait_for_interaction,
-  resolvePendingInteraction,
   setMessageSentCallback,
   feishuContextTools,
 } from './feishu-context-mcp.js';
@@ -87,8 +98,13 @@ describe('MCP Tools', () => {
   describe('Tool Definitions', () => {
     it('should have send_message tool definition', () => {
       expect(feishuContextTools.send_message).toBeDefined();
-      expect(feishuContextTools.send_message.description).toContain('Send a simple message to a chat');
-      expect(feishuContextTools.send_message.handler).toBe(send_message);
+      // Issue #1155: Updated description for consolidated tools
+      expect(feishuContextTools.send_message.description).toContain('Send a message to a chat');
+      expect(feishuContextTools.send_message.description).toContain('Text');
+      expect(feishuContextTools.send_message.description).toContain('Card');
+      expect(feishuContextTools.send_message.description).toContain('Interactive');
+      expect(feishuContextTools.send_message.description).toContain('actionPrompts');
+      expect(feishuContextTools.send_message.handler).toBeDefined();
     });
 
     it('should have send_file tool definition', () => {
@@ -553,108 +569,6 @@ describe('MCP Tools', () => {
       expect(result.platformCode).toBe(99991663);
       expect(result.platformMsg).toBe('permission denied');
       expect(result.platformLogId).toBe('log-123');
-    });
-  });
-
-  describe('wait_for_interaction', () => {
-    it('should have wait_for_interaction tool definition', () => {
-      expect(feishuContextTools.wait_for_interaction).toBeDefined();
-      expect(feishuContextTools.wait_for_interaction.description).toContain('Wait for the user to interact');
-      expect(feishuContextTools.wait_for_interaction.handler).toBe(wait_for_interaction);
-    });
-
-    it('should require messageId', async () => {
-      const result = await wait_for_interaction({
-        messageId: '',
-        chatId: 'chat-123',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('messageId is required');
-    });
-
-    it('should require chatId', async () => {
-      const result = await wait_for_interaction({
-        messageId: 'msg-123',
-        chatId: '',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('chatId is required');
-    });
-
-    it('should wait for interaction with cli- prefix chatId (no CLI fallback)', async () => {
-      // CLI fallback removed (Issue #849) - now waits for real interaction
-      const waitPromise = wait_for_interaction({
-        messageId: 'msg-cli-test',
-        chatId: 'cli-test',
-        timeoutSeconds: 1,
-      });
-
-      // Simulate interaction being received
-      setTimeout(() => {
-        resolvePendingInteraction('msg-cli-test', 'test-action', 'button', 'user-123');
-      }, 50);
-
-      const result = await waitPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.actionValue).toBe('test-action');
-    });
-
-    it('should resolve when interaction is received', async () => {
-      // Start waiting for interaction
-      const waitPromise = wait_for_interaction({
-        messageId: 'msg-456',
-        chatId: 'chat-123',
-        timeoutSeconds: 5,
-      });
-
-      // Simulate interaction being received
-      setTimeout(() => {
-        resolvePendingInteraction('msg-456', 'confirm', 'button', 'user-789');
-      }, 50);
-
-      const result = await waitPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.actionValue).toBe('confirm');
-      expect(result.actionType).toBe('button');
-      expect(result.userId).toBe('user-789');
-    });
-
-    it('should timeout if no interaction received', async () => {
-      const result = await wait_for_interaction({
-        messageId: 'msg-timeout',
-        chatId: 'chat-123',
-        timeoutSeconds: 1,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('timeout');
-    });
-
-    it('should reject duplicate wait for same message', async () => {
-      // Start first wait
-      const firstWait = wait_for_interaction({
-        messageId: 'msg-dup',
-        chatId: 'chat-123',
-        timeoutSeconds: 5,
-      });
-
-      // Try to wait again for same message
-      const secondResult = await wait_for_interaction({
-        messageId: 'msg-dup',
-        chatId: 'chat-123',
-        timeoutSeconds: 1,
-      });
-
-      expect(secondResult.success).toBe(false);
-      expect(secondResult.error).toContain('Already waiting');
-
-      // Clean up first wait
-      resolvePendingInteraction('msg-dup', 'cancel', 'button', 'user-1');
-      await firstWait;
     });
   });
 });

@@ -14,6 +14,7 @@ const legacyMockTestFiles = [
   'src/channels/feishu-channel-bot-mention.test.ts',
   'src/channels/feishu-channel-mention.test.ts',
   'src/channels/feishu-channel-passive-mode.test.ts',
+  'src/channels/feishu/message-handler.test.ts', // Issue #1123: chat_record tests
   'src/mcp/feishu-context-mcp.test.ts',
   'src/mcp/feishu-mcp-server.test.ts',
   'src/mcp/tools/interactive-message.test.ts',

@@ -1,0 +1,102 @@
+# =============================================================================
+# Disclaude MCP Server Dockerfile
+# =============================================================================
+# Multi-stage build for MCP Server - provides MCP tools and resources.
+#
+# Build:
+#   docker build -f Dockerfile.mcp -t disclaude:mcp .
+#
+# Run:
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:mcp
+#
+# For production deployment, use docker-compose.yml.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Dependencies (production only)
+# -----------------------------------------------------------------------------
+FROM docker.m.daocloud.io/library/node:20-alpine AS deps
+WORKDIR /app
+
+# Install build dependencies for native modules
+RUN apk add --no-cache python3 make g++
+
+# Copy package files
+COPY package.json package-lock.json ./
+
+# Configure npm mirror and install dependencies
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm ci --omit=dev && \
+    npm cache clean --force
+
+# -----------------------------------------------------------------------------
+# Stage 2: Builder
+# -----------------------------------------------------------------------------
+FROM docker.m.daocloud.io/library/node:20-alpine AS builder
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++
+
+# Copy package files
+COPY package.json package-lock.json ./
+COPY packages ./packages
+
+# Configure npm mirror and install all dependencies (including devDependencies for building)
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm ci
+
+# Copy source code
+COPY . .
+
+# Build the project
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 3: Production Image
+# -----------------------------------------------------------------------------
+FROM docker.m.daocloud.io/library/node:20-alpine AS production
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    curl \
+    ca-certificates \
+    procps
+
+# Install GitHub CLI (gh)
+RUN apk add --no-cache github-cli
+
+# Install PM2 globally for process management
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g pm2@latest
+
+# Create non-root user for running the application
+RUN addgroup -g 1001 disclaude && \
+    adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
+
+# Create directories for runtime with proper permissions
+RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.claude/backups /app/.claude/debug /app/.pm2 && \
+    echo '{}' > /app/.claude.json && \
+    chown -R disclaude:disclaude /app
+
+# Copy built artifacts from builder and production dependencies from deps
+COPY --from=builder --chown=disclaude:disclaude /app/dist ./dist
+COPY --from=deps --chown=disclaude:disclaude /app/node_modules ./node_modules
+COPY --from=builder --chown=disclaude:disclaude /app/package.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.mcp.config.json ./
+COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV DISCLAUDE_MODE=mcp
+
+# Health check - check if PM2 process is running
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pm2 pid disclaude-mcp > /dev/null 2>&1 || exit 1
+
+# Switch to non-root user
+USER disclaude
+
+# Default command: run MCP Server with PM2
+CMD ["pm2-runtime", "start", "ecosystem.mcp.config.json"]

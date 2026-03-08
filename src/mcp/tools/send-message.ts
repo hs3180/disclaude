@@ -5,11 +5,14 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
+import { existsSync } from 'fs';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
 import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
+import { getIpcClient } from '../../ipc/unix-socket-client.js';
+import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
 import type { SendMessageResult, MessageSentCallback } from './types.js';
 
 const logger = createLogger('SendMessage');
@@ -31,6 +34,60 @@ function invokeMessageSentCallback(chatId: string): void {
     } catch (error) {
       logger.error({ err: error }, 'Failed to invoke message sent callback');
     }
+  }
+}
+
+/**
+ * Check if IPC is available for Feishu API calls.
+ * Issue #1035: Prefer IPC when available for unified client management.
+ */
+function isIpcAvailable(): boolean {
+  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
+}
+
+/**
+ * Send text message via IPC to PrimaryNode's LarkClientService.
+ * Issue #1035: Routes Feishu API calls through unified client.
+ * Issue #1088: Improved error handling with detailed error information.
+ */
+async function sendMessageViaIpc(
+  chatId: string,
+  text: string,
+  threadId?: string
+): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
+  const ipcClient = getIpcClient();
+  return await ipcClient.feishuSendMessage(chatId, text, threadId);
+}
+
+/**
+ * Send card message via IPC to PrimaryNode's LarkClientService.
+ * Issue #1035: Routes Feishu API calls through unified client.
+ * Issue #1088: Improved error handling with detailed error information.
+ */
+async function sendCardViaIpc(
+  chatId: string,
+  card: Record<string, unknown>,
+  threadId?: string,
+  description?: string
+): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
+  const ipcClient = getIpcClient();
+  return await ipcClient.feishuSendCard(chatId, card, threadId, description);
+}
+
+/**
+ * Generate user-friendly error message based on IPC error type.
+ * Issue #1088: Provide actionable error messages.
+ */
+function getIpcErrorMessage(errorType?: string, originalError?: string): string {
+  switch (errorType) {
+    case 'ipc_unavailable':
+      return '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。';
+    case 'ipc_timeout':
+      return '❌ IPC 请求超时。服务可能过载，请稍后重试。';
+    case 'ipc_request_failed':
+      return `❌ IPC 请求失败: ${originalError ?? '未知错误'}`;
+    default:
+      return `❌ 消息发送失败: ${originalError ?? '未知错误'}`;
   }
 }
 
@@ -63,21 +120,41 @@ export async function send_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+    // Issue #1035: Try IPC first if available
+    const useIpc = isIpcAvailable();
 
     if (format === 'text') {
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
-      await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+
+      if (useIpc) {
+        logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
+        const result = await sendMessageViaIpc(chatId, textContent, parentMessageId);
+        if (!result.success) {
+          const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+          logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');
+          return {
+            success: false,
+            error: result.error ?? 'Failed to send message via IPC',
+            message: errorMsg,
+          };
+        }
+      } else {
+        // Fallback: Create client directly
+        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+        await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      }
       logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
     } else {
+      // Card format
+      let cardContent: Record<string, unknown>;
+
       if (typeof content === 'object' && isValidFeishuCard(content)) {
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(content), parentMessageId);
-        logger.debug({ chatId, parentMessageId }, 'User card sent');
+        cardContent = content;
       } else if (typeof content === 'string') {
         try {
           const parsed = JSON.parse(content);
           if (isValidFeishuCard(parsed)) {
-            await sendMessageToFeishu(client, chatId, 'interactive', content, parentMessageId);
+            cardContent = parsed;
           } else {
             return {
               success: false,
@@ -100,6 +177,25 @@ export async function send_message(params: {
           message: '❌ Invalid content type.',
         };
       }
+
+      if (useIpc) {
+        logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
+        const result = await sendCardViaIpc(chatId, cardContent, parentMessageId);
+        if (!result.success) {
+          const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+          logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC card message failed');
+          return {
+            success: false,
+            error: result.error ?? 'Failed to send card via IPC',
+            message: errorMsg,
+          };
+        }
+      } else {
+        // Fallback: Create client directly
+        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent), parentMessageId);
+      }
+      logger.debug({ chatId, parentMessageId }, 'User card sent');
     }
 
     invokeMessageSentCallback(chatId);

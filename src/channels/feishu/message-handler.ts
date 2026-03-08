@@ -15,7 +15,6 @@ import { FeishuMessageSender } from '../../platforms/feishu/feishu-message-sende
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { getLarkClientService, isLarkClientServiceInitialized } from '../../services/index.js';
 import { getCommandRegistry } from '../../nodes/commands/command-registry.js';
-import { resolvePendingInteraction } from '../../mcp/feishu-context-mcp.js';
 import { generateInteractionPrompt } from '../../mcp/tools/interactive-message.js';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { filteredMessageForwarder } from '../../feishu/filtered-message-forwarder.js';
@@ -282,6 +281,234 @@ export class MessageHandler {
   }
 
   /**
+   * Get quoted/replied message content.
+   * Issue #846: Support reading quoted/reply message content
+   *
+   * @param parentId - The parent message ID (message being replied to)
+   * @returns Formatted quoted message content or undefined if not available
+   */
+  private async getQuotedMessageContext(parentId: string): Promise<string | undefined> {
+    if (!this.client) {
+      return undefined;
+    }
+
+    try {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const larkService = getLarkClientService();
+      const message = await larkService.getMessage(parentId);
+
+      if (!message) {
+        logger.debug({ parentId }, 'Quoted message not found or no permission');
+        return undefined;
+      }
+
+      // Parse message content based on type
+      let quotedText = '';
+      try {
+        if (message.messageType === 'text') {
+          const parsed = JSON.parse(message.content);
+          quotedText = parsed.text || message.content;
+        } else if (message.messageType === 'post') {
+          // Extract text from post content
+          const parsed = JSON.parse(message.content);
+          if (parsed.content && Array.isArray(parsed.content)) {
+            for (const row of parsed.content) {
+              if (Array.isArray(row)) {
+                for (const segment of row) {
+                  if (segment?.tag === 'text' && segment.text) {
+                    quotedText += segment.text;
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          // For other types, use raw content with type indicator
+          quotedText = `[${message.messageType}] ${message.content}`;
+        }
+      } catch {
+        quotedText = message.content;
+      }
+
+      if (!quotedText.trim()) {
+        return undefined;
+      }
+
+      // Format as quoted context
+      return `> **引用的消息**:
+> ${quotedText.split('\n').join('\n> ')}`;
+    } catch (error) {
+      logger.debug({ err: error, parentId }, 'Failed to get quoted message context');
+      return undefined;
+    }
+  }
+
+  /**
+   * Format timestamp to readable date string.
+   * Issue #1123: Enhanced chat_record formatting
+   *
+   * @param timestamp - Unix timestamp in milliseconds
+   * @returns Formatted date string
+   */
+  private formatChatRecordTime(timestamp?: number): string {
+    if (!timestamp) {
+      return '';
+    }
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+  }
+
+  /**
+   * Parse and format chat_record message content.
+   * Issue #1123: Support dedicated chat_record message type
+   *
+   * @param content - Raw message content JSON string
+   * @returns Formatted chat record string
+   */
+  private parseChatRecordContent(content: string): string | undefined {
+    try {
+      const parsed = JSON.parse(content);
+
+      // chat_record type contains a "messages" array
+      if (!parsed.messages || !Array.isArray(parsed.messages)) {
+        return undefined;
+      }
+
+      const formattedMessages: string[] = [];
+
+      for (const msg of parsed.messages) {
+        // Extract sender ID
+        const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || 'unknown';
+
+        // Extract timestamp
+        const timeStr = this.formatChatRecordTime(msg.create_time);
+
+        // Extract message content based on type
+        let msgContent = '';
+        try {
+          if (msg.message_type === 'text') {
+            const contentParsed = JSON.parse(msg.content);
+            msgContent = contentParsed.text || msg.content;
+          } else if (msg.message_type === 'post') {
+            const contentParsed = JSON.parse(msg.content);
+            if (contentParsed.content && Array.isArray(contentParsed.content)) {
+              for (const row of contentParsed.content) {
+                if (Array.isArray(row)) {
+                  for (const segment of row) {
+                    if (segment?.tag === 'text' && segment.text) {
+                      msgContent += segment.text;
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            // For other types, use raw content with type indicator
+            msgContent = `[${msg.message_type}] ${msg.content}`;
+          }
+        } catch {
+          msgContent = msg.content;
+        }
+
+        // Format message with sender and timestamp
+        if (msgContent.trim()) {
+          const header = timeStr ? `[${senderId}] ${timeStr}` : `[${senderId}]`;
+          formattedMessages.push(`${header}\n${msgContent}`);
+        }
+      }
+
+      if (formattedMessages.length === 0) {
+        return undefined;
+      }
+
+      // Join messages with separator
+      return `[用户转发了一段聊天记录]\n\n${formattedMessages.join('\n\n---\n\n')}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Extract packed chat history from message content.
+   * Issue #846: Support reading packed chat history (forwarded conversation records)
+   *
+   * Feishu packed chat history may appear in:
+   * 1. post type messages with special content structure
+   * 2. messages with upper_message_id field
+   * 3. forwarded messages with chat history content
+   *
+   * @param content - Raw message content JSON string
+   * @param messageType - Message type
+   * @returns Extracted chat history or undefined if not a packed history
+   */
+  private extractPackedChatHistory(content: string, messageType: string): string | undefined {
+    try {
+      const parsed = JSON.parse(content);
+
+      // Check for post type with packed chat history
+      // Packed chat history typically contains multiple message segments
+      if (messageType === 'post' && parsed.content && Array.isArray(parsed.content)) {
+        // Look for patterns that indicate packed chat history
+        // Such as: multiple timestamp-like patterns, chat headers, etc.
+        const textSegments: string[] = [];
+        let hasChatHistoryPattern = false;
+
+        for (const row of parsed.content) {
+          if (Array.isArray(row)) {
+            let rowText = '';
+            for (const segment of row) {
+              if (segment?.tag === 'text' && segment.text) {
+                rowText += segment.text;
+              } else if (segment?.tag === 'at') {
+                // Include @mentions as they often appear in chat history
+                rowText += `@${segment.text || 'user'}`;
+              }
+            }
+            if (rowText.trim()) {
+              textSegments.push(rowText);
+              // Detect chat history patterns (timestamps, user names, etc.)
+              if (/\d{1,2}:\d{2}/.test(rowText) || /\d{4}-\d{2}-\d{2}/.test(rowText)) {
+                hasChatHistoryPattern = true;
+              }
+            }
+          }
+        }
+
+        // If we found multiple segments with chat history patterns, format as chat history
+        if (hasChatHistoryPattern && textSegments.length > 3) {
+          const formattedHistory = textSegments.join('\n');
+          return `📋 **转发的对话记录**:\n\n${formattedHistory}`;
+        }
+      }
+
+      // Check for specific packed chat history message type (if exists)
+      // Some Feishu versions may use a specific type for forwarded chat history
+      if (messageType === 'chat_history' || messageType === 'forwarded_chat_history') {
+        // Try to extract text content from the packed history
+        if (typeof parsed === 'string') {
+          return `📋 **转发的对话记录**:\n\n${parsed}`;
+        }
+        if (parsed.text) {
+          return `📋 **转发的对话记录**:\n\n${parsed.text}`;
+        }
+        if (parsed.content) {
+          return `📋 **转发的对话记录**:\n\n${JSON.stringify(parsed.content, null, 2)}`;
+        }
+      }
+
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -301,7 +528,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -389,6 +616,55 @@ export class MessageHandler {
       return;
     }
 
+    // Issue #1123: Handle chat_record messages (forwarded conversation records)
+    if (message_type === 'chat_record') {
+      logger.info(
+        { chatId: chat_id, messageId: message_id },
+        'Processing chat_record message'
+      );
+
+      const formattedChatRecord = this.parseChatRecordContent(content);
+      if (!formattedChatRecord) {
+        logger.debug({ messageId: message_id }, 'Failed to parse chat_record content');
+        await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+        return;
+      }
+
+      // Log message
+      await messageLogger.logIncomingMessage(
+        message_id,
+        this.extractOpenId(sender) || 'unknown',
+        chat_id,
+        formattedChatRecord,
+        message_type,
+        create_time
+      );
+
+      // Add typing reaction
+      await this.addTypingReaction(message_id);
+
+      // Emit as incoming message
+      await this.callbacks.emitMessage({
+        messageId: message_id,
+        chatId: chat_id,
+        userId: this.extractOpenId(sender),
+        content: formattedChatRecord,
+        messageType: message_type,
+        timestamp: create_time,
+        threadId,
+        metadata: {
+          isChatRecord: true,
+          messageCount: (formattedChatRecord.match(/---/g) || []).length + 1,
+        },
+      });
+
+      logger.info(
+        { messageId: message_id, chatId: chat_id },
+        'chat_record message processed'
+      );
+      return;
+    }
+
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
@@ -398,6 +674,7 @@ export class MessageHandler {
 
     // Parse content
     let text = '';
+    let packedChatHistory: string | undefined;
     try {
       const parsed = JSON.parse(content);
       if (message_type === 'text') {
@@ -413,6 +690,9 @@ export class MessageHandler {
           }
         }
         text = text.trim();
+
+        // Issue #846: Check for packed chat history in post messages
+        packedChatHistory = this.extractPackedChatHistory(content, message_type);
       }
     } catch {
       logger.error('Failed to parse content');
@@ -425,7 +705,16 @@ export class MessageHandler {
       return;
     }
 
-    logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
+    // Issue #846: If packed chat history was detected, prepend it to the message
+    if (packedChatHistory) {
+      text = `${packedChatHistory}\n\n---\n\n用户消息: ${text}`;
+      logger.info(
+        { messageId: message_id, chatId: chat_id, hasPackedHistory: true },
+        'Message with packed chat history received'
+      );
+    } else {
+      logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
+    }
 
     // Log message
     await messageLogger.logIncomingMessage(
@@ -528,6 +817,18 @@ export class MessageHandler {
     // Add typing reaction only for messages that will be processed
     await this.addTypingReaction(message_id);
 
+    // Issue #846: Get quoted/replied message context if this is a reply
+    let quotedMessageContext: string | undefined;
+    if (parent_id) {
+      quotedMessageContext = await this.getQuotedMessageContext(parent_id);
+      if (quotedMessageContext) {
+        logger.debug(
+          { messageId: message_id, parent_id, quotedLength: quotedMessageContext.length },
+          'Including quoted message context for reply'
+        );
+      }
+    }
+
     // Get chat history context for passive mode
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
@@ -540,6 +841,15 @@ export class MessageHandler {
       );
     }
 
+    // Build metadata with quoted message and chat history
+    const metadata: Record<string, unknown> = {};
+    if (quotedMessageContext) {
+      metadata.quotedMessage = quotedMessageContext;
+    }
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+
     // Emit as incoming message
     await this.callbacks.emitMessage({
       messageId: message_id,
@@ -549,23 +859,59 @@ export class MessageHandler {
       messageType: message_type,
       timestamp: create_time,
       threadId,
-      metadata: chatHistoryContext ? { chatHistoryContext } : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 
   /**
    * Handle card action event from WebSocket.
+   *
+   * Feishu event structure (actual):
+   * {
+   *   schema: "2.0",
+   *   event_type: "card.action.trigger",
+   *   operator: { open_id, user_id, union_id, tenant_key },
+   *   action: { value, tag },
+   *   host: "im_message",
+   *   context: { open_message_id, open_chat_id }
+   * }
    */
   async handleCardAction(data: FeishuCardActionEventData): Promise<void> {
     if (!this.isRunning()) {
       return;
     }
 
-    const event = (data.event || data) as FeishuCardActionEvent;
-    const { action, message_id, chat_id, user } = event;
+    // Parse actual Feishu event structure
+    // The event data is at the top level, not nested under "event"
+    const rawData = data as Record<string, unknown>;
+    const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
+    const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
+    const actionData = rawData.action as { value?: string; tag?: string; type?: string; text?: string } | undefined;
+
+    // Extract fields from actual structure
+    const message_id = context?.open_message_id;
+    const chat_id = context?.open_chat_id;
+    const action = actionData ? {
+      type: actionData.tag ?? actionData.type ?? '',
+      value: actionData.value ?? '',
+      trigger: 'button' as const,
+      text: actionData.text,
+    } : undefined;
+    const user = operator ? {
+      sender_id: {
+        open_id: operator.open_id ?? '',
+        user_id: operator.user_id,
+        union_id: operator.union_id,
+      },
+    } : undefined;
 
     if (!action || !message_id || !chat_id) {
-      logger.warn('Missing required card action fields');
+      logger.warn({
+        hasAction: !!action,
+        hasMessageId: !!message_id,
+        hasChatId: !!chat_id,
+        eventData: JSON.stringify(data),
+      }, 'Missing required card action fields');
       return;
     }
 
@@ -575,7 +921,6 @@ export class MessageHandler {
         chatId: chat_id,
         actionType: action.type,
         actionValue: action.value,
-        trigger: action.trigger,
         userId: user?.sender_id?.open_id,
       },
       'Card action received'
@@ -604,18 +949,6 @@ export class MessageHandler {
         // The Worker Node will handle the action, we're done here
         return;
       }
-    }
-
-    // First, try to resolve any pending wait_for_interaction calls
-    const resolved = resolvePendingInteraction(
-      message_id,
-      action.value,
-      action.type,
-      user?.sender_id?.open_id || 'unknown'
-    );
-
-    if (resolved) {
-      logger.debug({ messageId: message_id }, 'Card action resolved pending interaction');
     }
 
     // Always emit card action as a message to the agent
@@ -664,7 +997,6 @@ export class MessageHandler {
         metadata: {
           cardAction: action,
           cardMessageId: message_id,
-          wasPendingInteraction: resolved,
           usedPromptTemplate: !!promptFromTemplate,
         },
       });
@@ -677,14 +1009,17 @@ export class MessageHandler {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
     }
 
-    // Return early if resolved
-    if (resolved) {
-      return;
-    }
-
     try {
       // Try to handle via InteractionManager
-      const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
+      // Build a compatible FeishuCardActionEvent for InteractionManager
+      const compatEvent: FeishuCardActionEvent = {
+        action,
+        message_id,
+        chat_id,
+        user: user ?? { sender_id: { open_id: '' } },
+        tenant_key: (rawData.tenant_key as string) || '',
+      };
+      const handled = await this.interactionManager.handleAction(compatEvent, async (defaultEvent) => {
         // Try to get a pre-defined prompt template via IPC first (cross-process),
         // then fall back to local function (same-process)
         let promptFromTemplate: string | undefined;

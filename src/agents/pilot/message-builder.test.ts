@@ -97,9 +97,11 @@ describe('MessageBuilder', () => {
 
       const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
 
-      expect(result).toContain('Image attachment(s) detected');
-      expect(result).toContain('analyze_image');
-      expect(result).toContain('image analyzer MCP');
+      // Issue #656: Enhanced image analysis prompt
+      expect(result).toContain('Image Analysis Required');
+      expect(result).toContain('mcp__4_5v_mcp__analyze_image');
+      expect(result).toContain('MUST analyze the image content');
+      expect(result).toContain('Analysis Workflow');
     });
 
     it('should not include image analyzer hint when no image analyzer MCP is configured', async () => {
@@ -116,8 +118,9 @@ describe('MessageBuilder', () => {
 
       const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
 
-      expect(result).not.toContain('Image attachment(s) detected');
-      expect(result).not.toContain('analyze_image');
+      // Should not contain enhanced image analysis prompt
+      expect(result).not.toContain('Image Analysis Required');
+      expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
     });
 
     it('should not include image analyzer hint for non-image attachments', async () => {
@@ -167,7 +170,8 @@ describe('MessageBuilder', () => {
         }];
 
         const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
-        expect(result).toContain('analyze_image');
+        // Issue #656: Enhanced prompt includes image analysis workflow
+        expect(result).toContain('Image Analysis Required');
       }
     });
   });
