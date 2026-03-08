@@ -57,7 +57,7 @@ describe('TaskProgressService', () => {
       expect(mockSendCard).toHaveBeenCalledTimes(1);
 
       // Verify card structure
-      const cardArg = mockSendCard.mock.calls[0][0];
+      const [[cardArg]] = mockSendCard.mock.calls;
       expect(cardArg).toHaveProperty('config');
       expect(cardArg).toHaveProperty('header');
       expect(cardArg).toHaveProperty('elements');
@@ -175,7 +175,7 @@ describe('TaskProgressService', () => {
         sendCard: mockSendCard,
       });
 
-      const cardArg = mockSendCard.mock.calls[0][0];
+      const [[cardArg]] = mockSendCard.mock.calls;
 
       // Check structure
       expect(cardArg.config).toEqual({ wide_screen_mode: true });
@@ -193,8 +193,8 @@ describe('TaskProgressService', () => {
         sendCard: mockSendCard,
       });
 
-      const cardArg = mockSendCard.mock.calls[0][0];
-      const firstElement = cardArg.elements[0];
+      const [[cardArg]] = mockSendCard.mock.calls;
+      const [firstElement] = cardArg.elements;
       expect(firstElement.content).toContain('任务ID');
     });
   });
