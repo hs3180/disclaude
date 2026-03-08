@@ -1,6 +1,10 @@
 /**
  * Context MCP Tools - In-process tool implementation.
  *
+ * Refactored (Issue #1155): Consolidated tools to reduce token overhead.
+ * - Merged send_message + send_interactive_message + ask_user into unified send_message
+ * - Deprecated individual generate_* tools, kept only create_study_guide
+ *
  * @module mcp/feishu-context-mcp
  */
 
@@ -12,10 +16,6 @@ import {
   send_interactive_message,
   ask_user,
   setMessageSentCallback,
-  generate_summary,
-  generate_qa_pairs,
-  generate_flashcards,
-  generate_quiz,
   create_study_guide,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
@@ -48,22 +48,36 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
   return { content: [{ type: 'text', text }] };
 }
 
-export const feishuContextTools = {
-  send_message: {
-    description: `Send a simple message to a chat.
+// ============================================================================
+// Consolidated Tool Definitions (Issue #1155)
+// ============================================================================
 
-**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
+/**
+ * Unified send_message tool (Issue #1155).
+ *
+ * Consolidates three previous tools into one:
+ * - Original send_message (text/simple cards)
+ * - send_interactive_message (cards with actionPrompts)
+ * - ask_user (simplified question cards)
+ *
+ * Use actionPrompts for interactive cards, or ask parameter for simple questions.
+ */
+const unifiedSendMessageDefinition: InlineToolDefinition = {
+  name: 'send_message',
+  description: `Send a message to a chat.
+
+**Unified tool** for all messaging needs - text, cards, interactive buttons, and questions.
 
 ---
 
-## Usage
-
-### Text Message (Recommended)
+## 📝 Text Message
 \`\`\`json
 {"content": "Hello world", "format": "text", "chatId": "oc_xxx"}
 \`\`\`
 
-### Display-Only Card (No interactions)
+---
+
+## 🎴 Card Message (Display Only)
 \`\`\`json
 {
   "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
@@ -74,507 +88,50 @@ export const feishuContextTools = {
 
 ---
 
-## ⚠️ Important Notes
+## 🔘 Interactive Card (with actionPrompts)
 
-- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
-- **Card content**: Must be an OBJECT (not JSON string)
-- **Thread reply**: Use parentMessageId parameter
-
-**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
-    parameters: {
-      type: 'object',
-      properties: {
-        content: { oneOf: [{ type: 'string' }, { type: 'object' }] },
-        format: { type: 'string', enum: ['text', 'card'] },
-        chatId: { type: 'string' },
-        parentMessageId: { type: 'string' },
-      },
-      required: ['content', 'format', 'chatId'],
-    },
-    handler: send_message,
-  },
-  send_file: {
-    description: 'Send a file to a chat.',
-    parameters: {
-      type: 'object',
-      properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
-      required: ['filePath', 'chatId'],
-    },
-    handler: send_file,
-  },
-  send_interactive_message: {
-    description: `Send an interactive card message with pre-defined action prompts.
-
-**Core Concept:** When the user interacts with the card (clicks a button, selects from menu), the corresponding prompt template is automatically converted into a message that you (the agent) receive. You don't need to wait for callbacks - just handle the incoming message naturally.
-
----
-
-## 🎯 预定义模板（推荐使用）
-
-以下是常用的交互场景模板，可直接复制使用：
-
-### 1. 确认对话框
-\`\`\`json
-{
-  "actionPrompts": {
-    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
-    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
-  }
-}
-\`\`\`
-
-### 2. 选择列表
-\`\`\`json
-{
-  "actionPrompts": {
-    "option_a": "[用户操作] 用户选择了「选项A」。请根据此选择继续。",
-    "option_b": "[用户操作] 用户选择了「选项B」。请根据此选择继续。"
-  }
-}
-\`\`\`
-
-### 3. 审批流程
-\`\`\`json
-{
-  "actionPrompts": {
-    "approve": "[用户操作] 用户已批准。请执行批准后的操作。",
-    "reject": "[用户操作] 用户已拒绝。请执行拒绝后的处理。",
-    "review": "[用户操作] 用户请求更多信息。请提供详细信息后重新请求审批。"
-  }
-}
-\`\`\`
-
-### 4. 文件操作
-\`\`\`json
-{
-  "actionPrompts": {
-    "view": "[用户操作] 用户选择查看详情。请展示完整信息。",
-    "edit": "[用户操作] 用户选择编辑。请提供编辑界面或指导。",
-    "delete": "[用户操作] 用户选择删除。请确认删除操作。"
-  }
-}
-\`\`\`
-
----
-
-## 自定义 actionPrompts
-
-如果预定义模板不满足需求，可以自定义 prompt。支持以下占位符：
-
-| 占位符 | 说明 | 示例值 |
-|--------|------|--------|
-| \`{{actionText}}\` | 按钮显示文本 | "确认" |
-| \`{{actionValue}}\` | 按钮的 value 值 | "confirm" |
-| \`{{actionType}}\` | 组件类型 | "button" |
-
-**自定义示例：**
-\`\`\`json
-{
-  "actionPrompts": {
-    "custom": "用户点击了「{{actionText}}」(值: {{actionValue}})，请处理。"
-  }
-}
-\`\`\`
-
----
-
-## Parameters
-
-- **card**: The interactive card JSON structure (same as send_message with format="card")
-- **actionPrompts**: Map of action values to prompt templates
-- **chatId**: Target chat ID
-- **parentMessageId**: Optional, for thread reply
-
----
-
-## Interactive Components
-
-### 1. Button (tag: "button")
-\`\`\`json
-{
-  "tag": "button",
-  "text": { "tag": "plain_text", "content": "Click Me" },
-  "value": "action_1",
-  "type": "primary"
-}
-\`\`\`
-- **value**: Used as key in actionPrompts
-- **type**: "primary" (blue), "default" (white), "danger" (red)
-
-### 2. Select Menu (tag: "select_static")
-\`\`\`json
-{
-  "tag": "select_static",
-  "placeholder": { "tag": "plain_text", "content": "Choose..." },
-  "options": [
-    { "text": { "tag": "plain_text", "content": "Option A" }, "value": "opt_a" },
-    { "text": { "tag": "plain_text", "content": "Option B" }, "value": "opt_b" }
-  ]
-}
-\`\`\`
-- Selected option's **value** is used as key in actionPrompts
-
-### 3. Overflow Menu (tag: "overflow")
-\`\`\`json
-{
-  "tag": "overflow",
-  "options": [
-    { "text": { "tag": "plain_text", "content": "Edit" }, "value": "edit" },
-    { "text": { "tag": "plain_text", "content": "Delete" }, "value": "delete" }
-  ]
-}
-\`\`\`
-
-### 4. Date Picker (tag: "datepicker")
-\`\`\`json
-{
-  "tag": "datepicker",
-  "placeholder": { "tag": "plain_text", "content": "Select date" }
-}
-\`\`\`
-- actionPrompts key is the selected date (YYYY-MM-DD format)
-
-### 5. Input Field (tag: "input")
-\`\`\`json
-{
-  "tag": "input",
-  "placeholder": { "tag": "plain_text", "content": "Enter text" },
-  "element": { "tag": "plain_input" }
-}
-\`\`\`
-
----
-
-## Prompt Template Placeholders
-
-In actionPrompts, you can use these placeholders:
-
-| Placeholder | Description | Example |
-|-------------|-------------|---------|
-| \`{{actionText}}\` | Display text of clicked button/option | "Confirm" |
-| \`{{actionValue}}\` | Value of the action | "confirm" |
-| \`{{actionType}}\` | Type of component | "button", "select_static" |
-| \`{{form.fieldName}}\` | Form field value | User input |
-
----
-
-## Complete Example
+When user interacts, you receive the corresponding prompt automatically.
 
 \`\`\`json
 {
-  "card": {
-    "config": { "wide_screen_mode": true },
-    "header": {
-      "title": { "tag": "plain_text", "content": "Confirm Action" },
-      "template": "blue"
-    },
+  "content": {
+    "config": {"wide_screen_mode": true},
+    "header": {"title": {"tag": "plain_text", "content": "Confirm"}, "template": "blue"},
     "elements": [
-      {
-        "tag": "markdown",
-        "content": "Do you want to proceed?"
-      },
-      {
-        "tag": "action",
-        "actions": [
-          {
-            "tag": "button",
-            "text": { "tag": "plain_text", "content": "✓ Confirm" },
-            "value": "confirm",
-            "type": "primary"
-          },
-          {
-            "tag": "button",
-            "text": { "tag": "plain_text", "content": "✗ Cancel" },
-            "value": "cancel",
-            "type": "default"
-          }
-        ]
-      }
+      {"tag": "markdown", "content": "Proceed?"},
+      {"tag": "action", "actions": [
+        {"tag": "button", "text": {"tag": "plain_text", "content": "✓ Yes"}, "value": "yes", "type": "primary"},
+        {"tag": "button", "text": {"tag": "plain_text", "content": "✗ No"}, "value": "no", "type": "default"}
+      ]}
     ]
   },
-  "actionPrompts": {
-    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
-    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
-  },
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
----
-
-## Best Practices
-
-1. **Clear action values**: Use descriptive values like "approve", "reject", "view_details"
-2. **Informative prompts**: Write prompts that give clear context about what happened
-3. **Handle all actions**: Define prompts for all possible interactions
-4. **Use Chinese prompts**: The system is designed for Chinese users
-
----
-
-**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
-    parameters: {
-      type: 'object',
-      properties: {
-        card: { type: 'object' },
-        actionPrompts: { type: 'object', additionalProperties: { type: 'string' } },
-        chatId: { type: 'string' },
-        parentMessageId: { type: 'string' },
-      },
-      required: ['card', 'actionPrompts', 'chatId'],
-    },
-    handler: send_interactive_message,
-  },
-  ask_user: {
-    description: `Ask the user a question with predefined options (Human-in-the-Loop).
-
-This tool provides a simple way for agents to ask users questions and receive responses.
-When the user selects an option, you will receive a message with the selection context.
-
----
-
-## 🎯 常用场景
-
-### 1. PR 审核流程
-\`\`\`json
-{
-  "question": "发现新的 PR #123: Fix authentication bug\\n\\n请选择处理方式:",
-  "options": [
-    { "text": "✓ 合并", "value": "merge", "style": "primary", "action": "合并此 PR" },
-    { "text": "✗ 关闭", "value": "close", "style": "danger", "action": "关闭此 PR" },
-    { "text": "⏳ 等待", "value": "wait", "action": "稍后再处理" }
-  ],
-  "context": "PR #123 from scheduled scan",
-  "title": "🔔 PR 审核请求",
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
-### 2. 确认操作
-\`\`\`json
-{
-  "question": "确定要删除这个文件吗？此操作不可撤销。",
-  "options": [
-    { "text": "确认删除", "value": "confirm", "style": "danger", "action": "执行删除操作" },
-    { "text": "取消", "value": "cancel", "action": "取消删除操作" }
-  ],
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
-### 3. 选择方向
-\`\`\`json
-{
-  "question": "请选择实现方案:",
-  "options": [
-    { "text": "方案 A (推荐)", "value": "option_a", "style": "primary", "action": "使用方案 A 实现" },
-    { "text": "方案 B", "value": "option_b", "action": "使用方案 B 实现" },
-    { "text": "方案 C", "value": "option_c", "action": "使用方案 C 实现" }
-  ],
-  "context": "Issue #456 功能实现",
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
----
-
-## Parameters
-
-- **question**: The question text (supports Markdown)
-- **options**: Array of options (1-5 recommended)
-  - **text**: Button display text
-  - **value**: Unique value for this option (optional, defaults to option_N)
-  - **style**: Button style - "primary" (blue), "default" (white), "danger" (red)
-  - **action**: Description of what to do when this option is selected
-- **context**: Additional context information (optional)
-- **title**: Card title (optional, default: "🤖 Agent 提问")
-- **chatId**: Target chat ID
-- **parentMessageId**: Optional, for thread reply
-
----
-
-## How It Works
-
-1. You call ask_user with a question and options
-2. A card with buttons is sent to the user
-3. When the user clicks a button, you receive a message like:
-   \`[用户操作] 用户选择了「合并」选项。\n\n**上下文**: PR #123\n\n**请执行**: 合并此 PR\`
-4. You continue execution based on the selection
-
----
-
-## Best Practices
-
-1. **Include context**: Always provide enough context for future reference
-2. **Clear actions**: Specify what action to take for each option
-3. **Limit options**: 2-4 options work best for quick decisions
-4. **Use styles**: Use "primary" for recommended, "danger" for destructive actions`,
-    parameters: {
-      type: 'object',
-      properties: {
-        question: { type: 'string' },
-        options: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              text: { type: 'string' },
-              value: { type: 'string' },
-              style: { type: 'string', enum: ['primary', 'default', 'danger'] },
-              action: { type: 'string' },
-            },
-            required: ['text'],
-          },
-        },
-        context: { type: 'string' },
-        title: { type: 'string' },
-        chatId: { type: 'string' },
-        parentMessageId: { type: 'string' },
-      },
-      required: ['question', 'options', 'chatId'],
-    },
-    handler: ask_user,
-  },
-};
-
-export const feishuToolDefinitions: InlineToolDefinition[] = [
-  {
-    name: 'send_message',
-    description: `Send a simple message to a chat.
-
-**For interactive cards with buttons/actions, use \`send_interactive_message\` instead.**
-
----
-
-## Usage
-
-### Text Message (Recommended)
-\`\`\`json
-{"content": "Hello", "format": "text", "chatId": "oc_xxx"}
-\`\`\`
-
-### Display-Only Card (No interactions)
-\`\`\`json
-{
-  "content": {"config": {}, "header": {"title": {"tag": "plain_text", "content": "Title"}}, "elements": []},
   "format": "card",
+  "actionPrompts": {
+    "yes": "[用户操作] 用户确认。请继续执行。",
+    "no": "[用户操作] 用户取消。停止相关操作。"
+  },
   "chatId": "oc_xxx"
 }
 \`\`\`
 
 ---
 
-## ⚠️ Important Notes
+## ❓ Ask User (Simplified)
 
-- **Interactive cards**: Use \`send_interactive_message\` with actionPrompts
-- **Card content**: Must be an OBJECT (not JSON string)
-- **Thread reply**: Use parentMessageId parameter
+Quick question with options - auto-generates the card.
 
-**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
-    parameters: z.object({
-      content: z.union([z.string(), z.object({}).passthrough()]),
-      format: z.enum(['text', 'card']),
-      chatId: z.string(),
-      parentMessageId: z.string().optional(),
-    }),
-    handler: async ({ content, format, chatId, parentMessageId }) => {
-      if (format === 'card' && typeof content === 'string') {
-        return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
-      }
-      if (format === 'text' && typeof content !== 'string') {
-        return toolSuccess('❌ Error: When format="text", content must be a STRING.');
-      }
-      try {
-        const result = await send_message({ content, format, chatId, parentMessageId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Message send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'send_file',
-    description: 'Send a file to a chat.',
-    parameters: z.object({ filePath: z.string(), chatId: z.string() }),
-    handler: async ({ filePath, chatId }) => {
-      try {
-        const result = await send_file({ filePath, chatId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'send_interactive_message',
-    description: `Send an interactive card message with pre-defined action prompts.
-
-**Core Concept:** When the user interacts with the card (clicks a button, selects from menu), the corresponding prompt template is automatically converted into a message that you (the agent) receive. You don't need to wait for callbacks - just handle the incoming message naturally.
-
----
-
-## 🎯 预定义模板（推荐使用）
-
-以下是常用的交互场景模板，可直接复制使用：
-
-### 1. 确认对话框
 \`\`\`json
 {
-  "actionPrompts": {
-    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
-    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
-  }
-}
-\`\`\`
-
-### 2. 选择列表
-\`\`\`json
-{
-  "actionPrompts": {
-    "option_a": "[用户操作] 用户选择了「选项A」。请根据此选择继续。",
-    "option_b": "[用户操作] 用户选择了「选项B」。请根据此选择继续。"
-  }
-}
-\`\`\`
-
-### 3. 审批流程
-\`\`\`json
-{
-  "actionPrompts": {
-    "approve": "[用户操作] 用户已批准。请执行批准后的操作。",
-    "reject": "[用户操作] 用户已拒绝。请执行拒绝后的处理。",
-    "review": "[用户操作] 用户请求更多信息。请提供详细信息后重新请求审批。"
-  }
-}
-\`\`\`
-
-### 4. 文件操作
-\`\`\`json
-{
-  "actionPrompts": {
-    "view": "[用户操作] 用户选择查看详情。请展示完整信息。",
-    "edit": "[用户操作] 用户选择编辑。请提供编辑界面或指导。",
-    "delete": "[用户操作] 用户选择删除。请确认删除操作。"
-  }
-}
-\`\`\`
-
----
-
-## 自定义 actionPrompts
-
-如果预定义模板不满足需求，可以自定义 prompt。支持以下占位符：
-
-| 占位符 | 说明 | 示例值 |
-|--------|------|--------|
-| \`{{actionText}}\` | 按钮显示文本 | "确认" |
-| \`{{actionValue}}\` | 按钮的 value 值 | "confirm" |
-| \`{{actionType}}\` | 组件类型 | "button" |
-
-**自定义示例：**
-\`\`\`json
-{
-  "actionPrompts": {
-    "custom": "用户点击了「{{actionText}}」(值: {{actionValue}})，请处理。"
+  "format": "text",
+  "chatId": "oc_xxx",
+  "ask": {
+    "question": "Choose implementation:",
+    "options": [
+      {"text": "方案A", "value": "a", "style": "primary", "action": "使用方案A"},
+      {"text": "方案B", "value": "b", "action": "使用方案B"}
+    ],
+    "title": "选择方案",
+    "context": "Issue #123"
   }
 }
 \`\`\`
@@ -583,239 +140,27 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
 
 ## Parameters
 
-- **card**: The interactive card JSON structure (same as send_message with format="card")
-- **actionPrompts**: Map of action values to prompt templates
-- **chatId**: Target chat ID
-- **parentMessageId**: Optional, for thread reply
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| content | yes* | Message content (string for text, object for card) |
+| format | yes | "text" or "card" |
+| chatId | yes | Target chat ID |
+| parentMessageId | no | Reply in thread |
+| actionPrompts | no | For interactive cards: action value → prompt template |
+| ask | no* | Simplified question format (auto-builds card) |
 
----
-
-## Interactive Components
-
-### 1. Button (tag: "button")
-\`\`\`json
-{
-  "tag": "button",
-  "text": { "tag": "plain_text", "content": "Click Me" },
-  "value": "action_1",
-  "type": "primary"
-}
-\`\`\`
-- **value**: Used as key in actionPrompts
-- **type**: "primary" (blue), "default" (white), "danger" (red)
-
-### 2. Select Menu (tag: "select_static")
-\`\`\`json
-{
-  "tag": "select_static",
-  "placeholder": { "tag": "plain_text", "content": "Choose..." },
-  "options": [
-    { "text": { "tag": "plain_text", "content": "Option A" }, "value": "opt_a" },
-    { "text": { "tag": "plain_text", "content": "Option B" }, "value": "opt_b" }
-  ]
-}
-\`\`\`
-- Selected option's **value** is used as key in actionPrompts
-
-### 3. Overflow Menu (tag: "overflow")
-\`\`\`json
-{
-  "tag": "overflow",
-  "options": [
-    { "text": { "tag": "plain_text", "content": "Edit" }, "value": "edit" },
-    { "text": { "tag": "plain_text", "content": "Delete" }, "value": "delete" }
-  ]
-}
-\`\`\`
-
-### 4. Date Picker (tag: "datepicker")
-\`\`\`json
-{
-  "tag": "datepicker",
-  "placeholder": { "tag": "plain_text", "content": "Select date" }
-}
-\`\`\`
-- actionPrompts key is the selected date (YYYY-MM-DD format)
-
-### 5. Input Field (tag: "input")
-\`\`\`json
-{
-  "tag": "input",
-  "placeholder": { "tag": "plain_text", "content": "Enter text" },
-  "element": { "tag": "plain_input" }
-}
-\`\`\`
-
----
-
-## Prompt Template Placeholders
-
-In actionPrompts, you can use these placeholders:
-
-| Placeholder | Description | Example |
-|-------------|-------------|---------|
-| \`{{actionText}}\` | Display text of clicked button/option | "Confirm" |
-| \`{{actionValue}}\` | Value of the action | "confirm" |
-| \`{{actionType}}\` | Type of component | "button", "select_static" |
-| \`{{form.fieldName}}\` | Form field value | User input |
-
----
-
-## Complete Example
-
-\`\`\`json
-{
-  "card": {
-    "config": { "wide_screen_mode": true },
-    "header": {
-      "title": { "tag": "plain_text", "content": "Confirm Action" },
-      "template": "blue"
-    },
-    "elements": [
-      {
-        "tag": "markdown",
-        "content": "Do you want to proceed?"
-      },
-      {
-        "tag": "action",
-        "actions": [
-          {
-            "tag": "button",
-            "text": { "tag": "plain_text", "content": "✓ Confirm" },
-            "value": "confirm",
-            "type": "primary"
-          },
-          {
-            "tag": "button",
-            "text": { "tag": "plain_text", "content": "✗ Cancel" },
-            "value": "cancel",
-            "type": "default"
-          }
-        ]
-      }
-    ]
-  },
-  "actionPrompts": {
-    "confirm": "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
-    "cancel": "[用户操作] 用户点击了「取消」按钮。任务已取消，请停止相关操作。"
-  },
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
----
-
-## Best Practices
-
-1. **Clear action values**: Use descriptive values like "approve", "reject", "view_details"
-2. **Informative prompts**: Write prompts that give clear context about what happened
-3. **Handle all actions**: Define prompts for all possible interactions
-4. **Use Chinese prompts**: The system is designed for Chinese users
+*Use either content OR ask, not both.
 
 ---
 
 **Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
-    parameters: z.object({
-      card: z.object({}).passthrough(),
-      actionPrompts: z.record(z.string(), z.string()),
-      chatId: z.string(),
-      parentMessageId: z.string().optional(),
-    }),
-    handler: async ({ card, actionPrompts, chatId, parentMessageId }) => {
-      try {
-        const result = await send_interactive_message({ card, actionPrompts, chatId, parentMessageId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'ask_user',
-    description: `Ask the user a question with predefined options (Human-in-the-Loop).
-
-This tool provides a simple way for agents to ask users questions and receive responses.
-When the user selects an option, you will receive a message with the selection context.
-
----
-
-## 🎯 常用场景
-
-### 1. PR 审核流程
-\`\`\`json
-{
-  "question": "发现新的 PR #123: Fix authentication bug\\n\\n请选择处理方式:",
-  "options": [
-    { "text": "✓ 合并", "value": "merge", "style": "primary", "action": "合并此 PR" },
-    { "text": "✗ 关闭", "value": "close", "style": "danger", "action": "关闭此 PR" },
-    { "text": "⏳ 等待", "value": "wait", "action": "稍后再处理" }
-  ],
-  "context": "PR #123 from scheduled scan",
-  "title": "🔔 PR 审核请求",
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
-### 2. 确认操作
-\`\`\`json
-{
-  "question": "确定要删除这个文件吗？此操作不可撤销。",
-  "options": [
-    { "text": "确认删除", "value": "confirm", "style": "danger", "action": "执行删除操作" },
-    { "text": "取消", "value": "cancel", "action": "取消删除操作" }
-  ],
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
-### 3. 选择方向
-\`\`\`json
-{
-  "question": "请选择实现方案:",
-  "options": [
-    { "text": "方案 A (推荐)", "value": "option_a", "style": "primary", "action": "使用方案 A 实现" },
-    { "text": "方案 B", "value": "option_b", "action": "使用方案 B 实现" },
-    { "text": "方案 C", "value": "option_c", "action": "使用方案 C 实现" }
-  ],
-  "context": "Issue #456 功能实现",
-  "chatId": "oc_xxx"
-}
-\`\`\`
-
----
-
-## Parameters
-
-- **question**: The question text (supports Markdown)
-- **options**: Array of options (1-5 recommended)
-  - **text**: Button display text
-  - **value**: Unique value for this option (optional, defaults to option_N)
-  - **style**: Button style - "primary" (blue), "default" (white), "danger" (red)
-  - **action**: Description of what to do when this option is selected
-- **context**: Additional context information (optional)
-- **title**: Card title (optional, default: "🤖 Agent 提问")
-- **chatId**: Target chat ID
-- **parentMessageId**: Optional, for thread reply
-
----
-
-## How It Works
-
-1. You call ask_user with a question and options
-2. A card with buttons is sent to the user
-3. When the user clicks a button, you receive a message like:
-   \`[用户操作] 用户选择了「合并」选项。\n\n**上下文**: PR #123\n\n**请执行**: 合并此 PR\`
-4. You continue execution based on the selection
-
----
-
-## Best Practices
-
-1. **Include context**: Always provide enough context for future reference
-2. **Clear actions**: Specify what action to take for each option
-3. **Limit options**: 2-4 options work best for quick decisions
-4. **Use styles**: Use "primary" for recommended, "danger" for destructive actions`,
-    parameters: z.object({
+  parameters: z.object({
+    content: z.union([z.string(), z.object({}).passthrough()]).optional(),
+    format: z.enum(['text', 'card']),
+    chatId: z.string(),
+    parentMessageId: z.string().optional(),
+    actionPrompts: z.record(z.string(), z.string()).optional(),
+    ask: z.object({
       question: z.string(),
       options: z.array(z.object({
         text: z.string(),
@@ -823,257 +168,169 @@ When the user selects an option, you will receive a message with the selection c
         style: z.enum(['primary', 'default', 'danger']).optional(),
         action: z.string().optional(),
       })),
-      context: z.string().optional(),
       title: z.string().optional(),
-      chatId: z.string(),
-      parentMessageId: z.string().optional(),
-    }),
-    handler: async ({ question, options, context, title, chatId, parentMessageId }) => {
-      try {
-        const result = await ask_user({ question, options, context, title, chatId, parentMessageId });
+      context: z.string().optional(),
+    }).optional(),
+  }),
+  handler: async (params) => {
+    const { content, format, chatId, parentMessageId, actionPrompts, ask } = params;
+
+    try {
+      // Handle ask parameter (simplified question)
+      if (ask) {
+        const result = await ask_user({
+          question: ask.question,
+          options: ask.options,
+          title: ask.title,
+          context: ask.context,
+          chatId,
+          parentMessageId,
+        });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message || result.error}`);
+      }
+
+      // Validate content is provided
+      if (content === undefined) {
+        return toolSuccess('❌ Error: content is required when not using ask parameter.');
+      }
+
+      // Handle text format
+      if (format === 'text') {
+        if (typeof content !== 'string') {
+          return toolSuccess('❌ Error: When format="text", content must be a STRING.');
+        }
+        const result = await send_message({ content, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Ask user failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
-  },
-  // NotebookLM Study Guide Tools (Issue #950 M4)
-  {
-    name: 'generate_summary',
-    description: `Generate a structured summary from content.
 
-Part of NotebookLM features - generates summaries in different styles.
+      // Handle card format
+      if (format === 'card') {
+        if (typeof content === 'string') {
+          return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
+        }
+
+        // Interactive card with actionPrompts
+        if (actionPrompts && Object.keys(actionPrompts).length > 0) {
+          const result = await send_interactive_message({
+            card: content as Record<string, unknown>,
+            actionPrompts,
+            chatId,
+            parentMessageId,
+          });
+          return toolSuccess(result.success ? result.message : `⚠️ ${result.message || result.error}`);
+        }
+
+        // Simple display card
+        const result = await send_message({ content, format, chatId, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      }
+
+      return toolSuccess('❌ Error: Invalid format. Use "text" or "card".');
+    } catch (error) {
+      return toolSuccess(`⚠️ Message failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+};
+
+/**
+ * send_file tool - unchanged.
+ */
+const sendFileDefinition: InlineToolDefinition = {
+  name: 'send_file',
+  description: 'Send a file to a chat.',
+  parameters: z.object({ filePath: z.string(), chatId: z.string() }),
+  handler: async ({ filePath, chatId }) => {
+    try {
+      const result = await send_file({ filePath, chatId });
+      return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+    } catch (error) {
+      return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+};
+
+/**
+ * create_study_guide tool - the only study tool (Issue #1155).
+ *
+ * Other generate_* tools are deprecated. Use this unified tool instead.
+ */
+const createStudyGuideDefinition: InlineToolDefinition = {
+  name: 'create_study_guide',
+  description: `Create learning materials from content.
+
+**Unified study tool** - generates summary, Q&A, flashcards, and quiz.
+
+---
 
 ## Parameters
-- **content**: The text content to summarize
-- **maxLength**: Maximum length in words (default: 200)
-- **style**: Summary style - "brief", "detailed", or "bullet" (default: "bullet")
 
-## Styles
-- **brief**: 2-3 sentence concise summary
-- **detailed**: Comprehensive summary with sections
-- **bullet**: Bullet-point summary of main topics
+| Parameter | Description |
+|-----------|-------------|
+| content | The text content to process |
+| title | Study guide title (default: "Study Guide") |
+| include | Which components: {summary, qa, flashcards, quiz} |
+| outputPath | Optional file path to save |
 
-## Example
-\`\`\`json
-{
-  "content": "Long text to summarize...",
-  "maxLength": 150,
-  "style": "bullet"
-}
-\`\`\``,
-    parameters: z.object({
-      content: z.string(),
-      maxLength: z.number().optional(),
-      style: z.enum(['brief', 'detailed', 'bullet']).optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = generate_summary(options);
-        return Promise.resolve(toolSuccess(result.success
-          ? `Summary (${result.wordCount} words):\n\n${result.summary}`
-          : `⚠️ ${result.error}`));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Summary generation failed: ${error instanceof Error ? error.message : String(error)}`));
-      }
-    },
-  },
-  {
-    name: 'generate_qa_pairs',
-    description: `Generate Q&A pairs from content.
-
-Part of NotebookLM features - creates question-answer pairs for study.
-
-## Parameters
-- **content**: The text content to generate Q&A from
-- **count**: Number of Q&A pairs to generate (default: 5)
-- **includeDifficulty**: Include difficulty ratings (default: true)
-- **focusTopics**: Optional topics to focus on
+---
 
 ## Example
+
 \`\`\`json
 {
-  "content": "Learning material...",
-  "count": 10,
-  "includeDifficulty": true,
-  "focusTopics": ["key concept 1", "key concept 2"]
-}
-\`\`\``,
-    parameters: z.object({
-      content: z.string(),
-      count: z.number().optional(),
-      includeDifficulty: z.boolean().optional(),
-      focusTopics: z.array(z.string()).optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = generate_qa_pairs(options);
-        return Promise.resolve(toolSuccess(result.success
-          ? `Q&A Generation (${result.count} pairs):\n\n${result.qaPairs[0]?.question || 'No pairs generated'}`
-          : `⚠️ ${result.error}`));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Q&A generation failed: ${error instanceof Error ? error.message : String(error)}`));
-      }
-    },
-  },
-  {
-    name: 'generate_flashcards',
-    description: `Generate flashcards from content.
-
-Part of NotebookLM features - creates flashcards for spaced repetition learning.
-
-## Parameters
-- **content**: The text content to generate flashcards from
-- **count**: Number of flashcards to generate (default: 10)
-- **deckName**: Name for the flashcard deck (default: "Study Deck")
-- **format**: Output format - "json", "anki", or "csv" (default: "json")
-
-## Example
-\`\`\`json
-{
-  "content": "Study material...",
-  "count": 20,
-  "deckName": "Machine Learning Basics",
-  "format": "anki"
+  "content": "Course material...",
+  "title": "Machine Learning Guide",
+  "include": {"summary": true, "qa": true, "flashcards": true, "quiz": true}
 }
 \`\`\`
 
-## Formats
-- **json**: Returns structured flashcard data
-- **anki**: Returns tab-separated format for Anki import
-- **csv**: Returns CSV format`,
-    parameters: z.object({
-      content: z.string(),
-      count: z.number().optional(),
-      deckName: z.string().optional(),
-      format: z.enum(['json', 'anki', 'csv']).optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = generate_flashcards(options);
-        if (!result.success) {
-          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
-        }
-        let output = `Flashcards (${result.count} cards, Deck: "${result.flashcards[0]?.deck || 'Study Deck'}"):\n\n`;
-        if (options.format === 'anki' && result.ankiOutput) {
-          output += result.ankiOutput;
-        } else if (options.format === 'csv' && result.csvOutput) {
-          output += result.csvOutput;
-        } else {
-          output += result.flashcards[0]?.front || 'No flashcards generated';
-        }
-        return Promise.resolve(toolSuccess(output));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Flashcard generation failed: ${error instanceof Error ? error.message : String(error)}`));
+---
+
+**Note:** Individual generate_* tools (generate_summary, generate_qa_pairs, etc.) are deprecated. Use create_study_guide instead.`,
+  parameters: z.object({
+    content: z.string(),
+    title: z.string().optional(),
+    include: z.object({
+      summary: z.boolean().optional(),
+      qa: z.boolean().optional(),
+      flashcards: z.boolean().optional(),
+      quiz: z.boolean().optional(),
+    }).optional(),
+    outputPath: z.string().optional(),
+  }),
+  handler: (options) => {
+    try {
+      const result = create_study_guide(options);
+      if (!result.success) {
+        return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
       }
-    },
-  },
-  {
-    name: 'generate_quiz',
-    description: `Generate quiz questions from content.
-
-Part of NotebookLM features - creates quiz questions for assessment.
-
-## Parameters
-- **content**: The text content to generate quiz from
-- **count**: Number of questions to generate (default: 10)
-- **questionTypes**: Types to include (default: all types)
-  - "multiple_choice": Multiple choice with 4 options
-  - "true_false": True/false statements
-  - "fill_blank": Fill in the blank questions
-- **includeExplanations**: Include answer explanations (default: true)
-- **totalPoints**: Total points for the quiz (default: 100)
-
-## Example
-\`\`\`json
-{
-  "content": "Course material...",
-  "count": 15,
-  "questionTypes": ["multiple_choice", "true_false"],
-  "includeExplanations": true,
-  "totalPoints": 50
-}
-\`\`\``,
-    parameters: z.object({
-      content: z.string(),
-      count: z.number().optional(),
-      questionTypes: z.array(z.enum(['multiple_choice', 'true_false', 'fill_blank'])).optional(),
-      includeExplanations: z.boolean().optional(),
-      totalPoints: z.number().optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = generate_quiz(options);
-        if (!result.success) {
-          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
-        }
-        return Promise.resolve(toolSuccess(`Quiz (${result.count} questions, ${result.totalPoints} points):\n\n${result.markdownQuiz || 'No quiz generated'}`));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Quiz generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      let output = '✅ Study Guide created!\n';
+      if (result.outputPath) {
+        output += `Saved to: ${result.outputPath}\n\n`;
       }
-    },
+      // Show first 500 chars of the guide
+      const preview = result.studyGuide.slice(0, 500);
+      output += preview + (result.studyGuide.length > 500 ? '...\n\n[Content truncated]' : '');
+      return Promise.resolve(toolSuccess(output));
+    } catch (error) {
+      return Promise.resolve(toolSuccess(`⚠️ Study guide failed: ${error instanceof Error ? error.message : String(error)}`));
+    }
   },
-  {
-    name: 'create_study_guide',
-    description: `Create a complete study guide with all learning materials.
+};
 
-Part of NotebookLM features - generates comprehensive study materials including:
-- Summary of the content
-- Q&A pairs for review
-- Flashcards for memorization
-- Quiz for self-assessment
+// ============================================================================
+// Exports
+// ============================================================================
 
-## Parameters
-- **content**: The text content to create study guide from
-- **title**: Title for the study guide (default: "Study Guide")
-- **include**: Which components to include (default: all)
-  - summary: boolean
-  - qa: boolean
-  - flashcards: boolean
-  - quiz: boolean
-- **outputPath**: Optional file path to save the study guide
-
-## Example
-\`\`\`json
-{
-  "content": "Course material...",
-  "title": "Machine Learning Study Guide",
-  "include": {
-    "summary": true,
-    "qa": true,
-    "flashcards": true,
-    "quiz": true
-  }
-}
-\`\`\``,
-    parameters: z.object({
-      content: z.string(),
-      title: z.string().optional(),
-      include: z.object({
-        summary: z.boolean().optional(),
-        qa: z.boolean().optional(),
-        flashcards: z.boolean().optional(),
-        quiz: z.boolean().optional(),
-      }).optional(),
-      outputPath: z.string().optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = create_study_guide(options);
-        if (!result.success) {
-          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
-        }
-        let output = 'Study Guide created successfully!\n';
-        if (result.outputPath) {
-          output += `Saved to: ${result.outputPath}\n\n`;
-        }
-        output += result.studyGuide;
-        return Promise.resolve(toolSuccess(output));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
-      }
-    },
-  },
+/**
+ * Consolidated tool definitions (Issue #1155).
+ *
+ * Tools: send_message (unified), send_file, create_study_guide
+ * Total: 3 tools (down from 9)
+ */
+export const feishuToolDefinitions: InlineToolDefinition[] = [
+  unifiedSendMessageDefinition,
+  sendFileDefinition,
+  createStudyGuideDefinition,
 ];
 
 export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().createInlineTool(def));
@@ -1086,3 +343,35 @@ export function createFeishuSdkMcpServer() {
     tools: feishuToolDefinitions,
   });
 }
+
+// Legacy exports for backward compatibility
+export const feishuContextTools = {
+  send_message: {
+    description: unifiedSendMessageDefinition.description,
+    parameters: {
+      type: 'object',
+      properties: {
+        content: { oneOf: [{ type: 'string' }, { type: 'object' }] },
+        format: { type: 'string', enum: ['text', 'card'] },
+        chatId: { type: 'string' },
+        parentMessageId: { type: 'string' },
+        actionPrompts: { type: 'object', additionalProperties: { type: 'string' } },
+        ask: { type: 'object' },
+      },
+      required: ['format', 'chatId'],
+    },
+    handler: async (params: Record<string, unknown>) => {
+      const result = await unifiedSendMessageDefinition.handler(params as Parameters<typeof unifiedSendMessageDefinition.handler>[0]);
+      return result;
+    },
+  },
+  send_file: {
+    description: sendFileDefinition.description,
+    parameters: {
+      type: 'object',
+      properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
+      required: ['filePath', 'chatId'],
+    },
+    handler: send_file,
+  },
+};
