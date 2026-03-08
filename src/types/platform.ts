@@ -194,3 +194,32 @@ export interface FeishuP2PChatEnteredEventData {
   event?: FeishuP2PChatEnteredEvent;
   [key: string]: unknown;
 }
+
+/**
+ * Feishu chat_record message content structure.
+ * Used when user forwards chat history from another conversation.
+ * Issue #1123: Support reading chat_record message type
+ * @see https://open.feishu.cn/document/server-docs/im-v1/message/events/receive_v1
+ */
+export interface FeishuChatRecordContent {
+  /** Array of forwarded messages */
+  messages: Array<{
+    /** Message ID */
+    message_id: string;
+    /** Raw message content (JSON string) */
+    content: string;
+    /** Message type: text, post, image, etc. */
+    message_type: string;
+    /** Message creation timestamp (milliseconds) */
+    create_time?: number;
+    /** Sender information */
+    sender?: {
+      sender_id?: {
+        open_id?: string;
+        user_id?: string;
+        union_id?: string;
+      };
+      sender_type?: string;
+    };
+  }>;
+}

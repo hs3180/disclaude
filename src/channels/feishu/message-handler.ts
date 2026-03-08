@@ -25,6 +25,7 @@ import type {
   FeishuMessageEvent,
   FeishuCardActionEvent,
   FeishuCardActionEventData,
+  FeishuChatRecordContent,
 } from '../../types/platform.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -344,97 +345,6 @@ export class MessageHandler {
   }
 
   /**
-   * Format timestamp to readable date string.
-   * Issue #1123: Enhanced chat_record formatting
-   *
-   * @param timestamp - Unix timestamp in milliseconds
-   * @returns Formatted date string
-   */
-  private formatChatRecordTime(timestamp?: number): string {
-    if (!timestamp) {
-      return '';
-    }
-    const date = new Date(timestamp);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
-  }
-
-  /**
-   * Parse and format chat_record message content.
-   * Issue #1123: Support dedicated chat_record message type
-   *
-   * @param content - Raw message content JSON string
-   * @returns Formatted chat record string
-   */
-  private parseChatRecordContent(content: string): string | undefined {
-    try {
-      const parsed = JSON.parse(content);
-
-      // chat_record type contains a "messages" array
-      if (!parsed.messages || !Array.isArray(parsed.messages)) {
-        return undefined;
-      }
-
-      const formattedMessages: string[] = [];
-
-      for (const msg of parsed.messages) {
-        // Extract sender ID
-        const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || 'unknown';
-
-        // Extract timestamp
-        const timeStr = this.formatChatRecordTime(msg.create_time);
-
-        // Extract message content based on type
-        let msgContent = '';
-        try {
-          if (msg.message_type === 'text') {
-            const contentParsed = JSON.parse(msg.content);
-            msgContent = contentParsed.text || msg.content;
-          } else if (msg.message_type === 'post') {
-            const contentParsed = JSON.parse(msg.content);
-            if (contentParsed.content && Array.isArray(contentParsed.content)) {
-              for (const row of contentParsed.content) {
-                if (Array.isArray(row)) {
-                  for (const segment of row) {
-                    if (segment?.tag === 'text' && segment.text) {
-                      msgContent += segment.text;
-                    }
-                  }
-                }
-              }
-            }
-          } else {
-            // For other types, use raw content with type indicator
-            msgContent = `[${msg.message_type}] ${msg.content}`;
-          }
-        } catch {
-          msgContent = msg.content;
-        }
-
-        // Format message with sender and timestamp
-        if (msgContent.trim()) {
-          const header = timeStr ? `[${senderId}] ${timeStr}` : `[${senderId}]`;
-          formattedMessages.push(`${header}\n${msgContent}`);
-        }
-      }
-
-      if (formattedMessages.length === 0) {
-        return undefined;
-      }
-
-      // Join messages with separator
-      return `[用户转发了一段聊天记录]\n\n${formattedMessages.join('\n\n---\n\n')}`;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
    * Extract packed chat history from message content.
    * Issue #846: Support reading packed chat history (forwarded conversation records)
    *
@@ -505,6 +415,74 @@ export class MessageHandler {
       return undefined;
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Parse chat_record message content to extract forwarded conversation.
+   * Issue #1123: Support reading chat_record message type with sender and timestamp
+   *
+   * @param content - JSON string content from chat_record message
+   * @returns Formatted text representation of the conversation, or null if parsing fails
+   */
+  private parseChatRecordContent(content: string): string | null {
+    try {
+      const parsed = JSON.parse(content) as FeishuChatRecordContent;
+
+      if (!parsed.messages || !Array.isArray(parsed.messages)) {
+        logger.debug({ content }, 'chat_record content missing messages array');
+        return null;
+      }
+
+      const formattedMessages: string[] = [];
+
+      for (const msg of parsed.messages) {
+        // Try to extract text from each message
+        let msgText = '';
+        try {
+          const msgContent = JSON.parse(msg.content);
+          if (msg.message_type === 'text') {
+            msgText = msgContent.text?.trim() || '';
+          } else if (msg.message_type === 'post') {
+            // Extract text from post content
+            if (msgContent.content && Array.isArray(msgContent.content)) {
+              for (const row of msgContent.content) {
+                if (Array.isArray(row)) {
+                  for (const segment of row) {
+                    if (segment?.tag === 'text' && segment.text) {
+                      msgText += segment.text;
+                    } else if (segment?.tag === 'at') {
+                      msgText += `@${segment.text || 'user'}`;
+                    }
+                  }
+                }
+              }
+              msgText = msgText.trim();
+            }
+          } else {
+            // For other message types, include type indicator
+            msgText = `[${msg.message_type}] ${msg.content}`;
+          }
+        } catch {
+          // If parsing fails, use raw content
+          msgText = msg.content;
+        }
+
+        if (msgText) {
+          const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || '未知用户';
+          const timestamp = msg.create_time ? new Date(msg.create_time).toLocaleString('zh-CN') : '';
+          formattedMessages.push(`[${senderId}] ${timestamp}\n${msgText}`);
+        }
+      }
+
+      if (formattedMessages.length === 0) {
+        return null;
+      }
+
+      return formattedMessages.join('\n\n---\n\n');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to parse chat_record content');
+      return null;
     }
   }
 
@@ -616,16 +594,17 @@ export class MessageHandler {
       return;
     }
 
-    // Issue #1123: Handle chat_record messages (forwarded conversation records)
+    // Handle chat_record (forwarded conversation) messages
+    // Issue #1123: Support reading chat_record message type
     if (message_type === 'chat_record') {
       logger.info(
-        { chatId: chat_id, messageId: message_id },
+        { chatId: chat_id, messageType: message_type, messageId: message_id },
         'Processing chat_record message'
       );
 
-      const formattedChatRecord = this.parseChatRecordContent(content);
-      if (!formattedChatRecord) {
-        logger.debug({ messageId: message_id }, 'Failed to parse chat_record content');
+      const parsedChatRecord = this.parseChatRecordContent(content);
+      if (!parsedChatRecord) {
+        logger.warn({ messageId: message_id }, 'Failed to parse chat_record content');
         await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
         return;
       }
@@ -635,7 +614,7 @@ export class MessageHandler {
         message_id,
         this.extractOpenId(sender) || 'unknown',
         chat_id,
-        formattedChatRecord,
+        '[转发聊天记录]',
         message_type,
         create_time
       );
@@ -643,15 +622,19 @@ export class MessageHandler {
       // Add typing reaction
       await this.addTypingReaction(message_id);
 
+      // Format as forwarded chat history
+      const formattedContent = `[用户转发了一段聊天记录]\n\n${parsedChatRecord}`;
+
       // Emit as incoming message
       await this.callbacks.emitMessage({
         messageId: message_id,
         chatId: chat_id,
         userId: this.extractOpenId(sender),
-        content: formattedChatRecord,
-        messageType: message_type,
+        content: formattedContent,
+        messageType: 'chat_record',
         timestamp: create_time,
         threadId,
+        metadata: { isForwardedChatRecord: true },
       });
 
       logger.info(
