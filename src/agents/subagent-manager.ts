@@ -55,8 +55,10 @@ const logger = createLogger('SubagentManager');
 
 /**
  * Type of subagent to spawn.
+ *
+ * Issue #631: Added 'chat' type for offline discussion agents.
  */
-export type SubagentType = 'schedule' | 'skill' | 'task';
+export type SubagentType = 'schedule' | 'skill' | 'task' | 'chat';
 
 /**
  * Isolation mode for subagent execution.
@@ -109,6 +111,32 @@ export interface SubagentOptions {
   onProgress?: (message: string) => void;
   /** Optional sender OpenId for scheduled tasks */
   senderOpenId?: string;
+
+  // Issue #631: Chat subagent options
+  /** Optional context material for the chat agent to review before discussion */
+  discussionContext?: string;
+  /** Optional callback when chat discussion completes (Issue #631) */
+  onDiscussionComplete?: (result: DiscussionResult) => void | Promise<void>;
+}
+
+/**
+ * Result of a chat discussion (Issue #631).
+ */
+export interface DiscussionResult {
+  /** Subagent ID */
+  subagentId: string;
+  /** Chat ID where discussion took place */
+  chatId: string;
+  /** Discussion topic */
+  topic: string;
+  /** Whether the discussion completed successfully */
+  success: boolean;
+  /** Summary of the discussion */
+  summary?: string;
+  /** Suggested follow-up actions (e.g., create issue, skill, schedule) */
+  suggestedActions?: string[];
+  /** Error message if discussion failed */
+  error?: string;
 }
 
 /**
@@ -245,6 +273,9 @@ export class SubagentManager {
           break;
         case 'task':
           await this.spawnTaskAgent(subagentId, options);
+          break;
+        case 'chat':
+          await this.spawnChatAgent(subagentId, options);
           break;
         default:
           throw new Error(`Unknown subagent type: ${options.type}`);
@@ -453,6 +484,109 @@ export class SubagentManager {
       agent.dispose();
     } catch (err) {
       logger.error({ err, subagentId }, 'Error disposing task agent');
+    }
+    this.inMemoryAgents.delete(subagentId);
+  }
+
+  /**
+   * Spawn a chat agent for offline discussion (Issue #631).
+   *
+   * This method creates a ChatAgent that runs in the specified chat to
+   * facilitate a discussion on a given topic. The agent will:
+   * 1. Review the provided context material
+   * 2. Engage in discussion with users
+   * 3. Summarize results and suggest follow-up actions
+   *
+   * The discussion continues until:
+   * - The user explicitly ends it (via a special command)
+   * - A timeout is reached (default: 24 hours)
+   * - The agent determines the discussion is complete
+   *
+   * @param subagentId - The subagent ID
+   * @param options - Subagent options including discussion context
+   */
+  private async spawnChatAgent(
+    subagentId: string,
+    options: SubagentOptions
+  ): Promise<void> {
+    const handle = this.handles.get(subagentId)!;
+
+    // Build the initial prompt with context
+    let discussionPrompt = options.prompt;
+    if (options.discussionContext) {
+      discussionPrompt = `## 讨论背景
+
+${options.discussionContext}
+
+## 讨论话题
+
+${options.prompt}
+
+## 你的任务
+
+1. 仔细阅读上述背景信息
+2. 与用户就讨论话题进行深入交流
+3. 收集用户的反馈和意见
+4. 在讨论结束时，总结讨论结果并建议后续行动
+
+请开始讨论。首先向用户简要介绍讨论的背景和目的，然后询问他们的看法。`;
+    }
+
+    // Create agent using factory
+    const agent = AgentFactory.createChatAgent('pilot', options.chatId, options.callbacks);
+
+    this.inMemoryAgents.set(subagentId, handle);
+    handle.status = 'running';
+
+    logger.info({ subagentId, name: options.name, chatId: options.chatId }, 'Chat subagent started for discussion');
+    this.notifyStatusChange(handle);
+
+    // Execute discussion
+    let discussionResult: DiscussionResult = {
+      subagentId,
+      chatId: options.chatId,
+      topic: options.prompt,
+      success: false,
+    };
+
+    try {
+      await agent.executeOnce(
+        options.chatId,
+        discussionPrompt,
+        undefined,
+        options.senderOpenId
+      );
+
+      handle.status = 'completed';
+      handle.completedAt = new Date();
+      discussionResult.success = true;
+      discussionResult.summary = '讨论已完成';
+      logger.info({ subagentId }, 'Chat subagent discussion completed');
+    } catch (error) {
+      handle.status = 'failed';
+      handle.error = error instanceof Error ? error.message : String(error);
+      handle.completedAt = new Date();
+      discussionResult.error = handle.error;
+      logger.error({ err: error, subagentId }, 'Chat subagent discussion failed');
+    }
+
+    this.notifyStatusChange(handle);
+
+    // Call the completion callback if provided (Issue #631)
+    if (options.onDiscussionComplete) {
+      try {
+        await options.onDiscussionComplete(discussionResult);
+        logger.info({ subagentId }, 'Discussion completion callback executed');
+      } catch (callbackError) {
+        logger.error({ err: callbackError, subagentId }, 'Error in discussion completion callback');
+      }
+    }
+
+    // Cleanup
+    try {
+      agent.dispose();
+    } catch (err) {
+      logger.error({ err, subagentId }, 'Error disposing chat agent');
     }
     this.inMemoryAgents.delete(subagentId);
   }

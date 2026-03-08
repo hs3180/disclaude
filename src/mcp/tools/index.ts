@@ -65,3 +65,13 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Discussion Tool (Issue #631: Offline discussion)
+export {
+  start_discussion,
+  discussionToolDefinition,
+} from './discussion.js';
+export type {
+  StartDiscussionOptions,
+  StartDiscussionResult,
+} from './discussion.js';
