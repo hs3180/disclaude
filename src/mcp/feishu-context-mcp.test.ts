@@ -98,8 +98,13 @@ describe('MCP Tools', () => {
   describe('Tool Definitions', () => {
     it('should have send_message tool definition', () => {
       expect(feishuContextTools.send_message).toBeDefined();
-      expect(feishuContextTools.send_message.description).toContain('Send a simple message to a chat');
-      expect(feishuContextTools.send_message.handler).toBe(send_message);
+      // Issue #1155: Updated description for consolidated tools
+      expect(feishuContextTools.send_message.description).toContain('Send a message to a chat');
+      expect(feishuContextTools.send_message.description).toContain('Text');
+      expect(feishuContextTools.send_message.description).toContain('Card');
+      expect(feishuContextTools.send_message.description).toContain('Interactive');
+      expect(feishuContextTools.send_message.description).toContain('actionPrompts');
+      expect(feishuContextTools.send_message.handler).toBeDefined();
     });
 
     it('should have send_file tool definition', () => {

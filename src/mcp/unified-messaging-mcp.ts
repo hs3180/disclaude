@@ -164,49 +164,75 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
  *
  * These tools provide a channel-agnostic interface for message sending,
  * automatically routing to the appropriate channel based on chatId.
+ *
+ * Issue #1155: Consolidated from 9 tools to 4 tools to reduce token overhead.
  */
 export const unifiedMessagingToolDefinitions: InlineToolDefinition[] = [
   {
     name: 'send_message',
-    description: `Send a message to a chat via Feishu.
+    description: `Send a message to a chat. Supports text, card, and interactive modes.
 
-**Requirements:**
-- Feishu credentials must be configured (FEISHU_APP_ID and FEISHU_APP_SECRET)
-- If credentials are not configured, an error will be returned
+## Modes
+1. **Text**: Simple text message
+2. **Card**: Display-only card (no interactions)
+3. **Interactive**: Card with buttons/actions (requires actionPrompts)
 
-**Format Options:**
-- "text": Plain text message
-- "card": Interactive card (Feishu only)
+## Examples
 
-**Thread Support:**
-When parentMessageId is provided, the message is sent as a reply to that message.
+### Text Message
+\`\`\`json
+{"content": "Hello", "format": "text", "chatId": "oc_xxx"}
+\`\`\`
 
-**Card Format:**
-A valid card must include:
-- config: Object with optional "wide_screen_mode"
-- header: Object with "title" and "template" color
-- elements: Array of element objects
-
-**Example Card:**
+### Interactive Card
 \`\`\`json
 {
-  "config": {"wide_screen_mode": true},
-  "header": {"title": {"tag": "plain_text", "content": "Title"}, "template": "blue"},
-  "elements": [
-    {"tag": "markdown", "content": "**Bold** text"},
-    {"tag": "hr"},
-    {"tag": "div", "text": {"tag": "plain_text", "content": "Content"}}
-  ]
+  "content": {"config": {}, "header": {"title": {"content": "Confirm?"}}, "elements": [
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "OK"}, "value": "ok"},
+      {"tag": "button", "text": {"content": "Cancel"}, "value": "cancel"}
+    ]}
+  ]},
+  "format": "card",
+  "chatId": "oc_xxx",
+  "actionPrompts": {
+    "ok": "[用户] 点击了确认",
+    "cancel": "[用户] 点击了取消"
+  }
 }
-\`\`\``,
+\`\`\`
+
+## Parameters
+- **content**: Text string or card object
+- **format**: "text" or "card"
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+- **actionPrompts**: Optional, enables interactive mode
+
+**Reference:** https://open.feishu.cn/document/common-capabilities/message-card`,
     parameters: z.object({
-      content: z.union([z.string(), z.object({}).passthrough()]).describe('The content to send. String for text, object for cards.'),
-      format: z.enum(['text', 'card']).describe('Format: "text" for plain text, "card" for interactive cards (Feishu only).'),
-      chatId: z.string().describe('Chat ID (determines channel routing)'),
+      content: z.union([z.string(), z.object({}).passthrough()]).describe('Content to send. String for text, object for cards.'),
+      format: z.enum(['text', 'card']).describe('Format: "text" or "card"'),
+      chatId: z.string().describe('Chat ID'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread replies'),
+      actionPrompts: z.record(z.string(), z.string()).optional().describe('Optional action prompts for interactive cards'),
     }),
-    handler: async ({ content, format, chatId, parentMessageId }) => {
+    handler: async ({ content, format, chatId, parentMessageId, actionPrompts }) => {
       try {
+        // If actionPrompts provided with card, use interactive message
+        if (actionPrompts && Object.keys(actionPrompts).length > 0 && format === 'card') {
+          // Import send_interactive_message dynamically to avoid circular deps
+          const { send_interactive_message } = await import('./feishu-context-mcp.js');
+          const cardContent = content as Record<string, unknown>;
+          const result = await send_interactive_message({
+            card: cardContent,
+            actionPrompts,
+            chatId,
+            parentMessageId
+          });
+          return toolSuccess(result.success ? `${result.message}` : `⚠️ ${result.message}`);
+        }
+        // Otherwise use regular send_message
         const result = await send_message({ content, format, chatId, parentMessageId });
         if (result.success) {
           return toolSuccess(`${result.message} (via ${result.channel})`);
