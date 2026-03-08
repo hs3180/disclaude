@@ -75,14 +75,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build project
-        run: npm run build
+      - name: Cache packages build
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/.tsbuildinfo
+          key: packages-${{ runner.os }}-${{ hashFiles('packages/*/src/**/*', 'packages/*/tsconfig.json') }}
+          restore-keys: |
+            packages-${{ runner.os }}-
+
+      - name: Build packages
+        run: npm run build:packages
+
+      - name: Build main project
+        run: npx tsup
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: |
+            dist/
+            packages/*/dist/
           retention-days: 7
 
   # =============================================================================
