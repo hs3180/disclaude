@@ -652,6 +652,10 @@ export class MessageHandler {
         messageType: message_type,
         timestamp: create_time,
         threadId,
+        metadata: {
+          isChatRecord: true,
+          messageCount: (formattedChatRecord.match(/---/g) || []).length + 1,
+        },
       });
 
       logger.info(
