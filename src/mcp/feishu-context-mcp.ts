@@ -10,12 +10,7 @@ import {
   send_message,
   send_file,
   send_interactive_message,
-  ask_user,
   setMessageSentCallback,
-  generate_summary,
-  generate_qa_pairs,
-  generate_flashcards,
-  generate_quiz,
   create_study_guide,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
@@ -259,7 +254,9 @@ Generates: summary, Q&A pairs, flashcards, and quiz questions.
           return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
         }
         let output = 'Study Guide created!\n';
-        if (result.outputPath) output += `Saved: ${result.outputPath}\n\n`;
+        if (result.outputPath) {
+          output += `Saved: ${result.outputPath}\n\n`;
+        }
         output += result.studyGuide;
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
