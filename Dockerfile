@@ -1,40 +1,28 @@
 # =============================================================================
-# Disclaude Dockerfile
+# Disclaude Dockerfile - Primary Node
 # =============================================================================
-# Multi-stage build for production-ready Disclaude Feishu bot image.
+# Multi-stage build for production-ready Disclaude Primary Node image.
 #
 # The container connects to Chrome on the host via CDP (Chrome DevTools Protocol).
 # Start Chrome CDP on host first: ./scripts/start-playwright-cdp.sh
 #
 # Build:
-#   docker build -t disclaude:latest .
+#   docker build -t disclaude:primary .
 #
-# Run Modes:
-#   This image supports two deployment modes:
+# Run:
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:primary
 #
-#   1. Primary Node (default) - Handles Feishu WebSocket + Agent execution
-#      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
-#
-#   2. Worker Node - Handles Pilot/Agent task execution only
-#      docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
-#        -e COMM_URL=ws://primary:3001 \
-#        disclaude:latest pm2-runtime start ecosystem.worker.config.json
-#
-# For production deployment with both nodes, use docker-compose.yml.
+# For production deployment with worker node, use docker-compose.yml.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Stage 1: Dependencies
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS deps
+FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Install build dependencies for native modules
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -47,15 +35,11 @@ RUN npm config set registry https://registry.npmmirror.com && \
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -73,49 +57,43 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 3: Production Image
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/node:18-bookworm-slim AS production
+FROM node:20-alpine AS production
 WORKDIR /app
 
-# Install runtime dependencies and Playwright library dependencies
-# Note: Browser binaries are NOT installed here - container uses CDP to connect
-# to Chrome running on the host machine
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Procps for health check (pgrep)
-    procps \
-    # Curl for downloading GitHub CLI
+# Install runtime dependencies
+# - bash: required by some npm packages
+# - curl: for health checks and downloads
+# - procps: for process management (pgrep)
+# - chromium dependencies: for Playwright MCP integration
+RUN apk add --no-cache \
+    bash \
     curl \
-    # CA certificates for HTTPS connections
-    ca-certificates \
-    # Playwright library dependencies (for @playwright/mcp package)
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
+    procps \
+    nss \
+    nspr \
+    atk \
+    at-spi2-core \
+    cups-libs \
+    libdrm \
+    dbus-libs \
+    libxkbcommon \
+    libxcomposite \
+    libxdamage \
+    libxfixes \
+    libxrandr \
+    mesa-gl \
+    alsa-lib
 
 # Install GitHub CLI (gh)
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache github-cli
 
 # Install PM2 globally for process management and logging
 RUN npm config set registry https://registry.npmmirror.com && \
     npm install -g pm2@latest
 
 # Create non-root user for running the application
-RUN groupadd -g 1001 disclaude && \
-    useradd -r -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -c "Disclaude user" disclaude
+RUN addgroup -g 1001 -S disclaude && \
+    adduser -S -D -H -u 1001 -h /app -s /sbin/nologin -G disclaude -g disclaude disclaude
 
 # Create directories for runtime with proper permissions
 # Also create .claude.json with empty JSON object to avoid SDK config parse errors
@@ -149,23 +127,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 USER disclaude
 
 # Default command: run Primary Node with PM2
-#
-# This image supports two modes:
-#   - primary: Primary Node (Feishu WebSocket + Agent handler) - DEFAULT
-#   - worker: Worker Node (Agent handler only, connects to Primary)
-#
-# Usage examples:
-#
-#   # Run with default primary mode (recommended for most users)
-#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:latest
-#
-#   # Run worker mode (for distributed deployment)
-#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml \
-#     -e COMM_URL=ws://primary:3001 \
-#     disclaude:latest pm2-runtime start ecosystem.worker.config.json
-#
-# For full two-node deployment, use docker-compose.yml which configures both modes.
-#
 # Logs will be available at:
 #   - /app/logs/disclaude-combined.log (pino application logs)
 #   - ~/.pm2/logs/ (PM2 stdout/stderr logs)
