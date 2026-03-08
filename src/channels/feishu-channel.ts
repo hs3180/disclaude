@@ -25,7 +25,11 @@ import {
   type MessageCallbacks,
 } from './feishu/index.js';
 // Issue #992: Import IPC server for cross-process interactive contexts
+// Issue #1116: Also import FeishuApiHandlers type
 import { startIpcServer, stopIpcServer } from '../mcp/tools/interactive-message.js';
+import type { FeishuApiHandlers } from '../ipc/unix-socket-server.js';
+// Issue #1032: Use LarkClientService for IPC handlers
+import { getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 import type {
   FeishuEventData,
   FeishuCardActionEventData,
@@ -205,8 +209,30 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #992: Start IPC server for cross-process interactive contexts
     // This must be called during channel startup, not at module load time,
     // to avoid test timeouts (see PR #982)
+    // Issue #1116: Pass feishuHandlers to enable IPC-based Feishu API calls
     try {
-      await startIpcServer();
+      let feishuHandlers: FeishuApiHandlers | undefined;
+      if (isLarkClientServiceInitialized()) {
+        const service = getLarkClientService();
+        feishuHandlers = {
+          sendMessage: async (chatId, text, threadId) => {
+            await service.sendMessage(chatId, text, threadId ? { threadId } : undefined);
+          },
+          sendCard: async (chatId, card, threadId, description) => {
+            await service.sendCard(chatId, card, description ? { description, threadId } : { threadId });
+          },
+          uploadFile: async (chatId, filePath, threadId) => {
+            return await service.uploadFile(chatId, filePath, threadId ? { threadId } : undefined);
+          },
+          getBotInfo: async () => {
+            return await service.getBotInfo();
+          },
+        };
+        logger.debug('Feishu API handlers registered for IPC server');
+      } else {
+        logger.warn('LarkClientService not initialized, IPC Feishu API handlers not available');
+      }
+      await startIpcServer(feishuHandlers);
       logger.info('IPC server started for cross-process interactive contexts');
     } catch (error) {
       logger.error({ err: error }, 'Failed to start IPC server, interactive cards may not work across processes');

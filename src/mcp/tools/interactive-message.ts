@@ -18,6 +18,7 @@ import { getMessageSentCallback } from './send-message.js';
 import {
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
+  type FeishuApiHandlers,
 } from '../../ipc/unix-socket-server.js';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
@@ -335,8 +336,15 @@ let ipcServer: UnixSocketIpcServer | null = null;
  * Start the IPC server for cross-process communication.
  * This allows other processes (e.g., the main bot process) to query
  * the interactive contexts stored in this process.
+ *
+ * Issue #1116: Accept feishuHandlers to enable IPC-based Feishu API calls
+ * in Primary Node standalone mode.
+ *
+ * @param feishuHandlers - Optional handlers for Feishu API operations.
+ *                         When provided, IPC clients can send messages/cards
+ *                         through the Primary Node's LarkClientService.
  */
-export async function startIpcServer(): Promise<void> {
+export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promise<void> {
   if (ipcServer) {
     logger.debug('IPC server already running');
     return;
@@ -348,7 +356,7 @@ export async function startIpcServer(): Promise<void> {
     unregisterActionPrompts,
     generateInteractionPrompt,
     cleanupExpiredContexts,
-  });
+  }, feishuHandlers);
 
   ipcServer = new UnixSocketIpcServer(handler);
 
