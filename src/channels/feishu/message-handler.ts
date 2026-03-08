@@ -469,7 +469,7 @@ export class MessageHandler {
         }
 
         if (msgText) {
-          const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || '未知用户';
+          const senderId = msg.sender?.sender_id?.open_id || msg.sender?.sender_id?.user_id || 'unknown';
           const timestamp = msg.create_time ? new Date(msg.create_time).toLocaleString('zh-CN') : '';
           formattedMessages.push(`[${senderId}] ${timestamp}\n${msgText}`);
         }
