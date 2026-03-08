@@ -39,3 +39,13 @@ export type {
   CardActionMessage,
   CardContextMessage,
 } from './websocket-messages.js';
+
+// Worker Node types (Issue #1041)
+export type {
+  NodeType,
+  BaseNodeConfig,
+  WorkerNodeConfig,
+  NodeCapabilities,
+} from './worker-node.js';
+
+export { getNodeCapabilities } from './worker-node.js';
