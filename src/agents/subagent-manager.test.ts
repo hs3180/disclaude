@@ -300,7 +300,7 @@ describe('SubagentManager', () => {
 
       await manager.dispose();
 
-      const list = manager.list();
+      const _list = manager.list();
       // dispose calls terminateAll which terminates running agents
       // completed agents are still in the list
     });

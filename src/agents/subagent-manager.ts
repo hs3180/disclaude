@@ -45,7 +45,7 @@ import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { findSkill } from '../skills/index.js';
 import { AgentFactory } from './factory.js';
-import type { ChatAgent, BaseAgentConfig, AgentProvider } from './types.js';
+import type { ChatAgent, AgentProvider } from './types.js';
 import type { PilotCallbacks } from './pilot/index.js';
 
 const logger = createLogger('SubagentManager');
@@ -577,9 +577,7 @@ export class SubagentManager {
   async terminateAll(): Promise<void> {
     const runningHandles = this.listRunning();
 
-    for (const handle of runningHandles) {
-      this.terminate(handle.id);
-    }
+    await Promise.all(runningHandles.map(handle => this.terminate(handle.id)));
 
     logger.info({ count: runningHandles.length }, 'All subagents terminated');
   }
