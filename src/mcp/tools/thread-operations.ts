@@ -125,7 +125,7 @@ export async function reply_in_thread(params: {
           success: true,
           messageId: result.messageId,
           threadId: result.threadId,
-          message: `✅ Reply sent in thread`,
+          message: '✅ Reply sent in thread',
         };
       }
       return {
@@ -159,7 +159,7 @@ export async function reply_in_thread(params: {
       success: true,
       messageId: newMessageId,
       threadId,
-      message: `✅ Reply sent in thread`,
+      message: '✅ Reply sent in thread',
     };
 
   } catch (error) {
@@ -434,7 +434,7 @@ export async function get_thread_messages(params: {
  * Helper function for API responses.
  */
 function extractMessageContent(body: unknown): string {
-  if (!body) return '';
+  if (!body) {return '';}
 
   try {
     const bodyObj = body as Record<string, unknown>;
@@ -442,7 +442,7 @@ function extractMessageContent(body: unknown): string {
       // Try to parse JSON content
       try {
         const parsed = JSON.parse(bodyObj.content as string);
-        if (parsed.text) return parsed.text;
+        if (parsed.text) {return parsed.text;}
         return bodyObj.content as string;
       } catch {
         return bodyObj.content as string;
