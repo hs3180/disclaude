@@ -48,7 +48,7 @@ function formatThreadMessage(msg: ThreadMessage): string {
   }
   // Truncate content for display
   const contentPreview = msg.content.length > 100
-    ? msg.content.substring(0, 100) + '...'
+    ? `${msg.content.substring(0, 100)}...`
     : msg.content;
   lines.push(`  **Content**: ${contentPreview}`);
   return lines.join('\n');
