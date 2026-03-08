@@ -67,11 +67,20 @@ export interface FeishuApiHandlers {
 }
 
 /**
+ * Mutable container for Feishu API handlers.
+ * Issue #1120: Allows dynamic registration of handlers after IPC server starts.
+ */
+export interface FeishuHandlersContainer {
+  handlers: FeishuApiHandlers | undefined;
+}
+
+/**
  * Create an IPC request handler from interactive message handlers.
+ * Issue #1120: Uses FeishuHandlersContainer for dynamic handler registration.
  */
 export function createInteractiveMessageHandler(
   handlers: InteractiveMessageHandlers,
-  feishuHandlers?: FeishuApiHandlers
+  feishuHandlersContainer?: FeishuHandlersContainer
 ): IpcRequestHandler {
   // eslint-disable-next-line require-await
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -126,7 +135,9 @@ export function createInteractiveMessageHandler(
         }
 
         // Feishu API operations (Issue #1035)
+        // Issue #1120: Use container for dynamic handler registration
         case 'feishuSendMessage': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
@@ -146,6 +157,7 @@ export function createInteractiveMessageHandler(
         }
 
         case 'feishuSendCard': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
@@ -165,6 +177,7 @@ export function createInteractiveMessageHandler(
         }
 
         case 'feishuUploadFile': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
@@ -184,6 +197,7 @@ export function createInteractiveMessageHandler(
         }
 
         case 'feishuGetBotInfo': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
