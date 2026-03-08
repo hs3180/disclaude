@@ -1139,7 +1139,7 @@ mindmap
         if (!result.success) {
           return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
         }
-        let output = `Mind Map generated successfully!\n\n`;
+        let output = 'Mind Map generated successfully!\n\n';
         if (result.mermaid) {
           output += `### Mermaid Format\n\`\`\`mermaid\n${result.mermaid}\`\`\`\n\n`;
         }
