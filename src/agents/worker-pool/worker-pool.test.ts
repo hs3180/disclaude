@@ -15,6 +15,8 @@ import type {
   SubTaskResult,
   WorkerStatus,
 } from './types.js';
+import type { SkillAgent } from '../types.js';
+import type { AgentMessage } from '../../types/agent.js';
 
 // ============================================================================
 // Mock Worker Agent
@@ -335,15 +337,16 @@ describe('TaskDispatcher', () => {
 
 describe('SkillWorkerAgent', () => {
   it('should create worker with config', () => {
-    const mockSkillAgentFactory = () =>
-      ({
-        type: 'skill' as const,
-        name: 'mock-skill',
-        async *execute() {
-          yield { content: 'test', role: 'assistant' as const };
-        },
-        dispose: vi.fn(),
-      })();
+    const mockSkillAgent: SkillAgent = {
+      type: 'skill' as const,
+      name: 'mock-skill',
+      async *execute(): AsyncGenerator<AgentMessage> {
+        yield { content: 'test', role: 'assistant' as const };
+      },
+      dispose: vi.fn(),
+    };
+
+    const mockSkillAgentFactory = () => mockSkillAgent;
 
     const worker = new SkillWorkerAgent(
       { id: 'test-worker' },

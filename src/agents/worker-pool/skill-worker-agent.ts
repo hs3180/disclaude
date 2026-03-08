@@ -132,7 +132,20 @@ export class SkillWorkerAgent implements WorkerAgent {
         }
         // Get the final content from the last message
         const lastMessage = messages[messages.length - 1];
-        return lastMessage?.content ?? '';
+        const rawContent = lastMessage?.content;
+
+        // Convert ContentBlock[] to string if needed
+        if (typeof rawContent === 'string') {
+          return rawContent;
+        }
+        if (Array.isArray(rawContent)) {
+          // Extract text from ContentBlock[], join multiple text blocks
+          return rawContent
+            .filter((block): block is { type: 'text'; text: string } => block.type === 'text' && typeof block.text === 'string')
+            .map((block) => block.text)
+            .join('\n');
+        }
+        return '';
       };
 
       const content = await this.withTimeout(executePromise(), timeout);
