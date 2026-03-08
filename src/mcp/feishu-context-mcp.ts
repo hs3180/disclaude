@@ -18,6 +18,7 @@ import {
   generate_quiz,
   create_study_guide,
 } from './tools/index.js';
+import { find_experts, list_experts } from './tools/expert-tools.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
 // Re-export
@@ -1069,6 +1070,131 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Expert Search Tools (Issue #536)
+  {
+    name: 'find_experts',
+    description: `Find human experts by skill for consultation.
+
+Use this tool when you need to find a human expert with specific skills to help with a task.
+
+## Parameters
+- **skill**: The skill name or tag to search for (e.g., "React", "Python", "frontend")
+- **minLevel**: Minimum skill level filter (1-5, optional)
+- **availableOnly**: Only return currently available experts (default: false)
+- **limit**: Maximum number of results to return (optional)
+
+## Skill Levels
+| Level | Description |
+|-------|-------------|
+| 1 | Beginner - Basic knowledge |
+| 2 | Elementary - Can work with guidance |
+| 3 | Intermediate - Independent work |
+| 4 | Advanced - Can mentor others |
+| 5 | Expert - Industry leader |
+
+## Example
+\`\`\`json
+{
+  "skill": "TypeScript",
+  "minLevel": 3,
+  "availableOnly": true,
+  "limit": 5
+}
+\`\`\`
+
+## Response
+Returns a list of matching experts with:
+- Expert name and ID
+- Matching skills with levels
+- Availability status
+
+## Use Cases
+- "I need a React expert to review this code"
+- "Find me someone who knows Python for data analysis"
+- "Who is available now that knows Docker?"`,
+    parameters: z.object({
+      skill: z.string(),
+      minLevel: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+      availableOnly: z.boolean().optional(),
+      limit: z.number().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = find_experts(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        if (result.count === 0) {
+          return Promise.resolve(toolSuccess(`🔍 未找到匹配 "${options.skill}" 的专家`));
+        }
+        let output = `🔍 **找到 ${result.count} 位专家**\n\n`;
+        for (const expert of result.experts) {
+          const statusIcon = expert.isAvailable ? '🟢' : '🔴';
+          output += `${statusIcon} **${expert.name}** (\`${expert.userId}\`)\n`;
+          for (const skill of expert.matchingSkills) {
+            const stars = '⭐'.repeat(skill.level);
+            output += `   ${skill.name} ${stars}\n`;
+          }
+          if (expert.availability) {
+            output += `   ⏰ ${expert.availability}\n`;
+          }
+          output += '\n';
+        }
+        return Promise.resolve(toolSuccess(output.trim()));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Expert search failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  {
+    name: 'list_experts',
+    description: `List all registered human experts.
+
+Use this tool to see all available human experts and their skills.
+
+## Parameters
+- **availableOnly**: Only return currently available experts (default: false)
+- **limit**: Maximum number of results to return (optional)
+
+## Example
+\`\`\`json
+{
+  "availableOnly": true,
+  "limit": 10
+}
+\`\`\`
+
+## Response
+Returns a list of all experts with their skills and availability status.`,
+    parameters: z.object({
+      availableOnly: z.boolean().optional(),
+      limit: z.number().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = list_experts(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        if (result.count === 0) {
+          return Promise.resolve(toolSuccess('📋 暂无注册专家'));
+        }
+        let output = `📋 **注册专家列表** (${result.count} 位)\n\n`;
+        for (const expert of result.experts) {
+          const statusIcon = expert.isAvailable ? '🟢' : '🔴';
+          const skillCount = expert.matchingSkills.length;
+          output += `${statusIcon} **${expert.name}** (${skillCount} 项技能)`;
+          if (expert.availability) {
+            output += ` ⏰ ${expert.availability}`;
+          }
+          output += '\n';
+        }
+        return Promise.resolve(toolSuccess(output.trim()));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Expert list failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
