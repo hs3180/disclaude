@@ -195,13 +195,15 @@ describe('CreditsService', () => {
       account.spentToday = 50;
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      account.lastResetDate = yesterday.toISOString().split('T')[0];
+      const [yesterdayDate] = yesterday.toISOString().split('T');
+      account.lastResetDate = yesterdayDate;
 
       // Trigger reset by getting account again
       const resetAccount = service.getAccount('agent-1');
 
+      const [todayDate] = new Date().toISOString().split('T');
       expect(resetAccount?.spentToday).toBe(0);
-      expect(resetAccount?.lastResetDate).toBe(new Date().toISOString().split('T')[0]);
+      expect(resetAccount?.lastResetDate).toBe(todayDate);
     });
   });
 

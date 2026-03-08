@@ -31,7 +31,7 @@ function formatAccount(account: AgentAccount | undefined): string {
     const remaining = account.dailyLimit - account.spentToday;
     lines.push(`   📊 每日上限: ${account.dailyLimit} (已用: ${account.spentToday}, 剩余: ${remaining})`);
   } else {
-    lines.push(`   📊 每日上限: 无限制`);
+    lines.push('   📊 每日上限: 无限制');
   }
 
   lines.push(`   📅 创建时间: ${new Date(account.createdAt).toLocaleDateString('zh-CN')}`);
@@ -58,7 +58,8 @@ export class BudgetCommand implements Command {
     const { args } = context;
     const creditsService = getCreditsService();
 
-    const subCommand = args[0]?.toLowerCase();
+    const [firstArg] = args;
+    const subCommand = firstArg?.toLowerCase();
 
     switch (subCommand) {
       case 'balance':
@@ -79,7 +80,7 @@ export class BudgetCommand implements Command {
 
   private handleBalance(context: CommandContext, creditsService: ReturnType<typeof getCreditsService>): CommandResult {
     const { args } = context;
-    const agentId = args[1];
+    const [, agentId] = args;
 
     if (!agentId) {
       return { success: false, error: '❌ 请指定 Agent ID\n\n用法: /budget balance <agent>' };
@@ -102,8 +103,7 @@ export class BudgetCommand implements Command {
 
   private handleRecharge(context: CommandContext, creditsService: ReturnType<typeof getCreditsService>): CommandResult {
     const { args } = context;
-    const agentId = args[1];
-    const creditsStr = args[2];
+    const [, agentId, creditsStr] = args;
 
     if (!agentId) {
       return { success: false, error: '❌ 请指定 Agent ID\n\n用法: /budget recharge <agent> <积分>' };
@@ -134,8 +134,7 @@ export class BudgetCommand implements Command {
 
   private handleLimit(context: CommandContext, creditsService: ReturnType<typeof getCreditsService>): CommandResult {
     const { args } = context;
-    const agentId = args[1];
-    const limitStr = args[2];
+    const [, agentId, limitStr] = args;
 
     if (!agentId) {
       return { success: false, error: '❌ 请指定 Agent ID\n\n用法: /budget limit <agent> <每日上限>' };
