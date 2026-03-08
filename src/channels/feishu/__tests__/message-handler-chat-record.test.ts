@@ -145,7 +145,7 @@ describe('MessageHandler - chat_record parsing', () => {
       await handler.handleMessageReceive(eventData);
 
       expect(emitMessageMock).toHaveBeenCalledTimes(1);
-      const callArgs = emitMessageMock.mock.calls[0][0];
+      const [[callArgs]] = emitMessageMock.mock.calls;
 
       expect(callArgs.messageType).toBe('chat_record');
       expect(callArgs.content).toContain('[用户转发了一段聊天记录]');
@@ -191,7 +191,7 @@ describe('MessageHandler - chat_record parsing', () => {
       await handler.handleMessageReceive(eventData);
 
       expect(emitMessageMock).toHaveBeenCalledTimes(1);
-      const callArgs = emitMessageMock.mock.calls[0][0];
+      const [[callArgs]] = emitMessageMock.mock.calls;
 
       expect(callArgs.content).toContain('Rich text message');
     });
@@ -309,7 +309,7 @@ describe('MessageHandler - chat_record parsing', () => {
       await handler.handleMessageReceive(eventData);
 
       expect(emitMessageMock).toHaveBeenCalledTimes(1);
-      const callArgs = emitMessageMock.mock.calls[0][0];
+      const [[callArgs]] = emitMessageMock.mock.calls;
 
       expect(callArgs.content).toContain('fallback_user');
     });
@@ -346,7 +346,7 @@ describe('MessageHandler - chat_record parsing', () => {
       await handler.handleMessageReceive(eventData);
 
       expect(emitMessageMock).toHaveBeenCalledTimes(1);
-      const callArgs = emitMessageMock.mock.calls[0][0];
+      const [[callArgs]] = emitMessageMock.mock.calls;
 
       expect(callArgs.content).toContain('未知用户');
     });
@@ -384,7 +384,7 @@ describe('MessageHandler - chat_record parsing', () => {
       await handler.handleMessageReceive(eventData);
 
       expect(emitMessageMock).toHaveBeenCalledTimes(1);
-      const callArgs = emitMessageMock.mock.calls[0][0];
+      const [[callArgs]] = emitMessageMock.mock.calls;
 
       // Should contain formatted date (format may vary by locale)
       expect(callArgs.content).toMatch(/\d{4}/); // Year
