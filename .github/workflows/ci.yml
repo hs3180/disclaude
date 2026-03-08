@@ -75,14 +75,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build project
-        run: npm run build
+      - name: Build all packages and CLI
+        run: npm run build:all
 
-      - name: Upload build artifacts
+      - name: Upload CLI artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          retention-days: 7
+
+      - name: Upload packages artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-dist
+          path: packages/*/dist/
           retention-days: 7
 
   # =============================================================================

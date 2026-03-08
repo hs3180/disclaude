@@ -12,13 +12,15 @@
     }
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@disclaude/core": "*"
   },
   "devDependencies": {
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }
 }
