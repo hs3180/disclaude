@@ -11,6 +11,8 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  AskUserOptions,
+  AskUserResult,
 } from './types.js';
 
 export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -23,6 +25,9 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+
+// Ask User tool (Human-in-the-Loop)
+export { ask_user } from './ask-user.js';
 
 // Study Guide Generator (NotebookLM M4)
 export {
