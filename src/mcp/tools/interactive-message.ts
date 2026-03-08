@@ -36,15 +36,33 @@ function isIpcAvailable(): boolean {
 /**
  * Send card message via IPC to PrimaryNode's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
+ * Issue #1088: Improved error handling with detailed error information.
  */
 async function sendCardViaIpc(
   chatId: string,
   card: Record<string, unknown>,
   threadId?: string,
   description?: string
-): Promise<{ success: boolean; messageId?: string }> {
+): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
   return await ipcClient.feishuSendCard(chatId, card, threadId, description);
+}
+
+/**
+ * Generate user-friendly error message based on IPC error type.
+ * Issue #1088: Provide actionable error messages.
+ */
+function getIpcErrorMessage(errorType?: string, originalError?: string): string {
+  switch (errorType) {
+    case 'ipc_unavailable':
+      return '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。';
+    case 'ipc_timeout':
+      return '❌ IPC 请求超时。服务可能过载，请稍后重试。';
+    case 'ipc_request_failed':
+      return `❌ IPC 请求失败: ${originalError ?? '未知错误'}`;
+    default:
+      return `❌ 交互消息发送失败: ${originalError ?? '未知错误'}`;
+  }
 }
 
 /**
@@ -259,10 +277,12 @@ export async function send_interactive_message(params: {
       logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
       const result = await sendCardViaIpc(chatId, card, parentMessageId);
       if (!result.success) {
+        const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+        logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
         return {
           success: false,
-          error: 'Failed to send interactive message via IPC',
-          message: '❌ Failed to send interactive message via IPC.',
+          error: result.error ?? 'Failed to send interactive message via IPC',
+          message: errorMsg,
         };
       }
       ({ messageId } = result);
