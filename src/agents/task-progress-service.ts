@@ -242,7 +242,9 @@ export class TaskProgressService {
    */
   getActiveTask(chatId: string): { taskId: string; percent: number } | undefined {
     const progress = this.activeProgress.get(chatId);
-    if (!progress) return undefined;
+    if (!progress) {
+      return undefined;
+    }
     return {
       taskId: progress.taskId,
       percent: progress.currentPercent,
