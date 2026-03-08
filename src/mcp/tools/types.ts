@@ -30,33 +30,10 @@ export interface SendFileResult {
 }
 
 /**
- * Result type for wait_for_interaction tool.
- */
-export interface WaitForInteractionResult {
-  success: boolean;
-  message: string;
-  actionValue?: string;
-  actionType?: string;
-  userId?: string;
-  error?: string;
-}
-
-/**
  * Message sent callback type.
  * Called when a message is successfully sent to track user communication.
  */
 export type MessageSentCallback = (chatId: string) => void;
-
-/**
- * Pending interaction tracker for wait_for_interaction tool.
- */
-export interface PendingInteraction {
-  messageId: string;
-  chatId: string;
-  resolve: (action: { actionValue: string; actionType: string; userId: string }) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-}
 
 /**
  * Map of action values to prompt templates.
@@ -120,5 +97,29 @@ export interface LeaveMessageResult {
   message: string;
   messageId?: string;
   offlineId?: string;
+  error?: string;
+}
+
+/**
+ * Option for ask_user tool.
+ */
+export interface AskUserOptions {
+  /** Display text for the option (shown on button) */
+  text: string;
+  /** Value returned when this option is selected (defaults to option_N if not provided) */
+  value?: string;
+  /** Visual style of the button */
+  style?: 'primary' | 'default' | 'danger';
+  /** Action description for the agent to execute when this option is selected */
+  action?: string;
+}
+
+/**
+ * Result type for ask_user tool.
+ */
+export interface AskUserResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
   error?: string;
 }

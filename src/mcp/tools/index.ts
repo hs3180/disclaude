@@ -7,19 +7,20 @@
 export type {
   SendMessageResult,
   SendFileResult,
-  WaitForInteractionResult,
   MessageSentCallback,
-  PendingInteraction,
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  // Issue #631: 离线消息相关
   OfflineMessageContext,
   LeaveMessageResult,
+  // Ask User tool
+  AskUserOptions,
+  AskUserResult,
 } from './types.js';
 
 export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
 export { send_file } from './send-file.js';
-export { wait_for_interaction, resolvePendingInteraction } from './card-interaction.js';
 export {
   send_interactive_message,
   registerActionPrompts,
@@ -37,6 +38,9 @@ export {
   cleanupExpiredOfflineContexts,
   getAllOfflineContexts,
 } from './leave-message.js';
+
+// Ask User tool (Human-in-the-Loop)
+export { ask_user } from './ask-user.js';
 
 // Study Guide Generator (NotebookLM M4)
 export {

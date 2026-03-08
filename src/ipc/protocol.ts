@@ -19,7 +19,12 @@ export type IpcRequestType =
   // Issue #631: 离线消息相关
   | 'getOfflineContext'
   | 'generateFollowUpPrompt'
-  | 'unregisterOfflineContext';
+  | 'unregisterOfflineContext'
+  // Feishu API operations (Issue #1035)
+  | 'feishuSendMessage'
+  | 'feishuSendCard'
+  | 'feishuUploadFile'
+  | 'feishuGetBotInfo';
 
 /**
  * IPC request payload types.
@@ -50,6 +55,24 @@ export interface IpcRequestPayloads {
     formData?: Record<string, unknown>;
   };
   unregisterOfflineContext: { messageId: string };
+  // Feishu API operations (Issue #1035)
+  feishuSendMessage: {
+    chatId: string;
+    text: string;
+    threadId?: string;
+  };
+  feishuSendCard: {
+    chatId: string;
+    card: Record<string, unknown>;
+    threadId?: string;
+    description?: string;
+  };
+  feishuUploadFile: {
+    chatId: string;
+    filePath: string;
+    threadId?: string;
+  };
+  feishuGetBotInfo: Record<string, never>;
 }
 
 /**
@@ -74,6 +97,21 @@ export interface IpcResponsePayloads {
   };
   generateFollowUpPrompt: { prompt: string | null };
   unregisterOfflineContext: { success: boolean };
+  // Feishu API operations (Issue #1035)
+  feishuSendMessage: { success: boolean; messageId?: string };
+  feishuSendCard: { success: boolean; messageId?: string };
+  feishuUploadFile: {
+    success: boolean;
+    fileKey?: string;
+    fileType?: string;
+    fileName?: string;
+    fileSize?: number;
+  };
+  feishuGetBotInfo: {
+    openId: string;
+    name?: string;
+    avatarUrl?: string;
+  };
 }
 
 /**

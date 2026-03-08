@@ -459,7 +459,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const supportedMcpTools = capabilities?.supportedMcpTools;
 
     // Determine if we should include Context MCP server
-    const contextTools = ['send_message', 'send_file', 'wait_for_interaction'];
+    const contextTools = ['send_message', 'send_file'];
     const shouldIncludeContextMcp = supportedMcpTools === undefined ||
       contextTools.some(tool => supportedMcpTools.includes(tool));
 

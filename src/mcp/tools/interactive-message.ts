@@ -8,6 +8,7 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
+import { existsSync } from 'fs';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
@@ -17,7 +18,11 @@ import { getMessageSentCallback } from './send-message.js';
 import {
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
+  type FeishuApiHandlers,
+  type FeishuHandlersContainer,
 } from '../../ipc/unix-socket-server.js';
+import { getIpcClient } from '../../ipc/unix-socket-client.js';
+import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
 import {
   getOfflineContext,
@@ -26,6 +31,46 @@ import {
 } from './leave-message.js';
 
 const logger = createLogger('InteractiveMessage');
+
+/**
+ * Check if IPC is available for Feishu API calls.
+ * Issue #1035: Prefer IPC when available for unified client management.
+ */
+function isIpcAvailable(): boolean {
+  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
+}
+
+/**
+ * Send card message via IPC to PrimaryNode's LarkClientService.
+ * Issue #1035: Routes Feishu API calls through unified client.
+ * Issue #1088: Improved error handling with detailed error information.
+ */
+async function sendCardViaIpc(
+  chatId: string,
+  card: Record<string, unknown>,
+  threadId?: string,
+  description?: string
+): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
+  const ipcClient = getIpcClient();
+  return await ipcClient.feishuSendCard(chatId, card, threadId, description);
+}
+
+/**
+ * Generate user-friendly error message based on IPC error type.
+ * Issue #1088: Provide actionable error messages.
+ */
+function getIpcErrorMessage(errorType?: string, originalError?: string): string {
+  switch (errorType) {
+    case 'ipc_unavailable':
+      return '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。';
+    case 'ipc_timeout':
+      return '❌ IPC 请求超时。服务可能过载，请稍后重试。';
+    case 'ipc_request_failed':
+      return `❌ IPC 请求失败: ${originalError ?? '未知错误'}`;
+    default:
+      return `❌ 交互消息发送失败: ${originalError ?? '未知错误'}`;
+  }
+}
 
 /**
  * Store for interactive message contexts.
@@ -231,15 +276,35 @@ export async function send_interactive_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Send the message
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-    const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
+    // Issue #1035: Try IPC first if available
+    const useIpc = isIpcAvailable();
+    let messageId: string | undefined;
+
+    if (useIpc) {
+      logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
+      const result = await sendCardViaIpc(chatId, card, parentMessageId);
+      if (!result.success) {
+        const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+        logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
+        return {
+          success: false,
+          error: result.error ?? 'Failed to send interactive message via IPC',
+          message: errorMsg,
+        };
+      }
+      ({ messageId } = result);
+    } else {
+      // Fallback: Create client directly
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
+      ({ messageId } = result);
+    }
 
     // Register action prompts if message was sent successfully
-    if (result.messageId) {
-      registerActionPrompts(result.messageId, chatId, actionPrompts);
+    if (messageId) {
+      registerActionPrompts(messageId, chatId, actionPrompts);
       logger.info(
-        { messageId: result.messageId, chatId, actions: Object.keys(actionPrompts) },
+        { messageId, chatId, actions: Object.keys(actionPrompts) },
         'Interactive message sent and prompts registered'
       );
     }
@@ -257,7 +322,7 @@ export async function send_interactive_message(params: {
     return {
       success: true,
       message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
-      messageId: result.messageId,
+      messageId,
     };
 
   } catch (error) {
@@ -274,14 +339,59 @@ export async function send_interactive_message(params: {
 let ipcServer: UnixSocketIpcServer | null = null;
 
 /**
+ * Issue #1120: Mutable container for Feishu API handlers.
+ * Allows dynamic registration of handlers after IPC server starts.
+ */
+const feishuHandlersContainer: FeishuHandlersContainer = {
+  handlers: undefined,
+};
+
+/**
+ * Register Feishu API handlers for IPC-based operations.
+ * Issue #1120: Allows FeishuChannel to register handlers after IPC server starts.
+ *
+ * @param handlers - The Feishu API handlers to register.
+ */
+export function registerFeishuHandlers(handlers: FeishuApiHandlers): void {
+  feishuHandlersContainer.handlers = handlers;
+  logger.info('Feishu API handlers registered for IPC server');
+}
+
+/**
+ * Unregister Feishu API handlers.
+ * Issue #1120: Cleanup function for when FeishuChannel stops.
+ */
+export function unregisterFeishuHandlers(): void {
+  feishuHandlersContainer.handlers = undefined;
+  logger.debug('Feishu API handlers unregistered from IPC server');
+}
+
+/**
  * Start the IPC server for cross-process communication.
  * This allows other processes (e.g., the main bot process) to query
  * the interactive contexts stored in this process.
+ *
+ * Issue #1116: Accept feishuHandlers to enable IPC-based Feishu API calls
+ * in Primary Node standalone mode.
+ * Issue #1120: Use FeishuHandlersContainer for dynamic handler registration.
+ *
+ * @param feishuHandlers - Optional handlers for Feishu API operations.
+ *                         When provided, IPC clients can send messages/cards
+ *                         through the Primary Node's LarkClientService.
  */
-export async function startIpcServer(): Promise<void> {
+export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promise<void> {
   if (ipcServer) {
     logger.debug('IPC server already running');
+    // Issue #1120: Still try to register handlers if provided
+    if (feishuHandlers) {
+      registerFeishuHandlers(feishuHandlers);
+    }
     return;
+  }
+
+  // Issue #1120: Register initial handlers if provided
+  if (feishuHandlers) {
+    feishuHandlersContainer.handlers = feishuHandlers;
   }
 
   const handler = createInteractiveMessageHandler({
@@ -313,7 +423,7 @@ export async function startIpcServer(): Promise<void> {
       return generateFollowUpPrompt(context, actionValue, actionText, formData);
     },
     unregisterOfflineContext,
-  });
+  }, feishuHandlersContainer);
 
   ipcServer = new UnixSocketIpcServer(handler);
 

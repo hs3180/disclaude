@@ -9,9 +9,9 @@ import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import {
   send_message,
   send_file,
-  wait_for_interaction,
   send_interactive_message,
   leave_message,
+  ask_user,
   setMessageSentCallback,
   generate_summary,
   generate_qa_pairs,
@@ -24,10 +24,8 @@ import { startIpcServer } from './tools/interactive-message.js';
 // Re-export
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
-export { resolvePendingInteraction } from './tools/card-interaction.js';
 export { send_message } from './tools/send-message.js';
 export { send_file } from './tools/send-file.js';
-export { wait_for_interaction } from './tools/card-interaction.js';
 export {
   send_interactive_message,
   generateInteractionPrompt,
@@ -35,7 +33,10 @@ export {
   startIpcServer,
   stopIpcServer,
   isIpcServerRunning,
+  registerFeishuHandlers,
+  unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
+export { ask_user } from './tools/ask-user.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -101,15 +102,6 @@ export const feishuContextTools = {
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
-  },
-  wait_for_interaction: {
-    description: 'Wait for the user to interact with a card.',
-    parameters: {
-      type: 'object',
-      properties: { messageId: { type: 'string' }, chatId: { type: 'string' }, timeoutSeconds: { type: 'number' } },
-      required: ['messageId', 'chatId'],
-    },
-    handler: wait_for_interaction,
   },
   send_interactive_message: {
     description: `Send an interactive card message with pre-defined action prompts.
@@ -440,6 +432,116 @@ In actionPrompts, you can use these placeholders:
     },
     handler: leave_message,
   },
+  ask_user: {
+    description: `Ask the user a question with predefined options (Human-in-the-Loop).
+
+This tool provides a simple way for agents to ask users questions and receive responses.
+When the user selects an option, you will receive a message with the selection context.
+
+---
+
+## 🎯 常用场景
+
+### 1. PR 审核流程
+\`\`\`json
+{
+  "question": "发现新的 PR #123: Fix authentication bug\\n\\n请选择处理方式:",
+  "options": [
+    { "text": "✓ 合并", "value": "merge", "style": "primary", "action": "合并此 PR" },
+    { "text": "✗ 关闭", "value": "close", "style": "danger", "action": "关闭此 PR" },
+    { "text": "⏳ 等待", "value": "wait", "action": "稍后再处理" }
+  ],
+  "context": "PR #123 from scheduled scan",
+  "title": "🔔 PR 审核请求",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 2. 确认操作
+\`\`\`json
+{
+  "question": "确定要删除这个文件吗？此操作不可撤销。",
+  "options": [
+    { "text": "确认删除", "value": "confirm", "style": "danger", "action": "执行删除操作" },
+    { "text": "取消", "value": "cancel", "action": "取消删除操作" }
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 3. 选择方向
+\`\`\`json
+{
+  "question": "请选择实现方案:",
+  "options": [
+    { "text": "方案 A (推荐)", "value": "option_a", "style": "primary", "action": "使用方案 A 实现" },
+    { "text": "方案 B", "value": "option_b", "action": "使用方案 B 实现" },
+    { "text": "方案 C", "value": "option_c", "action": "使用方案 C 实现" }
+  ],
+  "context": "Issue #456 功能实现",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **question**: The question text (supports Markdown)
+- **options**: Array of options (1-5 recommended)
+  - **text**: Button display text
+  - **value**: Unique value for this option (optional, defaults to option_N)
+  - **style**: Button style - "primary" (blue), "default" (white), "danger" (red)
+  - **action**: Description of what to do when this option is selected
+- **context**: Additional context information (optional)
+- **title**: Card title (optional, default: "🤖 Agent 提问")
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+
+---
+
+## How It Works
+
+1. You call ask_user with a question and options
+2. A card with buttons is sent to the user
+3. When the user clicks a button, you receive a message like:
+   \`[用户操作] 用户选择了「合并」选项。\n\n**上下文**: PR #123\n\n**请执行**: 合并此 PR\`
+4. You continue execution based on the selection
+
+---
+
+## Best Practices
+
+1. **Include context**: Always provide enough context for future reference
+2. **Clear actions**: Specify what action to take for each option
+3. **Limit options**: 2-4 options work best for quick decisions
+4. **Use styles**: Use "primary" for recommended, "danger" for destructive actions`,
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string' },
+        options: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+              value: { type: 'string' },
+              style: { type: 'string', enum: ['primary', 'default', 'danger'] },
+              action: { type: 'string' },
+            },
+            required: ['text'],
+          },
+        },
+        context: { type: 'string' },
+        title: { type: 'string' },
+        chatId: { type: 'string' },
+        parentMessageId: { type: 'string' },
+      },
+      required: ['question', 'options', 'chatId'],
+    },
+    handler: ask_user,
+  },
 };
 
 export const feishuToolDefinitions: InlineToolDefinition[] = [
@@ -507,21 +609,6 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'wait_for_interaction',
-    description: 'Wait for the user to interact with a card.',
-    parameters: z.object({ messageId: z.string(), chatId: z.string(), timeoutSeconds: z.number().optional() }),
-    handler: async ({ messageId, chatId, timeoutSeconds }) => {
-      try {
-        const result = await wait_for_interaction({ messageId, chatId, timeoutSeconds });
-        return toolSuccess(result.success
-          ? `${result.message}\nAction: ${result.actionValue}\nType: ${result.actionType}\nUser: ${result.userId}`
-          : `⚠️ ${result.message}`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Wait failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -748,6 +835,113 @@ In actionPrompts, you can use these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive message failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'ask_user',
+    description: `Ask the user a question with predefined options (Human-in-the-Loop).
+
+This tool provides a simple way for agents to ask users questions and receive responses.
+When the user selects an option, you will receive a message with the selection context.
+
+---
+
+## 🎯 常用场景
+
+### 1. PR 审核流程
+\`\`\`json
+{
+  "question": "发现新的 PR #123: Fix authentication bug\\n\\n请选择处理方式:",
+  "options": [
+    { "text": "✓ 合并", "value": "merge", "style": "primary", "action": "合并此 PR" },
+    { "text": "✗ 关闭", "value": "close", "style": "danger", "action": "关闭此 PR" },
+    { "text": "⏳ 等待", "value": "wait", "action": "稍后再处理" }
+  ],
+  "context": "PR #123 from scheduled scan",
+  "title": "🔔 PR 审核请求",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 2. 确认操作
+\`\`\`json
+{
+  "question": "确定要删除这个文件吗？此操作不可撤销。",
+  "options": [
+    { "text": "确认删除", "value": "confirm", "style": "danger", "action": "执行删除操作" },
+    { "text": "取消", "value": "cancel", "action": "取消删除操作" }
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 3. 选择方向
+\`\`\`json
+{
+  "question": "请选择实现方案:",
+  "options": [
+    { "text": "方案 A (推荐)", "value": "option_a", "style": "primary", "action": "使用方案 A 实现" },
+    { "text": "方案 B", "value": "option_b", "action": "使用方案 B 实现" },
+    { "text": "方案 C", "value": "option_c", "action": "使用方案 C 实现" }
+  ],
+  "context": "Issue #456 功能实现",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **question**: The question text (supports Markdown)
+- **options**: Array of options (1-5 recommended)
+  - **text**: Button display text
+  - **value**: Unique value for this option (optional, defaults to option_N)
+  - **style**: Button style - "primary" (blue), "default" (white), "danger" (red)
+  - **action**: Description of what to do when this option is selected
+- **context**: Additional context information (optional)
+- **title**: Card title (optional, default: "🤖 Agent 提问")
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+
+---
+
+## How It Works
+
+1. You call ask_user with a question and options
+2. A card with buttons is sent to the user
+3. When the user clicks a button, you receive a message like:
+   \`[用户操作] 用户选择了「合并」选项。\n\n**上下文**: PR #123\n\n**请执行**: 合并此 PR\`
+4. You continue execution based on the selection
+
+---
+
+## Best Practices
+
+1. **Include context**: Always provide enough context for future reference
+2. **Clear actions**: Specify what action to take for each option
+3. **Limit options**: 2-4 options work best for quick decisions
+4. **Use styles**: Use "primary" for recommended, "danger" for destructive actions`,
+    parameters: z.object({
+      question: z.string(),
+      options: z.array(z.object({
+        text: z.string(),
+        value: z.string().optional(),
+        style: z.enum(['primary', 'default', 'danger']).optional(),
+        action: z.string().optional(),
+      })),
+      context: z.string().optional(),
+      title: z.string().optional(),
+      chatId: z.string(),
+      parentMessageId: z.string().optional(),
+    }),
+    handler: async ({ question, options, context, title, chatId, parentMessageId }) => {
+      try {
+        const result = await ask_user({ question, options, context, title, chatId, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Ask user failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

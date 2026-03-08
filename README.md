@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/disclaude.svg)](https://nodejs.org)
 
-A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark) with the Claude Agent SDK. Written in TypeScript, it enables chat-driven development, code editing, file operations, and browser automation through conversational interfaces.
+A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Ruliu/如流) with the Claude Agent SDK. Written in TypeScript, it enables chat-driven development, code editing, file operations, and browser automation through conversational interfaces.
 
 ## Features
 
@@ -200,6 +200,46 @@ npm run build && npm start
 5. **Publish Bot**
    - Add bot to a group or enable in organization
    - Test by sending a message
+
+### Ruliu (如流) Bot Configuration
+
+Ruliu (Baidu InfoFlow) is supported via HTTP Webhook. Configuration:
+
+1. **Create Robot App**
+   - Go to [Ruliu Developer Platform](https://qy.baidu.com/doc/document.html)
+   - Create a robot app → Get App Key, App Secret, Check Token, Encoding AES Key
+
+2. **Configure Webhook**
+   - Set webhook URL: `http://your-server:8080/webhook/ruliu`
+   - The server must be accessible from Ruliu servers
+
+3. **Update Configuration**
+   ```yaml
+   ruliu:
+     enabled: true
+     apiHost: "https://apiin.im.baidu.com"
+     checkToken: "your_check_token"
+     encodingAESKey: "your_encoding_aes_key"
+     appKey: "your_app_key"
+     appSecret: "your_app_secret"
+     robotName: "MyBot"
+     replyMode: "mention-and-watch"  # ignore, record, mention-only, mention-and-watch, proactive
+     followUp: true
+     followUpWindow: 300
+     webhookPath: "/webhook/ruliu"
+   ```
+
+4. **Reply Modes**
+   - `ignore` - Discard all messages
+   - `record` - Only record, no reply
+   - `mention-only` - Reply only when @mentioned
+   - `mention-and-watch` - Reply on @mention, watch list, or follow-up window (default)
+   - `proactive` - Respond to all messages
+
+5. **Start Ruliu Bot**
+   ```bash
+   disclaude start --mode ruliu
+   ```
 
 ## Available Tools
 
