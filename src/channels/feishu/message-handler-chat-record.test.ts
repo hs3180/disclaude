@@ -339,8 +339,8 @@ describe('MessageHandler - Issue #1123: chat_record message type', () => {
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
       const [[emittedMessage]] = mockCallbacks.emitMessage.mock.calls;
 
-      // Should show default "未知用户" for missing sender
-      expect(emittedMessage.content).toContain('未知用户');
+      // Should show default "unknown" for missing sender
+      expect(emittedMessage.content).toContain('unknown');
     });
 
     it('should handle chat_record with missing timestamp gracefully', async () => {
