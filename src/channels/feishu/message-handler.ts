@@ -746,7 +746,7 @@ export class MessageHandler {
     const rawData = data as Record<string, unknown>;
     const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
     const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
-    const actionData = rawData.action as { value?: string; tag?: string; type?: string } | undefined;
+    const actionData = rawData.action as { value?: string; tag?: string; type?: string; text?: string } | undefined;
 
     // Extract fields from actual structure
     const message_id = context?.open_message_id;
@@ -755,6 +755,7 @@ export class MessageHandler {
       type: actionData.tag ?? actionData.type ?? '',
       value: actionData.value ?? '',
       trigger: 'button' as const,
+      text: actionData.text,
     } : undefined;
     const user = operator ? {
       sender_id: {
@@ -875,7 +876,7 @@ export class MessageHandler {
         action,
         message_id,
         chat_id,
-        user,
+        user: user ?? { sender_id: { open_id: '' } },
         tenant_key: (rawData.tenant_key as string) || '',
       };
       const handled = await this.interactionManager.handleAction(compatEvent, async (defaultEvent) => {
