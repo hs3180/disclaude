@@ -39,3 +39,16 @@ export type {
   CardActionMessage,
   CardContextMessage,
 } from './websocket-messages.js';
+
+// Primary Node types (Issue #1040)
+export type {
+  NodeType,
+  NodeCapabilities,
+  BaseNodeConfig,
+  RestChannelConfig,
+  FileStorageConfig,
+  PrimaryNodeConfig,
+  ExecNodeInfo as PrimaryNodeExecInfo,
+} from './primary-node.js';
+
+export { getNodeCapabilities } from './primary-node.js';
