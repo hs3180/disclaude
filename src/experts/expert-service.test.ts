@@ -2,6 +2,7 @@
  * Tests for ExpertService.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #538 - 积分系统
  */
 
 import { describe, it, beforeEach, afterEach, expect } from 'vitest';
@@ -219,6 +220,233 @@ describe('ExpertService', () => {
     it('should return false for non-existent expert', () => {
       const result = service.unregisterExpert('nonexistent');
       expect(result).toBe(false);
+    });
+  });
+
+  // Credit System Tests (Issue #538)
+  describe('setPrice', () => {
+    it('should set price for expert', () => {
+      service.registerExpert('user_123', 'John Doe');
+      const profile = service.setPrice('user_123', 100);
+
+      expect(profile?.price).toBe(100);
+    });
+
+    it('should return undefined for non-existent expert', () => {
+      const result = service.setPrice('nonexistent', 100);
+      expect(result).toBeUndefined();
+    });
+
+    it('should reject negative price', () => {
+      service.registerExpert('user_123', 'John Doe');
+      const result = service.setPrice('user_123', -10);
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should allow zero price (free consultation)', () => {
+      service.registerExpert('user_123', 'John Doe');
+      const profile = service.setPrice('user_123', 0);
+
+      expect(profile?.price).toBe(0);
+    });
+  });
+
+  describe('getOrCreateAccount', () => {
+    it('should create new account', () => {
+      const account = service.getOrCreateAccount('agent_001', 'Test Agent');
+
+      expect(account.agentId).toBe('agent_001');
+      expect(account.name).toBe('Test Agent');
+      expect(account.balance).toBe(0);
+      expect(account.dailyLimit).toBe(1000);
+    });
+
+    it('should return existing account', () => {
+      service.getOrCreateAccount('agent_001', 'Test Agent');
+      const account = service.getOrCreateAccount('agent_001', 'Updated Name');
+
+      expect(account.name).toBe('Updated Name');
+    });
+  });
+
+  describe('recharge', () => {
+    it('should recharge account', () => {
+      service.getOrCreateAccount('agent_001');
+      const account = service.recharge('agent_001', 500);
+
+      expect(account?.balance).toBe(500);
+    });
+
+    it('should reject non-positive amount', () => {
+      service.getOrCreateAccount('agent_001');
+      const account = service.recharge('agent_001', 0);
+
+      expect(account).toBeUndefined();
+    });
+
+    it('should accumulate balance', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+      const account = service.recharge('agent_001', 300);
+
+      expect(account?.balance).toBe(800);
+    });
+  });
+
+  describe('canAfford', () => {
+    it('should return false for non-existent account', () => {
+      expect(service.canAfford('nonexistent', 100)).toBe(false);
+    });
+
+    it('should return true when balance is sufficient', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+
+      expect(service.canAfford('agent_001', 100)).toBe(true);
+    });
+
+    it('should return false when balance is insufficient', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 50);
+
+      expect(service.canAfford('agent_001', 100)).toBe(false);
+    });
+
+    it('should return false when daily limit exceeded', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 1000);
+      service.setDailyLimit('agent_001', 100);
+
+      // Use 50 first
+      service.registerExpert('expert_001', 'Expert');
+      service.deductCredits('agent_001', 50, 'expert_001');
+
+      // Try to use 60 more (would exceed limit)
+      expect(service.canAfford('agent_001', 60)).toBe(false);
+    });
+  });
+
+  describe('deductCredits', () => {
+    it('should deduct credits from account', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+      service.registerExpert('expert_001', 'Expert');
+
+      const result = service.deductCredits('agent_001', 100, 'expert_001');
+
+      expect(result?.account.balance).toBe(400);
+      expect(result?.transaction.amount).toBe(-100);
+    });
+
+    it('should return undefined when balance insufficient', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 50);
+      service.registerExpert('expert_001', 'Expert');
+
+      const result = service.deductCredits('agent_001', 100, 'expert_001');
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should track daily usage', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+      service.registerExpert('expert_001', 'Expert');
+
+      service.deductCredits('agent_001', 100, 'expert_001');
+      service.deductCredits('agent_001', 50, 'expert_001');
+
+      const account = service.getAccount('agent_001');
+      expect(account?.usedToday).toBe(150);
+    });
+  });
+
+  describe('setDailyLimit', () => {
+    it('should set daily limit', () => {
+      service.getOrCreateAccount('agent_001');
+      const account = service.setDailyLimit('agent_001', 500);
+
+      expect(account?.dailyLimit).toBe(500);
+    });
+
+    it('should allow zero (unlimited)', () => {
+      service.getOrCreateAccount('agent_001');
+      const account = service.setDailyLimit('agent_001', 0);
+
+      expect(account?.dailyLimit).toBe(0);
+    });
+
+    it('should reject negative limit', () => {
+      service.getOrCreateAccount('agent_001');
+      const account = service.setDailyLimit('agent_001', -10);
+
+      expect(account).toBeUndefined();
+    });
+  });
+
+  describe('refund', () => {
+    it('should refund credits to account', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 100);
+
+      const result = service.refund('agent_001', 50);
+
+      expect(result?.account.balance).toBe(150);
+      expect(result?.transaction.type).toBe('refund');
+    });
+  });
+
+  describe('getTransactionHistory', () => {
+    it('should return transaction history', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+      service.registerExpert('expert_001', 'Expert');
+      service.deductCredits('agent_001', 100, 'expert_001');
+
+      const history = service.getTransactionHistory('agent_001');
+
+      expect(history).toHaveLength(2);
+      // Check that both transactions are present (order depends on timestamp)
+      const types = history.map(t => t.type);
+      expect(types).toContain('recharge');
+      expect(types).toContain('deduct');
+    });
+  });
+
+  describe('listAccounts', () => {
+    it('should list all accounts', () => {
+      service.getOrCreateAccount('agent_001');
+      service.getOrCreateAccount('agent_002');
+
+      const accounts = service.listAccounts();
+
+      expect(accounts).toHaveLength(2);
+    });
+  });
+
+  describe('credit persistence', () => {
+    it('should persist account data to file', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+
+      // Create new service instance to load from file
+      const newService = new ExpertService({ filePath: testFilePath });
+      const account = newService.getAccount('agent_001');
+
+      expect(account?.balance).toBe(500);
+    });
+
+    it('should persist transaction history', () => {
+      service.getOrCreateAccount('agent_001');
+      service.recharge('agent_001', 500);
+
+      // Create new service instance to load from file
+      const newService = new ExpertService({ filePath: testFilePath });
+      const history = newService.getTransactionHistory('agent_001');
+
+      expect(history).toHaveLength(1);
+      expect(history[0].type).toBe('recharge');
     });
   });
 });
