@@ -185,8 +185,8 @@ describe('WorkerPool', () => {
 
       await pool.executeAll(tasks);
 
-      const stats = pool.stats;
-      expect(stats.totalCompleted).toBe(2);
+      const { totalCompleted } = pool.stats;
+      expect(totalCompleted).toBe(2);
     });
   });
 
@@ -197,8 +197,8 @@ describe('WorkerPool', () => {
 
       pool.dispose();
 
-      const stats = pool.stats;
-      expect(stats.totalWorkers).toBe(0);
+      const { totalWorkers } = pool.stats;
+      expect(totalWorkers).toBe(0);
     });
   });
 });
@@ -293,7 +293,7 @@ describe('TaskDispatcher', () => {
   });
 
   describe('cancel', () => {
-    it('should cancel pending tasks', async () => {
+    it('should cancel pending tasks', () => {
       const singlePool = new WorkerPool({
         maxWorkers: 1,
         workerFactory: (config) => new MockWorkerAgent(config, { executionTime: 100 }),
@@ -339,7 +339,7 @@ describe('SkillWorkerAgent', () => {
       ({
         type: 'skill' as const,
         name: 'mock-skill',
-        execute: async function* () {
+        async *execute() {
           yield { content: 'test', role: 'assistant' as const };
         },
         dispose: vi.fn(),

@@ -300,8 +300,12 @@ export class TaskDispatcher implements ITaskDispatcher {
     ) {
       // Find a task that is ready (no pending dependencies)
       const readyTaskIndex = this.taskQueue.findIndex((task) => {
-        if (task.status !== 'pending') return false;
-        if (task.abortController.signal.aborted) return false;
+        if (task.status !== 'pending') {
+          return false;
+        }
+        if (task.abortController.signal.aborted) {
+          return false;
+        }
 
         // Check dependencies
         const deps = task.subtask.dependencies ?? [];
@@ -313,7 +317,7 @@ export class TaskDispatcher implements ITaskDispatcher {
         break;
       }
 
-      const task = this.taskQueue.splice(readyTaskIndex, 1)[0];
+      const [task] = this.taskQueue.splice(readyTaskIndex, 1);
       this.executeTask(task).catch((error) => {
         logger.error({ error, taskId: task.subtask.id }, 'Task execution failed');
       });
@@ -351,8 +355,7 @@ export class TaskDispatcher implements ITaskDispatcher {
 
     try {
       // Execute via worker pool
-      const results = await this.config.workerPool.executeAll([subtask]);
-      const result = results[0];
+      const [result] = await this.config.workerPool.executeAll([subtask]);
 
       if (result.status === 'failed' && internalTask.retries < this.config.retryCount) {
         // Retry the task
