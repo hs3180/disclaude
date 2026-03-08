@@ -91,7 +91,8 @@ export class ExpertCommand implements Command {
       return { success: false, error: '❌ 需要用户身份才能执行此命令' };
     }
 
-    const subCommand = args[0]?.toLowerCase();
+    const [firstArg] = args;
+    const subCommand = firstArg?.toLowerCase();
 
     switch (subCommand) {
       case 'register':
@@ -255,7 +256,7 @@ export class ExpertCommand implements Command {
       };
     }
 
-    const priceStr = args[1];
+    const [, priceStr] = args;
 
     if (!priceStr) {
       return { success: false, error: '❌ 请指定咨询身价\n\n用法: /expert price <积分>\n\n示例: /expert price 100' };

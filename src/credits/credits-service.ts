@@ -126,7 +126,8 @@ export class CreditsService {
    * Get today's date as ISO string (YYYY-MM-DD).
    */
   private getTodayString(): string {
-    return new Date().toISOString().split('T')[0];
+    const [date] = new Date().toISOString().split('T');
+    return date;
   }
 
   /**
