@@ -55,55 +55,58 @@ gh pr view {number} --repo hs3180/disclaude \
   --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
 ```
 
-### 6. 发送 PR 信息到群聊
+### 6. 发送 PR 信息和交互式卡片
 
-使用 `send_user_feedback` 发送格式化的 PR 信息：
+使用 `send_interactive_message` 发送 PR 信息和操作选项：
 
-```markdown
-## 🔔 新 PR 检测到
-
-**PR #{number}**: {title}
-
-| 属性 | 值 |
-|------|-----|
-| 👤 作者 | {author} |
-| 🌿 分支 | {headRef} → {baseRef} |
-| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |
-| 🔍 CI 检查 | {ciStatus} |
-| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |
-
-### 📋 描述
-{description 前500字符}
-
----
-🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})
+**卡片内容**：
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "🔔 新 PR 检测到", "tag": "plain_text"}, "template": "blue"},
+  "elements": [
+    {"tag": "markdown", "content": "**PR #{number}**: {title}"},
+    {"tag": "hr"},
+    {"tag": "div", "fields": [
+      {"is_short": true, "text": {"tag": "lark_md", "content": "**👤 作者**\n{author}"}},
+      {"is_short": true, "text": {"tag": "lark_md", "content": "**🌿 分支**\n{headRef} → {baseRef}"}}
+    ]},
+    {"tag": "div", "fields": [
+      {"is_short": true, "text": {"tag": "lark_md", "content": "**📊 合并状态**\n{mergeable ? '✅ 可合并' : '⚠️ 有冲突'}"}},
+      {"is_short": true, "text": {"tag": "lark_md", "content": "**🔍 CI 检查**\n{ciStatus}"}}
+    ]},
+    {"tag": "div", "text": {"tag": "lark_md", "content": "**📈 变更**: +{additions} -{deletions} ({changedFiles} files)"}},
+    {"tag": "hr"},
+    {"tag": "markdown", "content": "**📋 描述**\n{description 前300字符}"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
+      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
+      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
+      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
+    ]},
+    {"tag": "note", "elements": [
+      {"tag": "plain_text", "content": "🔗 查看详情: https://github.com/hs3180/disclaude/pull/{number}"}
+    ]}
+  ]
+}
 ```
+
+**actionPrompts**：
+```json
+{
+  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
+  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
+  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
+  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+}
+```
+
+**注意**：将 {number} 替换为实际的 PR 编号。
 
 ### 7. 添加 pending label
 
 ```bash
 gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
-```
-
-### 8. 提供操作选项（交互式卡片）
-
-如果支持交互式卡片，发送操作选项：
-
-```json
-{
-  "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "PR 处理决策", "tag": "plain_text"}, "template": "blue"},
-  "elements": [
-    {"tag": "markdown", "content": "请选择处理方式："},
-    {"tag": "hr"},
-    {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge:{number}", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes:{number}", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close:{number}", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later:{number}", "type": "default"}
-    ]}
-  ]
-}
 ```
 
 ## 状态管理
