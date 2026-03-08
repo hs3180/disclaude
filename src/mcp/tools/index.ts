@@ -53,3 +53,15 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Thread Tools (Issue #873: 话题群扩展)
+export {
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
+} from './thread-tools.js';
+
+export type {
+  ThreadResult,
+  ThreadMessage,
+} from './thread-tools.js';

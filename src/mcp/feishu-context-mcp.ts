@@ -17,6 +17,9 @@ import {
   generate_flashcards,
   generate_quiz,
   create_study_guide,
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -1071,6 +1074,216 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Thread Tools (Issue #873: 话题群扩展)
+  {
+    name: 'reply_in_thread',
+    description: `Reply to a thread in a topic-mode chat (跟帖).
+
+Sends a reply message to an existing thread, creating a follow-up post.
+
+---
+
+## 🎯 使用场景
+
+- 在话题群中回复某个话题
+- 对特定消息进行跟帖讨论
+- 在话题线程中追加内容
+
+---
+
+## Parameters
+
+- **messageId**: The ID of the parent message (话题的根消息ID)
+- **content**: The reply content (回复内容)
+- **msgType**: Message type - "text" (default) or "interactive" (消息类型)
+- **chatId**: Optional chat ID for verification (可选的群ID)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "messageId": "om_xxx",
+  "content": "这是我的跟帖回复",
+  "msgType": "text"
+}
+\`\`\`
+
+---
+
+## 📚 参考资料
+
+- [话题介绍 - 飞书开放平台](https://open.larksuite.com/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/thread-introduction)
+- [回复消息 API](https://open.larksuite.com/document/server-docs/im-v1/message/reply)`,
+    parameters: z.object({
+      messageId: z.string().describe('The ID of the parent message to reply to'),
+      content: z.string().describe('The reply content'),
+      msgType: z.enum(['text', 'interactive']).optional().describe('Message type (default: text)'),
+      chatId: z.string().optional().describe('Optional chat ID for verification'),
+    }),
+    handler: async ({ messageId, content, msgType, chatId }) => {
+      try {
+        const result = await reply_in_thread({ messageId, content, msgType, chatId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Reply in thread failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_threads',
+    description: `Get list of threads in a chat (获取话题列表).
+
+Retrieves all thread root messages from a topic-mode chat.
+
+---
+
+## 🎯 使用场景
+
+- 查看话题群中的所有话题
+- 获取话题列表用于选择和浏览
+- 监控话题群的活动
+
+---
+
+## Parameters
+
+- **chatId**: The chat ID (群ID, e.g., oc_xxx)
+- **pageToken**: Optional pagination token (分页token)
+- **pageSize**: Number of threads per page (default: 50, 每页数量)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "pageSize": 20
+}
+\`\`\`
+
+---
+
+## Returns
+
+- **threads**: Array of thread messages (话题列表)
+- **hasMore**: Whether there are more threads (是否有更多)
+- **pageToken**: Token for next page (下一页token)
+
+---
+
+## 📚 参考资料
+
+- [获取会话历史消息 API](https://open.larksuite.com/document/server-docs/im-v1/message/list)`,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to get threads from'),
+      pageToken: z.string().optional().describe('Pagination token for next page'),
+      pageSize: z.number().optional().describe('Number of threads per page (default: 50)'),
+    }),
+    handler: async ({ chatId, pageToken, pageSize }) => {
+      try {
+        const result = await get_threads({ chatId, pageToken, pageSize });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        let output = `📋 Found ${result.threads?.length || 0} threads\n\n`;
+        if (result.threads && result.threads.length > 0) {
+          for (const thread of result.threads.slice(0, 10)) {
+            const preview = thread.content?.substring(0, 50) || '(no content)';
+            output += `- **${thread.threadId || thread.messageId}**: ${preview}...\n`;
+          }
+          if (result.threads.length > 10) {
+            output += `\n... and ${result.threads.length - 10} more threads`;
+          }
+        }
+        if (result.hasMore) {
+          output += `\n\n📄 More threads available. Use pageToken: ${result.pageToken}`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get threads failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_thread_messages',
+    description: `Get messages in a thread (获取话题详情).
+
+Retrieves all messages within a specific thread.
+
+---
+
+## 🎯 使用场景
+
+- 查看话题的完整讨论内容
+- 获取话题中的所有回复
+- 分析话题的对话历史
+
+---
+
+## Parameters
+
+- **threadId**: The thread ID (话题ID, e.g., omt_xxx)
+- **pageToken**: Optional pagination token (分页token)
+- **pageSize**: Number of messages per page (default: 50, 每页数量)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "threadId": "omt_xxx",
+  "pageSize": 30
+}
+\`\`\`
+
+---
+
+## Returns
+
+- **messages**: Array of messages in the thread (话题中的消息列表)
+- **hasMore**: Whether there are more messages (是否有更多)
+- **pageToken**: Token for next page (下一页token)
+
+---
+
+## 📚 参考资料
+
+- [获取会话历史消息 API](https://open.larksuite.com/document/server-docs/im-v1/message/list)`,
+    parameters: z.object({
+      threadId: z.string().describe('The thread ID to get messages from'),
+      pageToken: z.string().optional().describe('Pagination token for next page'),
+      pageSize: z.number().optional().describe('Number of messages per page (default: 50)'),
+    }),
+    handler: async ({ threadId, pageToken, pageSize }) => {
+      try {
+        const result = await get_thread_messages({ threadId, pageToken, pageSize });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+        let output = `💬 Found ${result.messages?.length || 0} messages in thread\n\n`;
+        if (result.messages && result.messages.length > 0) {
+          for (const msg of result.messages.slice(0, 10)) {
+            const sender = msg.senderId || msg.senderType || 'Unknown';
+            const preview = msg.content?.substring(0, 50) || '(no content)';
+            output += `- **${sender}**: ${preview}...\n`;
+          }
+          if (result.messages.length > 10) {
+            output += `\n... and ${result.messages.length - 10} more messages`;
+          }
+        }
+        if (result.hasMore) {
+          output += `\n\n📄 More messages available. Use pageToken: ${result.pageToken}`;
+        }
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Get thread messages failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
