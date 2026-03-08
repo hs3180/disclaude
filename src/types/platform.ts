@@ -10,6 +10,17 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /**
+     * Parent message ID for reply messages.
+     * When a user replies to a message, this field contains the message_id of the replied message.
+     * Issue #846: Support reading quoted/reply message content
+     */
+    parent_id?: string;
+    /**
+     * Root message ID for thread messages.
+     * When a message is part of a thread, this is the root message_id of the thread.
+     */
+    root_id?: string;
     mentions?: Array<{
       key: string;
       id: {
@@ -20,6 +31,12 @@ export interface FeishuMessageEvent {
       name: string;
       tenant_key: string;
     }>;
+    /**
+     * Upper message ID for packed chat history.
+     * When a user forwards packed chat history, this contains the original message context.
+     * Issue #846: Support reading packed chat history
+     */
+    upper_message_id?: string;
   };
   sender: {
     sender_type?: string;
