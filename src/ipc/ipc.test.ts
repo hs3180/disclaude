@@ -52,6 +52,10 @@ describe('UnixSocketIpcServer', () => {
         }
         return cleaned;
       },
+      // Issue #631: 离线消息相关
+      getOfflineContext: () => undefined,
+      generateFollowUpPrompt: () => undefined,
+      unregisterOfflineContext: () => false,
     });
 
     server = new UnixSocketIpcServer(handler, { socketPath });
@@ -127,6 +131,10 @@ describe('UnixSocketIpcClient', () => {
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
+      // Issue #631: 离线消息相关
+      getOfflineContext: () => undefined,
+      generateFollowUpPrompt: () => undefined,
+      unregisterOfflineContext: () => false,
     });
 
     server = new UnixSocketIpcServer(handler, { socketPath });

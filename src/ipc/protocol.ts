@@ -20,7 +20,11 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuGetBotInfo'
+  // Issue #631: 离线消息相关
+  | 'getOfflineContext'
+  | 'generateFollowUpPrompt'
+  | 'unregisterOfflineContext';
 
 /**
  * IPC request payload types.
@@ -60,6 +64,15 @@ export interface IpcRequestPayloads {
     threadId?: string;
   };
   feishuGetBotInfo: Record<string, never>;
+  // Issue #631: 离线消息相关
+  getOfflineContext: { messageId: string };
+  generateFollowUpPrompt: {
+    messageId: string;
+    actionValue: string;
+    actionText?: string;
+    formData?: Record<string, unknown>;
+  };
+  unregisterOfflineContext: { messageId: string };
 }
 
 /**
@@ -87,6 +100,18 @@ export interface IpcResponsePayloads {
     name?: string;
     avatarUrl?: string;
   };
+  // Issue #631: 离线消息相关
+  getOfflineContext: {
+    context: {
+      id: string;
+      messageId: string;
+      chatId: string;
+      taskContext: string;
+      followUpPrompt: string;
+    } | null;
+  };
+  generateFollowUpPrompt: { prompt: string | null };
+  unregisterOfflineContext: { success: boolean };
 }
 
 /**

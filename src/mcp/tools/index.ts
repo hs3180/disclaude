@@ -13,6 +13,8 @@ export type {
   SendInteractiveResult,
   AskUserOptions,
   AskUserResult,
+  OfflineMessageContext,
+  LeaveMessageResult,
 } from './types.js';
 
 export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -25,6 +27,15 @@ export {
   generateInteractionPrompt,
   cleanupExpiredContexts,
 } from './interactive-message.js';
+export {
+  leave_message,
+  registerOfflineContext,
+  getOfflineContext,
+  unregisterOfflineContext,
+  generateFollowUpPrompt,
+  cleanupExpiredOfflineContexts,
+  getAllOfflineContexts,
+} from './leave-message.js';
 
 // Ask User tool (Human-in-the-Loop)
 export { ask_user } from './ask-user.js';

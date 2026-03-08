@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   ask_user,
+  leave_message,
   setMessageSentCallback,
   generate_summary,
   generate_qa_pairs,
@@ -433,6 +434,113 @@ When the user selects an option, you will receive a message with the selection c
       required: ['question', 'options', 'chatId'],
     },
     handler: ask_user,
+  },
+  leave_message: {
+    description: `Send a non-blocking message for offline interaction.
+
+**核心概念**：与 \`send_interactive_message\` 不同，此工具：
+1. **不阻塞等待回复** - Agent 可以继续执行其他任务
+2. **用户回复后触发新任务** - 不是恢复当前任务，而是启动全新的任务
+3. **包含上下文信息** - 新任务会收到原任务的背景信息
+
+---
+
+## 与 \`send_interactive_message\` 的区别
+
+| 特性 | send_interactive_message | leave_message |
+|------|--------------------------|---------------|
+| Agent 行为 | 等待回复后继续 | 继续工作，不等待 |
+| 回复处理 | 恢复当前任务 | **触发新任务** |
+| 适用场景 | 即时决策、快速确认 | 离线讨论、异步反馈 |
+
+---
+
+## 使用场景
+
+### 1. 每日回顾分析后发起讨论
+\`\`\`json
+{
+  "card": {
+    "config": { "wide_screen_mode": true },
+    "header": { "title": { "tag": "plain_text", "content": "需要您的反馈" } },
+    "elements": [
+      { "tag": "markdown", "content": "分析发现您多次要求修正代码格式问题..." },
+      {
+        "tag": "action",
+        "actions": [
+          { "tag": "button", "text": { "tag": "plain_text", "content": "创建 Skill" }, "value": "create_skill", "type": "primary" },
+          { "tag": "button", "text": { "tag": "plain_text", "content": "忽略" }, "value": "ignore" }
+        ]
+      }
+    ]
+  },
+  "actionPrompts": {
+    "create_skill": "用户选择创建 Skill 来自动化处理此问题。",
+    "ignore": "用户选择忽略此问题。"
+  },
+  "taskContext": "每日聊天回顾分析：发现用户多次要求修正代码格式问题，建议创建 Skill 来自动化处理",
+  "followUpPrompt": "## 背景\\n{{taskContext}}\\n\\n## 用户决策\\n{{actionPrompt}}\\n\\n## 请执行\\n根据用户的决策，执行相应的后续操作（如创建 Skill 或记录反馈）。",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 2. 代码重构方案征求同意
+\`\`\`json
+{
+  "card": { ... },
+  "actionPrompts": {
+    "agree": "用户同意了重构方案。",
+    "disagree": "用户反对重构方案。",
+    "discuss": "用户希望进一步讨论。"
+  },
+  "taskContext": "代码重构方案：将 utils 模块拆分为独立包",
+  "followUpPrompt": "## 背景\\n{{taskContext}}\\n\\n## 用户反馈\\n{{actionPrompt}}\\n\\n## 请执行\\n根据用户的反馈，执行相应的后续操作。",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **card**: 交互卡片 JSON 结构（与 send_interactive_message 相同）
+- **actionPrompts**: 动作值到提示模板的映射
+- **taskContext**: 原任务的上下文描述（用于新任务理解背景）
+- **followUpPrompt**: 新任务的提示模板，支持以下占位符：
+  - \`{{taskContext}}\` - 原任务上下文
+  - \`{{actionPrompt}}\` - 用户选择的动作提示
+- **chatId**: 目标群聊 ID
+- **parentMessageId**: 可选，用于话题回复
+- **expirationMs**: 可选，过期时间（毫秒），默认 7 天
+
+---
+
+## followUpPrompt 模板示例
+
+\`\`\`
+## 背景
+{{taskContext}}
+
+## 用户反馈
+{{actionPrompt}}
+
+## 请执行
+根据用户的反馈，执行相应的后续操作。
+\`\`\``,
+    parameters: {
+      type: 'object',
+      properties: {
+        card: { type: 'object' },
+        actionPrompts: { type: 'object', additionalProperties: { type: 'string' } },
+        taskContext: { type: 'string', description: '原任务的上下文描述' },
+        followUpPrompt: { type: 'string', description: '新任务的提示模板' },
+        chatId: { type: 'string' },
+        parentMessageId: { type: 'string' },
+        expirationMs: { type: 'number', description: '过期时间（毫秒），默认 7 天' },
+      },
+      required: ['card', 'actionPrompts', 'taskContext', 'followUpPrompt', 'chatId'],
+    },
+    handler: leave_message,
   },
 };
 
@@ -1071,6 +1179,88 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Issue #631: 离线提问 - 非阻塞交互
+  {
+    name: 'leave_message',
+    description: `Send a non-blocking message for offline interaction.
+
+**核心概念**：与 \`send_interactive_message\` 不同，此工具：
+1. **不阻塞等待回复** - Agent 可以继续执行其他任务
+2. **用户回复后触发新任务** - 不是恢复当前任务，而是启动全新的任务
+3. **包含上下文信息** - 新任务会收到原任务的背景信息
+
+---
+
+## 与 \`send_interactive_message\` 的区别
+
+| 特性 | send_interactive_message | leave_message |
+|------|--------------------------|---------------|
+| Agent 行为 | 等待回复后继续 | 继续工作，不等待 |
+| 回复处理 | 恢复当前任务 | **触发新任务** |
+| 适用场景 | 即时决策、快速确认 | 离线讨论、异步反馈 |
+
+---
+
+## 使用场景
+
+### 1. 每日回顾分析后发起讨论
+\`\`\`json
+{
+  "card": {
+    "config": { "wide_screen_mode": true },
+    "header": { "title": { "tag": "plain_text", "content": "需要您的反馈" } },
+    "elements": [
+      { "tag": "markdown", "content": "分析发现您多次要求修正代码格式问题..." },
+      {
+        "tag": "action",
+        "actions": [
+          { "tag": "button", "text": { "tag": "plain_text", "content": "创建 Skill" }, "value": "create_skill", "type": "primary" },
+          { "tag": "button", "text": { "tag": "plain_text", "content": "忽略" }, "value": "ignore" }
+        ]
+      }
+    ]
+  },
+  "actionPrompts": {
+    "create_skill": "用户选择创建 Skill 来自动化处理此问题。",
+    "ignore": "用户选择忽略此问题。"
+  },
+  "taskContext": "每日聊天回顾分析：发现用户多次要求修正代码格式问题，建议创建 Skill 来自动化处理",
+  "followUpPrompt": "## 背景\\n{{taskContext}}\\n\\n## 用户决策\\n{{actionPrompt}}\\n\\n## 请执行\\n根据用户的决策，执行相应的后续操作。",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **card**: 交互卡片 JSON 结构（与 send_interactive_message 相同）
+- **actionPrompts**: 动作值到提示模板的映射
+- **taskContext**: 原任务的上下文描述（用于新任务理解背景）
+- **followUpPrompt**: 新任务的提示模板，支持以下占位符：
+  - \`{{taskContext}}\` - 原任务上下文
+  - \`{{actionPrompt}}\` - 用户选择的动作提示
+- **chatId**: 目标群聊 ID
+- **parentMessageId**: 可选，用于话题回复
+- **expirationMs**: 可选，过期时间（毫秒），默认 7 天`,
+    parameters: z.object({
+      card: z.object({}).passthrough(),
+      actionPrompts: z.record(z.string(), z.string()),
+      taskContext: z.string(),
+      followUpPrompt: z.string(),
+      chatId: z.string(),
+      parentMessageId: z.string().optional(),
+      expirationMs: z.number().optional(),
+    }),
+    handler: async ({ card, actionPrompts, taskContext, followUpPrompt, chatId, parentMessageId, expirationMs }) => {
+      try {
+        const result = await leave_message({ card, actionPrompts, taskContext, followUpPrompt, chatId, parentMessageId, expirationMs });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Leave message failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

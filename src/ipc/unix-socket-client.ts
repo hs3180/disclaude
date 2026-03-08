@@ -499,6 +499,60 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // Issue #631: 离线消息相关方法
+
+  /**
+   * Get offline message context via IPC.
+   */
+  async getOfflineContext(messageId: string): Promise<{
+    id: string;
+    messageId: string;
+    chatId: string;
+    taskContext: string;
+    followUpPrompt: string;
+  } | null> {
+    try {
+      const response = await this.request('getOfflineContext', { messageId });
+      return response.context;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Generate follow-up prompt for offline message via IPC.
+   */
+  async generateFollowUpPrompt(
+    messageId: string,
+    actionValue: string,
+    actionText?: string,
+    formData?: Record<string, unknown>
+  ): Promise<string | null> {
+    try {
+      const response = await this.request('generateFollowUpPrompt', {
+        messageId,
+        actionValue,
+        actionText,
+        formData,
+      });
+      return response.prompt;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Unregister offline context via IPC.
+   */
+  async unregisterOfflineContext(messageId: string): Promise<boolean> {
+    try {
+      const response = await this.request('unregisterOfflineContext', { messageId });
+      return response.success;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Handle incoming data.
    */

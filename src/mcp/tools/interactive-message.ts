@@ -24,6 +24,11 @@ import {
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
+import {
+  getOfflineContext,
+  generateFollowUpPrompt,
+  unregisterOfflineContext,
+} from './leave-message.js';
 
 const logger = createLogger('InteractiveMessage');
 
@@ -395,6 +400,33 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     unregisterActionPrompts,
     generateInteractionPrompt,
     cleanupExpiredContexts,
+    // Issue #631: 离线消息相关
+    getOfflineContext: (messageId: string) => {
+      const context = getOfflineContext(messageId);
+      if (!context) {
+        return undefined;
+      }
+      return {
+        id: context.id,
+        messageId: context.messageId,
+        chatId: context.chatId,
+        taskContext: context.taskContext,
+        followUpPrompt: context.followUpPrompt,
+      };
+    },
+    generateFollowUpPrompt: (
+      messageId: string,
+      actionValue: string,
+      actionText?: string,
+      formData?: Record<string, unknown>
+    ) => {
+      const context = getOfflineContext(messageId);
+      if (!context) {
+        return undefined;
+      }
+      return generateFollowUpPrompt(context, actionValue, actionText, formData);
+    },
+    unregisterOfflineContext,
   }, feishuHandlersContainer);
 
   ipcServer = new UnixSocketIpcServer(handler);
