@@ -651,7 +651,6 @@ export class MessageHandler {
         metadata: {
           cardAction: action,
           cardMessageId: message_id,
-          wasPendingInteraction: resolved,
           usedPromptTemplate: !!promptFromTemplate,
         },
       });
@@ -662,11 +661,6 @@ export class MessageHandler {
       );
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
-    }
-
-    // Return early if resolved
-    if (resolved) {
-      return;
     }
 
     try {
