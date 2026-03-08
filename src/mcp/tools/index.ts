@@ -13,6 +13,8 @@ export type {
   SendInteractiveResult,
   AskUserOptions,
   AskUserResult,
+  ReviewChangeItem,
+  RequestReviewResult,
 } from './types.js';
 
 export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
@@ -28,6 +30,9 @@ export {
 
 // Ask User tool (Human-in-the-Loop)
 export { ask_user } from './ask-user.js';
+
+// Request Review tool (Issue #946: 御书房批奏折体验)
+export { request_review, quick_review } from './request-review.js';
 
 // Study Guide Generator (NotebookLM M4)
 export {

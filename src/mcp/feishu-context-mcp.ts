@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   ask_user,
+  request_review,
   setMessageSentCallback,
   generate_summary,
   generate_qa_pairs,
@@ -36,6 +37,7 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { request_review, quick_review } from './tools/request-review.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -834,6 +836,119 @@ When the user selects an option, you will receive a message with the selection c
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Ask user failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Request Review Tool (Issue #946: 御书房批奏折体验)
+  {
+    name: 'request_review',
+    description: `Request user review with a structured "御书房批奏折" (Imperial Study Review) card.
+
+This tool provides a streamlined review experience with quick action buttons.
+When the user clicks a button, you will receive a message with the action context.
+
+---
+
+## 🎯 主题风格
+
+| 主题 | 描述 | 按钮文案 |
+|------|------|----------|
+| \`imperial\` | 御书房 - 古典宫廷风 | 👑 准奏 / ❌ 驳回 / 📝 再议 |
+| \`modern\` | 现代 - 专业简洁 | ✅ 批准 / ❌ 拒绝 / 🔄 需要修改 |
+| \`minimal\` | 简约 - 极简风格 | 同意 / 拒绝 / 修改 |
+
+---
+
+## 📋 使用场景
+
+### 1. 代码变更审查
+\`\`\`json
+{
+  "title": "代码变更请求",
+  "summary": "修复了用户认证的 bug",
+  "theme": "imperial",
+  "changes": [
+    { "path": "src/auth.ts", "type": "modified", "additions": 50, "deletions": 10 }
+  ],
+  "context": "PR #123",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 2. 带 Diff 预览的审查
+\`\`\`json
+{
+  "title": "代码审查",
+  "summary": "重构了数据库连接模块",
+  "diff": "--- a/db.ts\\n+++ b/db.ts\\n...",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 3. 批量审批
+\`\`\`json
+{
+  "title": "批量审批",
+  "items": [
+    { "name": "PR #101", "description": "Fix login bug" },
+    { "name": "PR #102", "description": "Add dark mode" }
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **title**: Review title/subject (required)
+- **summary**: Review summary/description
+- **theme**: "imperial" | "modern" | "minimal" (default: "modern")
+- **changes**: List of changes with path, type, additions, deletions
+- **diff**: Diff content to display (for code reviews)
+- **items**: Items for batch review
+- **context**: Context information (e.g., PR number)
+- **chatId**: Target chat ID (required)
+- **parentMessageId**: Optional, for thread reply
+
+---
+
+## How It Works
+
+1. You call request_review with title and optional changes/diff
+2. A beautifully formatted review card is sent to the user
+3. When the user clicks a button, you receive a message like:
+   \`[用户操作] 用户批准：PR #123。请继续执行后续操作。\`
+4. You continue execution based on the action`,
+    parameters: z.object({
+      title: z.string(),
+      summary: z.string().optional(),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional(),
+      changes: z.array(z.object({
+        path: z.string(),
+        type: z.enum(['added', 'modified', 'deleted', 'renamed']),
+        description: z.string().optional(),
+        additions: z.number().optional(),
+        deletions: z.number().optional(),
+      })).optional(),
+      diff: z.string().optional(),
+      maxDiffLines: z.number().optional(),
+      items: z.array(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+      })).optional(),
+      context: z.string().optional(),
+      details: z.string().optional(),
+      footerNote: z.string().optional(),
+      chatId: z.string(),
+      parentMessageId: z.string().optional(),
+    }),
+    handler: async (params) => {
+      try {
+        const result = await request_review(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Request review failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

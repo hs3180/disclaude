@@ -89,3 +89,30 @@ export interface AskUserResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Change item for review card.
+ */
+export interface ReviewChangeItem {
+  /** File path or item name */
+  path: string;
+  /** Change type */
+  type: 'added' | 'modified' | 'deleted' | 'renamed';
+  /** Optional description of the change */
+  description?: string;
+  /** Number of lines added (for code changes) */
+  additions?: number;
+  /** Number of lines removed (for code changes) */
+  deletions?: number;
+}
+
+/**
+ * Result type for request_review tool.
+ * Issue #946: AI 请求 review 时应提供御书房批奏折般的丝滑体验
+ */
+export interface RequestReviewResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  error?: string;
+}
