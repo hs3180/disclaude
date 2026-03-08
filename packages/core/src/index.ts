@@ -14,6 +14,9 @@
 // Types
 export * from './types/index.js';
 
+// Node types
+export * from './types/node.js';
+
 // Constants
 export * from './constants/index.js';
 
