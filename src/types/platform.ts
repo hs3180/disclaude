@@ -50,6 +50,27 @@ export interface FeishuMessageEvent {
 }
 
 /**
+ * Chat record message structure for forwarded/packed conversations.
+ * Issue #1123: Support chat_record message type for forwarded chat history
+ * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/im-v1/message/events/receive_v1
+ */
+export interface FeishuChatRecordContent {
+  /** List of messages in the packed conversation */
+  messages: Array<{
+    message_id: string;
+    content: string;
+    message_type: string;
+    create_time?: number;
+    sender?: {
+      sender_id?: {
+        open_id?: string;
+        user_id?: string;
+      };
+    };
+  }>;
+}
+
+/**
  * Feishu WebSocket event data wrapper.
  */
 export interface FeishuEventData {
