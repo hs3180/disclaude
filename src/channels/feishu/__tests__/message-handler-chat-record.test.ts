@@ -59,7 +59,7 @@ describe('MessageHandler - chat_record metadata', () => {
     };
     await handler.handleMessageReceive(eventData);
     expect(emitMessageMock).toHaveBeenCalledTimes(1);
-    const callArgs = emitMessageMock.mock.calls[0][0];
+    const [[callArgs]] = emitMessageMock.mock.calls;
     expect(callArgs.messageType).toBe('chat_record');
     expect(callArgs.metadata?.isChatRecord).toBe(true);
     expect(callArgs.metadata?.messageCount).toBe(2);
