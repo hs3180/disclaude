@@ -141,7 +141,7 @@ export async function reply_in_thread(params: {
       logger.info({ messageId, replyId: result.messageId }, 'Reply sent successfully');
       return {
         success: true,
-        message: `✅ Reply sent to thread`,
+        message: '✅ Reply sent to thread',
         messageId: result.messageId,
       };
     } else {
