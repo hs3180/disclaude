@@ -74,6 +74,9 @@ import { ScheduleManagement } from './schedule-management.js';
 import { buildCommandServices } from './command-services.js';
 // Issue #935: Card action routing to Worker Nodes
 import { CardActionRouter } from './card-action-router.js';
+// Issue #1085: Generate interaction prompt on Primary Node before routing
+import { generateInteractionPrompt } from '../mcp/tools/interactive-message.js';
+import { getIpcClient } from '../ipc/unix-socket-client.js';
 // Issue #455: Skill Agent System
 import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
 // Issue #1032: Unified Lark Client Service
@@ -781,10 +784,54 @@ export class PrimaryNode extends EventEmitter {
    * Route a card action to the appropriate handler.
    * If the card was sent by a Worker Node, forward the action to that node.
    *
+   * Issue #1085: Primary Node generates prompt content before routing to Worker Node.
+   * This ensures all interaction processing happens on Primary Node,
+   * and Worker Node only receives the pre-processed prompt content.
+   *
    * @param message - Card action message to route
    * @returns True if the action was routed to a Worker Node, false otherwise
    */
-  routeCardAction(message: CardActionMessage): Promise<boolean> {
+  async routeCardAction(message: CardActionMessage): Promise<boolean> {
+    // Issue #1085: Generate prompt content on Primary Node before routing
+    // Try IPC first (cross-process), then fall back to local function (same-process)
+    let promptContent: string | undefined;
+
+    try {
+      const ipcClient = getIpcClient();
+      if (ipcClient.isConnected()) {
+        // Cross-process: query via IPC
+        promptContent = await ipcClient.generateInteractionPrompt(
+          message.cardMessageId,
+          message.actionValue,
+          message.actionText,
+          message.actionType
+        ) ?? undefined;
+        if (promptContent) {
+          logger.debug({ cardMessageId: message.cardMessageId }, 'Got prompt template via IPC');
+        }
+      }
+
+      // Fallback to local function (same-process)
+      if (!promptContent) {
+        promptContent = generateInteractionPrompt(
+          message.cardMessageId,
+          message.actionValue,
+          message.actionText,
+          message.actionType
+        );
+        if (promptContent) {
+          logger.debug({ cardMessageId: message.cardMessageId }, 'Got prompt template from local function');
+        }
+      }
+    } catch (error) {
+      logger.warn({ err: error, cardMessageId: message.cardMessageId }, 'Failed to generate interaction prompt');
+    }
+
+    // Add prompt content to message for Worker Node
+    if (promptContent) {
+      message.promptContent = promptContent;
+    }
+
     return this.cardActionRouter.routeCardAction(message);
   }
 

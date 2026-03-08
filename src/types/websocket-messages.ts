@@ -95,6 +95,7 @@ export interface FeedbackMessage {
  * This enables Worker Node to receive card interaction callbacks from Primary Node.
  *
  * Issue #935: WebSocket bidirectional communication for card actions.
+ * Issue #1085: Primary Node generates prompt content before routing to Worker Node.
  */
 export interface CardActionMessage {
   type: 'card_action';
@@ -117,6 +118,12 @@ export interface CardActionMessage {
     text?: string;
     trigger?: string;
   };
+  /**
+   * Pre-generated prompt content from Primary Node.
+   * Issue #1085: Primary Node handles interaction processing, Worker just uses this content.
+   * If not provided, Worker should use a default message.
+   */
+  promptContent?: string;
 }
 
 /**

@@ -475,30 +475,22 @@ export class WorkerNode {
         }
 
         // Issue #935: Handle card action messages from Primary Node
+        // Issue #1085: Primary Node generates prompt content, Worker just uses it
         if (message.type === 'card_action') {
           const cardActionMsg = message as CardActionMessage;
-          const { chatId, cardMessageId, actionType, actionValue, actionText, userId } = cardActionMsg;
+          const { chatId, cardMessageId, actionType, actionValue, actionText, userId, promptContent } = cardActionMsg;
           logger.info(
-            { chatId, cardMessageId, actionType, actionValue, userId },
+            { chatId, cardMessageId, actionType, actionValue, userId, hasPromptContent: !!promptContent },
             'Received card action from Primary Node'
           );
-
-          // Import the necessary functions to handle card actions
-          const { generateInteractionPrompt } = await import('../mcp/tools/interactive-message.js');
 
           // Get the agent for this chatId and process the card action
           const ctx = this.activeFeedbackChannels.get(chatId);
           if (ctx) {
-            // Generate prompt from template if available
-            const promptFromTemplate = generateInteractionPrompt(
-              cardMessageId,
-              actionValue,
-              actionText,
-              actionType
-            );
-
-            // Use the template prompt if available, otherwise use default message
-            const messageContent = promptFromTemplate || (() => {
+            // Issue #1085: Use pre-generated prompt content from Primary Node
+            // Worker Node no longer calls generateInteractionPrompt directly
+            // This ensures all interaction processing happens on Primary Node
+            const messageContent = promptContent || (() => {
               const buttonText = actionText || actionValue;
               return `User clicked '${buttonText}' button`;
             })();
