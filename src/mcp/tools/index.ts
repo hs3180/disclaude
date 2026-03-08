@@ -53,3 +53,15 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Review Tools (Issue #946)
+export {
+  request_review,
+  request_quick_review,
+  request_batch_review,
+} from './request-review.js';
+
+export type {
+  RequestReviewParams,
+  RequestReviewResult,
+} from './request-review.js';
