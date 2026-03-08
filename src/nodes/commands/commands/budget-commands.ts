@@ -18,10 +18,10 @@ import { getCreditService, type AgentAccount } from '../../../experts/index.js';
  */
 function formatAccount(account: AgentAccount): string {
   const lines: string[] = [
-    `💳 **账户信息**`,
+    '💳 **账户信息**',
     `   Agent: \`${account.agentId}\``,
     `   💰 余额: ${account.balance} 积分`,
-    `   📊 每日限额: ${account.dailyLimit === 0 ? '无限制' : account.dailyLimit + ' 积分'}`,
+    `   📊 每日限额: ${account.dailyLimit === 0 ? '无限制' : `${account.dailyLimit  } 积分`}`,
     `   📈 今日已用: ${account.usedToday} 积分`,
   ];
 
@@ -49,7 +49,7 @@ export class BudgetCommand implements Command {
   readonly usage = 'budget <balance|recharge|limit|history>';
 
   execute(context: CommandContext): CommandResult {
-    const { args, chatId } = context;
+    const { args, chatId: _chatId } = context;
     const subCommand = args[0]?.toLowerCase();
 
     switch (subCommand) {
@@ -97,8 +97,7 @@ export class BudgetCommand implements Command {
     // TODO: Add admin check when admin system is implemented
     // For now, allow anyone to recharge for testing purposes
 
-    const agentId = args[1];
-    const amountStr = args[2];
+    const [, agentId, amountStr] = args;
 
     if (!agentId) {
       return { success: false, error: '❌ 请指定 Agent ID\n\n用法: /budget recharge <agent> <积分>' };
@@ -127,8 +126,7 @@ export class BudgetCommand implements Command {
 
     // TODO: Add admin check when admin system is implemented
 
-    const agentId = args[1];
-    const limitStr = args[2];
+    const [, agentId, limitStr] = args;
 
     if (!agentId) {
       return { success: false, error: '❌ 请指定 Agent ID\n\n用法: /budget limit <agent> <每日限额>\n\n提示: 设为 0 表示无限制' };
@@ -142,7 +140,7 @@ export class BudgetCommand implements Command {
       }
       return {
         success: true,
-        message: `📊 Agent \`${agentId}\` 的每日限额: ${account.dailyLimit === 0 ? '无限制' : account.dailyLimit + ' 积分'}`,
+        message: `📊 Agent \`${agentId}\` 的每日限额: ${account.dailyLimit === 0 ? '无限制' : `${account.dailyLimit  } 积分`}`,
       };
     }
 
@@ -159,7 +157,7 @@ export class BudgetCommand implements Command {
 
     return {
       success: true,
-      message: `✅ **每日限额已设置**\n\n📊 Agent: \`${agentId}\`\n💰 每日限额: ${limit === 0 ? '无限制' : limit + ' 积分'}`,
+      message: `✅ **每日限额已设置**\n\n📊 Agent: \`${agentId}\`\n💰 每日限额: ${limit === 0 ? '无限制' : `${limit  } 积分`}`,
     };
   }
 

@@ -256,7 +256,7 @@ export class ExpertCommand implements Command {
       };
     }
 
-    const priceStr = args[1];
+    const [, priceStr] = args;
 
     if (!priceStr) {
       // Show current price
