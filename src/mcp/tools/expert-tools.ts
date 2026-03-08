@@ -6,7 +6,7 @@
  * @see Issue #536 - 专家查询与匹配
  */
 
-import { getExpertService, type ExpertProfile, type SkillLevel } from '../../experts/index.js';
+import { getExpertService, type SkillLevel } from '../../experts/index.js';
 import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('expert-tools');
