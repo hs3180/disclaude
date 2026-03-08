@@ -32,13 +32,16 @@ interface PendingRequest {
 }
 
 /**
+ * IPC unavailable reason types.
+ */
+export type IpcUnavailableReason = 'socket_not_found' | 'connection_failed' | 'timeout' | 'error';
+
+/**
  * IPC availability status for better error handling.
  */
 export type IpcAvailabilityStatus =
   | { available: true }
   | { available: false; reason: IpcUnavailableReason; error?: Error };
-
-export type IpcUnavailableReason = 'socket_not_found' | 'connection_failed' | 'timeout' | 'error';
 
 /**
  * Unix Socket IPC Client.
