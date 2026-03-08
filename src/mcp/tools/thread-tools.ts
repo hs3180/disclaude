@@ -110,7 +110,7 @@ export async function reply_in_thread(params: {
     logger.debug({ messageId, responseMessageId: response.data?.message_id }, 'Thread reply sent');
     return {
       success: true,
-      message: `✅ Thread reply sent successfully`,
+      message: '✅ Thread reply sent successfully',
       messageId: response.data?.message_id,
     };
 
@@ -172,7 +172,7 @@ export async function get_threads(params: {
     const threads: ThreadMessage[] = [];
 
     for await (const page of iterator) {
-      if (!page?.items) continue;
+      if (!page?.items) {continue;}
 
       for (const item of page.items) {
         // Only include messages that have thread_id (thread root messages)
@@ -256,7 +256,7 @@ export async function get_thread_messages(params: {
     const messages: ThreadMessage[] = [];
 
     for await (const page of iterator) {
-      if (!page?.items) continue;
+      if (!page?.items) {continue;}
 
       for (const item of page.items) {
         messages.push({
