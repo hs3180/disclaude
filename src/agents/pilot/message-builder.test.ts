@@ -97,9 +97,9 @@ describe('MessageBuilder', () => {
 
       const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
 
-      expect(result).toContain('Image attachment(s) detected');
-      expect(result).toContain('analyze_image');
-      expect(result).toContain('image analyzer MCP');
+      expect(result).toContain('Image Analysis Guide');
+      expect(result).toContain('mcp__4_5v_mcp__analyze_image');
+      expect(result).toContain('visual analysis');
     });
 
     it('should not include image analyzer hint when no image analyzer MCP is configured', async () => {
@@ -116,8 +116,8 @@ describe('MessageBuilder', () => {
 
       const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
 
-      expect(result).not.toContain('Image attachment(s) detected');
-      expect(result).not.toContain('analyze_image');
+      expect(result).not.toContain('Image Analysis Guide');
+      expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
     });
 
     it('should not include image analyzer hint for non-image attachments', async () => {
@@ -136,7 +136,7 @@ describe('MessageBuilder', () => {
 
       const result = getAttachmentsInfo(new MessageBuilder(), textAttachment);
 
-      expect(result).not.toContain('Image attachment(s) detected');
+      expect(result).not.toContain('Image Analysis Guide');
     });
 
     it('should return empty string for no attachments', () => {
@@ -167,7 +167,7 @@ describe('MessageBuilder', () => {
         }];
 
         const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
-        expect(result).toContain('analyze_image');
+        expect(result).toContain('Image Analysis Guide');
       }
     });
   });
