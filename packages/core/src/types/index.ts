@@ -39,3 +39,15 @@ export type {
   CardActionMessage,
   CardContextMessage,
 } from './websocket-messages.js';
+
+// IPC types
+export type {
+  IpcRequestType,
+  IpcRequestPayloads,
+  IpcResponsePayloads,
+  IpcRequest,
+  IpcResponse,
+  IpcConfig,
+} from './ipc.js';
+
+export { DEFAULT_IPC_CONFIG } from './ipc.js';
