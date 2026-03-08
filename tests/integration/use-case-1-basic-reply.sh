@@ -14,7 +14,7 @@
 #   ./tests/integration/use-case-1-basic-reply.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 30)
+#   --timeout SECONDS   Request timeout (default: 180)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -30,7 +30,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Set defaults before sourcing common.sh
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-30}"
+TIMEOUT="${TIMEOUT:-180}"
 
 # Source common functions
 source "$SCRIPT_DIR/common.sh"

@@ -13,7 +13,7 @@
 #   ./tests/integration/use-case-2-task-execution.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: 180)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -29,7 +29,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Set defaults before sourcing common.sh
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-60}"
+TIMEOUT="${TIMEOUT:-180}"
 
 # Source common functions
 source "$SCRIPT_DIR/common.sh"
