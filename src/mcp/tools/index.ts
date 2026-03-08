@@ -41,6 +41,20 @@ export type {
   GetThreadMessagesToolResult,
 } from './thread-tools.js';
 
+// Start Discussion tool (Issue #631: 离线提问)
+export {
+  start_discussion,
+  registerDiscussionCallback,
+  getDiscussionCallback,
+  unregisterDiscussionCallback,
+  cleanupExpiredDiscussionCallbacks,
+} from './start-discussion.js';
+export type {
+  StartDiscussionOptions,
+  StartDiscussionResult,
+  DiscussionResponseCallback,
+} from './start-discussion.js';
+
 // Study Guide Generator (NotebookLM M4)
 export {
   generate_summary,

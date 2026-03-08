@@ -10,6 +10,7 @@ import {
   send_message,
   send_file,
   send_interactive_message,
+  start_discussion,
   setMessageSentCallback,
   create_study_guide,
   reply_in_thread,
@@ -34,6 +35,18 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export {
+  start_discussion,
+  registerDiscussionCallback,
+  getDiscussionCallback,
+  unregisterDiscussionCallback,
+  cleanupExpiredDiscussionCallbacks,
+} from './tools/start-discussion.js';
+export type {
+  StartDiscussionOptions,
+  StartDiscussionResult,
+  DiscussionResponseCallback,
+} from './tools/start-discussion.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -473,6 +486,104 @@ Returns an array of messages, each containing:
         return toolSuccess(output);
       } catch (error) {
         return toolSuccess(`⚠️ Get thread messages failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Start Discussion tool (Issue #631: 离线提问)
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking offline discussion (Issue #631).
+
+This tool allows you to initiate a discussion without blocking your work:
+1. Creates a new discussion group (if chatId not provided)
+2. Sends an initial message
+3. Continues working without waiting for response
+
+---
+
+## 🎯 使用场景
+
+### 1. 每日回顾讨论
+\`\`\`json
+{
+  "topic": "每日聊天回顾 - 重复问题讨论",
+  "message": "今天的聊天回顾发现了一些重复问题，想和大家讨论一下...",
+  "members": ["ou_user1", "ou_user2"],
+  "followUpContext": "daily-review-2024-01-15"
+}
+\`\`\`
+
+### 2. 代码风格讨论
+\`\`\`json
+{
+  "topic": "代码风格统一讨论",
+  "message": "最近发现代码风格有些不一致，建议制定统一的规范...",
+  "members": ["ou_dev1", "ou_dev2"],
+  "isTopicGroup": true
+}
+\`\`\`
+
+### 3. 在现有群发起讨论
+\`\`\`json
+{
+  "topic": "紧急问题讨论",
+  "message": "发现了一个紧急问题需要大家关注...",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **topic**: Discussion topic/title (used as group name for new groups)
+- **message**: Initial message to send (non-blocking)
+- **chatId**: Existing chat ID (optional - creates new group if not provided)
+- **members**: User open_ids to add to new group (optional)
+- **creatorId**: Creator open_id for tracking (optional)
+- **followUpContext**: Context for follow-up actions when users respond (optional)
+- **isTopicGroup**: Whether this is a topic group/BBS mode (optional, default: false)
+
+---
+
+## 非阻塞特性
+
+与 \`ask_user\` 不同，这个工具是**非阻塞**的：
+- \`ask_user\`: 发送问题后等待用户响应，阻塞当前任务
+- \`start_discussion\`: 发起讨论后立即返回，继续工作
+
+当用户回复时，系统可以根据 \`followUpContext\` 触发后续动作。
+
+---
+
+## Best Practices
+
+1. **明确主题**: topic 应该清晰描述讨论内容
+2. **提供上下文**: message 应包含足够的背景信息
+3. **选择合适的人**: members 应该包含相关人员
+4. **标记话题群**: 如果是长期讨论，设置 isTopicGroup: true`,
+    parameters: z.object({
+      topic: z.string(),
+      message: z.string(),
+      chatId: z.string().optional(),
+      members: z.array(z.string()).optional(),
+      creatorId: z.string().optional(),
+      followUpContext: z.string().optional(),
+      isTopicGroup: z.boolean().optional(),
+    }),
+    handler: async ({ topic, message, chatId, members, creatorId, followUpContext, isTopicGroup }) => {
+      try {
+        const result = await start_discussion({ topic, message, chatId, members, creatorId, followUpContext, isTopicGroup });
+        if (result.success) {
+          let output = result.message;
+          if (result.chatId) {
+            output += ` (chatId: ${result.chatId})`;
+          }
+          return toolSuccess(output);
+        }
+        return toolSuccess(`⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Start discussion failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
