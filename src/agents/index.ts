@@ -105,3 +105,17 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// SubagentManager - Unified subagent spawning (Issue #997)
+export {
+  SubagentManager,
+  getSubagentManager,
+  initSubagentManager,
+  resetSubagentManager,
+  type SubagentType,
+  type IsolationMode,
+  type SubagentStatus,
+  type SubagentOptions,
+  type SubagentHandle,
+  type SubagentStatusCallback,
+} from './subagent-manager.js';
