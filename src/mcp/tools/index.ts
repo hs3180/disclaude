@@ -53,3 +53,15 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Mind Map Generator (NotebookLM M3)
+export {
+  generate_mindmap,
+  generate_mindmap_prompt,
+} from './mindmap-generator.js';
+
+export type {
+  MindmapNode,
+  MindmapGeneratorOptions,
+  MindmapGeneratorResult,
+} from './mindmap-generator.js';
