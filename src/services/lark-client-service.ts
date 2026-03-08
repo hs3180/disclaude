@@ -646,7 +646,7 @@ export class LarkClientService {
    * Helper method for Thread API operations.
    */
   private extractMessageContent(body: unknown): string {
-    if (!body) return '';
+    if (!body) {return '';}
 
     try {
       const bodyObj = body as Record<string, unknown>;
@@ -654,7 +654,7 @@ export class LarkClientService {
         // Try to parse JSON content
         try {
           const parsed = JSON.parse(bodyObj.content as string);
-          if (parsed.text) return parsed.text;
+          if (parsed.text) {return parsed.text;}
           return bodyObj.content as string;
         } catch {
           return bodyObj.content as string;
