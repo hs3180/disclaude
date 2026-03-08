@@ -725,17 +725,52 @@ export class MessageHandler {
 
   /**
    * Handle card action event from WebSocket.
+   *
+   * Feishu event structure (actual):
+   * {
+   *   schema: "2.0",
+   *   event_type: "card.action.trigger",
+   *   operator: { open_id, user_id, union_id, tenant_key },
+   *   action: { value, tag },
+   *   host: "im_message",
+   *   context: { open_message_id, open_chat_id }
+   * }
    */
   async handleCardAction(data: FeishuCardActionEventData): Promise<void> {
     if (!this.isRunning()) {
       return;
     }
 
-    const event = (data.event || data) as FeishuCardActionEvent;
-    const { action, message_id, chat_id, user } = event;
+    // Parse actual Feishu event structure
+    // The event data is at the top level, not nested under "event"
+    const rawData = data as Record<string, unknown>;
+    const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
+    const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
+    const actionData = rawData.action as { value?: string; tag?: string; type?: string } | undefined;
+
+    // Extract fields from actual structure
+    const message_id = context?.open_message_id;
+    const chat_id = context?.open_chat_id;
+    const action = actionData ? {
+      type: actionData.tag ?? actionData.type ?? '',
+      value: actionData.value ?? '',
+      trigger: 'button' as const,
+    } : undefined;
+    const user = operator ? {
+      sender_id: {
+        open_id: operator.open_id ?? '',
+        user_id: operator.user_id,
+        union_id: operator.union_id,
+      },
+    } : undefined;
 
     if (!action || !message_id || !chat_id) {
-      logger.warn('Missing required card action fields');
+      logger.warn({
+        hasAction: !!action,
+        hasMessageId: !!message_id,
+        hasChatId: !!chat_id,
+        eventData: JSON.stringify(data),
+      }, 'Missing required card action fields');
       return;
     }
 
@@ -745,7 +780,6 @@ export class MessageHandler {
         chatId: chat_id,
         actionType: action.type,
         actionValue: action.value,
-        trigger: action.trigger,
         userId: user?.sender_id?.open_id,
       },
       'Card action received'
@@ -836,7 +870,15 @@ export class MessageHandler {
 
     try {
       // Try to handle via InteractionManager
-      const handled = await this.interactionManager.handleAction(event, async (defaultEvent) => {
+      // Build a compatible FeishuCardActionEvent for InteractionManager
+      const compatEvent: FeishuCardActionEvent = {
+        action,
+        message_id,
+        chat_id,
+        user,
+        tenant_key: (rawData.tenant_key as string) || '',
+      };
+      const handled = await this.interactionManager.handleAction(compatEvent, async (defaultEvent) => {
         // Try to get a pre-defined prompt template via IPC first (cross-process),
         // then fall back to local function (same-process)
         let promptFromTemplate: string | undefined;
