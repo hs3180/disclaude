@@ -228,7 +228,7 @@ export class CreditService {
    */
   recharge(agentId: string, amount: number, description: string = '管理员充值'): AgentAccount {
     const account = this.getOrCreateAccount(agentId);
-    const previousBalance = account.balance;
+    const _previousBalance = account.balance;
 
     account.balance += amount;
     account.updatedAt = Date.now();
