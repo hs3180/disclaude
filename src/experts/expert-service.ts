@@ -5,6 +5,7 @@
  * Stores expert metadata in workspace/experts.json.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import * as fs from 'fs';
@@ -68,6 +69,18 @@ interface ExpertRegistry {
 export interface ExpertServiceConfig {
   /** Storage file path (default: workspace/experts.json) */
   filePath?: string;
+}
+
+/**
+ * Options for findExperts method.
+ */
+export interface FindExpertsOptions {
+  /** Minimum skill level filter */
+  minLevel?: SkillLevel;
+  /** Only return currently available experts */
+  available?: boolean;
+  /** Maximum number of results */
+  limit?: number;
 }
 
 /**
@@ -298,6 +311,125 @@ export class ExpertService {
         return (nameMatch || tagMatch) && levelMatch;
       });
     });
+  }
+
+  /**
+   * Check if an expert is currently available.
+   *
+   * Parses the availability string and checks if current time falls within the available period.
+   * Supports formats like:
+   * - "weekdays 10:00-18:00" (Monday-Friday, 10am-6pm)
+   * - "daily 09:00-17:00" (Every day, 9am-5pm)
+   * - "always" (Always available)
+   * - "weekends 14:00-20:00" (Saturday-Sunday, 2pm-8pm)
+   *
+   * @param userId - User ID
+   * @param now - Current time (default: new Date())
+   * @returns Whether the expert is available
+   */
+  isAvailable(userId: string, now: Date = new Date()): boolean {
+    const profile = this.registry.experts[userId];
+    if (!profile || !profile.availability) {
+      // If no availability set, assume available
+      return true;
+    }
+
+    return this.parseAvailability(profile.availability, now);
+  }
+
+  /**
+   * Parse availability string and check if current time matches.
+   *
+   * @param availability - Availability string
+   * @param now - Current time
+   * @returns Whether the current time is within availability
+   */
+  private parseAvailability(availability: string, now: Date): boolean {
+    const lower = availability.toLowerCase().trim();
+
+    // "always" means always available
+    if (lower === 'always' || lower === '随时') {
+      return true;
+    }
+
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute;
+
+    // Parse day pattern
+    let dayMatch = true;
+    let timeMatch = false;
+
+    // Check day patterns
+    if (lower.includes('weekday') || lower.includes('工作日')) {
+      dayMatch = dayOfWeek >= 1 && dayOfWeek <= 5;
+    } else if (lower.includes('weekend') || lower.includes('周末')) {
+      dayMatch = dayOfWeek === 0 || dayOfWeek === 6;
+    } else if (lower.includes('daily') || lower.includes('每天')) {
+      dayMatch = true;
+    } else if (lower.includes('monday') || lower.includes('周一')) {
+      dayMatch = dayOfWeek === 1;
+    } else if (lower.includes('tuesday') || lower.includes('周二')) {
+      dayMatch = dayOfWeek === 2;
+    } else if (lower.includes('wednesday') || lower.includes('周三')) {
+      dayMatch = dayOfWeek === 3;
+    } else if (lower.includes('thursday') || lower.includes('周四')) {
+      dayMatch = dayOfWeek === 4;
+    } else if (lower.includes('friday') || lower.includes('周五')) {
+      dayMatch = dayOfWeek === 5;
+    } else if (lower.includes('saturday') || lower.includes('周六')) {
+      dayMatch = dayOfWeek === 6;
+    } else if (lower.includes('sunday') || lower.includes('周日')) {
+      dayMatch = dayOfWeek === 0;
+    }
+
+    // Parse time range (e.g., "10:00-18:00" or "9:00-17:30")
+    const timeMatch_result = lower.match(/(\d{1,2}):(\d{2})\s*[-~至到]\s*(\d{1,2}):(\d{2})/);
+    if (timeMatch_result) {
+      const startHour = parseInt(timeMatch_result[1], 10);
+      const startMin = parseInt(timeMatch_result[2], 10);
+      const endHour = parseInt(timeMatch_result[3], 10);
+      const endMin = parseInt(timeMatch_result[4], 10);
+
+      const startTime = startHour * 60 + startMin;
+      const endTime = endHour * 60 + endMin;
+
+      timeMatch = currentTime >= startTime && currentTime <= endTime;
+    } else {
+      // If no time range specified, assume all day
+      timeMatch = true;
+    }
+
+    return dayMatch && timeMatch;
+  }
+
+  /**
+   * Find experts by skill with optional availability filter.
+   *
+   * This is the primary API for Agent to find experts.
+   *
+   * @param skill - Skill name or tag to search for
+   * @param options - Search options
+   * @returns Array of matching expert profiles
+   */
+  findExperts(skill: string, options?: FindExpertsOptions): ExpertProfile[] {
+    const { minLevel, available, limit } = options || {};
+
+    let results = this.searchBySkill(skill, minLevel);
+
+    // Filter by availability if requested
+    if (available) {
+      const now = new Date();
+      results = results.filter(expert => this.isAvailable(expert.userId, now));
+    }
+
+    // Apply limit
+    if (limit !== undefined && limit > 0) {
+      results = results.slice(0, limit);
+    }
+
+    return results;
   }
 
   /**

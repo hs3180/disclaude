@@ -2,6 +2,7 @@
  * Tests for ExpertService.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import { describe, it, beforeEach, afterEach, expect } from 'vitest';
@@ -219,6 +220,95 @@ describe('ExpertService', () => {
     it('should return false for non-existent expert', () => {
       const result = service.unregisterExpert('nonexistent');
       expect(result).toBe(false);
+    });
+  });
+
+  describe('isAvailable', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'Expert 1');
+    });
+
+    it('should return true when no availability set', () => {
+      expect(service.isAvailable('user_1')).toBe(true);
+    });
+
+    it('should return true for "always" availability', () => {
+      service.setAvailability('user_1', 'always');
+      expect(service.isAvailable('user_1')).toBe(true);
+    });
+
+    it('should return true for "随时" availability', () => {
+      service.setAvailability('user_1', '随时');
+      expect(service.isAvailable('user_1')).toBe(true);
+    });
+
+    it('should return true when time is within range', () => {
+      service.setAvailability('user_1', 'daily 00:00-23:59');
+      expect(service.isAvailable('user_1')).toBe(true);
+    });
+
+    it('should return false for non-existent expert', () => {
+      expect(service.isAvailable('nonexistent')).toBe(true); // No availability = available
+    });
+  });
+
+  describe('findExperts', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'React Expert');
+      service.registerExpert('user_2', 'Python Expert');
+      service.registerExpert('user_3', 'Go Expert');
+
+      service.addSkill('user_1', { name: 'React', level: 5, tags: ['frontend'] });
+      service.addSkill('user_1', { name: 'TypeScript', level: 4, tags: ['frontend'] });
+
+      service.addSkill('user_2', { name: 'Python', level: 4, tags: ['backend'] });
+      service.addSkill('user_2', { name: 'Django', level: 3, tags: ['backend'] });
+
+      service.addSkill('user_3', { name: 'Go', level: 5, tags: ['backend', 'golang'] });
+
+      // Set availability
+      service.setAvailability('user_1', 'always');
+      service.setAvailability('user_2', 'daily 00:00-23:59');
+      service.setAvailability('user_3', 'daily 00:00-23:59');
+    });
+
+    it('should find experts by skill', () => {
+      const experts = service.findExperts('React');
+      expect(experts).toHaveLength(1);
+      expect(experts[0].name).toBe('React Expert');
+    });
+
+    it('should filter by minimum level', () => {
+      const experts = service.findExperts('Python', { minLevel: 4 });
+      expect(experts).toHaveLength(1);
+      expect(experts[0].name).toBe('Python Expert');
+    });
+
+    it('should filter by availability', () => {
+      // All experts are available in this test
+      const experts = service.findExperts('frontend', { available: true });
+      expect(experts).toHaveLength(1);
+    });
+
+    it('should apply limit', () => {
+      // Search for backend (matches Python and Go experts)
+      const experts = service.findExperts('backend', { limit: 1 });
+      expect(experts).toHaveLength(1);
+    });
+
+    it('should combine filters', () => {
+      const experts = service.findExperts('frontend', {
+        minLevel: 3,
+        available: true,
+        limit: 10,
+      });
+      expect(experts).toHaveLength(1);
+      expect(experts[0].name).toBe('React Expert');
+    });
+
+    it('should return empty array if no match', () => {
+      const experts = service.findExperts('Java');
+      expect(experts).toEqual([]);
     });
   });
 });

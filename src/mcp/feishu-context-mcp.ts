@@ -19,8 +19,9 @@ import {
   create_study_guide,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
+import { getExpertService } from '../experts/index.js';
 
-// Re-export
+// Re-export for backward compatibility
 export type { MessageSentCallback } from './tools/types.js';
 export { setMessageSentCallback };
 export { send_message } from './tools/send-message.js';
@@ -1069,6 +1070,101 @@ Part of NotebookLM features - generates comprehensive study materials including:
         return Promise.resolve(toolSuccess(output));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Study guide creation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // Expert Search Tool (Issue #536)
+  {
+    name: 'find_experts',
+    description: `Find human experts by skill for consultation.
+
+This tool searches registered experts by skill name or tag. Use this when you need human expertise that you don't have.
+
+## Parameters
+- **skill**: Skill name or tag to search for (e.g., "React", "Node.js", "Python")
+- **minLevel**: Minimum skill level filter (1-5, optional)
+- **available**: Only return currently available experts (default: false)
+- **limit**: Maximum number of results (default: 10)
+
+## Skill Levels
+- **1**: Beginner - Basic understanding
+- **2**: Elementary - Can work with guidance
+- **3**: Intermediate - Independent work
+- **4**: Advanced - Deep expertise
+- **5**: Expert - Industry leader
+
+## Availability
+When available=true, experts are filtered by their declared availability:
+- Checks current time against their schedule
+- Supports formats like "weekdays 10:00-18:00", "always", etc.
+
+## Example
+\`\`\`json
+{
+  "skill": "React",
+  "minLevel": 3,
+  "available": true,
+  "limit": 5
+}
+\`\`\`
+
+## Response
+Returns a list of matching experts with:
+- Name and ID
+- Matching skills with levels
+- Availability status
+- Availability schedule`,
+    parameters: z.object({
+      skill: z.string(),
+      minLevel: z.number().min(1).max(5).optional(),
+      available: z.boolean().optional(),
+      limit: z.number().min(1).max(50).optional(),
+    }),
+    handler: ({ skill, minLevel, available, limit }) => {
+      try {
+        const expertService = getExpertService();
+        const results = expertService.findExperts(skill, {
+          minLevel: minLevel as 1 | 2 | 3 | 4 | 5 | undefined,
+          available,
+          limit,
+        });
+
+        if (results.length === 0) {
+          return Promise.resolve(toolSuccess(`No experts found for skill "${skill}"${minLevel ? ` with minimum level ${minLevel}` : ''}.`));
+        }
+
+        const lines: string[] = [
+          `Found ${results.length} expert(s) for "${skill}":`,
+          '',
+        ];
+
+        for (const expert of results) {
+          const isAvail = expertService.isAvailable(expert.userId);
+          const availIcon = isAvail ? '🟢' : '🔴';
+
+          lines.push(`${availIcon} **${expert.name}** (ID: ${expert.userId.slice(-8)})`);
+
+          // Show matching skills
+          const skillLower = skill.toLowerCase();
+          const matchingSkills = expert.skills.filter(s =>
+            s.name.toLowerCase().includes(skillLower) ||
+            (s.tags?.some(t => t.toLowerCase().includes(skillLower)) ?? false)
+          );
+
+          for (const s of matchingSkills) {
+            const stars = '⭐'.repeat(s.level);
+            lines.push(`   ${s.name} ${stars}`);
+          }
+
+          if (expert.availability) {
+            lines.push(`   📅 Available: ${expert.availability}`);
+          }
+          lines.push('');
+        }
+
+        return Promise.resolve(toolSuccess(lines.join('\n')));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Expert search failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },
