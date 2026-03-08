@@ -26,7 +26,13 @@ import {
 } from './feishu/index.js';
 // Issue #992: Import IPC server for cross-process interactive contexts
 // Issue #1116: Also import FeishuApiHandlers type
-import { startIpcServer, stopIpcServer } from '../mcp/tools/interactive-message.js';
+// Issue #1120: Import registerFeishuHandlers for dynamic handler registration
+import {
+  startIpcServer,
+  stopIpcServer,
+  registerFeishuHandlers,
+  unregisterFeishuHandlers,
+} from '../mcp/tools/interactive-message.js';
 import type { FeishuApiHandlers } from '../ipc/unix-socket-server.js';
 // Issue #1032: Use LarkClientService for IPC handlers
 import { getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
@@ -209,12 +215,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Issue #992: Start IPC server for cross-process interactive contexts
     // This must be called during channel startup, not at module load time,
     // to avoid test timeouts (see PR #982)
-    // Issue #1116: Pass feishuHandlers to enable IPC-based Feishu API calls
+    // Issue #1120: Use registerFeishuHandlers for dynamic handler registration
     try {
-      let feishuHandlers: FeishuApiHandlers | undefined;
+      // Start IPC server first (may already be running from feishu-context-mcp.ts)
+      await startIpcServer();
+
+      // Register Feishu API handlers dynamically
       if (isLarkClientServiceInitialized()) {
         const service = getLarkClientService();
-        feishuHandlers = {
+        const feishuHandlers: FeishuApiHandlers = {
           sendMessage: async (chatId, text, threadId) => {
             await service.sendMessage(chatId, text, threadId ? { threadId } : undefined);
           },
@@ -228,12 +237,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             return await service.getBotInfo();
           },
         };
-        logger.debug('Feishu API handlers registered for IPC server');
+        registerFeishuHandlers(feishuHandlers);
+        logger.info('IPC server ready with Feishu API handlers');
       } else {
         logger.warn('LarkClientService not initialized, IPC Feishu API handlers not available');
       }
-      await startIpcServer(feishuHandlers);
-      logger.info('IPC server started for cross-process interactive contexts');
     } catch (error) {
       logger.error({ err: error }, 'Failed to start IPC server, interactive cards may not work across processes');
     }
@@ -250,6 +258,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
+
+    // Issue #1120: Unregister Feishu handlers before stopping IPC server
+    unregisterFeishuHandlers();
 
     // Issue #992: Stop IPC server
     stopIpcServer();

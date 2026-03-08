@@ -32,6 +32,8 @@ export {
   startIpcServer,
   stopIpcServer,
   isIpcServerRunning,
+  registerFeishuHandlers,
+  unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
 

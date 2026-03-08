@@ -19,6 +19,7 @@ import {
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
+  type FeishuHandlersContainer,
 } from '../../ipc/unix-socket-server.js';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
@@ -333,12 +334,41 @@ export async function send_interactive_message(params: {
 let ipcServer: UnixSocketIpcServer | null = null;
 
 /**
+ * Issue #1120: Mutable container for Feishu API handlers.
+ * Allows dynamic registration of handlers after IPC server starts.
+ */
+const feishuHandlersContainer: FeishuHandlersContainer = {
+  handlers: undefined,
+};
+
+/**
+ * Register Feishu API handlers for IPC-based operations.
+ * Issue #1120: Allows FeishuChannel to register handlers after IPC server starts.
+ *
+ * @param handlers - The Feishu API handlers to register.
+ */
+export function registerFeishuHandlers(handlers: FeishuApiHandlers): void {
+  feishuHandlersContainer.handlers = handlers;
+  logger.info('Feishu API handlers registered for IPC server');
+}
+
+/**
+ * Unregister Feishu API handlers.
+ * Issue #1120: Cleanup function for when FeishuChannel stops.
+ */
+export function unregisterFeishuHandlers(): void {
+  feishuHandlersContainer.handlers = undefined;
+  logger.debug('Feishu API handlers unregistered from IPC server');
+}
+
+/**
  * Start the IPC server for cross-process communication.
  * This allows other processes (e.g., the main bot process) to query
  * the interactive contexts stored in this process.
  *
  * Issue #1116: Accept feishuHandlers to enable IPC-based Feishu API calls
  * in Primary Node standalone mode.
+ * Issue #1120: Use FeishuHandlersContainer for dynamic handler registration.
  *
  * @param feishuHandlers - Optional handlers for Feishu API operations.
  *                         When provided, IPC clients can send messages/cards
@@ -347,7 +377,16 @@ let ipcServer: UnixSocketIpcServer | null = null;
 export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promise<void> {
   if (ipcServer) {
     logger.debug('IPC server already running');
+    // Issue #1120: Still try to register handlers if provided
+    if (feishuHandlers) {
+      registerFeishuHandlers(feishuHandlers);
+    }
     return;
+  }
+
+  // Issue #1120: Register initial handlers if provided
+  if (feishuHandlers) {
+    feishuHandlersContainer.handlers = feishuHandlers;
   }
 
   const handler = createInteractiveMessageHandler({
@@ -356,7 +395,7 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     unregisterActionPrompts,
     generateInteractionPrompt,
     cleanupExpiredContexts,
-  }, feishuHandlers);
+  }, feishuHandlersContainer);
 
   ipcServer = new UnixSocketIpcServer(handler);
 
