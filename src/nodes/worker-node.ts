@@ -474,38 +474,50 @@ export class WorkerNode {
           return;
         }
 
-        // Issue #1085: Handle card action messages from Primary Node (for wait_for_interaction only)
-        // Note: send_interactive_message prompts are now generated on Primary Node and sent as regular prompts
+        // Handle card action messages from Primary Node
         if (message.type === 'card_action') {
           const cardActionMsg = message as CardActionMessage;
-          const { chatId, cardMessageId, actionType, actionValue, userId } = cardActionMsg;
+          const { chatId, cardMessageId, actionType, actionValue, actionText, userId } = cardActionMsg;
           logger.info(
             { chatId, cardMessageId, actionType, actionValue, userId },
-            'Received card action from Primary Node (legacy wait_for_interaction)'
+            'Received card action from Primary Node'
           );
 
-          // Import the necessary function to resolve pending interactions
-          const { resolvePendingInteraction } = await import('../mcp/feishu-context-mcp.js');
+          // Import the necessary functions to handle card actions
+          const { generateInteractionPrompt } = await import('../mcp/tools/interactive-message.js');
 
-          // Try to resolve any pending wait_for_interaction calls
-          // Note: This is only for the deprecated wait_for_interaction tool.
-          // send_interactive_message prompts are now handled by Primary Node.
-          const resolved = resolvePendingInteraction(
-            cardMessageId,
-            actionValue,
-            actionType,
-            userId || 'unknown'
-          );
-
-          if (resolved) {
-            logger.debug({ cardMessageId }, 'Card action resolved pending wait_for_interaction');
-          } else {
-            // No pending wait_for_interaction found - this might be a legacy card
-            // that wasn't migrated to the new prompt-based flow
-            logger.warn(
-              { chatId, cardMessageId, actionValue },
-              'Received card_action with no pending wait_for_interaction - card may need migration to send_interactive_message'
+          // Get the agent for this chatId and process the card action
+          const ctx = this.activeFeedbackChannels.get(chatId);
+          if (ctx) {
+            // Generate prompt from template if available
+            const promptFromTemplate = generateInteractionPrompt(
+              cardMessageId,
+              actionValue,
+              actionText,
+              actionType
             );
+
+            // Use the template prompt if available, otherwise use default message
+            const messageContent = promptFromTemplate || (() => {
+              const buttonText = actionText || actionValue;
+              return `User clicked '${buttonText}' button`;
+            })();
+
+            // Get the agent and process the card action as a message
+            const agent = this.agentPool?.getOrCreateChatAgent(chatId);
+            if (agent) {
+              agent.processMessage(
+                chatId,
+                messageContent,
+                `${cardMessageId}-${actionValue}`,
+                userId,
+                undefined, // no attachments
+                undefined  // no chat history context
+              );
+              logger.debug({ chatId, cardMessageId }, 'Card action processed by agent');
+            }
+          } else {
+            logger.warn({ chatId }, 'No active feedback channel for card action');
           }
           return;
         }
