@@ -16,6 +16,7 @@ import {
   generate_qa_pairs,
   generate_flashcards,
   generate_quiz,
+  generate_mindmap,
   create_study_guide,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
@@ -1010,6 +1011,56 @@ Part of NotebookLM features - creates quiz questions for assessment.
         return Promise.resolve(toolSuccess(`Quiz (${result.count} questions, ${result.totalPoints} points):\n\n${result.markdownQuiz || 'No quiz generated'}`));
       } catch (error) {
         return Promise.resolve(toolSuccess(`⚠️ Quiz generation failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    },
+  },
+  // NotebookLM Mind Map Tool (Issue #950 M3)
+  {
+    name: 'generate_mindmap',
+    description: `Generate a mind map from content.
+
+Part of NotebookLM features - creates visual mind maps for concept visualization.
+
+## Parameters
+- **content**: The text content to generate mind map from
+- **title**: Root node title (default: "Topic")
+- **format**: Output format (default: "mermaid")
+  - "mermaid": Mermaid mindmap syntax (rendered in many Markdown editors)
+  - "markmap": Markdown hierarchy for Markmap rendering
+  - "json": JSON structure for custom rendering
+- **maxDepth**: Maximum depth of the mind map (default: 3)
+
+## Example
+\`\`\`json
+{
+  "content": "Learning material...",
+  "title": "Machine Learning",
+  "format": "mermaid",
+  "maxDepth": 4
+}
+\`\`\`
+
+## Formats
+- **mermaid**: Returns Mermaid mindmap syntax
+- **markmap**: Returns Markdown hierarchy
+- **json**: Returns JSON structure`,
+    parameters: z.object({
+      content: z.string(),
+      title: z.string().optional(),
+      format: z.enum(['mermaid', 'markmap', 'json']).optional(),
+      maxDepth: z.number().optional(),
+    }),
+    handler: (options) => {
+      try {
+        const result = generate_mindmap(options);
+        if (!result.success) {
+          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
+        }
+        let output = 'Mind Map generated successfully!\n\n';
+        output += result.output;
+        return Promise.resolve(toolSuccess(output));
+      } catch (error) {
+        return Promise.resolve(toolSuccess(`⚠️ Mind map generation failed: ${error instanceof Error ? error.message : String(error)}`));
       }
     },
   },

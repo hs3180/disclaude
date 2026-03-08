@@ -35,6 +35,7 @@ export {
   generate_qa_pairs,
   generate_flashcards,
   generate_quiz,
+  generate_mindmap,
   create_study_guide,
 } from './study-guide-generator.js';
 
@@ -50,6 +51,9 @@ export type {
   QuizQuestion,
   QuizGeneratorOptions,
   QuizGeneratorResult,
+  MindMapNode,
+  MindMapGeneratorOptions,
+  MindMapGeneratorResult,
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';

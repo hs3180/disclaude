@@ -10,11 +10,13 @@ import {
   generate_qa_pairs,
   generate_flashcards,
   generate_quiz,
+  generate_mindmap,
   create_study_guide,
   type SummaryOptions,
   type QAGeneratorOptions,
   type FlashcardGeneratorOptions,
   type QuizGeneratorOptions,
+  type MindMapGeneratorOptions,
   type StudyGuideOptions,
 } from './study-guide-generator.js';
 
@@ -327,6 +329,7 @@ describe('create_study_guide', () => {
     expect(result.studyGuide).toContain('## Q&A Pairs');
     expect(result.studyGuide).toContain('## Flashcards');
     expect(result.studyGuide).toContain('## Quiz');
+    expect(result.studyGuide).toContain('## Mind Map');
   });
 
   it('should use custom title', () => {
@@ -347,6 +350,7 @@ describe('create_study_guide', () => {
         qa: false,
         flashcards: false,
         quiz: false,
+        mindmap: false,
       },
     };
     const result = create_study_guide(options);
@@ -355,6 +359,7 @@ describe('create_study_guide', () => {
     expect(result.studyGuide).not.toContain('## Q&A Pairs');
     expect(result.studyGuide).not.toContain('## Flashcards');
     expect(result.studyGuide).not.toContain('## Quiz');
+    expect(result.studyGuide).not.toContain('## Mind Map');
   });
 
   it('should return components', () => {
@@ -364,6 +369,7 @@ describe('create_study_guide', () => {
     expect(result.components.qa).toBeDefined();
     expect(result.components.flashcards).toBeDefined();
     expect(result.components.quiz).toBeDefined();
+    expect(result.components.mindmap).toBeDefined();
   });
 
   it('should fail with empty content', () => {
@@ -378,5 +384,97 @@ describe('create_study_guide', () => {
 
     expect(result.studyGuide).toContain('Generated on');
     expect(result.studyGuide).toMatch(/\d{4}-\d{2}-\d{2}/); // Date format YYYY-MM-DD
+  });
+});
+
+describe('generate_mindmap', () => {
+  it('should generate a mind map with default options', () => {
+    const result = generate_mindmap({ content: sampleContent });
+
+    expect(result.success).toBe(true);
+    expect(result.mindMap).toBeDefined();
+    expect(result.output).toBeDefined();
+    expect(result.output.length).toBeGreaterThan(0);
+    expect(result.format).toBe('mermaid');
+    expect(result.nodeCount).toBeGreaterThan(0);
+  });
+
+  it('should generate Mermaid format by default', () => {
+    const result = generate_mindmap({ content: sampleContent });
+
+    expect(result.format).toBe('mermaid');
+    expect(result.output).toContain('mindmap');
+    expect(result.output).toContain('root');
+  });
+
+  it('should generate Markmap format when requested', () => {
+    const options: MindMapGeneratorOptions = {
+      content: sampleContent,
+      format: 'markmap',
+      title: 'ML Concepts',
+    };
+    const result = generate_mindmap(options);
+
+    expect(result.success).toBe(true);
+    expect(result.format).toBe('markmap');
+    expect(result.output).toContain('# ML Concepts');
+    expect(result.output).toContain('##');
+  });
+
+  it('should generate JSON format when requested', () => {
+    const options: MindMapGeneratorOptions = {
+      content: sampleContent,
+      format: 'json',
+      title: 'AI Topics',
+    };
+    const result = generate_mindmap(options);
+
+    expect(result.success).toBe(true);
+    expect(result.format).toBe('json');
+    expect(result.output).toContain('"text"');
+    expect(result.output).toContain('AI Topics');
+  });
+
+  it('should use custom title', () => {
+    const options: MindMapGeneratorOptions = {
+      content: sampleContent,
+      title: 'Machine Learning Overview',
+    };
+    const result = generate_mindmap(options);
+
+    expect(result.success).toBe(true);
+    expect(result.mindMap?.text).toBe('Machine Learning Overview');
+  });
+
+  it('should respect maxDepth parameter', () => {
+    const options: MindMapGeneratorOptions = {
+      content: sampleContent,
+      maxDepth: 2,
+    };
+    const result = generate_mindmap(options);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('2');
+  });
+
+  it('should fail with empty content', () => {
+    const result = generate_mindmap({ content: '' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('required');
+  });
+
+  it('should fail with whitespace-only content', () => {
+    const result = generate_mindmap({ content: '   \n\t  ' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('required');
+  });
+
+  it('should include prompt guidance for LLM', () => {
+    const result = generate_mindmap({ content: sampleContent });
+
+    expect(result.output).toContain('Mind Map Generation Request');
+    expect(result.output).toContain('Instructions');
   });
 });
