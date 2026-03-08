@@ -122,7 +122,7 @@ function getSpawnManager(): SubagentManager {
 /**
  * Wait for all subagents to complete with optional timeout.
  */
-async function waitForCompletion(
+function waitForCompletion(
   handles: SubagentHandle[],
   manager: SubagentManager,
   timeout?: number
@@ -183,8 +183,8 @@ function generateSummary(results: SubagentResult[]): string {
   const totalDuration = results.reduce((sum, r) => sum + r.duration, 0);
 
   const lines = [
-    `## 执行结果汇总`,
-    ``,
+    '## 执行结果汇总',
+    '',
     `- ✅ 成功: ${completed}`,
     `- ❌ 失败: ${failed}`,
     `- ⏹️ 中止: ${stopped}`,
@@ -192,7 +192,7 @@ function generateSummary(results: SubagentResult[]): string {
   ];
 
   if (failed > 0) {
-    lines.push(``, `### 失败的任务`, ``);
+    lines.push('', '### 失败的任务', '');
     for (const result of results.filter((r) => r.status === 'failed')) {
       lines.push(`- **${result.name}**: ${result.error || 'Unknown error'}`);
     }
@@ -333,7 +333,7 @@ export async function spawn_subagents(
         ? `✅ 所有任务完成 (${results.length}/${tasks.length})`
         : anyFailed
           ? `⚠️ 部分任务失败 (${results.filter((r) => r.status === 'completed').length}/${tasks.length} 成功)`
-          : `⏹️ 任务被中止`,
+          : '⏹️ 任务被中止',
       results,
       summary,
     };
