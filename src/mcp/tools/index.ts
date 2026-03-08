@@ -53,3 +53,16 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Thread Operations (Issue #873)
+export {
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
+} from './thread-operations.js';
+
+export type {
+  ReplyInThreadResult,
+  GetThreadsResult,
+  GetThreadMessagesResult,
+} from './thread-operations.js';

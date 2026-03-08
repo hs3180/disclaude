@@ -55,6 +55,66 @@ export interface SendMessageOptions {
 }
 
 /**
+ * Thread information.
+ * Issue #873: Support for topic group discussions.
+ */
+export interface ThreadInfo {
+  /** Message ID of the thread root */
+  messageId: string;
+  /** Thread ID */
+  threadId: string;
+  /** Message content */
+  content: string;
+  /** Sender's open ID */
+  senderId: string;
+  /** Message creation time */
+  createTime: string;
+}
+
+/**
+ * Thread message information.
+ * Issue #873: Support for topic group discussions.
+ */
+export interface ThreadMessageInfo {
+  /** Message ID */
+  messageId: string;
+  /** Message content */
+  content: string;
+  /** Sender's open ID */
+  senderId: string;
+  /** Message creation time */
+  createTime: string;
+  /** Parent message ID for replies */
+  parent_id?: string;
+}
+
+/**
+ * Thread list result.
+ * Issue #873: Support for topic group discussions.
+ */
+export interface ThreadListResult {
+  /** List of threads */
+  threads: ThreadInfo[];
+  /** Whether there are more results */
+  hasMore: boolean;
+  /** Page token for next page */
+  pageToken?: string;
+}
+
+/**
+ * Thread messages result.
+ * Issue #873: Support for topic group discussions.
+ */
+export interface ThreadMessagesResult {
+  /** List of messages */
+  messages: ThreadMessageInfo[];
+  /** Whether there are more results */
+  hasMore: boolean;
+  /** Page token for next page */
+  pageToken?: string;
+}
+
+/**
  * LarkClientService Configuration.
  */
 export interface LarkClientServiceConfig {
@@ -322,6 +382,287 @@ export class LarkClientService {
     } catch (error) {
       logger.error({ err: error }, 'Failed to get bot info');
       throw error;
+    }
+  }
+
+  // ============================================================================
+  // Thread API Operations (Issue #873)
+  // ============================================================================
+
+  /**
+   * Reply to a message in a thread.
+   * Issue #873: Support for topic group discussions.
+   *
+   * @param messageId - The message ID to reply to
+   * @param content - Message content
+   * @param msgType - Message type (text, post, etc.)
+   * @returns The new message ID and thread ID
+   */
+  async replyInThread(
+    messageId: string,
+    content: string,
+    msgType: string = 'text'
+  ): Promise<{ messageId: string; threadId: string }> {
+    try {
+      const response = await retry(
+        () => this.client.im.message.reply({
+          path: {
+            message_id: messageId,
+          },
+          data: {
+            content: msgType === 'text' ? JSON.stringify({ text: content }) : content,
+            msg_type: msgType,
+            reply_in_thread: true,
+          },
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            logger.warn(
+              { messageId, attempt, error: error.message },
+              'Retrying replyInThread after failure'
+            );
+          },
+        }
+      );
+
+      const newMessageId = response?.data?.message_id;
+      const threadId = response?.data?.thread_id || messageId;
+
+      if (newMessageId) {
+        await messageLogger.logOutgoingMessage(newMessageId, '', content);
+      }
+
+      logger.debug(
+        { messageId, newMessageId, threadId, msgType },
+        'Reply sent in thread'
+      );
+
+      return {
+        messageId: newMessageId || '',
+        threadId,
+      };
+    } catch (error) {
+      handleError(
+        error,
+        { category: ErrorCategory.API, messageId, msgType },
+        { log: true, customLogger: logger }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get threads (topics) from a chat.
+   * Issue #873: Support for topic group discussions.
+   *
+   * @param chatId - Chat ID to get threads from
+   * @param pageToken - Page token for pagination
+   * @param pageSize - Number of results per page (default: 20)
+   * @returns List of threads with pagination info
+   */
+  async getThreads(
+    chatId: string,
+    pageToken?: string,
+    pageSize: number = 20
+  ): Promise<ThreadListResult> {
+    try {
+      // Build query parameters
+      const queryParams = new URLSearchParams({
+        container_id_type: 'chat',
+        container_id: chatId,
+        page_size: String(pageSize),
+      });
+
+      if (pageToken) {
+        queryParams.set('page_token', pageToken);
+      }
+
+      // Use direct API call
+      const response = await retry(
+        () => this.client.request<{
+          data?: {
+            items?: Array<{
+              message_id?: string;
+              thread_id?: string;
+              body?: unknown;
+              sender?: { id?: string };
+              create_time?: string;
+            }>;
+            has_more?: boolean;
+            page_token?: string;
+          };
+        }>({
+          method: 'GET',
+          url: `/open-apis/im/v1/messages?${queryParams.toString()}`,
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            logger.warn(
+              { chatId, attempt, error: error.message },
+              'Retrying getThreads after failure'
+            );
+          },
+        }
+      );
+
+      const threads: ThreadInfo[] = [];
+      const items = response?.data?.items || [];
+
+      for (const item of items) {
+        if (item.message_id && item.thread_id) {
+          threads.push({
+            messageId: item.message_id,
+            threadId: item.thread_id,
+            content: this.extractMessageContent(item.body),
+            senderId: item.sender?.id || '',
+            createTime: item.create_time || '',
+          });
+        }
+      }
+
+      const hasMore = response?.data?.has_more || false;
+      const nextPageToken = response?.data?.page_token;
+
+      logger.debug(
+        { chatId, threadCount: threads.length, hasMore },
+        'Threads retrieved'
+      );
+
+      return {
+        threads,
+        hasMore,
+        pageToken: nextPageToken,
+      };
+    } catch (error) {
+      handleError(
+        error,
+        { category: ErrorCategory.API, chatId },
+        { log: true, customLogger: logger }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get messages from a thread.
+   * Issue #873: Support for topic group discussions.
+   *
+   * @param threadId - Thread ID to get messages from
+   * @param pageToken - Page token for pagination
+   * @param pageSize - Number of results per page (default: 20)
+   * @returns List of messages with pagination info
+   */
+  async getThreadMessages(
+    threadId: string,
+    pageToken?: string,
+    pageSize: number = 20
+  ): Promise<ThreadMessagesResult> {
+    try {
+      // Build query parameters
+      const queryParams = new URLSearchParams({
+        container_id_type: 'thread',
+        container_id: threadId,
+        page_size: String(pageSize),
+      });
+
+      if (pageToken) {
+        queryParams.set('page_token', pageToken);
+      }
+
+      // Use direct API call
+      const response = await retry(
+        () => this.client.request<{
+          data?: {
+            items?: Array<{
+              message_id?: string;
+              body?: unknown;
+              sender?: { id?: string };
+              create_time?: string;
+              parent_id?: string;
+            }>;
+            has_more?: boolean;
+            page_token?: string;
+          };
+        }>({
+          method: 'GET',
+          url: `/open-apis/im/v1/messages?${queryParams.toString()}`,
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 1000,
+          onRetry: (attempt, error) => {
+            logger.warn(
+              { threadId, attempt, error: error.message },
+              'Retrying getThreadMessages after failure'
+            );
+          },
+        }
+      );
+
+      const messages: ThreadMessageInfo[] = [];
+      const items = response?.data?.items || [];
+
+      for (const item of items) {
+        if (item.message_id) {
+          messages.push({
+            messageId: item.message_id,
+            content: this.extractMessageContent(item.body),
+            senderId: item.sender?.id || '',
+            createTime: item.create_time || '',
+            parent_id: item.parent_id,
+          });
+        }
+      }
+
+      const hasMore = response?.data?.has_more || false;
+      const nextPageToken = response?.data?.page_token;
+
+      logger.debug(
+        { threadId, messageCount: messages.length, hasMore },
+        'Thread messages retrieved'
+      );
+
+      return {
+        messages,
+        hasMore,
+        pageToken: nextPageToken,
+      };
+    } catch (error) {
+      handleError(
+        error,
+        { category: ErrorCategory.API, threadId },
+        { log: true, customLogger: logger }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Extract message content from message body.
+   * Helper method for Thread API operations.
+   */
+  private extractMessageContent(body: unknown): string {
+    if (!body) {return '';}
+
+    try {
+      const bodyObj = body as Record<string, unknown>;
+      if (bodyObj.content) {
+        // Try to parse JSON content
+        try {
+          const parsed = JSON.parse(bodyObj.content as string);
+          if (parsed.text) {return parsed.text;}
+          return bodyObj.content as string;
+        } catch {
+          return bodyObj.content as string;
+        }
+      }
+      return JSON.stringify(body);
+    } catch {
+      return String(body);
     }
   }
 }

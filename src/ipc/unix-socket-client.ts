@@ -499,6 +499,83 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Feishu Thread API Operations (Issue #873)
+  // ============================================================================
+
+  /**
+   * Reply to a message in a thread via IPC.
+   * Issue #873: Support for topic group discussions.
+   */
+  async feishuReplyInThread(
+    messageId: string,
+    content: string,
+    msgType: string
+  ): Promise<{ success: boolean; messageId?: string; threadId?: string }> {
+    try {
+      return await this.request('feishuReplyInThread', { messageId, content, msgType });
+    } catch (error) {
+      logger.error({ err: error, messageId }, 'feishuReplyInThread failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get threads (topics) from a chat via IPC.
+   * Issue #873: Support for topic group discussions.
+   */
+  async feishuGetThreads(
+    chatId: string,
+    pageToken?: string,
+    pageSize?: number
+  ): Promise<{
+    success: boolean;
+    threads?: Array<{
+      messageId: string;
+      threadId: string;
+      content: string;
+      senderId: string;
+      createTime: string;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
+  }> {
+    try {
+      return await this.request('feishuGetThreads', { chatId, pageToken, pageSize });
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'feishuGetThreads failed');
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get messages from a thread via IPC.
+   * Issue #873: Support for topic group discussions.
+   */
+  async feishuGetThreadMessages(
+    threadId: string,
+    pageToken?: string,
+    pageSize?: number
+  ): Promise<{
+    success: boolean;
+    messages?: Array<{
+      messageId: string;
+      content: string;
+      senderId: string;
+      createTime: string;
+      parent_id?: string;
+    }>;
+    hasMore?: boolean;
+    pageToken?: string;
+  }> {
+    try {
+      return await this.request('feishuGetThreadMessages', { threadId, pageToken, pageSize });
+    } catch (error) {
+      logger.error({ err: error, threadId }, 'feishuGetThreadMessages failed');
+      return { success: false };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
