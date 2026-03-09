@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  spawn_subagents,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 import { getGroupService } from '../platforms/feishu/group-service.js';
@@ -312,6 +313,104 @@ This tool initiates an async discussion. The conclusions will be returned when p
         return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'spawn_subagents',
+    description: `Spawn multiple subagents to execute tasks in parallel (Master-Workers pattern).
+
+Issue #897: Master-Workers Multi-Agent Collaboration Pattern
+
+---
+
+## 🎯 Use Cases
+
+1. **Parallel File Processing**: Analyze multiple files simultaneously
+2. **Multi-Source Research**: Gather information from different sources in parallel
+3. **Task Decomposition**: Break complex tasks into smaller parallel subtasks
+4. **Batch Operations**: Execute multiple independent operations concurrently
+
+---
+
+## Parameters
+
+- **tasks**: Array of tasks to execute (required)
+  - Each task has: type, name, prompt, templateVars (optional)
+- **maxParallel**: Maximum concurrent executions (default: 3)
+- **timeout**: Total timeout in milliseconds (default: 300000 = 5 min)
+- **continueOnFailure**: Continue if some tasks fail (default: true)
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "tasks": [
+    {"type": "task", "name": "analyze-auth", "prompt": "Analyze the auth module"},
+    {"type": "task", "name": "analyze-api", "prompt": "Analyze the API module"},
+    {"type": "task", "name": "analyze-db", "prompt": "Analyze the database module"}
+  ],
+  "maxParallel": 3
+}
+\`\`\`
+
+---
+
+## Task Types
+
+- **task**: General-purpose task agent
+- **skill**: Skill-based agent (requires skill name)
+- **schedule**: Scheduled task agent
+
+---
+
+## Returns
+
+- success: Whether all tasks completed successfully
+- message: Summary of execution
+- results: Array of individual task results
+- summary: Detailed summary with success/failure counts`,
+    parameters: z.object({
+      tasks: z.array(z.object({
+        type: z.enum(['task', 'skill', 'schedule']),
+        name: z.string(),
+        prompt: z.string(),
+        templateVars: z.record(z.string(), z.string()).optional(),
+      })).min(1),
+      maxParallel: z.number().min(1).max(10).optional(),
+      timeout: z.number().optional(),
+      continueOnFailure: z.boolean().optional(),
+    }),
+    handler: async ({ tasks, maxParallel, timeout, continueOnFailure }) => {
+      try {
+        const result = await spawn_subagents({
+          tasks,
+          maxParallel,
+          timeout,
+          continueOnFailure,
+        });
+
+        let responseText = result.message;
+        if (result.summary) {
+          responseText += `\n\n${result.summary}`;
+        }
+        if (result.results.length > 0) {
+          responseText += '\n\n### 任务详情\n';
+          for (const r of result.results) {
+            const statusEmoji = r.status === 'completed' ? '✅' : r.status === 'failed' ? '❌' : '⏹️';
+            responseText += `- ${statusEmoji} **${r.name}** (${(r.duration / 1000).toFixed(1)}s)`;
+            if (r.error) {
+              responseText += `: ${r.error}`;
+            }
+            responseText += '\n';
+          }
+        }
+
+        return toolSuccess(responseText);
+      } catch (error) {
+        return toolSuccess(`⚠️ spawn_subagents failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

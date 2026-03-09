@@ -36,6 +36,7 @@ import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
 import { SESSION_RESTORE } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
+import { setSpawnSubagentsCallbacks } from '../../mcp/tools/spawn-subagents.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
 import type { ChatAgent, UserInput } from '../types.js';
@@ -519,6 +520,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
 
+    // Issue #897: Set callbacks for spawn_subagents tool
+    setSpawnSubagentsCallbacks(this.callbacks, chatId);
+
     // Issue #955: Trigger background loading of persisted history
     if (!this.historyLoaded) {
       this.loadPersistedHistory().catch((err) => {
@@ -763,6 +767,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
     this.historyLoaded = false;
+
+    // Issue #897: Clear spawn_subagents callbacks
+    setSpawnSubagentsCallbacks(null, null);
   }
 
   /**
@@ -817,6 +824,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Clear restart states
     this.restartManager.clearAll();
+
+    // Issue #897: Clear spawn_subagents callbacks
+    setSpawnSubagentsCallbacks(null, null);
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot shutdown complete');
   }

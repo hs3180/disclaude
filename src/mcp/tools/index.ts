@@ -65,3 +65,17 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Spawn Subagents (Issue #897: Master-Workers Multi-Agent Collaboration)
+export {
+  spawn_subagents,
+  setSpawnSubagentsCallbacks,
+  getSpawnSubagentsCallbacks,
+  disposeSpawnManager,
+} from './spawn-subagents.js';
+export type {
+  SpawnSubagentsResult,
+  SpawnSubagentsOptions,
+  SubagentResult,
+  SubagentTask,
+} from './spawn-subagents.js';
