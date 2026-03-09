@@ -40,6 +40,38 @@ export type {
   CardContextMessage,
 } from './websocket-messages.js';
 
+// Channel types (Issue #1040)
+export type {
+  IncomingMessage,
+  OutgoingMessage,
+  OutgoingContentType,
+  MessageAttachment,
+  ControlCommand,
+  ControlCommandType,
+  ControlResponse,
+  ChannelStatus,
+  MessageHandler,
+  ControlHandler,
+  IChannel,
+  ChannelConfig,
+  ChannelFactory,
+  ChannelCapabilities,
+} from './channel.js';
+
+export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';
+
+// IPC types (Issue #1040)
+export type {
+  IpcRequestType,
+  IpcRequestPayloads,
+  IpcResponsePayloads,
+  IpcRequest,
+  IpcResponse,
+  IpcConfig,
+} from './ipc.js';
+
+export { DEFAULT_IPC_CONFIG } from './ipc.js';
+
 // Primary Node types (Issue #1040)
 export type {
   NodeType,
