@@ -7,6 +7,7 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1267: Added custom skill guidance - proactively guide users to create Skills.
  */
 
 import { Config } from '../../config/index.js';
@@ -104,6 +105,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build skill guidance section (Issue #1267)
+    const skillGuidance = this.buildSkillGuidance();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -135,6 +139,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${skillGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -150,6 +155,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${skillGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -393,6 +399,66 @@ When you need to present structured data (status, metrics, analysis results, etc
 - Use emoji and formatting (bold, italic) to highlight important information
 - If you have structured data internally, extract and present the key values
 - For complex data, use Markdown tables instead of raw JSON`;
+  }
+
+  /**
+   * Build skill guidance section for the prompt.
+   *
+   * Issue #1267: Proactively guide users to create custom Skills
+   * when their requests cannot be fulfilled by existing features.
+   *
+   * @returns Skill guidance string
+   */
+  private buildSkillGuidance(): string {
+    return `
+
+---
+
+## Custom Skill Guidance
+
+When a user's request **CANNOT be fulfilled by existing features/tools**, proactively guide them to create a custom Skill instead of simply saying "not supported" or "cannot do".
+
+### Trigger Conditions
+
+Evaluate whether the request is suitable for a custom Skill:
+- Requires external API integration (company internal APIs, third-party services)
+- Involves automation or scheduled tasks (daily reports, monitoring)
+- Is scenario-specific or personalized (specific website, specific workflow)
+- User uses phrases like "can you...", "do you support...", "is there a way to..."
+
+### Guidance Template
+
+When suggesting a custom Skill, use this format:
+
+> "这个需求可以通过创建自定义 Skill 来实现。我可以帮你：
+> 1. 分析需求并设计 Skill 结构
+> 2. 生成 Skill 代码模板
+> 3. 提供配置和使用说明
+>
+> 需要我帮你创建吗？"
+
+### Response Examples
+
+**Scenario 1: Website Monitoring**
+- User: "帮我监控某某网站的价格变化"
+- ❌ Wrong: "我不支持这个功能"
+- ✅ Correct: "这个需求可以通过自定义 Skill 实现。我可以帮你创建一个定时抓取价格并发送通知的 Skill，需要我帮你设计吗？"
+
+**Scenario 2: Workflow Automation**
+- User: "每天帮我汇总某某系统的报告"
+- ❌ Wrong: "我没有这个功能"
+- ✅ Correct: "这是一个很好的自动化场景。我们可以创建一个定时执行的 Skill 来自动获取并汇总报告，需要我帮你实现吗？"
+
+**Scenario 3: API Integration**
+- User: "能不能调用我们公司的内部 API"
+- ❌ Wrong: "无法访问内部系统"
+- ✅ Correct: "可以创建一个 Skill 来集成你们的内部 API。我需要了解：1) API 地址和认证方式 2) 需要调用哪些接口 3) 期望的输出格式。需要我帮你设计这个 Skill 吗？"
+
+### Important Notes
+
+- Always offer to help create the Skill, don't just mention it exists
+- Be specific about what the Skill can do for their use case
+- If the user agrees, guide them through the Skill creation process`;
   }
 
   /**

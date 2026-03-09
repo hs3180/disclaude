@@ -4,6 +4,7 @@
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Issue #1267: Tests for custom skill guidance to proactively help users.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -215,6 +216,73 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('Convert JSON objects to readable text');
       expect(result).toContain('Markdown tables instead of raw JSON');
+    });
+  });
+
+  describe('buildSkillGuidance (Issue #1267)', () => {
+    it('should include custom skill guidance in regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Custom Skill Guidance');
+      expect(result).toContain('proactively guide');
+    });
+
+    it('should include trigger conditions for skill guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('external API integration');
+      expect(result).toContain('automation or scheduled tasks');
+      expect(result).toContain('scenario-specific or personalized');
+    });
+
+    it('should include guidance template', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('这个需求可以通过创建自定义 Skill 来实现');
+      expect(result).toContain('分析需求并设计 Skill 结构');
+      expect(result).toContain('生成 Skill 代码模板');
+    });
+
+    it('should include example scenarios', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Website Monitoring');
+      expect(result).toContain('Workflow Automation');
+      expect(result).toContain('API Integration');
+    });
+
+    it('should not include skill guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Custom Skill Guidance');
+    });
+
+    it('should include correct and wrong response examples', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-123',
+      }, 'chat-123');
+
+      expect(result).toContain('❌ Wrong:');
+      expect(result).toContain('✅ Correct:');
+      expect(result).toContain('我不支持这个功能');
+      expect(result).toContain('自定义 Skill 实现');
     });
   });
 });
