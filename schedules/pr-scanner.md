@@ -8,13 +8,13 @@ chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 
 # PR Scanner - 串行扫描模式
 
-定期扫描仓库的 open PR，串行处理，一次只处理一个 PR。
+定期扫描仓库的 open PR，串行处理，为每个 PR 创建讨论群聊。
 
 ## 配置
 
 - **仓库**: hs3180/disclaude
 - **扫描间隔**: 每 15 分钟
-- **通知目标**: 配置的 chatId
+- **讨论超时**: 60 分钟
 
 ## 执行步骤
 
@@ -55,29 +55,34 @@ gh pr view {number} --repo hs3180/disclaude \
   --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
 ```
 
-### 6. 发送 PR 信息和交互式卡片
+### 6. 创建群聊讨论 PR ⚡ 核心改动
 
-使用 `send_interactive_message` 发送 PR 信息和操作选项：
+使用 `start_group_discussion` 工具为该 PR 创建专门的讨论群聊：
 
-**卡片内容**：
+```json
+{
+  "topic": "PR #{number} 讨论: {title}",
+  "members": [],
+  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})\n\n请在群聊中讨论后决定处理方式。",
+  "timeout": 60
+}
+```
+
+**注意**：
+- `members` 留空，表示只邀请当前用户
+- 群聊名称格式：`PR #{number} 讨论: {PR标题}`
+- 讨论超时：60 分钟
+
+### 7. 在群聊中发送交互式卡片
+
+群聊创建后，使用 `send_message` 发送操作选项卡片：
+
+**卡片内容**（format: "card"）：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🔔 新 PR 检测到", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
   "elements": [
-    {"tag": "markdown", "content": "**PR #{number}**: {title}"},
-    {"tag": "hr"},
-    {"tag": "div", "fields": [
-      {"is_short": true, "text": {"tag": "lark_md", "content": "**👤 作者**\n{author}"}},
-      {"is_short": true, "text": {"tag": "lark_md", "content": "**🌿 分支**\n{headRef} → {baseRef}"}}
-    ]},
-    {"tag": "div", "fields": [
-      {"is_short": true, "text": {"tag": "lark_md", "content": "**📊 合并状态**\n{mergeable ? '✅ 可合并' : '⚠️ 有冲突'}"}},
-      {"is_short": true, "text": {"tag": "lark_md", "content": "**🔍 CI 检查**\n{ciStatus}"}}
-    ]},
-    {"tag": "div", "text": {"tag": "lark_md", "content": "**📈 变更**: +{additions} -{deletions} ({changedFiles} files)"}},
-    {"tag": "hr"},
-    {"tag": "markdown", "content": "**📋 描述**\n{description 前300字符}"},
     {"tag": "action", "actions": [
       {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
       {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
@@ -85,7 +90,7 @@ gh pr view {number} --repo hs3180/disclaude \
       {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
     ]},
     {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "🔗 查看详情: https://github.com/hs3180/disclaude/pull/{number}"}
+      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
     ]}
   ]
 }
@@ -101,9 +106,7 @@ gh pr view {number} --repo hs3180/disclaude \
 }
 ```
 
-**注意**：将 {number} 替换为实际的 PR 编号。
-
-### 7. 添加 pending label
+### 8. 添加 pending label
 
 ```bash
 gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
@@ -121,22 +124,24 @@ gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 ### 状态转换
 
 ```
-新 PR → 添加 pending label → 等待用户反馈 → 执行动作 → 添加 processed label → 移除 pending label
+新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 执行动作 → 添加 processed label → 移除 pending label
 ```
 
 ## 错误处理
 
 - 如果 `gh` 命令失败，记录错误并发送错误通知
-- 如果发送通知失败，记录错误但继续
+- 如果创建群聊失败，回退到在固定 chatId 中发送消息
 - 如果添加 label 失败，记录错误但不影响流程
 
 ## 注意事项
 
-1. **串行处理**: 一次只处理一个 PR，避免并发问题
-2. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
-3. **用户驱动**: 等待用户反馈后才执行动作，不自动合并或关闭
+1. **群聊讨论**: 为每个 PR 创建独立群聊，便于深入讨论
+2. **串行处理**: 一次只处理一个 PR，避免并发问题
+3. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
+4. **用户驱动**: 等待群聊讨论结论后才执行动作，不自动合并或关闭
 
 ## 依赖
 
 - gh CLI
 - GitHub Labels: `pr-scanner:processed`, `pr-scanner:pending`
+- MCP Tool: `start_group_discussion` (Issue #1155)
