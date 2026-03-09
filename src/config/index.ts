@@ -356,4 +356,15 @@ export class Config {
   static getRestChannelConfig(): import('./types.js').RestChannelConfig {
     return fileConfigOnly.channels?.rest || {};
   }
+
+  /**
+   * Check if Agent Teams mode is enabled.
+   * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
+   * @see Issue #1208
+   *
+   * @returns true if agent teams mode is enabled
+   */
+  static isAgentTeamsEnabled(): boolean {
+    return fileConfigOnly.agent?.enableAgentTeams ?? false;
+  }
 }

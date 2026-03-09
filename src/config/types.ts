@@ -44,6 +44,13 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /**
+   * Enable Claude Code Agent Teams mode.
+   * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
+   * This allows the agent to spawn and coordinate multiple teammate sessions.
+   * @see https://code.claude.com/docs/en/agent-teams
+   */
+  enableAgentTeams?: boolean;
 }
 
 /**

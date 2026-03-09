@@ -41,6 +41,13 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
+  # Enable Claude Code Agent Teams mode
+  # When enabled, the agent can spawn and coordinate multiple teammate sessions
+  # for parallel work on complex tasks.
+  # @see https://code.claude.com/docs/en/agent-teams
+  # Default: false
+  # enableAgentTeams: true
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------
