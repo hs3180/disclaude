@@ -15,7 +15,9 @@ import { z } from 'zod';
 import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import { createLogger } from '../utils/logger.js';
 import { getOAuthManager, OAuthManager } from './oauth-manager.js';
-import type { OAuthProviderConfig } from './types.js';
+import { getDeviceCodeFlowManager } from './device-code-flow.js';
+import { getProviderTemplate, createProviderConfig } from './provider-templates.js';
+import type { OAuthProviderConfig, DeviceCodeProviderConfig } from './types.js';
 
 const logger = createLogger('AuthMCP');
 
@@ -67,6 +69,46 @@ export function createAuthCard(authUrl: string, provider: string): Record<string
       {
         tag: 'markdown',
         content: '_💡 授权信息将加密存储，AI 无法直接查看您的凭证_',
+      },
+    ],
+  };
+}
+
+/**
+ * Create Device Code Flow authorization card for Feishu.
+ * This card displays the user code and verification URL for Device Code Flow.
+ */
+export function createDeviceCodeCard(
+  userCode: string,
+  verificationUri: string,
+  provider: string,
+  expiresInMinutes: number = 15
+): Record<string, unknown> {
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `🔐 ${provider} 授权` },
+      template: 'blue',
+    },
+    elements: [
+      {
+        tag: 'markdown',
+        content: `请在浏览器中完成授权：\n\n**1.** 访问: ${verificationUri}\n**2.** 输入设备码: \`${userCode}\`\n\n⏳ 授权有效期: ${expiresInMinutes} 分钟`,
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '打开授权页面' },
+            url: verificationUri,
+            type: 'primary',
+          },
+        ],
+      },
+      {
+        tag: 'markdown',
+        content: '_💡 完成授权后，系统将自动获取令牌，无需手动确认_',
       },
     ],
   };
@@ -235,6 +277,142 @@ export const authToolDefinitions: InlineToolDefinition[] = [
         }
       } catch (error) {
         return toolError(`Failed to revoke authorization: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'auth_start_device_flow',
+    description: 'Start a Device Code Flow for OAuth authorization. Use this when the user cannot access a local callback URL (e.g., server deployment, chat scenario). Returns a user code and verification URL. Send these to the user so they can authorize in their browser.',
+    parameters: z.object({
+      providerName: z.string().describe('Provider name (e.g., "github", "google"). Use a known provider for automatic endpoint configuration.'),
+      clientId: z.string().describe('OAuth client ID'),
+      clientSecret: z.string().describe('OAuth client secret'),
+      scopes: z.string().optional().describe('Space-separated OAuth scopes to request (optional, uses defaults if not provided)'),
+      chatId: z.string().describe('Chat ID from the task context'),
+    }),
+    handler: async ({ providerName, clientId, clientSecret, scopes, chatId }) => {
+      try {
+        // Try to get provider template for endpoint URLs
+        const template = getProviderTemplate(providerName);
+
+        if (!template) {
+          return toolError(
+            `Unknown provider: ${providerName}. Known providers: ${Object.keys(getProviderTemplate).join(', ')}. ` +
+            'For custom providers, use auth_generate_url with explicit endpoints.'
+          );
+        }
+
+        if (!template.supportsDeviceCode) {
+          return toolError(
+            `Provider ${providerName} does not support Device Code Flow. ` +
+            'Use auth_generate_url for standard OAuth flow instead.'
+          );
+        }
+
+        // Create provider config
+        const config = createProviderConfig(providerName, {
+          clientId,
+          clientSecret,
+          scopes: scopes ? scopes.split(' ').filter(Boolean) : template.scopes,
+        }) as DeviceCodeProviderConfig;
+
+        if (!config || !config.deviceCodeUrl) {
+          return toolError(`Failed to create provider config for ${providerName}`);
+        }
+
+        // Start device code flow
+        const manager = getDeviceCodeFlowManager();
+        const state = await manager.startFlow(config, chatId);
+
+        const expiresInMinutes = Math.round((state.expiresAt - Date.now()) / 60000);
+
+        logger.info(
+          {
+            chatId,
+            provider: providerName,
+            flowId: state.id,
+            userCode: state.userCode,
+          },
+          'Device code flow started'
+        );
+
+        return toolSuccess(
+          'Device Code Flow started:\n\n' +
+          `**Provider:** ${providerName}\n` +
+          `**Verification URL:** ${state.verificationUri}\n` +
+          `**User Code:** \`${state.userCode}\`\n` +
+          `**Expires in:** ${expiresInMinutes} minutes\n\n` +
+          '**Flow ID:** `' + state.id + '`\n\n' +
+          'Send the verification URL and user code to the user. ' +
+          'After the user authorizes, call `auth_complete_device_flow` with the flow ID to complete the authorization.'
+        );
+      } catch (error) {
+        return toolError(`Failed to start device code flow: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'auth_complete_device_flow',
+    description: 'Complete a Device Code Flow by polling for the authorization token. Call this after the user has had time to complete authorization. This will block until authorization is complete or times out.',
+    parameters: z.object({
+      flowId: z.string().describe('The flow ID returned from auth_start_device_flow'),
+      timeout: z.number().optional().describe('Maximum time to wait in seconds (default: 300, max: 900)'),
+    }),
+    handler: async ({ flowId, timeout = 300 }) => {
+      try {
+        const manager = getDeviceCodeFlowManager();
+        const state = manager.getFlowState(flowId);
+
+        if (!state) {
+          return toolError('Invalid or expired flow ID. Please start a new device code flow.');
+        }
+
+        // Calculate remaining time
+        const remainingMs = state.expiresAt - Date.now();
+        if (remainingMs <= 0) {
+          return toolError('Device code has expired. Please start a new device code flow.');
+        }
+
+        const maxWaitMs = Math.min(timeout * 1000, 900000, remainingMs); // Max 15 minutes
+
+        logger.info(
+          { flowId, provider: state.provider, maxWaitMs },
+          'Starting to poll for device code completion'
+        );
+
+        // Poll with timeout
+        const startTime = Date.now();
+
+        const result = await manager.completeFlow(flowId, (status) => {
+          logger.debug({ flowId, status }, 'Device code flow status update');
+        });
+
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+        logger.info(
+          { flowId, chatId: result.chatId, provider: result.provider, elapsed },
+          'Device code flow completed successfully'
+        );
+
+        return toolSuccess(
+          `✅ Authorization successful!\n\n` +
+          `**Provider:** ${result.provider}\n` +
+          `**Chat ID:** ${result.chatId}\n` +
+          `**Time elapsed:** ${elapsed} seconds\n\n` +
+          'You can now use `auth_request` to make authenticated API calls.'
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes('expired')) {
+          return toolError('Device code has expired. Please start a new device code flow.');
+        }
+
+        if (errorMessage.includes('denied')) {
+          return toolError('Authorization was denied by the user.');
+        }
+
+        return toolError(`Failed to complete device code flow: ${errorMessage}`);
       }
     },
   },

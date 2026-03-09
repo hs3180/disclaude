@@ -149,3 +149,82 @@ export interface AuthConfig {
   /** Callback URL base */
   callbackUrl?: string;
 }
+
+/**
+ * Device Code Flow response from OAuth provider.
+ * RFC 8628 Section 3.2
+ */
+export interface DeviceCodeResponse {
+  /** The device verification code */
+  device_code: string;
+  /** The user verification code (displayed to user) */
+  user_code: string;
+  /** The verification URI where user enters the code */
+  verification_uri: string;
+  /** The verification URI with user code pre-filled (optional) */
+  verification_uri_complete?: string;
+  /** Lifetime of device code in seconds */
+  expires_in: number;
+  /** Minimum polling interval in seconds */
+  interval: number;
+}
+
+/**
+ * Device Token response when polling for token.
+ * RFC 8628 Section 3.5
+ */
+export interface DeviceTokenResponse {
+  /** Access token (on success) */
+  access_token?: string;
+  /** Token type (usually 'Bearer') */
+  token_type?: string;
+  /** Granted scopes */
+  scope?: string;
+  /** Refresh token (optional) */
+  refresh_token?: string;
+  /** Token expiration in seconds */
+  expires_in?: number;
+  /** Error code (on failure) */
+  error?: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied';
+  /** Human-readable error description */
+  error_description?: string;
+}
+
+/**
+ * OAuth Provider with Device Code Flow support.
+ * Extends base OAuthProviderConfig with Device Code specific fields.
+ */
+export interface DeviceCodeProviderConfig extends OAuthProviderConfig {
+  /** Whether this provider supports Device Code Flow */
+  supportsDeviceCode: boolean;
+  /** Device code endpoint URL */
+  deviceCodeUrl?: string;
+  /** Device token endpoint URL (usually same as tokenUrl) */
+  deviceTokenUrl?: string;
+}
+
+/**
+ * Device Code Flow state for tracking pending authorizations.
+ */
+export interface DeviceCodeState {
+  /** Unique identifier for this flow */
+  id: string;
+  /** Chat ID that initiated the flow */
+  chatId: string;
+  /** Provider name */
+  provider: string;
+  /** Device code for polling */
+  deviceCode: string;
+  /** User code displayed to user */
+  userCode: string;
+  /** Verification URI */
+  verificationUri: string;
+  /** Polling interval in seconds */
+  interval: number;
+  /** Expiration timestamp */
+  expiresAt: number;
+  /** When this state was created */
+  createdAt: number;
+  /** Provider configuration */
+  providerConfig: DeviceCodeProviderConfig;
+}
