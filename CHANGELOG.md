@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Completed Milestones
+
+- **Architecture Refactoring** - Per-process code separation completed (#1037)
+- **Expert Declaration System** - Human expert skills declaration and credit system (#534)
+
 ## [0.3.3] - 2026-03-08
 
 ### Highlights
