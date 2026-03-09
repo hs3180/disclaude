@@ -13,6 +13,7 @@ import { BaseAgent } from './base-agent.js';
 import type { AgentMessage } from '../types/agent.js';
 import type { BaseAgentConfig } from './types.js';
 import { taskHistoryStorage } from './task-history.js';
+import { etaPredictor, type ETAPrediction } from './eta-predictor.js';
 import { createLogger } from '../utils/logger.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
@@ -123,12 +124,22 @@ export class TaskComplexityAgent extends BaseAgent {
       // Get historical context for similar tasks
       const historicalContext = await this.getHistoricalContext(userMessage);
 
+      // Infer task type for ETA prediction
+      const taskType = this.inferTaskType(userMessage);
+
+      // Get ETA prediction from ETAPredictor (Issue #1234)
+      const etaPrediction = await etaPredictor.predictETA({
+        taskType,
+        description: userMessage,
+      });
+
       // Build prompt from skill template
       const prompt = await this.buildPrompt({
         chatId,
         messageId,
         userMessage,
         historicalContext,
+        etaContext: etaPredictor.formatPrediction(etaPrediction),
       });
 
       // Query LLM for complexity analysis
@@ -149,22 +160,67 @@ export class TaskComplexityAgent extends BaseAgent {
       // Parse LLM response
       const result = this.parseResponse(rawResponse);
 
+      // Enhance ETA with historical prediction if LLM confidence is low
+      // or if ETAPredictor has high confidence historical data (Issue #1234)
+      const enhancedResult = this.enhanceWithHistoricalETA(result, etaPrediction);
+
       logger.info({
         chatId,
         messageId,
-        complexityScore: result.complexityScore,
-        complexityLevel: result.complexityLevel,
-        estimatedSeconds: result.estimatedSeconds,
-        confidence: result.confidence,
+        complexityScore: enhancedResult.complexityScore,
+        complexityLevel: enhancedResult.complexityLevel,
+        estimatedSeconds: enhancedResult.estimatedSeconds,
+        confidence: enhancedResult.confidence,
+        etaBasedOn: etaPrediction.basedOn,
       }, 'Task complexity analysis complete');
 
-      return result;
+      return enhancedResult;
     } catch (error) {
       logger.error({ err: error, chatId, messageId }, 'Task complexity analysis failed');
 
       // Return conservative default on error
       return this.getDefaultResult();
     }
+  }
+
+  /**
+   * Enhance LLM result with historical ETA prediction.
+   * Issue #1234: Use historical data to improve ETA accuracy.
+   */
+  private enhanceWithHistoricalETA(
+    llmResult: TaskComplexityResult,
+    etaPrediction: ETAPrediction
+  ): TaskComplexityResult {
+    // Use historical ETA if:
+    // 1. ETAPredictor has high confidence historical data, OR
+    // 2. LLM confidence is low and ETAPredictor has some data
+    const useHistoryETA =
+      etaPrediction.basedOn === 'historical' ||
+      (etaPrediction.basedOn === 'similar_tasks' && llmResult.confidence < 0.5);
+
+    if (useHistoryETA) {
+      // Blend LLM estimate with historical estimate
+      const historicalWeight = etaPrediction.confidence;
+      const blendedETA = Math.round(
+        llmResult.estimatedSeconds * (1 - historicalWeight) +
+        etaPrediction.estimatedSeconds * historicalWeight
+      );
+
+      return {
+        ...llmResult,
+        estimatedSeconds: blendedETA,
+        confidence: Math.max(llmResult.confidence, etaPrediction.confidence),
+        reasoning: {
+          ...llmResult.reasoning,
+          keyFactors: [
+            ...llmResult.reasoning.keyFactors,
+            `ETA基于历史数据 (${etaPrediction.basedOn})`,
+          ],
+        },
+      };
+    }
+
+    return llmResult;
   }
 
   /**
@@ -175,8 +231,9 @@ export class TaskComplexityAgent extends BaseAgent {
     messageId: string;
     userMessage: string;
     historicalContext: string;
+    etaContext?: string;
   }): Promise<string> {
-    const { chatId, messageId, userMessage, historicalContext } = params;
+    const { chatId, messageId, userMessage, historicalContext, etaContext } = params;
 
     // Create temporary file path for historical data reference
     const historicalDataPath = join(tmpdir(), `task-history-${Date.now()}.txt`);
@@ -199,7 +256,8 @@ export class TaskComplexityAgent extends BaseAgent {
       .replace('{messageId}', messageId)
       .replace('{userMessage}', userMessage)
       .replace('{historicalDataPath}', historicalDataPath)
-      .replace('{historicalData}', historicalContext);
+      .replace('{historicalData}', historicalContext)
+      .replace('{etaContext}', etaContext || '暂无历史ETA数据');
   }
 
   /**
@@ -381,6 +439,7 @@ Context:
 - Message ID: {messageId}
 - User Message: {userMessage}
 - Historical Data: {historicalData}
+- ETA Prediction: {etaContext}
 
 Respond with a JSON object ONLY (no markdown, no explanation):
 
