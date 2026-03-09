@@ -287,13 +287,15 @@ This tool initiates an async discussion. The conclusions will be returned when p
         // Create the discussion group
         const chatId = await createDiscussionChat(client, { topic, members });
 
-        // Register the group for tracking
+        // Register the group for tracking with discussion topic for focus maintenance (Issue #1228)
         const groupService = getGroupService();
         groupService.registerGroup({
           chatId,
           name: topic,
           createdAt: Date.now(),
           initialMembers: members || [],
+          discussionTopic: topic,
+          discussionContext: context,
         });
 
         // Send the initial topic message

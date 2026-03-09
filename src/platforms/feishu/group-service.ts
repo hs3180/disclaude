@@ -37,6 +37,19 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * Discussion topic - the initial question/goal for this group discussion.
+   * Used by ChatAgent to maintain focus on the original discussion target.
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  discussionTopic?: string;
+  /**
+   * Discussion context - background information for the discussion.
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  discussionContext?: string;
 }
 
 /**

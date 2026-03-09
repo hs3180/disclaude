@@ -74,6 +74,33 @@ ${msg.persistedHistoryContext}
 `
       : '';
 
+    // Build discussion focus section for focus maintenance (Issue #1228)
+    const discussionFocusSection = msg.discussionTopic
+      ? `
+
+---
+
+## 🎯 Discussion Focus
+
+You are in a **group discussion** with the following focus:
+
+**Topic:** ${msg.discussionTopic}
+${msg.discussionContext ? `\n**Context:** ${msg.discussionContext}` : ''}
+
+### Guidelines
+
+1. **Stay on Topic** - Keep the discussion focused on the original topic above
+2. **Detect Drifting** - If the conversation starts to drift away from the main topic, gently guide it back
+3. **Summarize Progress** - Occasionally summarize what has been discussed in relation to the original topic
+4. **Conclude Properly** - When the discussion reaches a conclusion, clearly state the outcome
+
+If you notice the discussion has drifted, you can say:
+> "Let's get back to our main topic: ${msg.discussionTopic}"
+
+---
+`
+      : '';
+
     if (isSkillCommand) {
       // For skill commands: command first, then minimal context for skill to use
       const contextInfo = msg.senderOpenId
@@ -126,7 +153,7 @@ To notify the user in your FINAL response, use:
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
-${persistedHistorySection}${chatHistorySection}${mentionSection}
+${discussionFocusSection}${persistedHistorySection}${chatHistorySection}${mentionSection}
 
 ---
 
@@ -144,7 +171,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
-${persistedHistorySection}${chatHistorySection}
+${discussionFocusSection}${persistedHistorySection}${chatHistorySection}
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}

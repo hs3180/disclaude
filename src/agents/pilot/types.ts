@@ -93,4 +93,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Discussion topic for focus maintenance (Issue #1228) */
+  discussionTopic?: string;
+  /** Discussion context for focus maintenance (Issue #1228) */
+  discussionContext?: string;
 }

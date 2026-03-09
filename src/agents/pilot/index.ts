@@ -47,6 +47,7 @@ import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
 import { TaskComplexityAgent } from '../task-complexity-agent.js';
 import { taskProgressService } from '../task-progress-service.js';
+import { getGroupService } from '../../platforms/feishu/group-service.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -425,11 +426,19 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+    // Get discussion topic for focus maintenance (Issue #1228)
+    const groupInfo = getGroupService().getGroup(chatId);
+    const discussionTopic = groupInfo?.discussionTopic;
+    const discussionContext = groupInfo?.discussionContext;
+
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    // Issue #1228: Include discussion topic for focus maintenance
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      discussionTopic,
+      discussionContext,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

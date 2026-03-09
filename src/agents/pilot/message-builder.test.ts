@@ -4,6 +4,7 @@
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Issue #1228: Tests for discussion focus maintenance.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -215,6 +216,75 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('Convert JSON objects to readable text');
       expect(result).toContain('Markdown tables instead of raw JSON');
+    });
+  });
+
+  describe('buildEnhancedContent with discussionTopic (Issue #1228)', () => {
+    it('should include discussion focus section when discussionTopic is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'What do you think about this?',
+        messageId: 'msg-123',
+        discussionTopic: 'Should we migrate to TypeScript?',
+      }, 'chat-123');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('Should we migrate to TypeScript?');
+      expect(result).toContain('Stay on Topic');
+      expect(result).toContain('Detect Drifting');
+    });
+
+    it('should include discussion context when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'What do you think?',
+        messageId: 'msg-123',
+        discussionTopic: 'API Design',
+        discussionContext: 'We are designing a new REST API for our microservices architecture.',
+      }, 'chat-123');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('API Design');
+      expect(result).toContain('We are designing a new REST API');
+    });
+
+    it('should not include discussion focus section when no discussionTopic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should not include discussion focus section for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should include drift guidance with original topic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Database Migration',
+      }, 'chat-123');
+
+      expect(result).toContain('Let\'s get back to our main topic: Database Migration');
+    });
+
+    it('should include discussion focus with senderOpenId', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'I think we should go with PostgreSQL',
+        messageId: 'msg-123',
+        senderOpenId: 'user-456',
+        discussionTopic: 'Database Selection',
+      }, 'chat-123');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('Database Selection');
     });
   });
 });
