@@ -15,7 +15,8 @@ import { z } from 'zod';
 import { getProvider, type InlineToolDefinition } from '../sdk/index.js';
 import { createLogger } from '../utils/logger.js';
 import { getOAuthManager, OAuthManager } from './oauth-manager.js';
-import type { OAuthProviderConfig } from './types.js';
+import type { OAuthProviderConfig, DeviceCodeProviderConfig } from './types.js';
+import { createDeviceCodeCard } from './device-code-flow.js';
 
 const logger = createLogger('AuthMCP');
 
@@ -235,6 +236,98 @@ export const authToolDefinitions: InlineToolDefinition[] = [
         }
       } catch (error) {
         return toolError(`Failed to revoke authorization: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'auth_start_device_flow',
+    description: 'Start Device Code Flow for OAuth authorization. Use this instead of auth_generate_url when running on a server without public callback URL. Returns a user code and verification URL for the user to authorize in their browser.',
+    parameters: z.object({
+      providerName: z.string().describe('Provider name (e.g., "github", "google")'),
+      deviceCodeUrl: z.string().describe('Device code endpoint URL (e.g., "https://github.com/login/device/code" for GitHub)'),
+      tokenUrl: z.string().describe('OAuth token endpoint URL'),
+      clientId: z.string().describe('OAuth client ID'),
+      clientSecret: z.string().describe('OAuth client secret (optional for some providers)'),
+      scopes: z.string().describe('Space-separated OAuth scopes to request'),
+      chatId: z.string().describe('Chat ID from the task context'),
+    }),
+    handler: async ({ providerName, deviceCodeUrl, tokenUrl, clientId, clientSecret, scopes, chatId }) => {
+      try {
+        const provider: DeviceCodeProviderConfig = {
+          name: providerName,
+          authUrl: '', // Not needed for device code flow
+          tokenUrl,
+          clientId,
+          clientSecret,
+          scopes: scopes.split(' ').filter(Boolean),
+          callbackUrl: '', // Not needed for device code flow
+          deviceCodeUrl,
+          supportsDeviceCode: true,
+        };
+
+        const manager = getManager();
+        const result = await manager.initiateDeviceCodeFlow(provider, chatId);
+
+        if (!result.success) {
+          return toolError(`Failed to start Device Code Flow: ${result.error}`);
+        }
+
+        logger.info({ chatId, provider: providerName, stateId: result.stateId }, 'Device Code Flow started');
+
+        // Create card for user
+        const card = createDeviceCodeCard(
+          result.userCode!,
+          result.verificationUri!,
+          providerName
+        );
+
+        return toolSuccess(
+          `Device Code Flow started.\n\n` +
+          `**User Code:** ${result.userCode}\n` +
+          `**Verification URL:** ${result.verificationUri}\n` +
+          `**State ID:** ${result.stateId}\n\n` +
+          `Send a card to the user with this information. Use auth_poll_device_flow to check authorization status.\n\n` +
+          `Card JSON:\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``
+        );
+      } catch (error) {
+        return toolError(`Failed to start Device Code Flow: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'auth_poll_device_flow',
+    description: 'Poll for Device Code Flow authorization status. Returns whether the user has authorized or if still pending.',
+    parameters: z.object({
+      stateId: z.string().describe('State ID from auth_start_device_flow'),
+    }),
+    handler: async ({ stateId }) => {
+      try {
+        const manager = getManager();
+        const result = await manager.pollDeviceCode(stateId);
+
+        if (result.complete) {
+          if (result.success) {
+            return toolSuccess(`✅ Authorization complete! The user has successfully authorized.`);
+          } else {
+            return toolError(`Authorization failed: ${result.error || 'Unknown error'}`);
+          }
+        }
+
+        // Still pending
+        const state = manager.getDeviceCodeState(stateId);
+        if (state) {
+          const remaining = Math.max(0, Math.floor((state.expiresAt - Date.now()) / 1000));
+          return toolSuccess(
+            `⏳ Authorization pending. User needs to:\n` +
+            `1. Visit: ${state.verificationUri}\n` +
+            `2. Enter code: ${state.userCode}\n\n` +
+            `Time remaining: ${Math.floor(remaining / 60)}m ${remaining % 60}s`
+          );
+        }
+
+        return toolError('Device code state not found. It may have expired.');
+      } catch (error) {
+        return toolError(`Failed to poll Device Code Flow: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

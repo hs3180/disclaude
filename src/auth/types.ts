@@ -149,3 +149,112 @@ export interface AuthConfig {
   /** Callback URL base */
   callbackUrl?: string;
 }
+
+/**
+ * Device Code Flow response from OAuth provider.
+ * RFC 8628 Section 3.2
+ */
+export interface DeviceCodeResponse {
+  /** The device verification code */
+  device_code: string;
+  /** The end-user verification code */
+  user_code: string;
+  /** The end-user verification URI */
+  verification_uri: string;
+  /** The verification URI with user code included (optional) */
+  verification_uri_complete?: string;
+  /** Lifetime in seconds of the device_code */
+  expires_in: number;
+  /** The minimum amount of time in seconds between polling requests */
+  interval: number;
+}
+
+/**
+ * Device Token response from OAuth provider.
+ * RFC 8628 Section 3.5
+ */
+export interface DeviceTokenResponse {
+  /** Access token (on success) */
+  access_token?: string;
+  /** Token type (usually 'Bearer') */
+  token_type?: string;
+  /** Refresh token (optional) */
+  refresh_token?: string;
+  /** Lifetime in seconds of the access token */
+  expires_in?: number;
+  /** Granted scopes */
+  scope?: string;
+  /** Error code (on pending/failure) */
+  error?: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied';
+  /** Human-readable error description */
+  error_description?: string;
+}
+
+/**
+ * Device Code Flow state for tracking pending authorizations.
+ */
+export interface DeviceCodeState {
+  /** Unique identifier for this flow */
+  id: string;
+  /** Chat ID that initiated the flow */
+  chatId: string;
+  /** Provider name */
+  provider: string;
+  /** The device code */
+  deviceCode: string;
+  /** The user code to display */
+  userCode: string;
+  /** The verification URL */
+  verificationUri: string;
+  /** When this state was created */
+  createdAt: number;
+  /** Expiration timestamp */
+  expiresAt: number;
+  /** Polling interval in seconds */
+  interval: number;
+  /** Provider configuration */
+  providerConfig: DeviceCodeProviderConfig;
+  /** Whether polling is active */
+  polling: boolean;
+}
+
+/**
+ * Device Code Flow provider configuration.
+ * Extends OAuthProviderConfig with Device Code specific endpoints.
+ */
+export interface DeviceCodeProviderConfig extends OAuthProviderConfig {
+  /** Device code endpoint URL */
+  deviceCodeUrl: string;
+  /** Whether this provider supports Device Code Flow */
+  supportsDeviceCode: boolean;
+}
+
+/**
+ * Result of initiating Device Code Flow.
+ */
+export interface DeviceCodeFlowResult {
+  /** Whether initiation was successful */
+  success: boolean;
+  /** User code to display */
+  userCode?: string;
+  /** Verification URL */
+  verificationUri?: string;
+  /** State ID for tracking */
+  stateId?: string;
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
+ * Result of polling for Device Code token.
+ */
+export interface DeviceCodePollResult {
+  /** Whether authorization is complete */
+  complete: boolean;
+  /** Whether authorized successfully */
+  success?: boolean;
+  /** Error message if failed */
+  error?: string;
+  /** Error type for specific handling */
+  errorType?: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied';
+}

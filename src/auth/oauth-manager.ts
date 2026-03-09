@@ -23,7 +23,11 @@ import type {
   TokenCheckResult,
   ApiRequestConfig,
   ApiResponse,
+  DeviceCodeProviderConfig,
+  DeviceCodeFlowResult,
+  DeviceCodePollResult,
 } from './types.js';
+import { DeviceCodeFlow, getDeviceCodeFlow } from './device-code-flow.js';
 
 const logger = createLogger('OAuthManager');
 
@@ -54,9 +58,11 @@ function cleanupExpiredStates(): void {
 export class OAuthManager {
   private readonly tokenStore: TokenStore;
   private callbackServer: http.Server | null = null;
+  private readonly deviceCodeFlow: DeviceCodeFlow;
 
   constructor(tokenStore?: TokenStore) {
     this.tokenStore = tokenStore || getTokenStore();
+    this.deviceCodeFlow = getDeviceCodeFlow();
   }
 
   /**
@@ -432,6 +438,65 @@ export class OAuthManager {
       this.callbackServer = null;
       logger.info('OAuth callback server stopped');
     }
+  }
+
+  /**
+   * Initiate Device Code Flow for a provider.
+   * Alternative to PKCE flow for server/container deployments.
+   *
+   * @param provider - Provider configuration with device code endpoints
+   * @param chatId - Chat ID initiating the flow
+   * @returns Device Code Flow result with user code and verification URL
+   */
+  async initiateDeviceCodeFlow(
+    provider: DeviceCodeProviderConfig,
+    chatId: string
+  ): Promise<DeviceCodeFlowResult> {
+    logger.info({ chatId, provider: provider.name }, 'Initiating Device Code Flow');
+    return this.deviceCodeFlow.initiateDeviceCode(provider, chatId);
+  }
+
+  /**
+   * Poll for Device Code authorization.
+   *
+   * @param stateId - State ID from initiation
+   * @returns Poll result indicating authorization status
+   */
+  async pollDeviceCode(stateId: string): Promise<DeviceCodePollResult> {
+    return this.deviceCodeFlow.pollForToken(stateId);
+  }
+
+  /**
+   * Start automatic polling for Device Code authorization.
+   *
+   * @param stateId - State ID from initiation
+   * @param onProgress - Callback for progress updates (optional)
+   * @returns Final poll result
+   */
+  async startDeviceCodePolling(
+    stateId: string,
+    onProgress?: (result: DeviceCodePollResult) => void
+  ): Promise<DeviceCodePollResult> {
+    return this.deviceCodeFlow.startPolling(stateId, onProgress);
+  }
+
+  /**
+   * Cancel a pending Device Code Flow.
+   *
+   * @param stateId - State ID to cancel
+   */
+  cancelDeviceCodeFlow(stateId: string): void {
+    this.deviceCodeFlow.cancelDeviceCode(stateId);
+  }
+
+  /**
+   * Get Device Code state information.
+   *
+   * @param stateId - State ID
+   * @returns Device Code state or undefined
+   */
+  getDeviceCodeState(stateId: string) {
+    return this.deviceCodeFlow.getState(stateId);
   }
 }
 
