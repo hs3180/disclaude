@@ -277,6 +277,61 @@ export class LarkClientService {
   }
 
   /**
+   * Get message content by message ID.
+   * Issue #846: Support reading quoted/reply message content
+   *
+   * @param messageId - The message ID to fetch
+   * @returns Message content or null if not found
+   */
+  async getMessage(messageId: string): Promise<{
+    content: string;
+    messageType: string;
+    senderId?: string;
+  } | null> {
+    try {
+      const response = await retry(
+        () => this.client.im.message.get({
+          path: {
+            message_id: messageId,
+          },
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 500,
+          onRetry: (attempt, error) => {
+            logger.warn(
+              { messageId, attempt, error: error.message },
+              'Retrying getMessage after failure'
+            );
+          },
+        }
+      );
+
+      // The API returns items array for message list, but for single message get,
+      // the structure may vary. Handle both cases.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = response?.data as any;
+      const message = data?.item || data?.items?.[0];
+
+      if (!message) {
+        return null;
+      }
+
+      return {
+        content: message.body?.content || '',
+        messageType: message.msg_type || 'text',
+        senderId: message.sender?.id,
+      };
+    } catch (error) {
+      logger.debug(
+        { err: error, messageId },
+        'Failed to get message - message may not exist or no permission'
+      );
+      return null;
+    }
+  }
+
+  /**
    * Get bot information.
    * Caches the result after first call.
    *

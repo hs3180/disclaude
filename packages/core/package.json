@@ -1,0 +1,26 @@
+{
+  "name": "@disclaude/core",
+  "version": "0.0.1",
+  "description": "Shared core utilities, types, and interfaces for disclaude",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.9.3"
+  }
+}

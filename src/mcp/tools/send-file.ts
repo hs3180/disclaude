@@ -6,13 +6,45 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { existsSync } from 'fs';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
 import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { getIpcClient } from '../../ipc/unix-socket-client.js';
+import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
 import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
+
+/**
+ * Check if IPC is available for Feishu API calls.
+ * Issue #1035: Prefer IPC when available for unified client management.
+ */
+function isIpcAvailable(): boolean {
+  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
+}
+
+/**
+ * Upload file via IPC to PrimaryNode's LarkClientService.
+ * Issue #1035: Routes Feishu API calls through unified client.
+ */
+async function uploadFileViaIpc(
+  chatId: string,
+  filePath: string
+): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
+  const ipcClient = getIpcClient();
+  const result = await ipcClient.feishuUploadFile(chatId, filePath);
+  if (!result.success) {
+    throw new Error('Failed to upload file via IPC');
+  }
+  return {
+    fileKey: result.fileKey ?? '',
+    fileType: result.fileType ?? 'file',
+    fileName: result.fileName ?? path.basename(filePath),
+    fileSize: result.fileSize ?? 0,
+  };
+}
 
 export async function send_file(params: {
   filePath: string;
@@ -43,9 +75,20 @@ export async function send_file(params: {
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) { throw new Error(`Path is not a file: ${filePath}`); }
 
-    const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
-    const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-    const fileSize = await uploadAndSendFile(client, resolvedPath, chatId);
+    // Issue #1035: Try IPC first if available
+    const useIpc = isIpcAvailable();
+    let fileSize: number;
+
+    if (useIpc) {
+      logger.debug({ chatId, filePath }, 'Using IPC for file upload');
+      const { fileSize: ipcFileSize } = await uploadFileViaIpc(chatId, resolvedPath);
+      fileSize = ipcFileSize;
+    } else {
+      // Fallback: Create client directly
+      const { uploadAndSendFile } = await import('../../file-transfer/outbound/feishu-uploader.js');
+      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
+      fileSize = await uploadAndSendFile(client, resolvedPath, chatId);
+    }
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
     const fileName = path.basename(resolvedPath);

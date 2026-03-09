@@ -4,13 +4,13 @@
  * Issue #857: Complex Task Auto-Start Task Agent
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { TaskProgressService } from './task-progress-service.js';
 import type { TaskComplexityResult } from './task-complexity-agent.js';
 
 describe('TaskProgressService', () => {
   let service: TaskProgressService;
-  let mockSendCard: ReturnType<typeof TaskProgressService>;
+  let mockSendCard: Mock<(card: Record<string, unknown>) => Promise<void>>;
 
   const mockComplexity: TaskComplexityResult = {
     complexityScore: 8,
@@ -57,7 +57,7 @@ describe('TaskProgressService', () => {
       expect(mockSendCard).toHaveBeenCalledTimes(1);
 
       // Verify card structure
-      const cardArg = mockSendCard.mock.calls[0][0];
+      const [[cardArg]] = mockSendCard.mock.calls;
       expect(cardArg).toHaveProperty('config');
       expect(cardArg).toHaveProperty('header');
       expect(cardArg).toHaveProperty('elements');
@@ -175,7 +175,7 @@ describe('TaskProgressService', () => {
         sendCard: mockSendCard,
       });
 
-      const cardArg = mockSendCard.mock.calls[0][0];
+      const [[cardArg]] = mockSendCard.mock.calls;
 
       // Check structure
       expect(cardArg.config).toEqual({ wide_screen_mode: true });
@@ -193,8 +193,9 @@ describe('TaskProgressService', () => {
         sendCard: mockSendCard,
       });
 
-      const cardArg = mockSendCard.mock.calls[0][0];
-      const firstElement = cardArg.elements[0];
+      const cardArg = mockSendCard.mock.calls[0][0] as Record<string, unknown>;
+      const elements = cardArg.elements as Array<Record<string, unknown>>;
+      const [firstElement] = elements;
       expect(firstElement.content).toContain('任务ID');
     });
   });
