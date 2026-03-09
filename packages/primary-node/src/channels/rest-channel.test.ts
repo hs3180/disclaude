@@ -276,6 +276,62 @@ describe('RestChannel', () => {
       expect(channel.isHealthy()).toBe(false);
     });
   });
+
+  describe('Session cleanup (Issue #1263)', () => {
+    it('should accept sessionTtl config option', () => {
+      channel = new RestChannel({ port: TEST_PORT, sessionTtl: 60000 });
+      // Session TTL should be configured (60 seconds)
+      expect(channel).toBeDefined();
+    });
+
+    it('should accept maxSessions config option', () => {
+      channel = new RestChannel({ port: TEST_PORT, maxSessions: 100 });
+      expect(channel).toBeDefined();
+    });
+
+    it('should accept cleanupInterval config option', () => {
+      channel = new RestChannel({ port: TEST_PORT, cleanupInterval: 30000 });
+      expect(channel).toBeDefined();
+    });
+
+    it('should expose getSessionCount method', async () => {
+      channel = new RestChannel({ port: TEST_PORT });
+      await channel.start();
+
+      expect(channel.getSessionCount()).toBe(0);
+
+      // Create a session
+      await makeRequest('POST', '/api/chat/test-session', JSON.stringify({
+        message: 'Hello',
+      }));
+
+      expect(channel.getSessionCount()).toBe(1);
+    });
+
+    it('should clean up sessions on stop', async () => {
+      channel = new RestChannel({ port: TEST_PORT });
+      await channel.start();
+
+      // Create multiple sessions
+      await makeRequest('POST', '/api/chat/session-1', JSON.stringify({ message: 'Hello 1' }));
+      await makeRequest('POST', '/api/chat/session-2', JSON.stringify({ message: 'Hello 2' }));
+
+      expect(channel.getSessionCount()).toBe(2);
+
+      await channel.stop();
+      expect(channel.getSessionCount()).toBe(0);
+    });
+
+    it('should support disabling TTL-based cleanup with sessionTtl=0', () => {
+      channel = new RestChannel({ port: TEST_PORT, sessionTtl: 0 });
+      expect(channel).toBeDefined();
+    });
+
+    it('should support disabling periodic cleanup with cleanupInterval=0', () => {
+      channel = new RestChannel({ port: TEST_PORT, cleanupInterval: 0 });
+      expect(channel).toBeDefined();
+    });
+  });
 });
 
 // Helper function to make HTTP requests
