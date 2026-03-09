@@ -220,9 +220,11 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
   },
   {
     name: 'start_group_discussion',
-    description: `Start a group discussion on a topic and collect conclusions.
+    description: `Start a group discussion on a topic (non-blocking).
 
-Creates a temporary group chat, invites members, and facilitates a discussion on the given topic. After the discussion concludes, the group is dissolved and the conclusions are returned.
+Creates a group chat (or uses an existing one) and sends the discussion context. The ChatAgent will handle the subsequent conversation with users.
+
+**Issue #631: Non-blocking design - returns immediately after setup.**
 
 ---
 
@@ -236,10 +238,11 @@ Creates a temporary group chat, invites members, and facilitates a discussion on
 
 ## Parameters
 
-- **topic**: The discussion topic/question (required)
-- **members**: Array of member open_ids to invite (optional, defaults to current user)
+- **chatId**: (Optional) Use an existing group chat ID instead of creating a new one
+- **topic**: The discussion topic/question (required if creating new group)
+- **members**: Array of member open_ids to invite (optional, for new groups)
 - **context**: Background context for the discussion (optional)
-- **timeout**: Discussion timeout in minutes (optional, default: 30)
+- **timeout**: Discussion timeout hint in minutes (optional, default: 30)
 
 ---
 
@@ -254,29 +257,38 @@ Creates a temporary group chat, invites members, and facilitates a discussion on
 }
 \`\`\`
 
+Or use existing group:
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "topic": "Follow-up Discussion",
+  "context": "Continuing from our previous meeting..."
+}
+\`\`\`
+
 ---
 
 ## Workflow
 
-1. Creates a new group chat with the topic as the name
-2. Invites specified members
+1. Uses existing chatId OR creates a new group chat with the topic as the name
+2. Registers the group for tracking (if new)
 3. Posts the topic and context as the first message
-4. Facilitates the discussion (monitors for conclusion signals)
-5. Collects and summarizes conclusions
-6. Dissolves the group and returns conclusions
+4. Returns immediately (non-blocking)
+5. ChatAgent will handle subsequent user responses
 
 ---
 
 ## Note
 
-This tool initiates an async discussion. The conclusions will be returned when participants reach consensus or timeout expires.`,
+This tool is non-blocking. It sets up the discussion and returns immediately. The ChatAgent will continue the conversation when users respond.`,
     parameters: z.object({
-      topic: z.string().describe('The discussion topic/question'),
-      members: z.array(z.string()).optional().describe('Array of member open_ids to invite'),
+      chatId: z.string().optional().describe('Use existing group chat ID (optional, creates new group if not provided)'),
+      topic: z.string().optional().describe('The discussion topic/question (required if creating new group)'),
+      members: z.array(z.string()).optional().describe('Array of member open_ids to invite (for new groups)'),
       context: z.string().optional().describe('Background context for the discussion'),
-      timeout: z.number().optional().describe('Discussion timeout in minutes (default: 30)'),
+      timeout: z.number().optional().describe('Discussion timeout hint in minutes (default: 30)'),
     }),
-    handler: async ({ topic, members, context, timeout }) => {
+    handler: async ({ chatId: existingChatId, topic, members, context, timeout }) => {
       try {
         // Check if Feishu client is available
         if (!isLarkClientServiceInitialized()) {
@@ -284,24 +296,40 @@ This tool initiates an async discussion. The conclusions will be returned when p
         }
         const client = getLarkClientService().getClient();
 
-        // Create the discussion group
-        const chatId = await createDiscussionChat(client, { topic, members });
+        let chatId: string;
 
-        // Register the group for tracking
-        const groupService = getGroupService();
-        groupService.registerGroup({
-          chatId,
-          name: topic,
-          createdAt: Date.now(),
-          initialMembers: members || [],
-        });
+        if (existingChatId) {
+          // Use existing chat
+          chatId = existingChatId;
+        } else {
+          // Validate topic for new group creation
+          if (!topic) {
+            return toolSuccess('⚠️ topic is required when creating a new group (chatId not provided).');
+          }
+
+          // Create the discussion group
+          chatId = await createDiscussionChat(client, { topic, members });
+
+          // Register the group for tracking
+          const groupService = getGroupService();
+          groupService.registerGroup({
+            chatId,
+            name: topic,
+            createdAt: Date.now(),
+            initialMembers: members || [],
+          });
+        }
 
         // Send the initial topic message
-        let initialMessage = `## 🎯 讨论话题\n\n**${topic}**\n\n`;
+        let initialMessage = topic
+          ? `## 🎯 讨论话题\n\n**${topic}**\n\n`
+          : `## 🎯 讨论\n\n`;
         if (context) {
           initialMessage += `### 背景\n${context}\n\n`;
         }
-        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。达成结论后请明确说明。`;
+        if (timeout) {
+          initialMessage += `---\n建议在 ${timeout} 分钟内完成讨论。`;
+        }
 
         await send_message({
           content: initialMessage,
@@ -309,7 +337,8 @@ This tool initiates an async discussion. The conclusions will be returned when p
           chatId,
         });
 
-        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
+        const isNewGroup = !existingChatId;
+        return toolSuccess(`✅ 讨论已启动\n- 群聊ID: ${chatId}\n- ${topic ? `话题: ${topic}` : '使用现有群聊'}\n- ${isNewGroup ? `成员数: ${members?.length || 0}` : '已有群聊'}\n- 非阻塞模式: ChatAgent 将在用户回复时继续对话`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
       }
