@@ -65,3 +65,14 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Request Review Tools (Issue #946: 御书房批奏折体验)
+export { request_review, quick_review, batch_review } from './request-review.js';
+export type {
+  RequestReviewParams,
+  QuickReviewParams,
+  BatchReviewParams,
+  RequestReviewResult,
+  ReviewTheme,
+  ReviewChange,
+} from './request-review.js';

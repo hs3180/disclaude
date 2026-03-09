@@ -11,6 +11,9 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  request_review,
+  quick_review,
+  batch_review,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 import { getGroupService } from '../platforms/feishu/group-service.js';
@@ -312,6 +315,153 @@ This tool initiates an async discussion. The conclusions will be returned when p
         return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // ============================================================================
+  // Issue #946: 御书房批奏折体验 - Request Review Tools
+  // ============================================================================
+  {
+    name: 'request_review',
+    description: `Request user review with the "御书房批奏折" (Imperial Study Review) experience.
+
+Sends a beautifully formatted interactive card for user approval/rejection, providing a streamlined experience for quick decision making.
+
+---
+
+## 🎯 Themes
+
+| Theme | Style | Approve | Reject | Request Changes |
+|-------|-------|---------|--------|-----------------|
+| \`imperial\` | 🏛️ 御书房 | 👑 准奏 | ❌ 驳回 | 📝 再议 |
+| \`modern\` | 📋 审批中心 | ✅ 批准 | ❌ 拒绝 | 🔄 需要修改 |
+| \`minimal\` | 简洁 | 同意 | 拒绝 | 修改 |
+
+---
+
+## Parameters
+
+- **title** (required): Review title
+- **summary** (required): Summary/description of the review request
+- **chatId** (required): Target chat ID
+- **theme**: Theme style (default: "modern")
+- **changes**: List of file changes with type, additions, deletions
+- **details**: Additional context or details
+- **context**: Context for action prompts (e.g., "PR #123")
+- **parentMessageId**: For thread reply
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "title": "代码变更请求",
+  "summary": "修复了用户认证的 bug",
+  "theme": "imperial",
+  "changes": [
+    { "path": "src/auth.ts", "type": "modified", "additions": 10, "deletions": 5 },
+    { "path": "tests/auth.test.ts", "type": "added", "additions": 30 }
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      title: z.string().describe('Review title'),
+      summary: z.string().describe('Summary/description of the review request'),
+      chatId: z.string().describe('Target chat ID'),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional().describe('Theme style (default: modern)'),
+      changes: z.array(z.object({
+        path: z.string(),
+        type: z.enum(['added', 'modified', 'deleted', 'renamed']),
+        description: z.string().optional(),
+        additions: z.number().optional(),
+        deletions: z.number().optional(),
+      })).optional().describe('List of changes'),
+      details: z.string().optional().describe('Additional context or details'),
+      context: z.string().optional().describe('Context for action prompts'),
+      parentMessageId: z.string().optional().describe('Parent message ID for thread reply'),
+    }),
+    handler: async ({ title, summary, chatId, theme, changes, details, context, parentMessageId }) => {
+      try {
+        const result = await request_review({ title, summary, chatId, theme, changes, details, context, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Review request failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'quick_review',
+    description: `Request a quick review with approve/reject buttons only.
+
+Use for simple decisions that don't need detailed change information.
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "title": "确认操作",
+  "message": "是否继续执行删除操作？",
+  "theme": "imperial",
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      title: z.string().describe('Review title'),
+      message: z.string().describe('Review message/question'),
+      chatId: z.string().describe('Target chat ID'),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional().describe('Theme style'),
+      parentMessageId: z.string().optional().describe('Parent message ID for thread reply'),
+    }),
+    handler: async ({ title, message, chatId, theme, parentMessageId }) => {
+      try {
+        const result = await quick_review({ title, message, chatId, theme, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Quick review request failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'batch_review',
+    description: `Request batch approval for multiple items.
+
+Use when you need user to approve/reject multiple items at once.
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "title": "批量文件审批",
+  "items": [
+    { "name": "file1.ts", "description": "新增功能" },
+    { "name": "file2.ts", "description": "修复bug" }
+  ],
+  "theme": "modern",
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      title: z.string().describe('Review title'),
+      items: z.array(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+      })).describe('Items to review'),
+      chatId: z.string().describe('Target chat ID'),
+      theme: z.enum(['imperial', 'modern', 'minimal']).optional().describe('Theme style'),
+      parentMessageId: z.string().optional().describe('Parent message ID for thread reply'),
+    }),
+    handler: async ({ title, items, chatId, theme, parentMessageId }) => {
+      try {
+        const result = await batch_review({ title, items, chatId, theme, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Batch review request failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
