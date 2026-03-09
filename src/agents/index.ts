@@ -106,6 +106,15 @@ export {
   type TaskTypeStats,
 } from './task-history.js';
 
+// ETA Prediction Service (Issue #1234)
+export {
+  ETAPredictionService,
+  etaPredictionService,
+  type ETAPrediction,
+  type ETAPredictionInput,
+  type TaskTypeSummary,
+} from './eta-prediction-service.js';
+
 // SubagentManager - Unified subagent spawning (Issue #997)
 export {
   SubagentManager,
