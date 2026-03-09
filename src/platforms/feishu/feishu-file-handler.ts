@@ -79,8 +79,22 @@ export class FeishuFileHandler implements IFileHandler {
         return { success: false, error: 'No file_key found' };
       }
 
+      // Issue #1205: Log the complete message_id + file_key pairing for debugging
+      // This helps identify mismatch issues between the message containing the file
+      // and the file_key being downloaded
+      logger.info(
+        {
+          chatId,
+          messageType,
+          messageId,
+          fileKey,
+          fileName,
+          pairing: `message_id=${messageId} + file_key=${fileKey}`,
+        },
+        'Starting file download with message_id + file_key pairing'
+      );
+
       // Download file to local storage
-      logger.debug({ fileKey, messageType, fileName, messageId }, 'Starting file download');
       const downloadResult = await this.downloadFile(fileKey, messageType, fileName, messageId);
       if (!downloadResult.success || !downloadResult.filePath) {
         const errorDetail = downloadResult.filePath ? 'Download returned success but no path' : 'Download failed';

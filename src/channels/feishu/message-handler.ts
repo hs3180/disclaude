@@ -565,15 +565,30 @@ export class MessageHandler {
 
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+      // Issue #1205: Log complete message structure for debugging message_id + file_key pairing
+      // This helps identify if the message_id being used matches the file_key in the content
       logger.info(
-        { chatId: chat_id, messageType: message_type, messageId: message_id },
+        {
+          chatId: chat_id,
+          messageType: message_type,
+          messageId: message_id,
+          parentId: parent_id,
+          contentPreview: content.substring(0, 200),
+        },
         'Processing file/image message'
       );
       const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
       if (!result.success) {
+        // Issue #1205: Include message_id in error logging for debugging pairing issues
         logger.error(
-          { chatId: chat_id, messageType: message_type, messageId: message_id, error: result.error },
-          'File/image processing failed - detailed error'
+          {
+            chatId: chat_id,
+            messageType: message_type,
+            messageId: message_id,
+            error: result.error,
+            contentPreview: content.substring(0, 200),
+          },
+          'File/image processing failed - check message_id and file_key pairing'
         );
         await this.callbacks.sendMessage({
           chatId: chat_id,
