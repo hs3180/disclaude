@@ -24,7 +24,7 @@ const logger = createLogger('MentionDetector');
  */
 export interface BotInfo {
   open_id: string;
-  app_id: string;
+  app_id?: string;
 }
 
 /**
