@@ -86,6 +86,23 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
+ * Session timeout configuration (Issue #1213)
+ *
+ * For long-inactive chat sessions, close the session and reload with
+ * compacted history when the user sends a new message.
+ */
+export const SESSION_TIMEOUT = {
+  /** Inactivity timeout in milliseconds (30 minutes) */
+  INACTIVE_MS: 30 * 60 * 1000,
+
+  /** Number of days to load after timeout (reduced from default 7) */
+  COMPACTED_HISTORY_DAYS: 1,
+
+  /** Maximum characters for compacted history (reduced from default 4000) */
+  COMPACTED_MAX_LENGTH: 2000,
+} as const;
+
+/**
  * Error codes that should trigger a retry
  */
 export const RETRYABLE_ERROR_CODES = [

@@ -34,7 +34,7 @@
 
 import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
-import { SESSION_RESTORE } from '../../config/constants.js';
+import { SESSION_RESTORE, SESSION_TIMEOUT } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
@@ -85,6 +85,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private persistedHistoryContext?: string;
   private historyLoaded = false;
   private historyLoadPromise?: Promise<void>;
+
+  // Session timeout tracking (Issue #1213)
+  private lastActivityTime = Date.now();
+  private useCompactedHistory = false;
 
   // Task complexity tracking (Issue #857)
   private readonly complexityAgent: TaskComplexityAgent;
@@ -160,27 +164,46 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
   /**
    * Internal method to perform the actual history loading.
+   *
+   * Issue #1213: Supports compacted history loading after session timeout.
    */
   private async doLoadPersistedHistory(): Promise<void> {
     try {
+      // Issue #1213: Use compacted settings after session timeout
+      const historyDays = this.useCompactedHistory
+        ? SESSION_TIMEOUT.COMPACTED_HISTORY_DAYS
+        : SESSION_RESTORE.HISTORY_DAYS;
+      const maxLength = this.useCompactedHistory
+        ? SESSION_TIMEOUT.COMPACTED_MAX_LENGTH
+        : SESSION_RESTORE.MAX_CONTEXT_LENGTH;
+
       this.logger.info(
-        { chatId: this.boundChatId, days: SESSION_RESTORE.HISTORY_DAYS },
+        {
+          chatId: this.boundChatId,
+          days: historyDays,
+          maxLength,
+          compacted: this.useCompactedHistory,
+        },
         'Loading persisted chat history for session restoration'
       );
 
       const history = await messageLogger.getChatHistory(
         this.boundChatId,
-        SESSION_RESTORE.HISTORY_DAYS
+        historyDays
       );
 
       if (history && history.trim()) {
         // Truncate if too long
-        this.persistedHistoryContext = history.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
-          ? history.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
+        this.persistedHistoryContext = history.length > maxLength
+          ? history.slice(-maxLength)
           : history;
 
         this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
+          {
+            chatId: this.boundChatId,
+            historyLength: this.persistedHistoryContext.length,
+            compacted: this.useCompactedHistory,
+          },
           'Persisted chat history loaded successfully'
         );
       } else {
@@ -383,6 +406,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    *
    * Issue #644: Only accepts messages for the bound chatId.
    * Issue #857: Triggers async complexity analysis for progress tracking.
+   * Issue #1213: Handles session timeout with compacted history reload.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
@@ -407,6 +431,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
       );
       return;
     }
+
+    // Issue #1213: Check for session timeout
+    const now = Date.now();
+    const inactiveMs = now - this.lastActivityTime;
+    if (this.isSessionActive && inactiveMs > SESSION_TIMEOUT.INACTIVE_MS) {
+      this.logger.info(
+        { chatId, inactiveMs: inactiveMs / 1000 / 60, timeoutMinutes: SESSION_TIMEOUT.INACTIVE_MS / 1000 / 60 },
+        'Session timed out due to inactivity, resetting with compacted history'
+      );
+
+      // Reset session
+      this.reset();
+
+      // Mark for compacted history loading
+      this.useCompactedHistory = true;
+      this.historyLoaded = false;
+    }
+
+    // Update activity time
+    this.lastActivityTime = now;
 
     this.logger.info(
       { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext },
@@ -726,6 +770,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Reset the agent session (ChatAgent interface).
    *
    * Clears conversation history and state for this Pilot's bound chatId.
+   * Issue #1213: Manual reset restores full history loading (not compacted).
    *
    * @param chatId - Optional chat ID (must match bound chatId if provided)
    */
@@ -763,6 +808,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
     this.historyLoaded = false;
+
+    // Issue #1213: Manual reset restores full history loading
+    this.useCompactedHistory = false;
   }
 
   /**

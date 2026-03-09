@@ -15,5 +15,6 @@ export {
   FEISHU_API,
   CHAT_HISTORY,
   SESSION_RESTORE,
+  SESSION_TIMEOUT,
   RETRYABLE_ERROR_CODES,
 } from '@disclaude/core';
