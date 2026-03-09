@@ -52,3 +52,8 @@ export type {
 } from './primary-node.js';
 
 export { getNodeCapabilities } from './primary-node.js';
+
+// Worker Node types (Issue #1041)
+export type { WorkerNodeConfig } from './worker-node.js';
+
+export { getWorkerNodeCapabilities } from './worker-node.js';

@@ -3,14 +3,19 @@
  *
  * Worker Node process for disclaude.
  *
- * This package will contain:
- * - Agent execution
- * - WebSocket client
- * - Scheduler
- * - File transfer client
+ * This package contains:
+ * - WorkerNodeConfig type definition
+ * - (Future) Agent execution code
+ * - (Future) WebSocket client
+ * - (Future) Scheduler
+ * - (Future) File transfer client
  *
- * Code will be migrated from src/ in subsequent PRs.
+ * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
-export const WORKER_NODE_VERSION = '0.0.1';
+// Re-export types from @disclaude/core
+export type { WorkerNodeConfig } from '@disclaude/core';
+export { getWorkerNodeCapabilities } from '@disclaude/core';
+
+// Package version
+export const WORKER_NODE_VERSION = '0.0.2';

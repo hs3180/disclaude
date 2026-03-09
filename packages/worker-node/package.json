@@ -1,6 +1,6 @@
 {
   "name": "@disclaude/worker-node",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Worker Node process for disclaude - handles agent execution and scheduled tasks",
   "type": "module",
   "main": "./dist/index.js",
