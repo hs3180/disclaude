@@ -11,6 +11,7 @@ import type { Logger } from 'pino';
 import type { IMessageSender } from '../../channels/adapters/types.js';
 import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
+import { extractCardTextContent } from './card-builders/card-text-extractor.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { retry } from '../../utils/retry.js';
 
@@ -139,9 +140,11 @@ export class FeishuMessageSender implements IMessageSender {
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
+        // Issue #1231: Only log user-visible content, not full JSON structure
+        // If description is provided, use it; otherwise extract text from card
         const cardContent = description
-          ? `[Card] ${description}\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``
-          : `[Interactive Card]\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``;
+          ? `[Card] ${description}`
+          : extractCardTextContent(card);
         await messageLogger.logOutgoingMessage(botMessageId, chatId, cardContent);
       }
 
