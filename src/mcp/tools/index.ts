@@ -65,3 +65,7 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Start Discussion (Issue #631: 离线提问 - Agent 不阻塞工作的留言机制)
+export { start_discussion } from './start-discussion.js';
+export type { StartDiscussionResult } from './start-discussion.js';

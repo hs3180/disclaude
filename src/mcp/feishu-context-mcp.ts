@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  start_discussion,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 import { getGroupService } from '../platforms/feishu/group-service.js';
@@ -219,27 +220,30 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
     },
   },
   {
-    name: 'start_group_discussion',
-    description: `Start a group discussion on a topic and collect conclusions.
+    name: 'start_discussion',
+    description: `Start a discussion by creating a new group chat with context for ChatAgent.
 
-Creates a temporary group chat, invites members, and facilitates a discussion on the given topic. After the discussion concludes, the group is dissolved and the conclusions are returned.
+**Issue #631: 离线提问 - Agent 不阻塞工作的留言机制**
+
+This tool allows an agent to initiate a discussion by creating a new group chat,
+sending context information wrapped as a prompt for ChatAgent, and returning immediately
+(non-blocking).
 
 ---
 
 ## 🎯 Use Cases
 
-1. **Deep Dive Discussion**: When a topic needs more thorough discussion than the main chat allows
-2. **Stakeholder Input**: Gather input from specific people on a decision
-3. **Problem Solving**: Collaboratively solve complex problems with relevant team members
+1. **Offline Questions**: Agent needs user input but shouldn't block current work
+2. **Deep Dive Discussion**: When a topic needs more thorough discussion
+3. **Stakeholder Input**: Gather input from specific people on a decision
 
 ---
 
 ## Parameters
 
-- **topic**: The discussion topic/question (required)
-- **members**: Array of member open_ids to invite (optional, defaults to current user)
-- **context**: Background context for the discussion (optional)
-- **timeout**: Discussion timeout in minutes (optional, default: 30)
+- **topic**: Discussion topic (used as group name, required)
+- **members**: Array of member open_ids to invite (required)
+- **context**: Context information to send to ChatAgent (required)
 
 ---
 
@@ -247,10 +251,9 @@ Creates a temporary group chat, invites members, and facilitates a discussion on
 
 \`\`\`json
 {
-  "topic": "Should we migrate to TypeScript?",
+  "topic": "API 设计讨论",
   "members": ["ou_xxx", "ou_yyy"],
-  "context": "We are considering migrating our codebase from JavaScript to TypeScript.",
-  "timeout": 60
+  "context": "我们需要讨论新 API 的设计方案。当前有两个候选方案..."
 }
 \`\`\`
 
@@ -260,58 +263,26 @@ Creates a temporary group chat, invites members, and facilitates a discussion on
 
 1. Creates a new group chat with the topic as the name
 2. Invites specified members
-3. Posts the topic and context as the first message
-4. Facilitates the discussion (monitors for conclusion signals)
-5. Collects and summarizes conclusions
-6. Dissolves the group and returns conclusions
+3. Sends context wrapped as a prompt for ChatAgent
+4. Returns immediately (non-blocking)
 
 ---
 
 ## Note
 
-This tool initiates an async discussion. The conclusions will be returned when participants reach consensus or timeout expires.`,
-    parameters: z.object({
-      topic: z.string().describe('The discussion topic/question'),
-      members: z.array(z.string()).optional().describe('Array of member open_ids to invite'),
-      context: z.string().optional().describe('Background context for the discussion'),
-      timeout: z.number().optional().describe('Discussion timeout in minutes (default: 30)'),
+This is a non-blocking operation. The agent can continue other work while
+the discussion happens in the background. ChatAgent will handle the discussion
+in the new group.`,    parameters: z.object({
+      topic: z.string().describe('Discussion topic (used as group name)'),
+      members: z.array(z.string()).describe('Array of member open_ids to invite'),
+      context: z.string().describe('Context information to send to ChatAgent'),
     }),
-    handler: async ({ topic, members, context, timeout }) => {
+    handler: async ({ topic, members, context }) => {
       try {
-        // Check if Feishu client is available
-        if (!isLarkClientServiceInitialized()) {
-          return toolSuccess('⚠️ Feishu client not configured. Cannot create group discussion.');
-        }
-        const client = getLarkClientService().getClient();
-
-        // Create the discussion group
-        const chatId = await createDiscussionChat(client, { topic, members });
-
-        // Register the group for tracking
-        const groupService = getGroupService();
-        groupService.registerGroup({
-          chatId,
-          name: topic,
-          createdAt: Date.now(),
-          initialMembers: members || [],
-        });
-
-        // Send the initial topic message
-        let initialMessage = `## 🎯 讨论话题\n\n**${topic}**\n\n`;
-        if (context) {
-          initialMessage += `### 背景\n${context}\n\n`;
-        }
-        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。达成结论后请明确说明。`;
-
-        await send_message({
-          content: initialMessage,
-          format: 'text',
-          chatId,
-        });
-
-        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
+        const result = await start_discussion({ topic, members, context });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
-        return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
+        return toolSuccess(`⚠️ Failed to start discussion: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
