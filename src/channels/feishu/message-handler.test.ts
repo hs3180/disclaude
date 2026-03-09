@@ -480,4 +480,176 @@ describe('MessageHandler - Issue #1123: chat_record', () => {
       expect(mockCallbacks.emitMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe('Issue #1205: Image placeholder detection', () => {
+    it('should detect Chinese image placeholder "这张图片"', async () => {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        messageType: 'image',
+        content: JSON.stringify({ image_key: 'test_image_key' }),
+      });
+      vi.mocked(getLarkClientService).mockReturnValue({
+        getClient: vi.fn().mockReturnValue({}),
+        getMessage: mockGetMessage,
+      } as unknown as ReturnType<typeof getLarkClientService>);
+
+      const { FeishuFileHandler } = await import('../../platforms/feishu/feishu-file-handler.js');
+      vi.mocked(FeishuFileHandler).mockImplementation(() => ({
+        handleFileMessage: vi.fn().mockResolvedValue({
+          success: true,
+          filePath: '/tmp/test_image.jpg',
+          fileKey: 'test_image_key',
+        }),
+        buildUploadPrompt: vi.fn().mockReturnValue('📷 Image uploaded'),
+      }) as unknown as InstanceType<typeof FeishuFileHandler>);
+
+      const { attachmentManager } = await import('../../file-transfer/inbound/index.js');
+      vi.mocked(attachmentManager.getAttachments).mockReturnValue([{
+        fileKey: 'test_image_key',
+        fileName: 'image_test.jpg',
+        localPath: '/tmp/test_image.jpg',
+        fileType: 'image',
+        messageId: 'test-msg-id',
+        timestamp: Date.now(),
+      }]);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '这张图片' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      expect(mockGetMessage).toHaveBeenCalledWith('test-msg-id');
+    });
+
+    it('should detect Chinese image placeholder "[图片]"', async () => {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const mockGetMessage = vi.fn().mockResolvedValue(null);
+      vi.mocked(getLarkClientService).mockReturnValue({
+        getClient: vi.fn().mockReturnValue({}),
+        getMessage: mockGetMessage,
+      } as unknown as ReturnType<typeof getLarkClientService>);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '[图片]' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      expect(mockGetMessage).toHaveBeenCalledWith('test-msg-id');
+    });
+
+    it('should detect English image placeholder "[Image]"', async () => {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const mockGetMessage = vi.fn().mockResolvedValue(null);
+      vi.mocked(getLarkClientService).mockReturnValue({
+        getClient: vi.fn().mockReturnValue({}),
+        getMessage: mockGetMessage,
+      } as unknown as ReturnType<typeof getLarkClientService>);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '[Image]' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      expect(mockGetMessage).toHaveBeenCalledWith('test-msg-id');
+    });
+
+    it('should not detect regular text as image placeholder', async () => {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const mockGetMessage = vi.fn().mockResolvedValue(null);
+      vi.mocked(getLarkClientService).mockReturnValue({
+        getClient: vi.fn().mockReturnValue({}),
+        getMessage: mockGetMessage,
+      } as unknown as ReturnType<typeof getLarkClientService>);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '这是一条普通消息' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // Should not call getMessage for regular text
+      expect(mockGetMessage).not.toHaveBeenCalled();
+    });
+
+    it('should send permission help message when image cannot be fetched', async () => {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const mockGetMessage = vi.fn().mockResolvedValue({
+        messageType: 'text',
+        content: JSON.stringify({ text: '这张图片' }),
+      });
+      vi.mocked(getLarkClientService).mockReturnValue({
+        getClient: vi.fn().mockReturnValue({}),
+        getMessage: mockGetMessage,
+      } as unknown as ReturnType<typeof getLarkClientService>);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '这张图片' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // Should send a help message about permissions
+      expect(mockCallbacks.sendMessage).toHaveBeenCalled();
+      const [[sentMessage]] = mockCallbacks.sendMessage.mock.calls;
+      expect(sentMessage.text).toContain('im:resource');
+    });
+  });
 });
