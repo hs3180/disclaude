@@ -535,14 +535,14 @@ ${options.prompt}
     // Create agent using factory
     const agent = AgentFactory.createChatAgent('pilot', options.chatId, options.callbacks);
 
-    this.inMemoryAgents.set(subagentId, handle);
+    this.inMemoryAgents.set(subagentId, agent);
     handle.status = 'running';
 
     logger.info({ subagentId, name: options.name, chatId: options.chatId }, 'Chat subagent started for discussion');
     this.notifyStatusChange(handle);
 
     // Execute discussion
-    let discussionResult: DiscussionResult = {
+    const discussionResult: DiscussionResult = {
       subagentId,
       chatId: options.chatId,
       topic: options.prompt,

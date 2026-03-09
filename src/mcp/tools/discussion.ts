@@ -65,19 +65,25 @@ export interface StartDiscussionResult {
  * @param client - Feishu client for API calls
  * @returns PilotCallbacks implementation
  */
-function buildDiscussionCallbacks(client: lark.Client): PilotCallbacks {
+function buildDiscussionCallbacks(_client: lark.Client): PilotCallbacks {
   return {
-    sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+    sendMessage: (chatId: string, _text: string, parentMessageId?: string) => {
       // Use IPC or direct API to send message
       logger.debug({ chatId, parentMessageId }, 'Discussion agent sending message');
       // For now, we'll use the Feishu API directly
       // In production, this should go through IPC
+      // TODO: Implement actual message sending via IPC or Feishu API
+      return Promise.resolve();
     },
-    sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+    sendCard: (chatId: string, _card: Record<string, unknown>, _description?: string, parentMessageId?: string) => {
       logger.debug({ chatId, parentMessageId }, 'Discussion agent sending card');
+      // TODO: Implement actual card sending via IPC or Feishu API
+      return Promise.resolve();
     },
-    sendFile: async (chatId: string, filePath: string) => {
-      logger.debug({ chatId, filePath }, 'Discussion agent sending file');
+    sendFile: (chatId: string, _filePath: string) => {
+      logger.debug({ chatId }, 'Discussion agent sending file');
+      // TODO: Implement actual file sending via IPC or Feishu API
+      return Promise.resolve();
     },
   };
 }
@@ -164,7 +170,7 @@ export async function start_discussion(params: {
         members,
         creatorId,
       });
-      chatId = group.chatId;
+      ({ chatId } = group);
       logger.info({ chatId, groupName: group.name }, 'Created new discussion group');
     }
 
