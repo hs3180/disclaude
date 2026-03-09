@@ -37,6 +37,7 @@ type ConfigType = typeof import('./config/index.js').Config;
 type InitLoggerFn = typeof import('./utils/logger.js').initLogger;
 type FlushLoggerFn = typeof import('./utils/logger.js').flushLogger;
 type GetRootLoggerFn = typeof import('./utils/logger.js').getRootLogger;
+type SetLogLevelFn = typeof import('./utils/logger.js').setLogLevel;
 type HandleErrorFn = typeof import('./utils/error-handler.js').handleError;
 type ErrorCategoryType = typeof import('./utils/error-handler.js').ErrorCategory;
 type SetupSkillsFn = typeof import('./utils/skills-setup.js').setupSkillsInWorkspace;
@@ -47,6 +48,7 @@ let Config: ConfigType;
 let initLogger: InitLoggerFn;
 let flushLogger: FlushLoggerFn;
 let getRootLogger: GetRootLoggerFn;
+let setLogLevel: SetLogLevelFn;
 let handleError: HandleErrorFn;
 let ErrorCategory: ErrorCategoryType;
 let setupSkillsInWorkspace: SetupSkillsFn;
@@ -61,7 +63,7 @@ async function loadDependencies(): Promise<void> {
   ({ Config } = configModule);
 
   const loggerModule = await import('./utils/logger.js');
-  ({ initLogger, flushLogger, getRootLogger } = loggerModule);
+  ({ initLogger, flushLogger, getRootLogger, setLogLevel } = loggerModule);
 
   const errorHandlerModule = await import('./utils/error-handler.js');
   ({ handleError, ErrorCategory } = errorHandlerModule);
@@ -148,13 +150,19 @@ async function main(): Promise<void> {
   // Load all dependencies after config is set
   await loadDependencies();
 
+  // Get logging config from file and apply log level
+  const loggingConfig = Config.getLoggingConfig();
+  // Set log level first (rootLogger may already be initialized by module imports)
+  setLogLevel(loggingConfig.level as import('./utils/logger.js').LogLevel);
   const logger = await initLogger({
+    level: loggingConfig.level as import('./utils/logger.js').LogLevel,
     metadata: {
       version: packageJson.version,
       nodeVersion: process.version,
       platform: process.platform
     }
   });
+  logger.debug({ loggingConfig }, 'Logging configuration applied');
 
   const globalArgs = parseGlobalArgs();
   const { mode } = globalArgs;
