@@ -61,6 +61,8 @@ export interface ExecNodeInfo {
   activeChats: number;
   /** Connection time */
   connectedAt: Date;
+  /** Whether this is a local execution capability */
+  isLocal?: boolean;
 }
 
 /**

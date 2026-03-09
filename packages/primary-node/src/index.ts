@@ -85,5 +85,19 @@ export {
   type IpcUnavailableReason,
 } from './ipc/index.js';
 
+// Node services (Issue #1040)
+export {
+  ExecNodeRegistry,
+  type ConnectedExecNode,
+  type ExecNodeRegistryConfig,
+} from './exec-node-registry.js';
+
+export {
+  WebSocketServerService,
+  type WebSocketServerServiceConfig,
+  type IFileStorageService,
+  type FileTransferAPIHandler,
+} from './websocket-server-service.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
