@@ -139,9 +139,11 @@ export class FeishuMessageSender implements IMessageSender {
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
+        // Issue #1231: Only log user-visible content, not full JSON structure
+        // If description is provided, use it; otherwise extract text from card
         const cardContent = description
-          ? `[Card] ${description}\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``
-          : `[Interactive Card]\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``;
+          ? `[Card] ${description}`
+          : this.extractCardTextContent(card);
         await messageLogger.logOutgoingMessage(botMessageId, chatId, cardContent);
       }
 
@@ -187,6 +189,76 @@ export class FeishuMessageSender implements IMessageSender {
     } catch (error) {
       this.logger.error({ err: error, filePath, chatId, threadId }, 'Failed to send file to user');
     }
+  }
+
+  /**
+   * Extract user-visible text content from a Feishu Card structure.
+   * Issue #1231: Only persist what the user actually sees, not the full JSON.
+   *
+   * @param card - Feishu card object
+   * @returns Extracted text content for logging
+   */
+  private extractCardTextContent(card: Record<string, unknown>): string {
+    const textParts: string[] = [];
+
+    // Extract header title if present
+    const header = card.header as { title?: { content?: string } } | undefined;
+    if (header?.title?.content) {
+      textParts.push(`[${header.title.content}]`);
+    }
+
+    // Recursively extract text from elements
+    const extractFromElements = (elements: unknown[]): void => {
+      for (const element of elements) {
+        if (!element || typeof element !== 'object') continue;
+
+        const el = element as Record<string, unknown>;
+
+        // Extract from markdown content
+        if (el.tag === 'markdown' && typeof el.content === 'string') {
+          // Only take first line or first 100 chars for brevity
+          const content = el.content.split('\n')[0]?.slice(0, 100) || '';
+          if (content.trim()) {
+            textParts.push(content.trim());
+          }
+        }
+
+        // Extract from plain text
+        if (el.tag === 'div' && typeof el.text === 'string') {
+          textParts.push(el.text.trim());
+        }
+
+        // Extract from button text
+        if (el.tag === 'button' && el.text) {
+          const text = (el.text as { content?: string })?.content;
+          if (text) {
+            textParts.push(`[${text}]`);
+          }
+        }
+
+        // Recursively process nested elements
+        if (Array.isArray(el.elements)) {
+          extractFromElements(el.elements);
+        }
+
+        // Process actions array
+        if (Array.isArray(el.actions)) {
+          extractFromElements(el.actions);
+        }
+      }
+    };
+
+    // Start extraction from card elements
+    const elements = card.elements as unknown[] | undefined;
+    if (Array.isArray(elements)) {
+      extractFromElements(elements);
+    }
+
+    // If we found text content, return it; otherwise return a generic description
+    if (textParts.length > 0) {
+      return `[Interactive Card] ${textParts.slice(0, 3).join(' | ')}`;
+    }
+    return '[Interactive Card]';
   }
 
   async addReaction(messageId: string, emoji: string): Promise<boolean> {

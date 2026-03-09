@@ -705,9 +705,14 @@ export class MessageHandler {
       return;
     }
 
+    // Issue #1231: Save original text for persistence (without packed history)
+    const originalText = text;
+
     // Issue #846: If packed chat history was detected, prepend it to the message
+    // This enhanced text is for Agent processing only, NOT for persistence
+    let enhancedText = text;
     if (packedChatHistory) {
-      text = `${packedChatHistory}\n\n---\n\n用户消息: ${text}`;
+      enhancedText = `${packedChatHistory}\n\n---\n\n用户消息: ${text}`;
       logger.info(
         { messageId: message_id, chatId: chat_id, hasPackedHistory: true },
         'Message with packed chat history received'
@@ -716,12 +721,12 @@ export class MessageHandler {
       logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
     }
 
-    // Log message
+    // Issue #1231: Log original message content only (without packed history)
     await messageLogger.logIncomingMessage(
       message_id,
       this.extractOpenId(sender) || 'unknown',
       chat_id,
-      text,
+      originalText,
       message_type,
       create_time
     );
@@ -733,7 +738,8 @@ export class MessageHandler {
     const commandRegistry = getCommandRegistry();
 
     // Strip leading mentions to detect commands in messages like "@bot /help"
-    const textWithoutMentions = stripLeadingMentions(text, mentions);
+    // Use originalText for command detection (commands are in user's message, not packed history)
+    const textWithoutMentions = stripLeadingMentions(originalText, mentions);
 
     // Group chat passive mode
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
@@ -743,7 +749,8 @@ export class MessageHandler {
         { messageId: message_id, chatId: chat_id, chat_type },
         'Skipped group chat message without @mention (passive mode)'
       );
-      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      // Issue #1231: Use originalText for filtered message forwarding
+      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, originalText, this.extractOpenId(sender), { chat_type });
       return;
     }
 
@@ -851,11 +858,12 @@ export class MessageHandler {
     }
 
     // Emit as incoming message
+    // Issue #1231: Use enhancedText for Agent processing (includes packed history if present)
     await this.callbacks.emitMessage({
       messageId: message_id,
       chatId: chat_id,
       userId: this.extractOpenId(sender),
-      content: text,
+      content: enhancedText,
       messageType: message_type,
       timestamp: create_time,
       threadId,
