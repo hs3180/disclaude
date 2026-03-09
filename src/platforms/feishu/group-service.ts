@@ -17,6 +17,35 @@ import { createDiscussionChat } from './chat-ops.js';
 const logger = createLogger('GroupService');
 
 /**
+ * Discussion status for a group.
+ *
+ * @see Issue #1229 - 智能会话结束
+ */
+export type DiscussionStatus = 'active' | 'concluded' | 'abandoned';
+
+/**
+ * Discussion metadata for a group.
+ *
+ * @see Issue #1229 - 智能会话结束
+ */
+export interface DiscussionInfo {
+  /** The discussion topic */
+  topic: string;
+  /** Background context for the discussion */
+  context?: string;
+  /** Current status of the discussion */
+  status: DiscussionStatus;
+  /** When the discussion was started */
+  startedAt: number;
+  /** When the discussion was concluded (if applicable) */
+  concludedAt?: number;
+  /** Conclusion/summary of the discussion (if applicable) */
+  conclusion?: string;
+  /** Actions to take after discussion concludes */
+  followUpActions?: string[];
+}
+
+/**
  * Group metadata.
  */
 export interface GroupInfo {
@@ -37,6 +66,12 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * Discussion metadata for discussion groups.
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  discussion?: DiscussionInfo;
 }
 
 /**
@@ -228,6 +263,131 @@ export class GroupService {
    */
   listTopicGroups(): GroupInfo[] {
     return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
+  }
+
+  // ============================================================================
+  // Discussion Status Management (Issue #1229)
+  // ============================================================================
+
+  /**
+   * Start a discussion in a group.
+   *
+   * @param chatId - Group chat ID
+   * @param topic - Discussion topic
+   * @param context - Optional background context
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  startDiscussion(chatId: string, topic: string, context?: string): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot start discussion: group not found');
+      return false;
+    }
+
+    group.discussion = {
+      topic,
+      context,
+      status: 'active',
+      startedAt: Date.now(),
+    };
+    this.save();
+
+    logger.info({ chatId, topic }, 'Discussion started');
+    return true;
+  }
+
+  /**
+   * Get discussion info for a group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Discussion info or undefined
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  getDiscussion(chatId: string): DiscussionInfo | undefined {
+    return this.registry.groups[chatId]?.discussion;
+  }
+
+  /**
+   * Check if a group has an active discussion.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group has an active discussion
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  hasActiveDiscussion(chatId: string): boolean {
+    const discussion = this.getDiscussion(chatId);
+    return discussion?.status === 'active';
+  }
+
+  /**
+   * Conclude a discussion.
+   *
+   * @param chatId - Group chat ID
+   * @param conclusion - The conclusion/summary of the discussion
+   * @param followUpActions - Optional follow-up actions to take
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  concludeDiscussion(chatId: string, conclusion: string, followUpActions?: string[]): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group || !group.discussion) {
+      logger.warn({ chatId }, 'Cannot conclude discussion: no active discussion found');
+      return false;
+    }
+
+    group.discussion.status = 'concluded';
+    group.discussion.concludedAt = Date.now();
+    group.discussion.conclusion = conclusion;
+    if (followUpActions && followUpActions.length > 0) {
+      group.discussion.followUpActions = followUpActions;
+    }
+    this.save();
+
+    logger.info({ chatId, conclusion }, 'Discussion concluded');
+    return true;
+  }
+
+  /**
+   * Abandon a discussion.
+   *
+   * @param chatId - Group chat ID
+   * @param reason - Optional reason for abandoning
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  abandonDiscussion(chatId: string, reason?: string): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group || !group.discussion) {
+      logger.warn({ chatId }, 'Cannot abandon discussion: no discussion found');
+      return false;
+    }
+
+    group.discussion.status = 'abandoned';
+    group.discussion.concludedAt = Date.now();
+    if (reason) {
+      group.discussion.conclusion = `已放弃: ${reason}`;
+    }
+    this.save();
+
+    logger.info({ chatId, reason }, 'Discussion abandoned');
+    return true;
+  }
+
+  /**
+   * List all groups with active discussions.
+   *
+   * @returns Array of group info with active discussions
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  listActiveDiscussions(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(g => g.discussion?.status === 'active');
   }
 
   /**

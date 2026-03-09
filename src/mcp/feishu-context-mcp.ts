@@ -296,6 +296,9 @@ This tool initiates an async discussion. The conclusions will be returned when p
           initialMembers: members || [],
         });
 
+        // Start the discussion tracking (Issue #1229)
+        groupService.startDiscussion(chatId, topic, context);
+
         // Send the initial topic message
         let initialMessage = `## 🎯 讨论话题\n\n**${topic}**\n\n`;
         if (context) {
@@ -312,6 +315,173 @@ This tool initiates an async discussion. The conclusions will be returned when p
         return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // ============================================================================
+  // Issue #1229: Discussion Status Management
+  // ============================================================================
+  {
+    name: 'check_discussion_status',
+    description: `Check the status of a discussion in a group chat.
+
+Use this tool to:
+1. Check if a discussion is still active or has concluded
+2. Get the discussion topic and context
+3. See how long the discussion has been running
+
+---
+
+## Parameters
+
+- **chatId**: The group chat ID to check
+
+---
+
+## Returns
+
+- Discussion status (active/concluded/abandoned)
+- Topic and context
+- Duration since start
+- Conclusion (if concluded)
+
+---
+
+## Use Cases
+
+1. Before sending a message to a discussion group, check if it's still active
+2. Monitor discussion progress
+3. Decide whether to prompt for conclusion
+
+---
+
+*Issue #1229: 智能会话结束*`,
+    parameters: z.object({
+      chatId: z.string().describe('The group chat ID to check'),
+    }),
+    handler: async ({ chatId }) => {
+      try {
+        const groupService = getGroupService();
+        const group = groupService.getGroup(chatId);
+
+        if (!group) {
+          return toolSuccess(`⚠️ 群组未找到: ${chatId}`);
+        }
+
+        if (!group.discussion) {
+          return toolSuccess(`ℹ️ 该群组没有进行中的讨论\n- 群组名称: ${group.name}`);
+        }
+
+        const discussion = group.discussion;
+        const duration = Math.floor((Date.now() - discussion.startedAt) / 60000); // minutes
+        const statusEmoji = {
+          active: '🟢',
+          concluded: '✅',
+          abandoned: '❌',
+        }[discussion.status];
+
+        let result = `📋 讨论状态\n\n`;
+        result += `- **状态**: ${statusEmoji} ${discussion.status}\n`;
+        result += `- **话题**: ${discussion.topic}\n`;
+        if (discussion.context) {
+          result += `- **背景**: ${discussion.context}\n`;
+        }
+        result += `- **已进行**: ${duration} 分钟\n`;
+
+        if (discussion.status === 'concluded' && discussion.conclusion) {
+          result += `- **结论**: ${discussion.conclusion}\n`;
+        }
+
+        if (discussion.followUpActions && discussion.followUpActions.length > 0) {
+          result += `- **后续动作**: ${discussion.followUpActions.join(', ')}\n`;
+        }
+
+        return toolSuccess(result);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to check discussion status: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'conclude_discussion',
+    description: `Conclude a discussion in a group chat.
+
+Use this tool when:
+1. The discussion has reached a natural conclusion
+2. Users have confirmed they're satisfied with the outcome
+3. You want to formally close the discussion
+
+---
+
+## Parameters
+
+- **chatId**: The group chat ID
+- **conclusion**: The conclusion/summary of the discussion
+- **followUpActions**: Optional array of follow-up actions to take
+
+---
+
+## Workflow
+
+1. First, use \`ask_user\` to confirm with participants that the discussion is complete
+2. Summarize the key points and conclusions
+3. Call this tool to formally conclude the discussion
+4. Execute any follow-up actions as needed
+
+---
+
+## Example
+
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "conclusion": "团队决定采用 TypeScript 进行新项目开发，并在一个月内完成迁移。",
+  "followUpActions": ["创建迁移计划文档", "安排技术分享会"]
+}
+\`\`\`
+
+---
+
+*Issue #1229: 智能会话结束*`,
+    parameters: z.object({
+      chatId: z.string().describe('The group chat ID'),
+      conclusion: z.string().describe('The conclusion/summary of the discussion'),
+      followUpActions: z.array(z.string()).optional().describe('Optional follow-up actions to take'),
+    }),
+    handler: async ({ chatId, conclusion, followUpActions }) => {
+      try {
+        const groupService = getGroupService();
+        const group = groupService.getGroup(chatId);
+
+        if (!group) {
+          return toolSuccess(`⚠️ 群组未找到: ${chatId}`);
+        }
+
+        if (!group.discussion) {
+          return toolSuccess(`⚠️ 该群组没有进行中的讨论`);
+        }
+
+        if (group.discussion.status !== 'active') {
+          return toolSuccess(`⚠️ 讨论已经${group.discussion.status === 'concluded' ? '结束' : '放弃'}，无法再次结束`);
+        }
+
+        const success = groupService.concludeDiscussion(chatId, conclusion, followUpActions);
+
+        if (success) {
+          let result = `✅ 讨论已结束\n\n`;
+          result += `**结论**: ${conclusion}\n`;
+          if (followUpActions && followUpActions.length > 0) {
+            result += `\n**后续动作**:\n`;
+            followUpActions.forEach((action: string, i: number) => {
+              result += `${i + 1}. ${action}\n`;
+            });
+          }
+          return toolSuccess(result);
+        } else {
+          return toolSuccess(`⚠️ 结束讨论失败`);
+        }
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to conclude discussion: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
