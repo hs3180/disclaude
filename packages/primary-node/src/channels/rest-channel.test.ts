@@ -270,10 +270,10 @@ describe('RestChannel', () => {
       channel = new RestChannel({ port: TEST_PORT });
       await channel.start();
 
-      expect(channel.checkHealth()).toBe(true);
+      expect((channel as unknown as { checkHealth: () => boolean }).checkHealth()).toBe(true);
 
       await channel.stop();
-      expect(channel.checkHealth()).toBe(false);
+      expect((channel as unknown as { checkHealth: () => boolean }).checkHealth()).toBe(false);
     });
   });
 });
