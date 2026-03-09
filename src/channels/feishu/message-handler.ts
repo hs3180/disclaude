@@ -1009,6 +1009,22 @@ export class MessageHandler {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
     }
 
+    // Issue #1223: Send user-visible confirmation when clicking interactive component
+    const confirmationText = action.text ?? action.value;
+    const userConfirmation = `✅ 您选择了「${confirmationText}」`;
+
+    // Send confirmation message to user
+    try {
+      await this.callbacks.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: userConfirmation,
+      });
+      logger.debug({ messageId: message_id, chatId: chat_id, confirmation: userConfirmation }, 'User confirmation sent');
+    } catch (confirmError) {
+      logger.warn({ err: confirmError, messageId: message_id }, 'Failed to send user confirmation');
+      }
+
     try {
       // Try to handle via InteractionManager
       // Build a compatible FeishuCardActionEvent for InteractionManager
