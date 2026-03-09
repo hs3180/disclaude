@@ -80,6 +80,8 @@ import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-
 import { initLarkClientService, getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 // Issue #1085: IPC client for interaction prompt generation
 import { getIpcClient } from '../ipc/unix-socket-client.js';
+// Issue #1230: Chat history for first message context
+import { messageLogger } from '../feishu/message-logger.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -507,6 +509,27 @@ export class PrimaryNode extends EventEmitter {
           // Capability-aware prompt generation (Issue #582)
           getCapabilities: (chatId: string) => {
             return this.getChannelCapabilities(chatId);
+          },
+          // Issue #1230: Get chat history for first message context
+          getChatHistory: async (chatId: string): Promise<string | undefined> => {
+            try {
+              const history = await messageLogger.getChatHistory(chatId);
+              if (history && history.trim()) {
+                // Truncate if too long
+                const truncatedHistory = history.length > 8000
+                  ? history.slice(-8000)
+                  : history;
+                logger.debug(
+                  { chatId, historyLength: truncatedHistory.length },
+                  'Chat history loaded for first message context'
+                );
+                return truncatedHistory;
+              }
+              return undefined;
+            } catch (error) {
+              logger.error({ err: error, chatId }, 'Failed to get chat history for first message');
+              return undefined;
+            }
           },
         });
       },

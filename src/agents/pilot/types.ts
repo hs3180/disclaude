@@ -51,6 +51,14 @@ export interface PilotCallbacks {
    * @returns Channel capabilities or undefined if not available
    */
   getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
+
+  /**
+   * Get chat history context for the first message in a new session.
+   * Issue #1230: Used to attach context only on the first message.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Chat history context string or undefined if not available
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
