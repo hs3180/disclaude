@@ -11,12 +11,11 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
-  create_study_guide,
-  reply_in_thread,
-  get_threads,
-  get_thread_messages,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
+import { getGroupService } from '../platforms/feishu/group-service.js';
+import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
+import { getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 
 // Re-export
 export type { MessageSentCallback } from './tools/types.js';
@@ -128,7 +127,7 @@ export const feishuContextTools = {
 export const feishuToolDefinitions: InlineToolDefinition[] = [
   // ============================================================================
   // Issue #1155: Consolidated tools to reduce token overhead
-  // Reduced from 9 tools to 4 tools (~1600 tokens -> ~400 tokens)
+  // Reduced to 4 core tools: send_message, send_file, start_group_discussion
   // ============================================================================
   {
     name: 'send_message',
@@ -220,80 +219,27 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
     },
   },
   {
-    name: 'create_study_guide',
-    description: `Create study materials from content (NotebookLM feature).
+    name: 'start_group_discussion',
+    description: `Start a group discussion on a topic and collect conclusions.
 
-Generates: summary, Q&A pairs, flashcards, and quiz questions.
-
-## Parameters
-- **content**: Text content to process
-- **title**: Study guide title (default: "Study Guide")
-- **include**: Components to include (default: all)
-  - summary, qa, flashcards, quiz (booleans)
-
-## Example
-\`\`\`json
-{
-  "content": "Course material...",
-  "title": "ML Study Guide",
-  "include": {"summary": true, "qa": true, "flashcards": true, "quiz": false}
-}
-\`\`\``,
-    parameters: z.object({
-      content: z.string(),
-      title: z.string().optional(),
-      include: z.object({
-        summary: z.boolean().optional(),
-        qa: z.boolean().optional(),
-        flashcards: z.boolean().optional(),
-        quiz: z.boolean().optional(),
-      }).optional(),
-      outputPath: z.string().optional(),
-    }),
-    handler: (options) => {
-      try {
-        const result = create_study_guide(options);
-        if (!result.success) {
-          return Promise.resolve(toolSuccess(`⚠️ ${result.error}`));
-        }
-        let output = 'Study Guide created!\n';
-        if (result.outputPath) {
-          output += `Saved: ${result.outputPath}\n\n`;
-        }
-        output += result.studyGuide;
-        return Promise.resolve(toolSuccess(output));
-      } catch (error) {
-        return Promise.resolve(toolSuccess(`⚠️ Failed: ${error instanceof Error ? error.message : String(error)}`));
-      }
-    },
-  },
-  // Thread Tools (Issue #873: Topic group extension)
-  {
-    name: 'reply_in_thread',
-    description: `Reply to a message in a thread (follow-up post).
-
-In a topic-mode chat, this creates a reply to a thread. The message will appear as a follow-up post in the thread.
+Creates a temporary group chat, invites members, and facilitates a discussion on the given topic. After the discussion concludes, the group is dissolved and the conclusions are returned.
 
 ---
 
 ## 🎯 Use Cases
 
-### 1. Follow-up Discussion
-Reply to a topic to continue the discussion without starting a new thread.
-
-### 2. Answer Questions
-Provide answers to questions posted in a thread.
-
-### 3. Add Information
-Add additional information or updates to an existing topic.
+1. **Deep Dive Discussion**: When a topic needs more thorough discussion than the main chat allows
+2. **Stakeholder Input**: Gather input from specific people on a decision
+3. **Problem Solving**: Collaboratively solve complex problems with relevant team members
 
 ---
 
 ## Parameters
 
-- **messageId**: The message ID to reply to (root message of the thread, starts with "om_")
-- **content**: Message content (text or card JSON string)
-- **format**: Message format - "text" or "card"
+- **topic**: The discussion topic/question (required)
+- **members**: Array of member open_ids to invite (optional, defaults to current user)
+- **context**: Background context for the discussion (optional)
+- **timeout**: Discussion timeout in minutes (optional, default: 30)
 
 ---
 
@@ -301,178 +247,71 @@ Add additional information or updates to an existing topic.
 
 \`\`\`json
 {
-  "messageId": "om_xxx",
-  "content": "这是对帖子的回复内容",
-  "format": "text"
+  "topic": "Should we migrate to TypeScript?",
+  "members": ["ou_xxx", "ou_yyy"],
+  "context": "We are considering migrating our codebase from JavaScript to TypeScript.",
+  "timeout": 60
 }
 \`\`\`
+
+---
+
+## Workflow
+
+1. Creates a new group chat with the topic as the name
+2. Invites specified members
+3. Posts the topic and context as the first message
+4. Facilitates the discussion (monitors for conclusion signals)
+5. Collects and summarizes conclusions
+6. Dissolves the group and returns conclusions
 
 ---
 
 ## Note
 
-The \`messageId\` should be the root message of the thread (the first message in the topic), not a reply message.`,
+This tool initiates an async discussion. The conclusions will be returned when participants reach consensus or timeout expires.`,
     parameters: z.object({
-      messageId: z.string(),
-      content: z.string(),
-      format: z.enum(['text', 'card']),
+      topic: z.string().describe('The discussion topic/question'),
+      members: z.array(z.string()).optional().describe('Array of member open_ids to invite'),
+      context: z.string().optional().describe('Background context for the discussion'),
+      timeout: z.number().optional().describe('Discussion timeout in minutes (default: 30)'),
     }),
-    handler: async ({ messageId, content, format }) => {
+    handler: async ({ topic, members, context, timeout }) => {
       try {
-        const result = await reply_in_thread({ messageId, content, format });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+        // Check if Feishu client is available
+        if (!isLarkClientServiceInitialized()) {
+          return toolSuccess('⚠️ Feishu client not configured. Cannot create group discussion.');
+        }
+        const client = getLarkClientService().getClient();
+
+        // Create the discussion group
+        const chatId = await createDiscussionChat(client, { topic, members });
+
+        // Register the group for tracking
+        const groupService = getGroupService();
+        groupService.registerGroup({
+          chatId,
+          name: topic,
+          createdAt: Date.now(),
+          initialMembers: members || [],
+        });
+
+        // Send the initial topic message
+        let initialMessage = `## 🎯 讨论话题\n\n**${topic}**\n\n`;
+        if (context) {
+          initialMessage += `### 背景\n${context}\n\n`;
+        }
+        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。达成结论后请明确说明。`;
+
+        await send_message({
+          content: initialMessage,
+          format: 'text',
+          chatId,
+        });
+
+        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
       } catch (error) {
-        return toolSuccess(`⚠️ Reply failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'get_threads',
-    description: `Get threads (topic list) from a chat.
-
-Retrieves the list of threads in a topic-mode chat. Each thread is represented by its root message.
-
----
-
-## 🎯 Use Cases
-
-### 1. Browse Topics
-List all topics in a topic-mode chat.
-
-### 2. Find Specific Topic
-Search for a specific topic by iterating through the list.
-
-### 3. Topic Overview
-Get an overview of recent discussions in the chat.
-
----
-
-## Parameters
-
-- **chatId**: Chat ID to get threads from (starts with "oc_")
-- **pageSize**: Number of threads to retrieve (default: 20, max: 50)
-- **pageToken**: Page token for pagination (from previous response)
-
----
-
-## Example
-
-\`\`\`json
-{
-  "chatId": "oc_xxx",
-  "pageSize": 20
-}
-\`\`\`
-
----
-
-## Response
-
-Returns an array of threads, each containing:
-- **messageId**: Root message ID
-- **threadId**: Thread ID (starts with "omt_")
-- **contentType**: Message type (text, post, etc.)
-- **content**: Message content
-- **createTime**: Creation timestamp
-- **senderId**: Sender's ID`,
-    parameters: z.object({
-      chatId: z.string(),
-      pageSize: z.number().optional(),
-      pageToken: z.string().optional(),
-    }),
-    handler: async ({ chatId, pageSize, pageToken }) => {
-      try {
-        const result = await get_threads({ chatId, pageSize, pageToken });
-        if (!result.success) {
-          return toolSuccess(`⚠️ ${result.message}`);
-        }
-        let output = `Threads in chat ${chatId}:\n\n`;
-        for (const thread of result.threads || []) {
-          output += `- **${thread.threadId}** (${thread.createTime})\n`;
-          output += `  Content: ${thread.content.substring(0, 100)}${thread.content.length > 100 ? '...' : ''}\n\n`;
-        }
-        if (result.hasMore) {
-          output += `\n_More threads available. Use pageToken: ${result.pageToken}_`;
-        }
-        return toolSuccess(output);
-      } catch (error) {
-        return toolSuccess(`⚠️ Get threads failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'get_thread_messages',
-    description: `Get messages in a thread (thread detail).
-
-Retrieves all messages in a specific thread. The first message is the root message, followed by replies.
-
----
-
-## 🎯 Use Cases
-
-### 1. Read Discussion
-Read all replies in a thread to understand the full discussion.
-
-### 2. Find Specific Reply
-Locate a specific reply within a thread.
-
-### 3. Summarize Thread
-Get all messages to summarize the discussion.
-
----
-
-## Parameters
-
-- **threadId**: Thread ID to get messages from (starts with "omt_")
-- **pageSize**: Number of messages to retrieve (default: 20, max: 50)
-- **pageToken**: Page token for pagination (from previous response)
-
----
-
-## Example
-
-\`\`\`json
-{
-  "threadId": "omt_xxx",
-  "pageSize": 20
-}
-\`\`\`
-
----
-
-## Response
-
-Returns an array of messages, each containing:
-- **messageId**: Message ID
-- **parentMessageId**: Parent message ID (for replies)
-- **threadId**: Thread ID
-- **contentType**: Message type
-- **content**: Message content
-- **createTime**: Creation timestamp
-- **senderId**: Sender's ID`,
-    parameters: z.object({
-      threadId: z.string(),
-      pageSize: z.number().optional(),
-      pageToken: z.string().optional(),
-    }),
-    handler: async ({ threadId, pageSize, pageToken }) => {
-      try {
-        const result = await get_thread_messages({ threadId, pageSize, pageToken });
-        if (!result.success) {
-          return toolSuccess(`⚠️ ${result.message}`);
-        }
-        let output = `Messages in thread ${threadId}:\n\n`;
-        for (const msg of result.messages || []) {
-          const isRoot = !msg.parentMessageId;
-          output += `${isRoot ? '📝' : '  ↪️'} **${msg.messageId}** (${msg.createTime})\n`;
-          output += `  ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}\n\n`;
-        }
-        if (result.hasMore) {
-          output += `\n_More messages available. Use pageToken: ${result.pageToken}_`;
-        }
-        return toolSuccess(output);
-      } catch (error) {
-        return toolSuccess(`⚠️ Get thread messages failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
