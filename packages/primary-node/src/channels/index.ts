@@ -30,3 +30,6 @@ export { DEFAULT_CHANNEL_CAPABILITIES } from '@disclaude/core';
 
 // Base class
 export { BaseChannel } from './base-channel.js';
+
+// REST Channel (Issue #1040)
+export { RestChannel, type RestChannelConfig, type IFileStorageService } from './rest-channel.js';
