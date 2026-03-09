@@ -58,6 +58,12 @@ export interface RestChannelConfig extends ChannelConfig {
   maxFileSize?: number;
   /** File storage service provider (for dependency injection) */
   fileStorageServiceProvider?: () => Promise<{ FileStorageService: new (config: { storageDir: string; maxFileSize: number }) => IFileStorageService }>;
+  /** Session TTL in milliseconds (default: 3600000 = 1 hour). Set to 0 to disable TTL-based cleanup. */
+  sessionTtl?: number;
+  /** Maximum number of sessions to keep (default: 10000). Set to 0 to disable limit. */
+  maxSessions?: number;
+  /** Cleanup interval in milliseconds (default: 60000 = 1 minute). Set to 0 to disable periodic cleanup. */
+  cleanupInterval?: number;
 }
 
 /**
@@ -204,9 +210,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private fileStorageDir: string;
   private maxFileSize: number;
   private fileStorageServiceProvider?: RestChannelConfig['fileStorageServiceProvider'];
+  private sessionTtl: number;
+  private maxSessions: number;
+  private cleanupIntervalMs: number;
 
   private server?: http.Server;
   private fileStorage?: IFileStorageService;
+  private cleanupTimer?: NodeJS.Timeout;
 
   // Pending responses for sync mode (chatId -> PendingResponse)
   private pendingResponses = new Map<string, PendingResponse>();
@@ -229,8 +239,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.fileStorageDir = config.fileStorageDir || './data/rest-files';
     this.maxFileSize = config.maxFileSize ?? 100 * 1024 * 1024; // 100MB
     this.fileStorageServiceProvider = config.fileStorageServiceProvider;
+    this.sessionTtl = config.sessionTtl ?? 3600000; // 1 hour default
+    this.maxSessions = config.maxSessions ?? 10000;
+    this.cleanupIntervalMs = config.cleanupInterval ?? 60000; // 1 minute default
 
-    logger.info({ id: this.id, port: this.port }, 'RestChannel created');
+    logger.info({ id: this.id, port: this.port, sessionTtl: this.sessionTtl, maxSessions: this.maxSessions }, 'RestChannel created');
   }
 
   protected async doStart(): Promise<void> {
@@ -252,6 +265,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       });
     });
 
+    // Start session cleanup timer
+    this.startSessionCleanup();
+
     return new Promise((resolve, reject) => {
       this.server!.listen(this.port, this.host, () => {
         logger.info({ port: this.port, host: this.host }, 'RestChannel started');
@@ -266,6 +282,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   protected doStop(): Promise<void> {
+    // Stop session cleanup timer
+    this.stopSessionCleanup();
+
     // Clear all pending responses
     for (const [_chatId, pending] of this.pendingResponses) {
       clearTimeout(pending.timeout);
@@ -980,5 +999,89 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       logger.error({ err: error, fileId }, 'Failed to read file content');
       this.sendError(res, 500, 'Failed to read file content');
     }
+  }
+
+  /**
+   * Start the periodic session cleanup timer.
+   * @see Issue #1263 - Session state memory leak fix
+   */
+  private startSessionCleanup(): void {
+    if (this.cleanupIntervalMs <= 0) {
+      logger.info('Session cleanup disabled (cleanupInterval is 0)');
+      return;
+    }
+
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupSessions();
+    }, this.cleanupIntervalMs);
+
+    // Prevent the timer from keeping the process alive
+    this.cleanupTimer.unref();
+
+    logger.info(
+      { cleanupInterval: this.cleanupIntervalMs, sessionTtl: this.sessionTtl, maxSessions: this.maxSessions },
+      'Session cleanup timer started'
+    );
+  }
+
+  /**
+   * Stop the session cleanup timer.
+   * @see Issue #1263 - Session state memory leak fix
+   */
+  private stopSessionCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+      logger.info('Session cleanup timer stopped');
+    }
+  }
+
+  /**
+   * Clean up expired sessions and enforce max session limit.
+   * This method is called periodically to prevent memory leaks.
+   * @see Issue #1263 - Session state memory leak fix
+   */
+  private cleanupSessions(): void {
+    const now = Date.now();
+    let expiredCount = 0;
+    let evictedCount = 0;
+
+    // Remove expired sessions (TTL-based cleanup)
+    if (this.sessionTtl > 0) {
+      for (const [chatId, session] of this.sessionStates) {
+        if (now - session.updatedAt > this.sessionTtl) {
+          this.sessionStates.delete(chatId);
+          expiredCount++;
+        }
+      }
+    }
+
+    // Enforce max sessions limit (LRU eviction)
+    if (this.maxSessions > 0 && this.sessionStates.size > this.maxSessions) {
+      // Sort sessions by updatedAt (oldest first)
+      const sortedSessions = Array.from(this.sessionStates.entries())
+        .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+
+      const toEvict = sortedSessions.slice(0, this.sessionStates.size - this.maxSessions);
+      for (const [chatId] of toEvict) {
+        this.sessionStates.delete(chatId);
+        evictedCount++;
+      }
+    }
+
+    if (expiredCount > 0 || evictedCount > 0) {
+      logger.info(
+        { expiredCount, evictedCount, remainingSessions: this.sessionStates.size },
+        'Session cleanup completed'
+      );
+    }
+  }
+
+  /**
+   * Get current session count (for monitoring/debugging).
+   * @see Issue #1263 - Session state memory leak fix
+   */
+  getSessionCount(): number {
+    return this.sessionStates.size;
   }
 }
