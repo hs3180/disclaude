@@ -480,4 +480,81 @@ describe('MessageHandler - Issue #1123: chat_record', () => {
       expect(mockCallbacks.emitMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe('Issue #1223: User confirmation on card action', () => {
+    it('should send user confirmation when card action is triggered', async () => {
+      await handler.handleCardAction({
+        context: {
+          open_message_id: 'test-msg-id',
+          open_chat_id: 'test-chat-id',
+        },
+        operator: {
+          open_id: 'user-open-id',
+        },
+        action: {
+          value: 'action_confirm',
+          tag: 'button',
+          text: '确认操作',
+        },
+      });
+
+      // Should send user confirmation message
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 'test-chat-id',
+          type: 'text',
+          text: expect.stringContaining('确认操作'),
+        })
+      );
+    });
+
+    it('should use action value when action text is not available', async () => {
+      await handler.handleCardAction({
+        context: {
+          open_message_id: 'test-msg-id',
+          open_chat_id: 'test-chat-id',
+        },
+        operator: {
+          open_id: 'user-open-id',
+        },
+        action: {
+          value: 'analyze_issue',
+          tag: 'button',
+        },
+      });
+
+      // Should use action value in confirmation
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 'test-chat-id',
+          type: 'text',
+          text: expect.stringContaining('analyze_issue'),
+        })
+      );
+    });
+
+    it('should continue processing even if confirmation fails', async () => {
+      // Make sendMessage fail once
+      const mockSend = vi.fn().mockRejectedValueOnce(new Error('Send failed')).mockResolvedValue(undefined);
+      mockCallbacks.sendMessage = mockSend;
+
+      await handler.handleCardAction({
+        context: {
+          open_message_id: 'test-msg-id',
+          open_chat_id: 'test-chat-id',
+        },
+        operator: {
+          open_id: 'user-open-id',
+        },
+        action: {
+          value: 'test_action',
+          tag: 'button',
+          text: '测试',
+        },
+      });
+
+      // Should still emit message to agent even if confirmation failed
+      expect(mockCallbacks.emitMessage).toHaveBeenCalled();
+    });
+  });
 });
