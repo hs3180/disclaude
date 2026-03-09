@@ -747,6 +747,10 @@ export class MessageHandler {
       return;
     }
 
+    // Issue #1232: Add typing reaction uniformly for all messages that will be processed
+    // This is placed after passive mode check to avoid adding reaction for filtered messages
+    await this.addTypingReaction(message_id);
+
     if (textWithoutMentions.startsWith('/')) {
       const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
@@ -813,9 +817,6 @@ export class MessageHandler {
     if (botMentioned && textWithoutMentions.startsWith('/')) {
       logger.debug({ messageId: message_id, chatId: chat_id, command: textWithoutMentions }, 'Bot mentioned with non-control command, passing to agent');
     }
-
-    // Add typing reaction only for messages that will be processed
-    await this.addTypingReaction(message_id);
 
     // Issue #846: Get quoted/replied message context if this is a reply
     let quotedMessageContext: string | undefined;

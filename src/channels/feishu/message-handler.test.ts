@@ -96,7 +96,7 @@ vi.mock('../../feishu/filtered-message-forwarder.js', () => ({
 }));
 
 vi.mock('../../utils/mention-parser.js', () => ({
-  stripLeadingMentions: vi.fn().mockReturnValue(''),
+  stripLeadingMentions: vi.fn((text: string) => text),
 }));
 
 import { MessageHandler } from './message-handler.js';
@@ -555,6 +555,111 @@ describe('MessageHandler - Issue #1123: chat_record', () => {
 
       // Should still emit message to agent even if confirmation failed
       expect(mockCallbacks.emitMessage).toHaveBeenCalled();
+    });
+  });
+
+  describe('Issue #1232: Typing reaction for control commands', () => {
+    it('should add typing reaction for control commands', async () => {
+      // Mock command registry to recognize 'status' as a control command
+      const { getCommandRegistry } = await import('../../nodes/commands/command-registry.js');
+      vi.mocked(getCommandRegistry).mockReturnValue({
+        has: vi.fn().mockReturnValue(true),
+      } as unknown as ReturnType<typeof getCommandRegistry>);
+
+      // Set up handler with control handler enabled
+      handler = new MessageHandler({
+        appId: 'test-app-id',
+        appSecret: 'test-app-secret',
+        passiveModeManager: mockPassiveModeManager as unknown as import('./passive-mode.js').PassiveModeManager,
+        mentionDetector: mockMentionDetector as unknown as import('./mention-detector.js').MentionDetector,
+        interactionManager: mockInteractionManager as unknown as import('../../platforms/feishu/interaction-manager.js').InteractionManager,
+        callbacks: {
+          ...mockCallbacks,
+          emitControl: vi.fn().mockResolvedValue({ success: true, message: 'Status OK' }),
+        },
+        isRunning: () => true,
+        hasControlHandler: () => true,
+      });
+      handler.initialize();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '/status' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // Get the mock message sender instance and verify addReaction was called
+      const { FeishuMessageSender } = await import('../../platforms/feishu/feishu-message-sender.js');
+      const MockFeishuMessageSender = vi.mocked(FeishuMessageSender);
+      const mockInstance = MockFeishuMessageSender.mock.results[MockFeishuMessageSender.mock.results.length - 1]?.value;
+
+      expect(mockInstance?.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
+    });
+
+    it('should add typing reaction for regular messages', async () => {
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id-regular',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: 'Hello bot' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // Get the mock message sender instance and verify addReaction was called
+      const { FeishuMessageSender } = await import('../../platforms/feishu/feishu-message-sender.js');
+      const MockFeishuMessageSender = vi.mocked(FeishuMessageSender);
+      const mockInstance = MockFeishuMessageSender.mock.results[MockFeishuMessageSender.mock.results.length - 1]?.value;
+
+      expect(mockInstance?.addReaction).toHaveBeenCalledWith('test-msg-id-regular', 'Typing');
+    });
+
+    it('should NOT add typing reaction for passive mode filtered messages', async () => {
+      // Mock mention detector to return false (bot not mentioned)
+      mockMentionDetector.isBotMentioned = vi.fn().mockReturnValue(false);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id-passive',
+            chat_id: 'test-chat-id',
+            chat_type: 'group', // Group chat
+            message_type: 'text',
+            content: JSON.stringify({ text: 'Hello everyone' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // Get the mock message sender instance and verify addReaction was NOT called
+      const { FeishuMessageSender } = await import('../../platforms/feishu/feishu-message-sender.js');
+      const MockFeishuMessageSender = vi.mocked(FeishuMessageSender);
+      const mockInstance = MockFeishuMessageSender.mock.results[MockFeishuMessageSender.mock.results.length - 1]?.value;
+
+      expect(mockInstance?.addReaction).not.toHaveBeenCalled();
     });
   });
 });
