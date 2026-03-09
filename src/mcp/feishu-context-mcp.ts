@@ -287,13 +287,20 @@ This tool initiates an async discussion. The conclusions will be returned when p
         // Create the discussion group
         const chatId = await createDiscussionChat(client, { topic, members });
 
-        // Register the group for tracking
+        // Register the group for tracking with discussion info (Issue #1229)
         const groupService = getGroupService();
         groupService.registerGroup({
           chatId,
           name: topic,
           createdAt: Date.now(),
           initialMembers: members || [],
+          // Add discussion info for conclusion mechanism (Issue #1229)
+          discussion: {
+            topic,
+            context,
+            timeout: timeout || 30,
+            status: 'active',
+          },
         });
 
         // Send the initial topic message
@@ -301,7 +308,7 @@ This tool initiates an async discussion. The conclusions will be returned when p
         if (context) {
           initialMessage += `### 背景\n${context}\n\n`;
         }
-        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。达成结论后请明确说明。`;
+        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。`;
 
         await send_message({
           content: initialMessage,
@@ -309,7 +316,7 @@ This tool initiates an async discussion. The conclusions will be returned when p
           chatId,
         });
 
-        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
+        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。当讨论达成目标时，发送带有"结束讨论"按钮的交互卡片让参与者确认。`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
       }

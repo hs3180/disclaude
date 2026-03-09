@@ -4,6 +4,7 @@
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Issue #1229: Tests for discussion conclusion guidance.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,11 +17,20 @@ vi.mock('../../config/index.js', () => ({
   },
 }));
 
+// Mock group-service (Issue #1229)
+const mockGetDiscussion = vi.fn();
+vi.mock('../../platforms/feishu/group-service.js', () => ({
+  getGroupService: () => ({
+    getDiscussion: mockGetDiscussion,
+  }),
+}));
+
 describe('MessageBuilder', () => {
   let messageBuilder: MessageBuilder;
 
   beforeEach(() => {
     messageBuilder = new MessageBuilder();
+    mockGetDiscussion.mockReset();
   });
 
   afterEach(() => {
@@ -215,6 +225,61 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('Convert JSON objects to readable text');
       expect(result).toContain('Markdown tables instead of raw JSON');
+    });
+  });
+
+  describe('buildDiscussionGuidance (Issue #1229)', () => {
+    // Access private method for testing
+    const getDiscussionGuidance = (mb: MessageBuilder, chatId: string) =>
+      (mb as any).buildDiscussionGuidance(chatId);
+
+    it('should return empty string for non-discussion group', () => {
+      mockGetDiscussion.mockReturnValue(undefined);
+
+      const result = getDiscussionGuidance(messageBuilder, 'chat-no-discussion');
+
+      expect(result).toBe('');
+    });
+
+    it('should return empty string for concluded discussion', () => {
+      mockGetDiscussion.mockReturnValue({
+        topic: 'Test Topic',
+        status: 'concluded',
+      });
+
+      const result = getDiscussionGuidance(messageBuilder, 'chat-concluded');
+
+      expect(result).toBe('');
+    });
+
+    it('should include discussion guidance for active discussion', () => {
+      mockGetDiscussion.mockReturnValue({
+        topic: 'Should we use TypeScript?',
+        context: 'We are considering migrating our codebase.',
+        timeout: 30,
+        status: 'active',
+      });
+
+      const result = getDiscussionGuidance(messageBuilder, 'chat-active-discussion');
+
+      expect(result).toContain('Discussion Mode');
+      expect(result).toContain('Should we use TypeScript?');
+      expect(result).toContain('We are considering migrating our codebase.');
+      expect(result).toContain('conclude_discussion');
+      expect(result).toContain('continue_discussion');
+      expect(result).toContain('[DISCUSSION_CONCLUDE]');
+      expect(result).toContain('[DISCUSSION_CONTINUE]');
+    });
+
+    it('should include chatId in the interactive card example', () => {
+      mockGetDiscussion.mockReturnValue({
+        topic: 'Test Topic',
+        status: 'active',
+      });
+
+      const result = getDiscussionGuidance(messageBuilder, 'oc_test_chat_id');
+
+      expect(result).toContain('"chatId": "oc_test_chat_id"');
     });
   });
 });

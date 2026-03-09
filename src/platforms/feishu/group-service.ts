@@ -17,6 +17,22 @@ import { createDiscussionChat } from './chat-ops.js';
 const logger = createLogger('GroupService');
 
 /**
+ * Discussion info for discussion groups.
+ *
+ * @see Issue #1229 - 智能会话结束
+ */
+export interface DiscussionInfo {
+  /** Discussion topic */
+  topic: string;
+  /** Discussion context/background */
+  context?: string;
+  /** Discussion timeout in minutes */
+  timeout?: number;
+  /** Discussion status */
+  status: 'active' | 'concluded';
+}
+
+/**
  * Group metadata.
  */
 export interface GroupInfo {
@@ -37,6 +53,13 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * Discussion info for discussion groups.
+   * When set, this group is a discussion group that needs conclusion mechanism.
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  discussion?: DiscussionInfo;
 }
 
 /**
@@ -228,6 +251,57 @@ export class GroupService {
    */
   listTopicGroups(): GroupInfo[] {
     return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
+  }
+
+  // ============================================================================
+  // Discussion Group Methods (Issue #1229)
+  // ============================================================================
+
+  /**
+   * Check if a group is a discussion group with active discussion.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group has an active discussion
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  hasActiveDiscussion(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.discussion?.status === 'active';
+  }
+
+  /**
+   * Get discussion info for a group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Discussion info or undefined
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  getDiscussion(chatId: string): DiscussionInfo | undefined {
+    return this.registry.groups[chatId]?.discussion;
+  }
+
+  /**
+   * Conclude a discussion.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  concludeDiscussion(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group?.discussion) {
+      logger.warn({ chatId }, 'Cannot conclude discussion: no active discussion');
+      return false;
+    }
+
+    group.discussion.status = 'concluded';
+    this.save();
+
+    logger.info({ chatId, name: group.name }, 'Discussion concluded');
+    return true;
   }
 
   /**

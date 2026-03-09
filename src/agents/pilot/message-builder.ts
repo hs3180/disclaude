@@ -7,11 +7,13 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1229: Added discussion conclusion guidance for discussion groups.
  */
 
 import { Config } from '../../config/index.js';
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { MessageData } from './types.js';
+import { getGroupService } from '../../platforms/feishu/group-service.js';
 
 /**
  * Message builder for Pilot.
@@ -104,6 +106,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build discussion conclusion guidance if this is a discussion group (Issue #1229)
+    const discussionGuidance = this.buildDiscussionGuidance(chatId);
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -126,7 +131,7 @@ To notify the user in your FINAL response, use:
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
-${persistedHistorySection}${chatHistorySection}${mentionSection}
+${persistedHistorySection}${chatHistorySection}${mentionSection}${discussionGuidance}
 
 ---
 
@@ -144,7 +149,7 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
-${persistedHistorySection}${chatHistorySection}
+${persistedHistorySection}${chatHistorySection}${discussionGuidance}
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}
@@ -430,5 +435,88 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+
+  /**
+   * Build discussion conclusion guidance for discussion groups.
+   *
+   * Issue #1229: When this chat is a discussion group (created by start_group_discussion),
+   * the agent should be guided to:
+   * 1. Track the discussion topic and goal
+   * 2. Detect when the discussion has reached a conclusion
+   * 3. Send an interactive card with "End Discussion" button for user confirmation
+   * 4. When user confirms, generate a summary and conclude the discussion
+   *
+   * @param chatId - Chat ID to check for discussion status
+   * @returns Discussion guidance string or empty string if not a discussion group
+   */
+  private buildDiscussionGuidance(chatId: string): string {
+    try {
+      const groupService = getGroupService();
+      const discussion = groupService.getDiscussion(chatId);
+
+      // Only add guidance if this is an active discussion group
+      if (!discussion || discussion.status !== 'active') {
+        return '';
+      }
+
+      const contextSection = discussion.context
+        ? `\n\n**背景:** ${discussion.context}`
+        : '';
+      const timeoutSection = discussion.timeout
+        ? `\n**超时:** ${discussion.timeout} 分钟`
+        : '';
+
+      return `
+
+---
+
+## 🗣️ Discussion Mode
+
+This chat is a **discussion group** created for a specific topic. Your role is to facilitate the discussion and help reach a conclusion.
+
+**讨论话题:** ${discussion.topic}${contextSection}${timeoutSection}
+
+### Discussion Conclusion Mechanism
+
+When you believe the discussion has reached its goal (e.g., consensus reached, problem solved, or decision made), follow these steps:
+
+1. **Send an interactive confirmation card** with \`send_message\`:
+\`\`\`json
+{
+  "content": {
+    "config": {"wide_screen_mode": true},
+    "header": {"title": {"content": "📋 讨论是否已达成目标？", "tag": "plain_text"}, "template": "blue"},
+    "elements": [
+      {"tag": "markdown", "content": "讨论话题: **${discussion.topic}**\\n\\n请确认讨论是否已结束。"},
+      {"tag": "hr"},
+      {"tag": "action", "actions": [
+        {"tag": "button", "text": {"content": "✅ 结束讨论", "tag": "plain_text"}, "value": "conclude_discussion", "type": "primary"},
+        {"tag": "button", "text": {"content": "继续讨论", "tag": "plain_text"}, "value": "continue_discussion"}
+      ]}
+    ]
+  },
+  "format": "card",
+  "chatId": "${chatId}",
+  "actionPrompts": {
+    "conclude_discussion": "[DISCUSSION_CONCLUDE] 用户确认结束讨论。请生成讨论总结并正式结束本次讨论。",
+    "continue_discussion": "[DISCUSSION_CONTINUE] 用户希望继续讨论。请继续协助讨论。"
+  }
+}
+\`\`\`
+
+2. **When user confirms** (receives \`[DISCUSSION_CONCLUDE]\`):
+   - Generate a concise discussion summary
+   - List key conclusions or decisions
+   - Mention any follow-up actions if applicable
+   - The discussion is now concluded
+
+3. **When user wants to continue** (receives \`[DISCUSSION_CONTINUE]\`):
+   - Continue facilitating the discussion
+   - You can send another confirmation card later when appropriate`;
+    } catch {
+      // If group service is not available, return empty string
+      return '';
+    }
   }
 }

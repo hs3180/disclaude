@@ -438,4 +438,121 @@ describe('GroupService', () => {
       expect(topicGroups.map(g => g.chatId).sort()).toEqual(['oc_topic1', 'oc_topic2']);
     });
   });
+
+  // Issue #1229: Discussion group tests
+  describe('hasActiveDiscussion', () => {
+    it('should return true for group with active discussion', () => {
+      service.registerGroup({
+        chatId: 'oc_discussion_active',
+        name: 'Discussion Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        discussion: {
+          topic: 'Test Topic',
+          status: 'active',
+        },
+      });
+
+      expect(service.hasActiveDiscussion('oc_discussion_active')).toBe(true);
+    });
+
+    it('should return false for group with concluded discussion', () => {
+      service.registerGroup({
+        chatId: 'oc_discussion_concluded',
+        name: 'Discussion Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        discussion: {
+          topic: 'Test Topic',
+          status: 'concluded',
+        },
+      });
+
+      expect(service.hasActiveDiscussion('oc_discussion_concluded')).toBe(false);
+    });
+
+    it('should return false for group without discussion', () => {
+      service.registerGroup({
+        chatId: 'oc_no_discussion',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.hasActiveDiscussion('oc_no_discussion')).toBe(false);
+    });
+
+    it('should return false for non-existent group', () => {
+      expect(service.hasActiveDiscussion('oc_nonexistent')).toBe(false);
+    });
+  });
+
+  describe('getDiscussion', () => {
+    it('should return discussion info for discussion group', () => {
+      const discussionInfo = {
+        topic: 'Test Topic',
+        context: 'Test Context',
+        timeout: 30,
+        status: 'active' as const,
+      };
+
+      service.registerGroup({
+        chatId: 'oc_get_discussion',
+        name: 'Discussion Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        discussion: discussionInfo,
+      });
+
+      expect(service.getDiscussion('oc_get_discussion')).toEqual(discussionInfo);
+    });
+
+    it('should return undefined for non-discussion group', () => {
+      service.registerGroup({
+        chatId: 'oc_no_discussion_info',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.getDiscussion('oc_no_discussion_info')).toBeUndefined();
+    });
+  });
+
+  describe('concludeDiscussion', () => {
+    it('should conclude an active discussion', () => {
+      service.registerGroup({
+        chatId: 'oc_conclude_test',
+        name: 'Discussion Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        discussion: {
+          topic: 'Test Topic',
+          status: 'active',
+        },
+      });
+
+      const result = service.concludeDiscussion('oc_conclude_test');
+
+      expect(result).toBe(true);
+      expect(service.getDiscussion('oc_conclude_test')?.status).toBe('concluded');
+    });
+
+    it('should return false for non-existent group', () => {
+      const result = service.concludeDiscussion('oc_nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('should return false for group without discussion', () => {
+      service.registerGroup({
+        chatId: 'oc_no_discussion_to_conclude',
+        name: 'Regular Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = service.concludeDiscussion('oc_no_discussion_to_conclude');
+      expect(result).toBe(false);
+    });
+  });
 });
