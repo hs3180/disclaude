@@ -47,6 +47,7 @@ import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
 import { TaskComplexityAgent } from '../task-complexity-agent.js';
 import { taskProgressService } from '../task-progress-service.js';
+import { HistoryCompressor, createDefaultSummaryGenerator } from './history-compressor.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -90,6 +91,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private readonly complexityAgent: TaskComplexityAgent;
   private currentTaskId?: string;
 
+  // History compressor (Issue #1213)
+  private readonly historyCompressor: HistoryCompressor;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -114,6 +118,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
       ...config,
       complexityThreshold: config.complexityThreshold ?? 7,
     });
+
+    // Initialize history compressor (Issue #1213)
+    this.historyCompressor = new HistoryCompressor(
+      this.logger,
+      createDefaultSummaryGenerator(this.logger)
+    );
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -160,6 +170,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
   /**
    * Internal method to perform the actual history loading.
+   *
+   * Issue #1213: Integrates AI-based context compression to reduce
+   * token usage while preserving semantic information.
    */
   private async doLoadPersistedHistory(): Promise<void> {
     try {
@@ -174,15 +187,35 @@ export class Pilot extends BaseAgent implements ChatAgent {
       );
 
       if (history && history.trim()) {
-        // Truncate if too long
-        this.persistedHistoryContext = history.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
-          ? history.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
-          : history;
+        // Issue #1213: Apply context compression if enabled and history is long
+        const compressionResult = await this.historyCompressor.compress(history);
 
-        this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
-          'Persisted chat history loaded successfully'
-        );
+        if (compressionResult.wasCompressed) {
+          this.persistedHistoryContext = compressionResult.compressedHistory.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
+            ? compressionResult.compressedHistory.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
+            : compressionResult.compressedHistory;
+
+          this.logger.info(
+            {
+              chatId: this.boundChatId,
+              originalLength: compressionResult.originalLength,
+              compressedLength: compressionResult.compressedLength,
+              messageCount: compressionResult.messageCount,
+              keptMessageCount: compressionResult.keptMessageCount,
+            },
+            'Persisted chat history loaded and compressed successfully'
+          );
+        } else {
+          // No compression applied, use original history (with truncation if needed)
+          this.persistedHistoryContext = history.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
+            ? history.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
+            : history;
+
+          this.logger.info(
+            { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
+            'Persisted chat history loaded successfully'
+          );
+        }
       } else {
         this.logger.debug(
           { chatId: this.boundChatId },

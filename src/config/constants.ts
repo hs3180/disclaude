@@ -86,6 +86,24 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
+ * Context compression configuration (Issue #1213)
+ * AI-based compression to reduce token usage while preserving semantic information
+ */
+export const CONTEXT_COMPRESSION = {
+  /** Enable context compression */
+  ENABLED: true,
+
+  /** Character threshold to trigger compression */
+  THRESHOLD: 10000,
+
+  /** Number of recent messages to keep uncompressed */
+  KEEP_RECENT_MESSAGES: 5,
+
+  /** Maximum length of generated summary */
+  SUMMARY_MAX_LENGTH: 2000,
+} as const;
+
+/**
  * Error codes that should trigger a retry
  */
 export const RETRYABLE_ERROR_CODES = [
