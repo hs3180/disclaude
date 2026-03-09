@@ -23,7 +23,9 @@ export function extractCardTextContent(card: Record<string, unknown>): string {
   // Recursively extract text from elements
   const extractFromElements = (elements: unknown[]): void => {
     for (const element of elements) {
-      if (!element || typeof element !== 'object') continue;
+      if (!element || typeof element !== 'object') {
+        continue;
+      }
 
       const el = element as Record<string, unknown>;
 
