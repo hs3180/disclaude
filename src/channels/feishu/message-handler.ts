@@ -122,14 +122,18 @@ export class MessageHandler {
       attachmentManager,
       downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
         if (!this.client) {
-          logger.error({ fileKey }, 'Client not initialized for file download');
+          logger.error({ fileKey, messageId }, 'Client not initialized for file download');
           return { success: false };
         }
         try {
           const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId);
           return { success: true, filePath };
         } catch (error) {
-          logger.error({ err: error, fileKey, messageType }, 'File download failed');
+          // Issue #1205: Include messageId in error log for debugging message_id and file_key pairing issues
+          logger.error(
+            { err: error, fileKey, messageType, messageId, pairing: `message_id=${messageId} file_key=${fileKey}` },
+            'File download failed - check if message_id and file_key are correctly paired'
+          );
           return { success: false };
         }
       },

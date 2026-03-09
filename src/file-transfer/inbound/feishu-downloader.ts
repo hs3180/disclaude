@@ -205,6 +205,13 @@ export async function downloadFile(
 
   logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
 
+  // Issue #1205: Log the complete messageId and fileKey pairing for debugging
+  // This helps identify if there's a mismatch between message_id and file_key
+  logger.info(
+    { messageId, fileKey, pairing: `message_id=${messageId} file_key=${fileKey}` },
+    'File download request parameters - verify pairing is correct'
+  );
+
   try {
     let fileResource: FileResourceResponse;
 
@@ -253,8 +260,22 @@ export async function downloadFile(
     }
 
     // Check if response contains file resource
+    // Issue #1205: Enhanced validation to catch SDK issues early
     if (!fileResource) {
+      logger.error(
+        { messageId, fileKey, fileType },
+        'Feishu API returned null/undefined response - possible message_id and file_key mismatch'
+      );
       throw new Error('Empty response from Feishu API');
+    }
+
+    // Verify the response has the expected writeFile method
+    if (typeof fileResource.writeFile !== 'function') {
+      logger.error(
+        { messageId, fileKey, fileType, responseType: typeof fileResource },
+        'Feishu API returned invalid response format - missing writeFile method'
+      );
+      throw new Error('Invalid response format from Feishu API: missing writeFile method');
     }
 
     // The fileResource has writeFile method to save directly
