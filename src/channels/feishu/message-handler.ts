@@ -926,6 +926,24 @@ export class MessageHandler {
       'Card action received'
     );
 
+    // Issue #1223: Send user-visible confirmation message
+    const buttonText = action.text || action.value;
+    if (buttonText) {
+      const confirmationText = `✅ 您选择了「${buttonText}」`;
+      try {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: confirmationText,
+          threadId: message_id,
+        });
+        logger.debug({ messageId: message_id, chatId: chat_id, buttonText }, 'User confirmation sent');
+      } catch (error) {
+        // Non-fatal: continue even if confirmation fails
+        logger.warn({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to send user confirmation');
+      }
+    }
+
     // Issue #935: Try to route card action to Worker Node first
     // If the card was sent by a Worker Node, forward the action to that node
     if (this.callbacks.routeCardAction) {
