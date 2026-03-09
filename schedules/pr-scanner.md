@@ -55,7 +55,7 @@ gh pr view {number} --repo hs3180/disclaude \
   --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
 ```
 
-### 6. 创建群聊讨论 PR ⚡ 核心改动
+### 6. 创建群聊讨论 PR
 
 使用 `start_group_discussion` 工具为该 PR 创建专门的讨论群聊：
 
@@ -63,7 +63,7 @@ gh pr view {number} --repo hs3180/disclaude \
 {
   "topic": "PR #{number} 讨论: {title}",
   "members": [],
-  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})\n\n请在群聊中讨论后决定处理方式。",
+  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})",
   "timeout": 60
 }
 ```
@@ -73,44 +73,54 @@ gh pr view {number} --repo hs3180/disclaude \
 - 群聊名称格式：`PR #{number} 讨论: {PR标题}`
 - 讨论超时：60 分钟
 
-### 7. 在群聊中发送交互式卡片
-
-群聊创建后，使用 `send_message` 发送操作选项卡片：
-
-**卡片内容**（format: "card"）：
-```json
-{
-  "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
-  "elements": [
-    {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
-    ]},
-    {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
-    ]}
-  ]
-}
-```
-
-**actionPrompts**：
-```json
-{
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
-}
-```
-
-### 8. 添加 pending label
+### 7. 添加 pending label
 
 ```bash
 gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 ```
+
+### 8. 在群聊中发送讨论引导消息
+
+群聊创建后，使用 `send_message` 发送讨论引导消息：
+
+**消息内容**：
+```
+## 🎯 讨论指南
+
+请针对这个 PR 进行讨论，讨论完成后请明确说明你的决定：
+
+- **✅ 合并**: 说"合并吧"、"可以合并"等
+- **🔄 请求修改**: 说明需要修改的内容
+- **❌ 关闭**: 说"关闭吧"、"不需要了"等
+- **⏳ 稍后**: 说"稍后处理"、"先放着"等
+
+讨论完成后，Agent 会分析聊天记录，提取你的决定并执行相应操作。
+```
+
+### 9. 等待并分析群聊结论 ⚡ 核心逻辑 (Issue #1152)
+
+**重要**: 这是 #1152 的核心实现 - 通过总结群聊结论来决定动作，而不是按钮点击。
+
+当用户在群聊中表示讨论完成时（如说"就这样吧"、"决定了"、"执行吧"等），你需要：
+
+1. **分析聊天记录**: 回顾群聊中的所有讨论内容
+2. **提取用户意图**: 判断用户最终的决定是什么
+3. **执行相应动作**:
+
+| 用户意图 | 执行命令 |
+|----------|----------|
+| ✅ 合并 | `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch` |
+| 🔄 请求修改 | `gh pr comment {number} --repo hs3180/disclaude --body "{修改内容}"` |
+| ❌ 关闭 | `gh pr close {number} --repo hs3180/disclaude` |
+| ⏳ 稍后 | 移除 pending label，不执行其他操作 |
+
+4. **更新 Label**: 执行动作后，添加 `pr-scanner:processed` label 并移除 `pr-scanner:pending` label
+
+```bash
+gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:processed" --remove-label "pr-scanner:pending"
+```
+
+5. **报告结果**: 在群聊中报告执行结果
 
 ## 状态管理
 
@@ -124,7 +134,7 @@ gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 ### 状态转换
 
 ```
-新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 执行动作 → 添加 processed label → 移除 pending label
+新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 分析结论并执行动作 → 添加 processed label → 移除 pending label
 ```
 
 ## 错误处理
@@ -139,6 +149,7 @@ gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 2. **串行处理**: 一次只处理一个 PR，避免并发问题
 3. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
 4. **用户驱动**: 等待群聊讨论结论后才执行动作，不自动合并或关闭
+5. **结论分析**: Agent 分析聊天记录提取用户意图，而不是简单的按钮点击
 
 ## 依赖
 
