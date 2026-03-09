@@ -29,6 +29,11 @@ export interface ProgressCardConfig {
 }
 
 /**
+ * Task status for progress tracking.
+ */
+type TaskStatus = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+
+/**
  * Active progress tracking state.
  */
 interface ActiveProgress {
@@ -41,8 +46,9 @@ interface ActiveProgress {
   lastUpdateTime: number;
   currentPercent: number;
   currentStep: string;
+  status: TaskStatus;
   cardMessageId?: string;
-  updateInterval: ReturnType<typeof setInterval>;
+  updateInterval: ReturnType<typeof setInterval> | null;
   sendCard: (card: Record<string, unknown>) => Promise<void>;
 }
 
@@ -104,6 +110,7 @@ export class TaskProgressService {
       lastUpdateTime: startTime,
       currentPercent: 0,
       currentStep: '正在分析任务...',
+      status: 'running',
       sendCard,
       updateInterval: setInterval(
         () => this.updateProgress(taskId),
@@ -125,6 +132,17 @@ export class TaskProgressService {
     const progress = this.activeProgress.get(taskId);
     if (!progress) {
       logger.warn({ taskId }, 'No active progress found for update');
+      return;
+    }
+
+    // Skip update if task is paused
+    if (progress.status === 'paused') {
+      logger.debug({ taskId }, 'Task is paused, skipping update');
+      return;
+    }
+
+    // Skip if task is no longer running
+    if (progress.status !== 'running') {
       return;
     }
 
@@ -186,7 +204,9 @@ export class TaskProgressService {
     }
 
     // Clear update interval
-    clearInterval(progress.updateInterval);
+    if (progress.updateInterval) {
+      clearInterval(progress.updateInterval);
+    }
 
     const elapsed = (Date.now() - progress.startTime) / 1000;
 
@@ -240,7 +260,7 @@ export class TaskProgressService {
   /**
    * Get active task info for a chat.
    */
-  getActiveTask(chatId: string): { taskId: string; percent: number } | undefined {
+  getActiveTask(chatId: string): { taskId: string; percent: number; status: TaskStatus } | undefined {
     const progress = this.activeProgress.get(chatId);
     if (!progress) {
       return undefined;
@@ -248,7 +268,157 @@ export class TaskProgressService {
     return {
       taskId: progress.taskId,
       percent: progress.currentPercent,
+      status: progress.status,
     };
+  }
+
+  /**
+   * Pause a tracked task.
+   *
+   * Issue #857 Phase 5: Support task pause/resume
+   *
+   * @param chatId - Chat ID to pause task for
+   * @returns true if task was paused, false if no task to pause
+   */
+  async pauseTask(chatId: string): Promise<boolean> {
+    const progress = this.activeProgress.get(chatId);
+    if (!progress) {
+      logger.debug({ chatId }, 'No active progress to pause');
+      return false;
+    }
+
+    if (progress.status !== 'running') {
+      logger.warn({ chatId, status: progress.status }, 'Task is not running, cannot pause');
+      return false;
+    }
+
+    // Update status
+    progress.status = 'paused';
+    progress.lastUpdateTime = Date.now();
+
+    // Send paused card
+    const elapsed = (Date.now() - progress.startTime) / 1000;
+    const card = this.buildProgressCard({
+      taskId: progress.taskId,
+      status: 'paused',
+      percent: progress.currentPercent,
+      message: '任务已暂停',
+      eta: Math.max(0, progress.complexity.estimatedSeconds - elapsed),
+      currentStep: progress.currentStep,
+    });
+
+    await progress.sendCard(card);
+
+    logger.info({ chatId, taskId: progress.taskId }, 'Task paused');
+    return true;
+  }
+
+  /**
+   * Resume a paused task.
+   *
+   * Issue #857 Phase 5: Support task pause/resume
+   *
+   * @param chatId - Chat ID to resume task for
+   * @returns true if task was resumed, false if no task to resume
+   */
+  async resumeTask(chatId: string): Promise<boolean> {
+    const progress = this.activeProgress.get(chatId);
+    if (!progress) {
+      logger.debug({ chatId }, 'No active progress to resume');
+      return false;
+    }
+
+    if (progress.status !== 'paused') {
+      logger.warn({ chatId, status: progress.status }, 'Task is not paused, cannot resume');
+      return false;
+    }
+
+    // Update status
+    progress.status = 'running';
+    progress.lastUpdateTime = Date.now();
+
+    // Send resumed card
+    const elapsed = (Date.now() - progress.startTime) / 1000;
+    const card = this.buildProgressCard({
+      taskId: progress.taskId,
+      status: 'running',
+      percent: progress.currentPercent,
+      message: '任务已恢复',
+      eta: Math.max(0, progress.complexity.estimatedSeconds - elapsed),
+      currentStep: progress.currentStep,
+    });
+
+    await progress.sendCard(card);
+
+    logger.info({ chatId, taskId: progress.taskId }, 'Task resumed');
+    return true;
+  }
+
+  /**
+   * Cancel a tracked task.
+   *
+   * Issue #857 Phase 5: Support task cancellation
+   *
+   * @param chatId - Chat ID to cancel task for
+   * @returns true if task was cancelled, false if no task to cancel
+   */
+  async cancelTask(chatId: string): Promise<boolean> {
+    const progress = this.activeProgress.get(chatId);
+    if (!progress) {
+      logger.debug({ chatId }, 'No active progress to cancel');
+      return false;
+    }
+
+    if (!['running', 'paused'].includes(progress.status)) {
+      logger.warn({ chatId, status: progress.status }, 'Task is not running or paused, cannot cancel');
+      return false;
+    }
+
+    // Clear update interval
+    if (progress.updateInterval) {
+      clearInterval(progress.updateInterval);
+    }
+
+    const elapsed = (Date.now() - progress.startTime) / 1000;
+
+    // Send cancelled card
+    const card = this.buildProgressCard({
+      taskId: progress.taskId,
+      status: 'cancelled',
+      percent: progress.currentPercent,
+      message: '任务已取消',
+      eta: 0,
+      currentStep: '用户取消了任务',
+    });
+
+    await progress.sendCard(card);
+
+    // Record to history as cancelled (success = false)
+    const record: TaskRecord = {
+      taskId: progress.taskId,
+      chatId: progress.chatId,
+      userMessage: progress.userMessage,
+      taskType: progress.complexity.reasoning.taskType,
+      complexityScore: progress.complexity.complexityScore,
+      estimatedSeconds: progress.complexity.estimatedSeconds,
+      actualSeconds: elapsed,
+      success: false,
+      startedAt: progress.startTime,
+      completedAt: Date.now(),
+      keyFactors: [...progress.complexity.reasoning.keyFactors, 'Cancelled by user'],
+    };
+
+    await taskHistoryStorage.recordTask(record);
+
+    logger.info({
+      taskId: progress.taskId,
+      elapsed,
+    }, 'Task cancelled by user');
+
+    // Remove from active tracking
+    this.activeProgress.delete(chatId);
+
+    return true;
   }
 
   /**
@@ -256,7 +426,7 @@ export class TaskProgressService {
    */
   private buildProgressCard(params: {
     taskId: string;
-    status: 'running' | 'completed' | 'failed';
+    status: TaskStatus;
     percent: number;
     message: string;
     eta: number;
@@ -266,14 +436,18 @@ export class TaskProgressService {
 
     const statusEmoji = {
       running: '🔄',
+      paused: '⏸️',
       completed: '✅',
       failed: '❌',
+      cancelled: '🚫',
     }[status];
 
     const headerColor = {
       running: 'blue',
+      paused: 'orange',
       completed: 'green',
       failed: 'red',
+      cancelled: 'grey',
     }[status];
 
     const progressBar = this.buildProgressBar(percent);
