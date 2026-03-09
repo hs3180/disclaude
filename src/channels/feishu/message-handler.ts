@@ -32,6 +32,20 @@ import type { MentionDetector } from './mention-detector.js';
 const logger = createLogger('MessageHandler');
 
 /**
+ * Image placeholder patterns for detecting image messages sent as text.
+ * Issue #1205: Feishu sometimes sends image messages as text type with placeholder content.
+ */
+const IMAGE_PLACEHOLDER_PATTERNS = [
+  /^这张图片$/u,           // Chinese: "this image"
+  /^\[图片\]$/u,           // Chinese: "[image]"
+  /^这张照片$/u,           // Chinese: "this photo"
+  /^\[照片\]$/u,           // Chinese: "[photo]"
+  /^\[图像\]$/u,           // Chinese: "[picture]"
+  /^\[Image\]$/i,          // English: "[Image]"
+  /^\[Photo\]$/i,          // English: "[Photo]"
+];
+
+/**
  * Callback interface for emitting messages and control events.
  */
 export interface MessageCallbacks {
@@ -509,6 +523,140 @@ export class MessageHandler {
   }
 
   /**
+   * Detect image placeholder text and try to fetch actual image message.
+   * Issue #1205: Handle cases where Feishu sends image as text message type.
+   *
+   * @param messageId - The message ID
+   * @param chatId - The chat ID
+   * @param content - Raw message content JSON string
+   * @param messageType - Message type (should be 'text')
+   * @param createTime - Message creation timestamp
+   * @param sender - Message sender info
+   * @param threadId - Thread ID for replies
+   * @returns True if image was detected and handled, false otherwise
+   */
+  private async detectAndHandleImagePlaceholder(
+    messageId: string,
+    chatId: string,
+    content: string,
+    messageType: string,
+    createTime: number | undefined,
+    sender: FeishuMessageEvent['sender'],
+    threadId: string
+  ): Promise<boolean> {
+    try {
+      // Parse the text content
+      const parsed = JSON.parse(content);
+      const text = parsed.text?.trim() || '';
+
+      // Check if text matches image placeholder patterns
+      const isImagePlaceholder = IMAGE_PLACEHOLDER_PATTERNS.some(
+        pattern => pattern.test(text)
+      );
+
+      if (!isImagePlaceholder) {
+        return false;
+      }
+
+      logger.info(
+        { messageId, chatId, text, messageType },
+        'Image placeholder text detected, attempting to fetch actual image message'
+      );
+
+      // Try to fetch the actual message using Lark API
+      if (!this.client) {
+        logger.debug({ messageId }, 'Client not initialized, cannot fetch message details');
+        return false;
+      }
+
+      const larkService = getLarkClientService();
+      const messageDetails = await larkService.getMessage(messageId);
+
+      if (!messageDetails) {
+        logger.debug({ messageId }, 'Could not fetch message details');
+        return false;
+      }
+
+      // Check if the fetched message has image type
+      if (messageDetails.messageType === 'image') {
+        logger.info(
+          { messageId, chatId, actualMessageType: messageDetails.messageType },
+          'Found actual image message via API, processing as image'
+        );
+
+        // Process as image message
+        const result = await this.fileHandler.handleFileMessage(
+          chatId,
+          'image',
+          messageDetails.content,
+          messageId
+        );
+
+        if (result.success) {
+          const attachments = attachmentManager.getAttachments(chatId);
+          if (attachments.length > 0) {
+            const latestAttachment = attachments[attachments.length - 1];
+            const uploadPrompt = this.fileHandler.buildUploadPrompt(latestAttachment);
+
+            await messageLogger.logIncomingMessage(
+              messageId,
+              this.extractOpenId(sender) || 'unknown',
+              chatId,
+              `[Image uploaded: ${latestAttachment.fileName}]`,
+              'image',
+              createTime
+            );
+
+            // Emit as incoming message
+            await this.callbacks.emitMessage({
+              messageId: `${messageId}-image`,
+              chatId: chatId,
+              userId: this.extractOpenId(sender),
+              content: uploadPrompt,
+              messageType: 'image',
+              timestamp: createTime,
+              threadId,
+              attachments: [{
+                fileName: latestAttachment.fileName || 'unknown',
+                filePath: latestAttachment.localPath || '',
+                mimeType: latestAttachment.mimeType,
+              }],
+            });
+
+            return true;
+          }
+        } else {
+          logger.warn(
+            { messageId, chatId, error: result.error },
+            'Failed to process image message'
+          );
+        }
+      } else {
+        // Message is still text type, but it's an image placeholder
+        // This typically means the bot lacks im:resource permission
+        logger.info(
+          { messageId, chatId, actualMessageType: messageDetails.messageType },
+          'Message is text type but contains image placeholder - Bot may lack im:resource permission'
+        );
+
+        // Send a helpful message to user
+        await this.callbacks.sendMessage({
+          chatId: chatId,
+          type: 'text',
+          text: '📷 检测到图片消息，但无法获取图片内容。\n\n这可能是因为机器人缺少 `im:resource` 权限。请在飞书开放平台为机器人添加以下权限：\n- `im:resource` - 获取与上传图片或文件资源\n\n添加权限后，重新启用机器人即可接收图片消息。',
+        });
+
+        return true; // We detected and handled it (even if we couldn't process the image)
+      }
+
+      return false;
+    } catch (error) {
+      logger.debug({ err: error, messageId }, 'Error detecting image placeholder');
+      return false;
+    }
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -663,6 +811,25 @@ export class MessageHandler {
         'chat_record message processed'
       );
       return;
+    }
+
+    // Issue #1205: Detect image placeholder text and try to fetch actual image message
+    // In some scenarios (e.g., private chat), Feishu sends a text message with placeholder
+    // like "这张图片" (this image) instead of the actual image message type
+    if (message_type === 'text') {
+      const imageDetected = await this.detectAndHandleImagePlaceholder(
+        message_id,
+        chat_id,
+        content,
+        message_type,
+        create_time,
+        sender,
+        threadId
+      );
+      if (imageDetected) {
+        logger.info({ messageId: message_id, chatId: chat_id }, 'Image placeholder detected and handled');
+        return;
+      }
     }
 
     // Handle text and post messages
