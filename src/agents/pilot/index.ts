@@ -86,6 +86,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private historyLoaded = false;
   private historyLoadPromise?: Promise<void>;
 
+  // First message chat history (Issue #1230)
+  private firstMessageHistoryContext?: string;
+  private firstMessageHistoryLoaded = false;
+
   // Task complexity tracking (Issue #857)
   private readonly complexityAgent: TaskComplexityAgent;
   private currentTaskId?: string;
@@ -198,6 +202,47 @@ export class Pilot extends BaseAgent implements ChatAgent {
       );
       // Mark as loaded even on error to prevent retry loops
       this.historyLoaded = true;
+    }
+  }
+
+  /**
+   * Load chat history for first message context (Issue #1230).
+   *
+   * This method loads recent chat history to be attached to the first message
+   * in a new agent session, providing context for the agent.
+   *
+   * @returns Promise that resolves when history is loaded
+   */
+  private async loadFirstMessageHistory(): Promise<void> {
+    try {
+      this.logger.info(
+        { chatId: this.boundChatId },
+        'Loading chat history for first message context'
+      );
+
+      const history = await this.callbacks.getChatHistory?.(this.boundChatId);
+
+      if (history && history.trim()) {
+        this.firstMessageHistoryContext = history;
+        this.logger.info(
+          { chatId: this.boundChatId, historyLength: this.firstMessageHistoryContext.length },
+          'Chat history for first message loaded successfully'
+        );
+      } else {
+        this.logger.debug(
+          { chatId: this.boundChatId },
+          'No chat history found for first message'
+        );
+      }
+
+      this.firstMessageHistoryLoaded = true;
+    } catch (error) {
+      this.logger.error(
+        { err: error, chatId: this.boundChatId },
+        'Failed to load chat history for first message'
+      );
+      // Mark as loaded even on error to prevent retry loops
+      this.firstMessageHistoryLoaded = true;
     }
   }
 
@@ -383,6 +428,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    *
    * Issue #644: Only accepts messages for the bound chatId.
    * Issue #857: Triggers async complexity analysis for progress tracking.
+   * Issue #1230: Attachs chat history on first message for new sessions.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
@@ -409,7 +455,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext },
       'processMessage called'
     );
 
@@ -422,13 +468,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.startAgentLoop();
     }
 
+    // Issue #1230: Attach chat history on first message for new sessions
+    // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode)
+    let effectiveChatHistoryContext = chatHistoryContext;
+    if (!chatHistoryContext && this.firstMessageHistoryContext) {
+      effectiveChatHistoryContext = this.firstMessageHistoryContext;
+      this.logger.info(
+        { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
+        'Using pre-loaded chat history for first message'
+      );
+      // Clear after first use
+      this.firstMessageHistoryContext = undefined;
+    }
+
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text, messageId, senderOpenId, attachments, chatHistoryContext,
+      text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
     }, chatId, capabilities);
 
@@ -515,6 +574,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Creates a MessageChannel and Query, using the channel's generator for streaming input.
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    * Issue #955: Triggers background loading of persisted chat history.
+   * Issue #1230: Triggers background loading of chat history for first message.
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
@@ -523,6 +583,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
     if (!this.historyLoaded) {
       this.loadPersistedHistory().catch((err) => {
         this.logger.error({ err, chatId }, 'Failed to load persisted history in background');
+      });
+    }
+
+    // Issue #1230: Load chat history for first message context
+    if (!this.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
+      this.loadFirstMessageHistory().catch((err) => {
+        this.logger.error({ err, chatId }, 'Failed to load first message history in background');
       });
     }
 
@@ -763,6 +830,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
     this.historyLoaded = false;
+
+    // Clear first message history context (Issue #1230)
+    this.firstMessageHistoryContext = undefined;
+    this.firstMessageHistoryLoaded = false;
   }
 
   /**
