@@ -35,6 +35,62 @@ interface FeishuApiError extends Error {
 }
 
 /**
+ * Retry configuration for file downloads.
+ */
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelayMs: 1000, // 1 second
+  maxDelayMs: 10000, // 10 seconds
+};
+
+/**
+ * Check if an error is a temporary/retriable error.
+ * Includes SDK internal errors when response is undefined.
+ */
+function isRetriableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+
+  // SDK internal error when response is undefined (Issue #1205)
+  if (message.includes('cannot read properties of undefined')) {
+    return true;
+  }
+
+  // Network errors
+  if (message.includes('econnreset') || message.includes('etimedout') || message.includes('enotfound')) {
+    return true;
+  }
+
+  // Rate limiting
+  if (message.includes('rate limit') || message.includes('429')) {
+    return true;
+  }
+
+  // Server errors (5xx)
+  if (message.includes('500') || message.includes('502') || message.includes('503') || message.includes('504')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Sleep for a given number of milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Calculate delay with exponential backoff.
+ */
+function calculateBackoff(attempt: number): number {
+  const delay = RETRY_CONFIG.baseDelayMs * Math.pow(2, attempt);
+  return Math.min(delay, RETRY_CONFIG.maxDelayMs);
+}
+
+/**
  * Get the attachments directory path.
  */
 function getAttachmentsDir(): string {
@@ -205,87 +261,127 @@ export async function downloadFile(
 
   logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
 
-  try {
-    let fileResource: FileResourceResponse;
+  let lastError: Error | undefined;
 
-    // For user-uploaded files in messages, we MUST use messageResource.get API
-    // This API retrieves files from messages regardless of who uploaded them
-    if (messageId) {
-      logger.debug({ messageId, fileKey, fileType, fileName }, 'Downloading message file using message-resource API');
+  // Retry loop for handling temporary errors
+  for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+    try {
+      let fileResource: FileResourceResponse | undefined;
 
-      // Map internal file type to Feishu API type
-      // Required params: 'file', 'image', 'video', or 'audio'
-      // Pass fileName to handle special cases like .MOV files
-      const apiFileType = mapToFileType(fileType, fileName);
+      // For user-uploaded files in messages, we MUST use messageResource.get API
+      // This API retrieves files from messages regardless of who uploaded them
+      if (messageId) {
+        logger.debug({ messageId, fileKey, fileType, fileName, attempt }, 'Downloading message file using message-resource API');
 
-      logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
+        // Map internal file type to Feishu API type
+        // Required params: 'file', 'image', 'video', or 'audio'
+        // Pass fileName to handle special cases like .MOV files
+        const apiFileType = mapToFileType(fileType, fileName);
 
-      // SDK type doesn't include params.type, so we need to cast
-      fileResource = await client.im.messageResource.get({
-        path: {
-          message_id: messageId,
-          file_key: fileKey,
-        },
-        params: {
-          type: apiFileType,
-        },
-      }) as unknown as FileResourceResponse;
-    } else if (fileType === 'image') {
-      // Fallback: Try direct image API (only works for bot-uploaded images)
-      // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
-      logger.debug({ imageKey: fileKey }, 'Downloading image using direct IM API (bot uploads only)');
+        logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
-      fileResource = await client.im.image.get({
-        path: {
-          image_key: fileKey,
-        },
-      }) as unknown as FileResourceResponse;
-    } else {
-      // Fallback: Try Drive API (only works for drive files uploaded by bot)
-      // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/drive-v1/file/download
-      logger.debug({ fileToken: fileKey }, 'Downloading drive file using Drive API (bot uploads only)');
+        // SDK type doesn't include params.type, so we need to cast
+        fileResource = await client.im.messageResource.get({
+          path: {
+            message_id: messageId,
+            file_key: fileKey,
+          },
+          params: {
+            type: apiFileType,
+          },
+        }) as unknown as FileResourceResponse;
+      } else if (fileType === 'image') {
+        // Fallback: Try direct image API (only works for bot-uploaded images)
+        // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
+        logger.debug({ imageKey: fileKey, attempt }, 'Downloading image using direct IM API (bot uploads only)');
 
-      fileResource = await client.drive.file.download({
-        path: {
-          file_token: fileKey,
-        },
-      }) as unknown as FileResourceResponse;
+        fileResource = await client.im.image.get({
+          path: {
+            image_key: fileKey,
+          },
+        }) as unknown as FileResourceResponse;
+      } else {
+        // Fallback: Try Drive API (only works for drive files uploaded by bot)
+        // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/drive-v1/file/download
+        logger.debug({ fileToken: fileKey, attempt }, 'Downloading drive file using Drive API (bot uploads only)');
+
+        fileResource = await client.drive.file.download({
+          path: {
+            file_token: fileKey,
+          },
+        }) as unknown as FileResourceResponse;
+      }
+
+      // Check if response contains file resource
+      // This handles cases where SDK returns undefined (Issue #1205)
+      if (!fileResource) {
+        throw new Error('Empty response from Feishu API - file may have expired or been deleted');
+      }
+
+      // Verify fileResource has required methods before using
+      if (typeof fileResource.writeFile !== 'function') {
+        throw new Error('Invalid response from Feishu API - missing writeFile method');
+      }
+
+      // The fileResource has writeFile method to save directly
+      // Also supports getReadableStream() for streaming
+      await fileResource.writeFile(localPath);
+
+      // Get file size for logging
+      const stats = await fs.stat(localPath);
+
+      logger.info({ fileKey, localPath, size: stats.size, attempts: attempt + 1 }, 'File downloaded successfully');
+
+      return localPath;
+    } catch (error: unknown) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Check if we should retry
+      const shouldRetry = isRetriableError(error) && attempt < RETRY_CONFIG.maxRetries;
+
+      if (shouldRetry) {
+        const delay = calculateBackoff(attempt);
+        logger.warn(
+          { err: error, fileKey, attempt, nextRetryIn: delay, maxRetries: RETRY_CONFIG.maxRetries },
+          'Retriable error occurred, will retry'
+        );
+        await sleep(delay);
+        continue;
+      }
+
+      // Non-retriable error or max retries reached
+      // Extract detailed error response from Feishu API
+      const apiError = error as FeishuApiError;
+      const errorDetails: Record<string, unknown> = {
+        fileKey,
+        fileType,
+        messageId,
+        errorMessage: apiError.message,
+        errorCode: apiError.code,
+        attempt,
+        maxRetries: RETRY_CONFIG.maxRetries,
+      };
+
+      // Add response data if available
+      if (apiError.response) {
+        errorDetails.statusCode = apiError.response.status;
+        errorDetails.statusMessage = apiError.response.statusText;
+        errorDetails.responseData = apiError.response.data;
+      }
+
+      // Provide more helpful error message for common issues
+      let enhancedMessage = apiError.message;
+      if (apiError.message.includes('Cannot read properties of undefined')) {
+        enhancedMessage = 'Feishu API returned empty response. This usually means: (1) the file has expired or been deleted, (2) the bot lacks permission to access this file, or (3) a temporary API issue. Original error: ' + apiError.message;
+      }
+
+      logger.error({ err: error, ...errorDetails }, 'Failed to download file');
+
+      // Throw enhanced error
+      throw new Error(enhancedMessage);
     }
-
-    // Check if response contains file resource
-    if (!fileResource) {
-      throw new Error('Empty response from Feishu API');
-    }
-
-    // The fileResource has writeFile method to save directly
-    // Also supports getReadableStream() for streaming
-    await fileResource.writeFile(localPath);
-
-    // Get file size for logging
-    const stats = await fs.stat(localPath);
-
-    logger.info({ fileKey, localPath, size: stats.size }, 'File downloaded successfully');
-
-    return localPath;
-  } catch (error: unknown) {
-    // Extract detailed error response from Feishu API
-    const apiError = error as FeishuApiError;
-    const errorDetails: Record<string, unknown> = {
-      fileKey,
-      fileType,
-      messageId,
-      errorMessage: apiError.message,
-      errorCode: apiError.code,
-    };
-
-    // Add response data if available
-    if (apiError.response) {
-      errorDetails.statusCode = apiError.response.status;
-      errorDetails.statusMessage = apiError.response.statusText;
-      errorDetails.responseData = apiError.response.data;
-    }
-
-    logger.error({ err: error, ...errorDetails }, 'Failed to download file');
-    throw error;
   }
+
+  // Should never reach here, but TypeScript needs a return
+  throw lastError || new Error('Failed to download file after all retries');
 }

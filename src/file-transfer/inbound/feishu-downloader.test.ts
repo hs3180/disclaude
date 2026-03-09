@@ -292,4 +292,113 @@ describe('downloadFile', () => {
     // Should use fileKey substring in filename
     expect(result).toContain('image_file_key_1234');
   });
+
+  describe('retry logic (Issue #1205)', () => {
+    it('should retry on SDK internal error (undefined.readable)', async () => {
+      const mockClient = createMockClient();
+      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+
+      // First call fails with SDK internal error, second succeeds
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error('Cannot read properties of undefined (reading "readable")'))
+        .mockResolvedValueOnce({
+          writeFile: mockWriteFile,
+        });
+
+      const result = await downloadFile(
+        mockClient as unknown as Parameters<typeof downloadFile>[0],
+        'file_key_123',
+        'image',
+        'test.png',
+        'message_123'
+      );
+
+      // Should have been called twice (1 failure + 1 success)
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(2);
+      expect(mockWriteFile).toHaveBeenCalled();
+      expect(result).toContain('test.png');
+    });
+
+    it('should retry up to max retries on persistent retriable errors', async () => {
+      const mockClient = createMockClient();
+
+      // All calls fail with retriable error
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Cannot read properties of undefined (reading "readable")')
+      );
+
+      await expect(
+        downloadFile(
+          mockClient as unknown as Parameters<typeof downloadFile>[0],
+          'file_key_123',
+          'image',
+          'test.png',
+          'message_123'
+        )
+      ).rejects.toThrow('Feishu API returned empty response');
+
+      // Should have been called maxRetries + 1 times (initial + 3 retries)
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(4);
+    });
+
+    it('should provide enhanced error message for undefined.readable error', async () => {
+      const mockClient = createMockClient();
+
+      // All calls fail with retriable error
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Cannot read properties of undefined (reading "readable")')
+      );
+
+      await expect(
+        downloadFile(
+          mockClient as unknown as Parameters<typeof downloadFile>[0],
+          'file_key_123',
+          'image',
+          'test.png',
+          'message_123'
+        )
+      ).rejects.toThrow(/file has expired or been deleted/);
+    });
+
+    it('should not retry on non-retriable errors', async () => {
+      const mockClient = createMockClient();
+
+      // Non-retriable error (e.g., authentication error)
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Authentication failed')
+      );
+
+      await expect(
+        downloadFile(
+          mockClient as unknown as Parameters<typeof downloadFile>[0],
+          'file_key_123',
+          'image',
+          'test.png',
+          'message_123'
+        )
+      ).rejects.toThrow('Authentication failed');
+
+      // Should have been called only once (no retry)
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw error when response lacks writeFile method', async () => {
+      const mockClient = createMockClient();
+
+      // Response without writeFile method
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        // No writeFile method
+      });
+
+      await expect(
+        downloadFile(
+          mockClient as unknown as Parameters<typeof downloadFile>[0],
+          'file_key_123',
+          'image',
+          'test.png',
+          'message_123'
+        )
+      ).rejects.toThrow('Invalid response from Feishu API - missing writeFile method');
+    });
+  });
 });
