@@ -233,6 +233,14 @@ export class PrimaryNode extends EventEmitter {
             action: message.action,
           });
         },
+        // Issue #1230: Check if agent session is active for context attachment
+        hasActiveSession: (chatId: string) => {
+          if (!this.agentPool) {
+            return false;
+          }
+          const agent = this.agentPool.get(chatId);
+          return agent?.hasActiveSession() ?? false;
+        },
       });
 
       // Initialize TaskFlowOrchestrator for Feishu channel

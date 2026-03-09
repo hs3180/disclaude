@@ -189,6 +189,14 @@ export interface ChatAgent extends Disposable {
   ): Promise<void>;
 
   /**
+   * Check if the agent has an active session.
+   * Issue #1230: Used to determine if chat history context should be attached.
+   *
+   * @returns true if the agent has an active session
+   */
+  hasActiveSession(): boolean;
+
+  /**
    * Reset the agent session.
    * Clears conversation history and state.
    *

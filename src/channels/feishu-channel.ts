@@ -78,6 +78,11 @@ export interface FeishuChannelConfig extends ChannelConfig {
       trigger?: string;
     };
   }) => Promise<boolean>;
+  /**
+   * Check if the agent has an active session for the given chatId.
+   * Issue #1230: Used to determine if chat history context should be attached.
+   */
+  hasActiveSession?: (chatId: string) => boolean;
 }
 
 /**
@@ -132,6 +137,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
       // Issue #935: Route card action to Worker Node if applicable
       routeCardAction: config.routeCardAction,
+      // Issue #1230: Check if agent session is active for context attachment
+      hasActiveSession: config.hasActiveSession,
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({
