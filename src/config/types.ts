@@ -310,6 +310,19 @@ export interface MessagingConfig {
 }
 
 /**
+ * Session restoration configuration (Issue #1213).
+ * Controls how chat history is loaded when agent starts or resets.
+ */
+export interface SessionRestoreConfig {
+  /** Number of days to look back for chat history (default: 7) */
+  historyDays?: number;
+  /** Maximum characters for restored session context (default: 4000) */
+  maxContextLength?: number;
+  /** Whether to load history on reset (default: false) */
+  loadOnReset?: boolean;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -343,6 +356,8 @@ export interface DisclaudeConfig {
   channels?: ChannelsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Session restoration configuration (Issue #1213) */
+  sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

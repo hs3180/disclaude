@@ -34,6 +34,8 @@ export interface CommandMessage {
   chatId: string;
   /** Target exec node ID for switch-node command */
   targetNodeId?: string;
+  /** Whether to keep context when resetting (Issue #1213) */
+  keepContext?: boolean;
 }
 
 /**
