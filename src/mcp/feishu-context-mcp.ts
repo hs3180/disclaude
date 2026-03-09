@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  ask_user,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 import { getGroupService } from '../platforms/feishu/group-service.js';
@@ -32,7 +33,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
-export { ask_user } from './tools/ask-user.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -312,6 +312,102 @@ This tool initiates an async discussion. The conclusions will be returned when p
         return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
       } catch (error) {
         return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // ============================================================================
+  // Issue #946: "御书房批奏折" 体验 - Human-in-the-Loop 工具
+  // ============================================================================
+  {
+    name: 'ask_user',
+    description: `Ask the user a question with predefined options (Human-in-the-Loop).
+
+This tool provides a streamlined review experience - "御书房批奏折" (Imperial Study Review).
+
+---
+
+## 🏛️ 御书房体验原则
+
+> **就事论事 + 流程控制，最小化用户负担**
+
+1. **一目了然**: 清晰展示 AI 做了什么、改了什么
+2. **快速决策**: 一键批准/拒绝/修改
+3. **上下文完整**: 不需要用户来回翻看历史消息
+4. **操作便捷**: 减少用户认知负担
+
+---
+
+## 📋 使用场景
+
+### 1. 代码变更请求 (Code Review)
+\`\`\`json
+{
+  "question": "**代码变更请求**\\n\\n修复了用户认证的 bug\\n\\n**变更文件**: src/auth.ts (+50/-10), tests/auth.test.ts (+30)\\n\\n请选择处理方式:",
+  "options": [
+    {"text": "✅ 批准", "value": "approve", "style": "primary", "action": "执行批准操作"},
+    {"text": "❌ 拒绝", "value": "reject", "style": "danger", "action": "执行拒绝操作"},
+    {"text": "📝 需要修改", "value": "changes", "action": "请求修改"}
+  ],
+  "context": "PR #123",
+  "title": "📋 代码审核",
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+### 2. 任务确认
+\`\`\`json
+{
+  "question": "准备执行以下操作：\\n\\n1. 创建新分支 feature-x\\n2. 修改配置文件\\n3. 提交 PR\\n\\n是否继续?",
+  "options": [
+    {"text": "✓ 继续", "value": "continue", "style": "primary", "action": "继续执行"},
+    {"text": "✗ 取消", "value": "cancel", "style": "danger", "action": "取消操作"}
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\`
+
+---
+
+## Parameters
+
+- **question**: The question to ask (supports Markdown)
+- **options**: Array of 1-5 options, each with:
+  - \`text\`: Button display text
+  - \`value\`: Unique value for this option
+  - \`style\`: "primary" (blue), "danger" (red), or "default" (grey)
+  - \`action\`: Description of what to do when selected
+- **context**: Optional context info (e.g., "PR #123")
+- **title**: Optional card title (default: "🤖 Agent 提问")
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+
+---
+
+## ⚠️ 最佳实践
+
+1. **最多 5 个选项** - 移动端显示限制
+2. **使用明确的按钮文字** - 用户无需思考即可决策
+3. **提供 action 描述** - Agent 知道如何响应每个选项
+4. **包含上下文** - 用户无需翻看历史`,
+    parameters: z.object({
+      question: z.string().describe('The question to ask the user'),
+      options: z.array(z.object({
+        text: z.string().describe('Button display text'),
+        value: z.string().optional().describe('Unique value for this option'),
+        style: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
+        action: z.string().optional().describe('Action description for agent to execute'),
+      })).min(1).max(5).describe('Available options (1-5)'),
+      context: z.string().optional().describe('Context information'),
+      title: z.string().optional().describe('Card title'),
+      chatId: z.string().describe('Target chat ID'),
+      parentMessageId: z.string().optional().describe('Parent message ID for thread reply'),
+    }),
+    handler: async ({ question, options, context, title, chatId, parentMessageId }) => {
+      try {
+        const result = await ask_user({ question, options, context, title, chatId, parentMessageId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Ask user failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
