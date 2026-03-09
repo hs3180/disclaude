@@ -563,6 +563,10 @@ export class MessageHandler {
       }
     }
 
+    // Issue #1232: Add typing reaction uniformly for all valid messages
+    // This ensures control commands, regular messages, and file messages all receive feedback
+    await this.addTypingReaction(message_id);
+
     // Handle file/image messages
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
       logger.info(
@@ -639,9 +643,6 @@ export class MessageHandler {
         message_type,
         create_time
       );
-
-      // Add typing reaction
-      await this.addTypingReaction(message_id);
 
       // Emit as incoming message
       await this.callbacks.emitMessage({
@@ -813,9 +814,6 @@ export class MessageHandler {
     if (botMentioned && textWithoutMentions.startsWith('/')) {
       logger.debug({ messageId: message_id, chatId: chat_id, command: textWithoutMentions }, 'Bot mentioned with non-control command, passing to agent');
     }
-
-    // Add typing reaction only for messages that will be processed
-    await this.addTypingReaction(message_id);
 
     // Issue #846: Get quoted/replied message context if this is a reply
     let quotedMessageContext: string | undefined;
