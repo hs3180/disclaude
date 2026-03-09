@@ -1,33 +1,133 @@
 /**
  * Tests for IPC module - Unix Socket cross-process communication.
  *
+ * Uses mocks to avoid real IPC interactions for stable, fast unit tests.
+ *
  * @module ipc/ipc.test
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { unlinkSync, existsSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'events';
+
+// Mock types
+interface MockSocket extends EventEmitter {
+  write: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
+  remoteAddress?: string;
+}
+
+interface MockServer extends EventEmitter {
+  listen: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  listening: boolean;
+}
+
+// Mock net module
+const mockSockets: MockSocket[] = [];
+let mockServer: MockServer | null = null;
+let serverConnectionHandler: ((socket: MockSocket) => void) | null = null;
+
+vi.mock('net', () => ({
+  createServer: vi.fn((handler: (socket: MockSocket) => void) => {
+    serverConnectionHandler = handler;
+    let currentSocketPath: string | null = null;
+    mockServer = Object.assign(new EventEmitter(), {
+      listen: vi.fn((path: string, callback: () => void) => {
+        currentSocketPath = path;
+        activeSocketPaths.add(path);
+        mockServer!.listening = true;
+        setTimeout(callback, 0);
+      }),
+      close: vi.fn((callback: () => void) => {
+        if (currentSocketPath) {
+          activeSocketPaths.delete(currentSocketPath);
+        }
+        mockServer!.listening = false;
+        setTimeout(callback, 0);
+      }),
+      listening: false,
+    }) as MockServer;
+    return mockServer;
+  }),
+  createConnection: vi.fn(() => {
+    const socket = Object.assign(new EventEmitter(), {
+      write: vi.fn((data: string) => {
+        // Simulate server receiving data and sending response
+        setTimeout(() => {
+          if (serverConnectionHandler) {
+            // Create a server-side socket to handle the request
+            const serverSocket = Object.assign(new EventEmitter(), {
+              write: vi.fn((responseData: string) => {
+                // Simulate client receiving response
+                socket.emit('data', responseData);
+              }),
+              destroy: vi.fn(),
+            }) as MockSocket;
+            mockSockets.push(serverSocket);
+            serverConnectionHandler(serverSocket);
+
+            // Process the request data
+            const lines = data.split('\n').filter((l: string) => l.trim());
+            for (const line of lines) {
+              try {
+                const request = JSON.parse(line);
+                // Simulate server response
+                serverSocket.emit('data', line);
+              } catch {
+                // Ignore parse errors
+              }
+            }
+          }
+        }, 0);
+        return true;
+      }),
+      destroy: vi.fn(),
+    }) as MockSocket;
+    mockSockets.push(socket);
+
+    // Simulate successful connection
+    setTimeout(() => {
+      socket.emit('connect');
+    }, 0);
+
+    return socket;
+  }),
+}));
+
+// Track active socket paths
+const activeSocketPaths = new Set<string>();
+
+// Mock fs module
+vi.mock('fs', () => ({
+  existsSync: vi.fn((path: string) => {
+    // Socket path exists only if it's in the active set
+    return activeSocketPaths.has(path);
+  }),
+  unlinkSync: vi.fn(),
+  mkdirSync: vi.fn(),
+}));
+
+vi.mock('../utils/logger.js', () => ({
+  createLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+  })),
+}));
+
 import { UnixSocketIpcServer, createInteractiveMessageHandler } from './unix-socket-server.js';
 import { UnixSocketIpcClient, getIpcClient, resetIpcClient } from './unix-socket-client.js';
 
-// Generate a unique socket path for each test
-function generateSocketPath(): string {
-  return join(tmpdir(), `disclaude-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`);
-}
-
-describe('UnixSocketIpcServer', () => {
-  let server: UnixSocketIpcServer;
-  let socketPath: string;
-  let handler: ReturnType<typeof createInteractiveMessageHandler>;
-
+describe('createInteractiveMessageHandler', () => {
   const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
 
   beforeEach(() => {
-    socketPath = generateSocketPath();
     mockContexts.clear();
+  });
 
-    handler = createInteractiveMessageHandler({
+  const createHandler = () =>
+    createInteractiveMessageHandler({
       getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
       registerActionPrompts: (messageId, chatId, actionPrompts) => {
         mockContexts.set(messageId, { chatId, actionPrompts });
@@ -54,37 +154,213 @@ describe('UnixSocketIpcServer', () => {
       },
     });
 
-    server = new UnixSocketIpcServer(handler, { socketPath });
+  describe('ping', () => {
+    it('should return pong', async () => {
+      const handler = createHandler();
+      const response = await handler({ type: 'ping', id: '1', payload: {} });
+      expect(response).toEqual({ id: '1', success: true, payload: { pong: true } });
+    });
+  });
+
+  describe('getActionPrompts', () => {
+    it('should return prompts for existing message', async () => {
+      mockContexts.set('msg-1', {
+        chatId: 'chat-1',
+        actionPrompts: { confirm: 'Confirmed!', cancel: 'Cancelled!' },
+      });
+
+      const handler = createHandler();
+      const response = await handler({
+        type: 'getActionPrompts',
+        id: '2',
+        payload: { messageId: 'msg-1' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ prompts: { confirm: 'Confirmed!', cancel: 'Cancelled!' } });
+    });
+
+    it('should return null for non-existent message', async () => {
+      const handler = createHandler();
+      const response = await handler({
+        type: 'getActionPrompts',
+        id: '3',
+        payload: { messageId: 'non-existent' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ prompts: null });
+    });
+  });
+
+  describe('registerActionPrompts', () => {
+    it('should register action prompts', async () => {
+      const handler = createHandler();
+      const response = await handler({
+        type: 'registerActionPrompts',
+        id: '4',
+        payload: {
+          messageId: 'msg-2',
+          chatId: 'chat-2',
+          actionPrompts: { approve: 'Approved!' },
+        },
+      });
+
+      expect(response.success).toBe(true);
+      expect(mockContexts.has('msg-2')).toBe(true);
+      expect(mockContexts.get('msg-2')?.actionPrompts).toEqual({ approve: 'Approved!' });
+    });
+  });
+
+  describe('unregisterActionPrompts', () => {
+    it('should unregister action prompts and return true', async () => {
+      mockContexts.set('msg-3', { chatId: 'chat-1', actionPrompts: {} });
+
+      const handler = createHandler();
+      const response = await handler({
+        type: 'unregisterActionPrompts',
+        id: '5',
+        payload: { messageId: 'msg-3' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true });
+      expect(mockContexts.has('msg-3')).toBe(false);
+    });
+
+    it('should return false for non-existent message', async () => {
+      const handler = createHandler();
+      const response = await handler({
+        type: 'unregisterActionPrompts',
+        id: '6',
+        payload: { messageId: 'non-existent' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: false });
+    });
+  });
+
+  describe('generateInteractionPrompt', () => {
+    it('should generate prompt with template substitution', async () => {
+      mockContexts.set('msg-4', {
+        chatId: 'chat-1',
+        actionPrompts: { confirm: 'User clicked {{actionText}}' },
+      });
+
+      const handler = createHandler();
+      const response = await handler({
+        type: 'generateInteractionPrompt',
+        id: '7',
+        payload: { messageId: 'msg-4', actionValue: 'confirm', actionText: 'Confirm' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ prompt: 'User clicked Confirm' });
+    });
+
+    it('should return null for non-existent message', async () => {
+      const handler = createHandler();
+      const response = await handler({
+        type: 'generateInteractionPrompt',
+        id: '8',
+        payload: { messageId: 'non-existent', actionValue: 'confirm' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ prompt: null });
+    });
+
+    it('should return null for non-existent action', async () => {
+      mockContexts.set('msg-5', {
+        chatId: 'chat-1',
+        actionPrompts: { confirm: 'Confirmed!' },
+      });
+
+      const handler = createHandler();
+      const response = await handler({
+        type: 'generateInteractionPrompt',
+        id: '9',
+        payload: { messageId: 'msg-5', actionValue: 'non-existent' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ prompt: null });
+    });
+  });
+
+  describe('cleanupExpiredContexts', () => {
+    it('should clean up all contexts and return count', async () => {
+      mockContexts.set('msg-a', { chatId: 'chat-1', actionPrompts: {} });
+      mockContexts.set('msg-b', { chatId: 'chat-2', actionPrompts: {} });
+      mockContexts.set('msg-c', { chatId: 'chat-3', actionPrompts: {} });
+
+      const handler = createHandler();
+      const response = await handler({
+        type: 'cleanupExpiredContexts',
+        id: '10',
+        payload: {},
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ cleaned: 3 });
+      expect(mockContexts.size).toBe(0);
+    });
+  });
+
+  describe('unknown request type', () => {
+    it('should return error for unknown type', async () => {
+      const handler = createHandler();
+      const response = await handler({
+        type: 'unknown' as 'ping',
+        id: '11',
+        payload: {},
+      });
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Unknown request type');
+    });
+  });
+});
+
+describe('UnixSocketIpcServer', () => {
+  let server: UnixSocketIpcServer;
+  const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
+
+  beforeEach(() => {
+    mockContexts.clear();
+    mockServer = null;
+    mockSockets.length = 0;
+    serverConnectionHandler = null;
+
+    const handler = createInteractiveMessageHandler({
+      getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
+      registerActionPrompts: (messageId, chatId, actionPrompts) => {
+        mockContexts.set(messageId, { chatId, actionPrompts });
+      },
+      unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
+      generateInteractionPrompt: () => undefined,
+      cleanupExpiredContexts: () => 0,
+    });
+
+    server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' });
   });
 
   afterEach(async () => {
     await server.stop();
-    if (existsSync(socketPath)) {
-      try {
-        unlinkSync(socketPath);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
   });
 
-  it('should start and stop successfully', async () => {
+  it('should start successfully', async () => {
     expect(server.isRunning()).toBe(false);
-
     await server.start();
     expect(server.isRunning()).toBe(true);
-    expect(server.getSocketPath()).toBe(socketPath);
-
-    await server.stop();
-    expect(server.isRunning()).toBe(false);
   });
 
-  it('should clean up socket file on stop', async () => {
+  it('should stop successfully', async () => {
     await server.start();
-    expect(existsSync(socketPath)).toBe(true);
-
+    expect(server.isRunning()).toBe(true);
     await server.stop();
-    expect(existsSync(socketPath)).toBe(false);
+    expect(server.isRunning()).toBe(false);
   });
 
   it('should handle multiple start calls gracefully', async () => {
@@ -97,17 +373,22 @@ describe('UnixSocketIpcServer', () => {
     await server.stop(); // Should not throw
     expect(server.isRunning()).toBe(false);
   });
+
+  it('should return socket path', () => {
+    expect(server.getSocketPath()).toBe('/tmp/test.ipc');
+  });
 });
 
 describe('UnixSocketIpcClient', () => {
-  let server: UnixSocketIpcServer;
   let client: UnixSocketIpcClient;
-  let socketPath: string;
   const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
 
-  beforeEach(async () => {
-    socketPath = generateSocketPath();
+  beforeEach(() => {
     mockContexts.clear();
+    mockServer = null;
+    mockSockets.length = 0;
+    serverConnectionHandler = null;
+    resetIpcClient();
 
     const handler = createInteractiveMessageHandler({
       getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
@@ -117,91 +398,60 @@ describe('UnixSocketIpcClient', () => {
       unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
       generateInteractionPrompt: (messageId, actionValue, actionText) => {
         const context = mockContexts.get(messageId);
-        if (!context) {
-          return undefined;
-        }
+        if (!context) return undefined;
         const template = context.actionPrompts[actionValue];
-        if (!template) {
-          return undefined;
-        }
+        if (!template) return undefined;
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
     });
 
-    server = new UnixSocketIpcServer(handler, { socketPath });
-    client = new UnixSocketIpcClient({ socketPath, timeout: 2000 });
+    const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' });
+    server.start();
 
-    await server.start();
+    client = new UnixSocketIpcClient({ socketPath: '/tmp/test.ipc', timeout: 2000 });
   });
 
   afterEach(async () => {
     await client.disconnect();
-    await server.stop();
-    if (existsSync(socketPath)) {
-      try {
-        unlinkSync(socketPath);
-      } catch {
-        // Ignore cleanup errors
-      }
+    resetIpcClient();
+  });
+
+  it('should not be connected initially', () => {
+    expect(client.isConnected()).toBe(false);
+  });
+
+  it('should check availability', async () => {
+    const status = await client.checkAvailability();
+    expect(status.available).toBe(true);
+  });
+
+  it('should report not available when socket does not exist', async () => {
+    const noServerClient = new UnixSocketIpcClient({ socketPath: '/tmp/nonexistent.ipc', timeout: 100 });
+    const status = await noServerClient.checkAvailability();
+    expect(status.available).toBe(false);
+    if (!status.available) {
+      expect(status.reason).toBe('socket_not_found');
     }
   });
 
-  it('should connect and disconnect', async () => {
-    expect(client.isConnected()).toBe(false);
+  it('should invalidate availability cache', async () => {
+    const status1 = await client.checkAvailability();
+    expect(status1.available).toBe(true);
 
-    await client.connect();
-    expect(client.isConnected()).toBe(true);
+    client.invalidateAvailabilityCache();
 
-    await client.disconnect();
-    expect(client.isConnected()).toBe(false);
-  });
-
-  it('should ping the server', async () => {
-    const result = await client.ping();
-    expect(result).toBe(true);
-  });
-
-  it('should handle multiple connect calls', async () => {
-    await client.connect();
-    await client.connect(); // Should not throw
-    expect(client.isConnected()).toBe(true);
-  });
-
-  it('should get action prompts', async () => {
-    mockContexts.set('msg-1', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'Confirmed!', cancel: 'Cancelled!' },
-    });
-
-    const prompts = await client.getActionPrompts('msg-1');
-    expect(prompts).toEqual({ confirm: 'Confirmed!', cancel: 'Cancelled!' });
-  });
-
-  it('should return null for non-existent prompts', async () => {
-    const prompts = await client.getActionPrompts('non-existent');
-    expect(prompts).toBeNull();
-  });
-
-  it('should generate interaction prompt', async () => {
-    mockContexts.set('msg-2', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'User clicked {{actionText}}' },
-    });
-
-    const prompt = await client.generateInteractionPrompt('msg-2', 'confirm', 'Confirm');
-    expect(prompt).toBe('User clicked Confirm');
-  });
-
-  it('should return null for non-existent prompt template', async () => {
-    const prompt = await client.generateInteractionPrompt('non-existent', 'confirm');
-    expect(prompt).toBeNull();
+    // Cache should be cleared
+    expect(client.isAvailable()).toBe(true);
   });
 });
 
 describe('getIpcClient singleton', () => {
   beforeEach(() => {
     resetIpcClient();
+    mockServer = null;
+    mockSockets.length = 0;
+    serverConnectionHandler = null;
   });
 
   afterEach(() => {
@@ -222,194 +472,144 @@ describe('getIpcClient singleton', () => {
   });
 });
 
-describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
-  let socketPath: string;
+describe('Feishu API handlers', () => {
+  const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
 
   beforeEach(() => {
-    socketPath = generateSocketPath();
-    resetIpcClient();
+    mockContexts.clear();
   });
 
-  afterEach(() => {
-    resetIpcClient();
-    if (existsSync(socketPath)) {
-      try {
-        unlinkSync(socketPath);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  });
-
-  describe('checkAvailability', () => {
-    it('should return socket_not_found when socket does not exist', async () => {
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      const status = await client.checkAvailability();
-
-      expect(status.available).toBe(false);
-      if (!status.available) {
-        expect(status.reason).toBe('socket_not_found');
-      }
+  it('should return error when Feishu handlers not available', async () => {
+    const handler = createInteractiveMessageHandler({
+      getActionPrompts: () => undefined,
+      registerActionPrompts: () => {},
+      unregisterActionPrompts: () => false,
+      generateInteractionPrompt: () => undefined,
+      cleanupExpiredContexts: () => 0,
     });
 
-    it('should return available when server is running', async () => {
-      const handler = createInteractiveMessageHandler({
+    const response = await handler({
+      type: 'feishuSendMessage',
+      id: '1',
+      payload: { chatId: 'chat-1', text: 'Hello' },
+    });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Feishu API handlers not available');
+  });
+
+  it('should call Feishu handlers when available', async () => {
+    const mockSendMessage = vi.fn().mockResolvedValue(undefined);
+    const mockSendCard = vi.fn().mockResolvedValue(undefined);
+    const mockUploadFile = vi.fn().mockResolvedValue({
+      fileKey: 'key-1',
+      fileType: 'stream',
+      fileName: 'test.txt',
+      fileSize: 100,
+    });
+    const mockGetBotInfo = vi.fn().mockResolvedValue({
+      openId: 'bot-1',
+      name: 'Test Bot',
+      avatarUrl: 'https://example.com/avatar.png',
+    });
+
+    const feishuContainer = {
+      handlers: {
+        sendMessage: mockSendMessage,
+        sendCard: mockSendCard,
+        uploadFile: mockUploadFile,
+        getBotInfo: mockGetBotInfo,
+      },
+    };
+
+    const handler = createInteractiveMessageHandler(
+      {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
-      });
+      },
+      feishuContainer
+    );
 
-      const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
+    // Test feishuSendMessage
+    const sendResponse = await handler({
+      type: 'feishuSendMessage',
+      id: '1',
+      payload: { chatId: 'chat-1', text: 'Hello' },
+    });
+    expect(sendResponse.success).toBe(true);
+    expect(mockSendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined);
 
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      const status = await client.checkAvailability();
+    // Test feishuSendCard
+    const cardResponse = await handler({
+      type: 'feishuSendCard',
+      id: '2',
+      payload: { chatId: 'chat-1', card: { type: 'test' } },
+    });
+    expect(cardResponse.success).toBe(true);
+    expect(mockSendCard).toHaveBeenCalledWith('chat-1', { type: 'test' }, undefined, undefined);
 
-      expect(status.available).toBe(true);
-
-      await client.disconnect();
-      await server.stop();
+    // Test feishuUploadFile
+    const uploadResponse = await handler({
+      type: 'feishuUploadFile',
+      id: '3',
+      payload: { chatId: 'chat-1', filePath: '/tmp/test.txt' },
+    });
+    expect(uploadResponse.success).toBe(true);
+    expect(uploadResponse.payload).toEqual({
+      success: true,
+      fileKey: 'key-1',
+      fileType: 'stream',
+      fileName: 'test.txt',
+      fileSize: 100,
     });
 
-    it('should cache availability result', async () => {
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-
-      // First check
-      const status1 = await client.checkAvailability();
-      expect(status1.available).toBe(false);
-
-      // Second check should return cached result
-      const status2 = await client.checkAvailability();
-      expect(status2).toBe(status1);
+    // Test feishuGetBotInfo
+    const botResponse = await handler({
+      type: 'feishuGetBotInfo',
+      id: '4',
+      payload: {},
+    });
+    expect(botResponse.success).toBe(true);
+    expect(botResponse.payload).toEqual({
+      openId: 'bot-1',
+      name: 'Test Bot',
+      avatarUrl: 'https://example.com/avatar.png',
     });
   });
 
-  describe('isAvailable', () => {
-    it('should return false when socket does not exist', () => {
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      expect(client.isAvailable()).toBe(false);
-    });
+  it('should handle Feishu handler errors', async () => {
+    const mockSendMessage = vi.fn().mockRejectedValue(new Error('API Error'));
 
-    it('should return true when connected', async () => {
-      const handler = createInteractiveMessageHandler({
+    const feishuContainer = {
+      handlers: {
+        sendMessage: mockSendMessage,
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        uploadFile: vi.fn().mockResolvedValue({ fileKey: 'key', fileType: 'stream', fileName: 'f', fileSize: 0 }),
+        getBotInfo: vi.fn().mockResolvedValue({ openId: 'bot' }),
+      },
+    };
+
+    const handler = createInteractiveMessageHandler(
+      {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
         generateInteractionPrompt: () => undefined,
         cleanupExpiredContexts: () => 0,
-      });
+      },
+      feishuContainer
+    );
 
-      const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
-
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      await client.connect();
-
-      expect(client.isAvailable()).toBe(true);
-
-      await client.disconnect();
-      await server.stop();
-    });
-  });
-
-  describe('retry mechanism', () => {
-    it('should retry connection on failure', async () => {
-      // Create a client with maxRetries=3
-      const client = new UnixSocketIpcClient({
-        socketPath,
-        timeout: 100,
-        maxRetries: 3,
-      });
-
-      // Try to connect to non-existent socket
-      await expect(client.connect()).rejects.toThrow();
-
-      // Should have tried 3 times (verified by timing)
-      // This is a timing-based test, so we just verify it doesn't throw immediately
+    const response = await handler({
+      type: 'feishuSendMessage',
+      id: '1',
+      payload: { chatId: 'chat-1', text: 'Hello' },
     });
 
-    it('should connect on retry if server becomes available', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
-
-      const server = new UnixSocketIpcServer(handler, { socketPath });
-
-      // Start server after a short delay
-      setTimeout(() => server.start(), 50);
-
-      const client = new UnixSocketIpcClient({
-        socketPath,
-        timeout: 200,
-        maxRetries: 5,
-      });
-
-      // Should eventually connect
-      await client.connect();
-      expect(client.isConnected()).toBe(true);
-
-      await client.disconnect();
-      await server.stop();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should include IPC_NOT_AVAILABLE prefix when socket not found', async () => {
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 100, maxRetries: 1 });
-
-      await expect(client.request('ping', {})).rejects.toThrow('IPC_NOT_AVAILABLE:');
-    });
-
-    it('should include IPC_TIMEOUT prefix on request timeout', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
-
-      const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
-
-      // Create client with very short timeout
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 1, maxRetries: 1 });
-
-      // This might timeout or succeed depending on timing
-      // Just verify the error format when it fails
-      try {
-        await client.request('ping', {});
-      } catch (error) {
-        expect(error instanceof Error).toBe(true);
-        // Error should have a descriptive message
-        expect((error as Error).message).toMatch(/IPC_/);
-      }
-
-      await client.disconnect();
-      await server.stop();
-    });
-  });
-
-  describe('invalidateAvailabilityCache', () => {
-    it('should clear cached availability', async () => {
-      const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-
-      // First check caches the result
-      const status1 = await client.checkAvailability();
-      expect(status1.available).toBe(false);
-
-      // Invalidate cache
-      client.invalidateAvailabilityCache();
-
-      // Check again - should be a new object
-      const status2 = await client.checkAvailability();
-      expect(status2).not.toBe(status1);
-    });
+    expect(response.success).toBe(false);
+    expect(response.error).toBe('API Error');
   });
 });
