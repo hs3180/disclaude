@@ -73,8 +73,8 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       expect(result).toContain('image/png');
 
       // Should include image analyzer hint
-      expect(result).toContain('Image attachment(s) detected');
-      expect(result).toContain('analyze_image');
+      expect(result).toContain('## 🖼️ Image Analysis Required');
+      expect(result).toContain('mcp__4_5v_mcp__analyze_image');
     });
 
     it('should handle JPEG image', () => {
@@ -148,7 +148,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       expect(result).toContain('2 file(s)');
 
       // Should include image analyzer hint
-      expect(result).toContain('Image attachment(s) detected');
+      expect(result).toContain('## 🖼️ Image Analysis Required');
     });
 
     it('should handle multiple images with different formats', () => {
@@ -311,7 +311,7 @@ console.log(data.value);
           attachments: [attachment],
         }, 'chat-789');
 
-        expect(result).toContain('Image attachment(s) detected');
+        expect(result).toContain('## 🖼️ Image Analysis Required');
         expect(result).toContain(mimeType);
       }
     });
@@ -338,7 +338,7 @@ console.log(data.value);
         attachments: [pdfAttachment],
       }, 'chat-789');
 
-      expect(result).not.toContain('Image attachment(s) detected');
+      expect(result).not.toContain('## 🖼️ Image Analysis Required');
       expect(result).toContain('document.pdf');
     });
   });
