@@ -57,6 +57,7 @@ export interface PilotCallbacks {
  * Configuration options for Pilot.
  *
  * Issue #644: Added chatId binding for session isolation.
+ * Issue #857: Added complexityThreshold for task progress tracking.
  */
 export interface PilotConfig extends BaseAgentConfig {
   /**
@@ -69,6 +70,15 @@ export interface PilotConfig extends BaseAgentConfig {
    * Callback functions for platform-specific operations.
    */
   callbacks: PilotCallbacks;
+
+  /**
+   * Complexity threshold for starting progress tracking.
+   * Tasks with complexity >= threshold will show progress cards.
+   * Default: 7 (range: 1-10)
+   *
+   * Issue #857: Task progress tracking for complex tasks.
+   */
+  complexityThreshold?: number;
 }
 
 /**

@@ -46,6 +46,8 @@ export interface ExpertProfile {
   skills: SkillDeclaration[];
   /** Available hours (e.g., "weekdays 10:00-18:00") */
   availability?: string;
+  /** Price per consultation in credits (default: 0 = free) */
+  price?: number;
   /** Registration timestamp */
   registeredAt: number;
   /** Last update timestamp */
@@ -278,6 +280,32 @@ export class ExpertService {
     profile.updatedAt = Date.now();
     this.save();
     logger.info({ userId, availability }, 'Availability set');
+    return profile;
+  }
+
+  /**
+   * Set expert price per consultation.
+   *
+   * @param userId - User ID
+   * @param price - Price in credits (0 = free)
+   * @returns Updated profile or undefined if expert not found
+   */
+  setPrice(userId: string, price: number): ExpertProfile | undefined {
+    const profile = this.registry.experts[userId];
+    if (!profile) {
+      logger.warn({ userId }, 'Cannot set price: expert not found');
+      return undefined;
+    }
+
+    if (price < 0) {
+      logger.warn({ userId, price }, 'Cannot set negative price');
+      return undefined;
+    }
+
+    profile.price = price;
+    profile.updatedAt = Date.now();
+    this.save();
+    logger.info({ userId, price }, 'Expert price set');
     return profile;
   }
 

@@ -34,6 +34,18 @@ export { ask_user } from './ask-user.js';
 // Request Review tool (Issue #946: 御书房批奏折体验)
 export { request_review, quick_review } from './request-review.js';
 
+// Thread Tools (Issue #873: Topic group extension)
+export {
+  reply_in_thread,
+  get_threads,
+  get_thread_messages,
+} from './thread-tools.js';
+export type {
+  ReplyInThreadToolResult,
+  GetThreadsToolResult,
+  GetThreadMessagesToolResult,
+} from './thread-tools.js';
+
 // Study Guide Generator (NotebookLM M4)
 export {
   generate_summary,

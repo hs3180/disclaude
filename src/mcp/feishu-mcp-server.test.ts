@@ -77,10 +77,13 @@ describe('Feishu MCP Server', () => {
       const sendMessageTool = feishuToolDefinitions.find(t => t.name === 'send_message');
       expect(sendMessageTool).toBeDefined();
 
-      // Verify description mentions key features
-      expect(sendMessageTool?.description).toContain('Send a simple message');
-      expect(sendMessageTool?.description).toContain('send_interactive_message');
-      expect(sendMessageTool?.description).toContain('Important Notes');
+      // Issue #1155: Updated description for consolidated tools
+      // Verify description mentions key modes
+      expect(sendMessageTool?.description).toContain('Send a message');
+      expect(sendMessageTool?.description).toContain('Text');
+      expect(sendMessageTool?.description).toContain('Card');
+      expect(sendMessageTool?.description).toContain('Interactive');
+      expect(sendMessageTool?.description).toContain('actionPrompts');
     });
 
     it('should define send_file tool with correct schema', async () => {
