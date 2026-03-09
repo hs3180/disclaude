@@ -3,13 +3,44 @@
  *
  * MCP Server process for disclaude.
  *
- * This package will contain:
- * - MCP tools
- * - IPC client
- * - MCP resources
- *
- * Code will be migrated from src/ in subsequent PRs.
+ * This package contains:
+ * - MCP tools types
+ * - MCP utilities
+ * - IPC client (to be migrated)
+ * - MCP resources (to be migrated)
  */
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Tool Types
+export type {
+  SendMessageResult,
+  SendFileResult,
+  MessageSentCallback,
+  ActionPromptMap,
+  InteractiveMessageContext,
+  SendInteractiveResult,
+  AskUserOptions,
+  AskUserResult,
+} from './tools/types.js';
+
+// Utils - Card Validator
+export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+
+// Utils - Feishu API
+export {
+  sendMessageToFeishu,
+  replyInThread,
+  getThreads,
+  getThreadMessages,
+} from './utils/feishu-api.js';
+
+export type {
+  SendMessageResult as FeishuSendMessageResult,
+  ReplyInThreadResult,
+  ThreadItem,
+  GetThreadsResult,
+  ThreadMessageItem,
+  GetThreadMessagesResult,
+} from './utils/feishu-api.js';
+
+// Version
 export const MCP_SERVER_VERSION = '0.0.1';

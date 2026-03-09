@@ -16,7 +16,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@disclaude/core": "*"
+    "@disclaude/core": "*",
+    "@larksuiteoapi/node-sdk": "^1.34.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
