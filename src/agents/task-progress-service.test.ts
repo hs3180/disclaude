@@ -1,36 +1,16 @@
 /**
  * Tests for TaskProgressService.
  *
- * Issue #857: Complex Task Auto-Start Task Agent
+ * Issue #857: Complex Task Auto-Start Task Agent with Progress Reporting
+ * Refactored: Removed TaskComplexityAgent dependency
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { TaskProgressService } from './task-progress-service.js';
-import type { TaskComplexityResult } from './task-complexity-agent.js';
 
 describe('TaskProgressService', () => {
   let service: TaskProgressService;
   let mockSendCard: Mock<(card: Record<string, unknown>) => Promise<void>>;
-
-  const mockComplexity: TaskComplexityResult = {
-    complexityScore: 8,
-    complexityLevel: 'high',
-    estimatedSteps: 5,
-    estimatedSeconds: 300,
-    confidence: 0.75,
-    reasoning: {
-      taskType: 'refactoring',
-      scope: 'multiple_files',
-      uncertainty: 'medium',
-      dependencies: ['file_system', 'testing'],
-      keyFactors: ['Factor 1', 'Factor 2', 'Factor 3'],
-    },
-    recommendation: {
-      shouldStartTaskAgent: true,
-      reportingInterval: 60,
-      message: '检测到复杂任务，已启动后台执行模式',
-    },
-  };
 
   beforeEach(() => {
     service = new TaskProgressService();
@@ -44,12 +24,11 @@ describe('TaskProgressService', () => {
 
   describe('startTracking', () => {
     it('should start tracking and send initial progress card', async () => {
-    const taskId = await service.startTracking({
-      chatId: 'test-chat-id',
-      messageId: 'test-message-id',
-      userMessage: 'Refactor the authentication module',
-      complexity: mockComplexity,
-      sendCard: mockSendCard,
+      const taskId = await service.startTracking({
+        chatId: 'test-chat-id',
+        messageId: 'test-message-id',
+        userMessage: 'Refactor the authentication module',
+        sendCard: mockSendCard,
       });
 
       expect(taskId).toBeDefined();
@@ -69,7 +48,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -85,7 +63,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -104,7 +81,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -135,7 +111,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -154,7 +129,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -171,7 +145,6 @@ describe('TaskProgressService', () => {
         chatId: 'test-chat-id',
         messageId: 'test-message-id',
         userMessage: 'Task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -189,7 +162,6 @@ describe('TaskProgressService', () => {
         chatId: 'test-chat-id',
         messageId: 'test-message-id',
         userMessage: 'Task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -200,6 +172,39 @@ describe('TaskProgressService', () => {
     });
   });
 
+  describe('updateProgressManually', () => {
+    it('should update progress for active task', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Task',
+        sendCard: mockSendCard,
+      });
+
+      mockSendCard.mockClear();
+
+      await service.updateProgressManually(chatId, {
+        currentStep: 'Processing files',
+        percent: 50,
+        message: 'Halfway done',
+      });
+
+      expect(mockSendCard).toHaveBeenCalledTimes(1);
+
+      const taskInfo = service.getActiveTask(chatId);
+      expect(taskInfo?.percent).toBe(50);
+    });
+
+    it('should not update progress for non-existent task', async () => {
+      await service.updateProgressManually('non-existent-chat', {
+        currentStep: 'Processing',
+      });
+
+      expect(mockSendCard).not.toHaveBeenCalled();
+    });
+  });
+
   describe('pauseTask', () => {
     it('should pause a running task', async () => {
       const chatId = 'test-chat-id';
@@ -207,7 +212,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -233,7 +237,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -252,7 +255,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -279,7 +281,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -297,7 +298,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -316,7 +316,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 
@@ -340,7 +339,6 @@ describe('TaskProgressService', () => {
         chatId,
         messageId: 'test-message-id',
         userMessage: 'Complex task',
-        complexity: mockComplexity,
         sendCard: mockSendCard,
       });
 

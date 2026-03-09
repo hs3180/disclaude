@@ -7,6 +7,7 @@
  * - Output adapters for Feishu integration
  * - Message tracking and cleanup
  * - Error handling
+ * - Progress reporting (Issue #857)
  *
  * Architecture (Serial Loop):
  * TaskFileWatcher loop: find task → execute (await) → wait (if no task)
@@ -19,6 +20,7 @@
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  * Refactored (Issue #417): Removed Reporter, using message level system instead.
  * Simplified (Issue #413): Uses SkillAgent instead of Evaluator/Executor classes.
+ * Added (Issue #857): Progress reporting with fixed interval updates.
  */
 
 import * as path from 'path';
@@ -38,6 +40,7 @@ import type { ReflectionContext } from '../task/reflection.js';
 import { SkillAgent } from '../agents/skill-agent.js';
 import { TaskFileManager } from '../task/task-files.js';
 import { DIALOGUE } from '../config/constants.js';
+import { taskProgressService } from '../agents/task-progress-service.js';
 
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -125,6 +128,7 @@ export class TaskFlowOrchestrator {
    * Run the dialogue phase using ReflectionController (Evaluator → Executor → Reporter).
    *
    * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
+   * Added (Issue #857): Progress reporting with fixed interval updates.
    */
   private async runDialogue(
     chatId: string,
@@ -163,6 +167,25 @@ export class TaskFlowOrchestrator {
     const fileManager = new TaskFileManager();
 
     let completionReason = 'unknown';
+
+    // Issue #857: Start progress tracking
+    let progressTaskId: string | undefined;
+    try {
+      // Read task.md to get user message for progress tracking
+      const taskContent = await fileManager.readTaskSpec(taskId);
+      const userMessage = taskContent.split('\n').find(line => line.startsWith('# Task:'))?.replace('# Task: ', '').trim() || 'Task';
+
+      progressTaskId = await taskProgressService.startTracking({
+        chatId,
+        messageId,
+        userMessage,
+        sendCard: (card) => this.messageCallbacks.sendCard(chatId, card),
+      });
+
+      this.logger.info({ chatId, taskId, progressTaskId }, 'Progress tracking started');
+    } catch (error) {
+      this.logger.debug({ err: error, chatId }, 'Failed to start progress tracking (non-critical)');
+    }
 
     // Create ReflectionController with termination conditions
     const controller = new ReflectionController(
@@ -282,6 +305,14 @@ export class TaskFlowOrchestrator {
           continue;
         }
 
+        // Issue #857: Update progress on key milestones
+        if (progressTaskId && message.messageType === 'status') {
+          await taskProgressService.updateProgressManually(chatId, {
+            currentStep: content.slice(0, 100),
+            message: '任务执行中',
+          });
+        }
+
         // Send to user
         await adapter.write(content, message.messageType ?? 'text', {
           toolName: message.metadata?.toolName as string | undefined,
@@ -318,9 +349,19 @@ export class TaskFlowOrchestrator {
 
       const errorMsg = `❌ ${enriched.userMessage || enriched.message}`;
       await this.messageCallbacks.sendMessage(chatId, errorMsg, messageId);
+
+      // Issue #857: Complete progress tracking with failure
+      if (progressTaskId) {
+        await taskProgressService.completeTask(chatId, false, enriched.message);
+      }
     } finally {
       // Clean up message tracking callback to prevent memory leaks
       setMessageSentCallback(null);
+
+      // Issue #857: Complete progress tracking if not already done
+      if (progressTaskId && completionReason === 'task_done') {
+        await taskProgressService.completeTask(chatId, true, '任务完成');
+      }
 
       // Check if no user message was sent and send warning
       if (!messageTracker.hasAnyMessage()) {

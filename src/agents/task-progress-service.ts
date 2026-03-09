@@ -1,21 +1,35 @@
 /**
  * Task Progress Service - Manages progress tracking for complex tasks.
  *
- * Issue #857: Complex Task Auto-Start Task Agent
+ * Issue #857: Complex Task Auto-Start Task Agent with Progress Reporting
  *
  * This service provides:
- * - Progress card management with ETA updates
+ * - Progress card management with updates
  * - Task execution recording to history
- * - Progress updates at appropriate intervals
+ * - Progress updates at fixed intervals (60 seconds)
+ *
+ * Refactored: Removed TaskComplexityAgent dependency.
+ * Progress tracking is now independent of complexity scoring.
  *
  * @module agents/task-progress-service
  */
 
 import { createLogger } from '../utils/logger.js';
 import { taskHistoryStorage, type TaskRecord } from './task-history.js';
-import type { TaskComplexityResult } from './task-complexity-agent.js';
 
 const logger = createLogger('TaskProgressService');
+
+/**
+ * Progress update data.
+ */
+export interface ProgressUpdate {
+  /** Current step description */
+  currentStep: string;
+  /** Optional percentage (0-100) */
+  percent?: number;
+  /** Optional message */
+  message?: string;
+}
 
 /**
  * Progress card configuration.
@@ -24,7 +38,6 @@ export interface ProgressCardConfig {
   chatId: string;
   messageId: string;
   userMessage: string;
-  complexity: TaskComplexityResult;
   sendCard: (card: Record<string, unknown>) => Promise<void>;
 }
 
@@ -41,13 +54,11 @@ interface ActiveProgress {
   chatId: string;
   messageId: string;
   userMessage: string;
-  complexity: TaskComplexityResult;
   startTime: number;
   lastUpdateTime: number;
   currentPercent: number;
   currentStep: string;
   status: TaskStatus;
-  cardMessageId?: string;
   updateInterval: ReturnType<typeof setInterval> | null;
   sendCard: (card: Record<string, unknown>) => Promise<void>;
 }
@@ -56,24 +67,25 @@ interface ActiveProgress {
  * Task Progress Service.
  *
  * Manages progress cards and task execution recording.
+ * Provides simple progress reporting at fixed intervals.
  */
 export class TaskProgressService {
   private activeProgress: Map<string, ActiveProgress> = new Map();
 
-  /** Minimum interval between progress updates (30 seconds) */
-  private readonly MIN_UPDATE_INTERVAL = 30000;
+  /** Fixed interval between progress updates (60 seconds) as per Issue #857 */
+  private readonly UPDATE_INTERVAL_MS = 60000;
 
   /** Maximum progress before completion (capped at 90%) */
   private readonly MAX_PROGRESS_BEFORE_COMPLETE = 90;
 
   /**
-   * Start tracking a complex task.
+   * Start tracking a task.
    *
    * @param config - Progress card configuration
    * @returns Task ID for tracking
    */
   async startTracking(config: ProgressCardConfig): Promise<string> {
-    const { chatId, messageId, userMessage, complexity, sendCard } = config;
+    const { chatId, messageId, userMessage, sendCard } = config;
 
     // Generate unique task ID
     const taskId = `task-${chatId}-${Date.now()}`;
@@ -82,17 +94,14 @@ export class TaskProgressService {
       taskId,
       chatId,
       messageId,
-      complexityScore: complexity.complexityScore,
-      estimatedSeconds: complexity.estimatedSeconds,
-    }, 'Starting progress tracking for complex task');
+    }, 'Starting progress tracking for task');
 
     // Send initial progress card
     const card = this.buildProgressCard({
       taskId,
       status: 'running',
       percent: 0,
-      message: complexity.recommendation.message || '任务已启动',
-      eta: complexity.estimatedSeconds,
+      message: '任务已启动',
       currentStep: '正在分析任务...',
     });
 
@@ -105,7 +114,6 @@ export class TaskProgressService {
       chatId,
       messageId,
       userMessage,
-      complexity,
       startTime,
       lastUpdateTime: startTime,
       currentPercent: 0,
@@ -114,7 +122,7 @@ export class TaskProgressService {
       sendCard,
       updateInterval: setInterval(
         () => this.updateProgress(taskId),
-        Math.max(this.MIN_UPDATE_INTERVAL, complexity.recommendation.reportingInterval * 1000)
+        this.UPDATE_INTERVAL_MS
       ),
     };
 
@@ -147,42 +155,79 @@ export class TaskProgressService {
     }
 
     const elapsed = (Date.now() - progress.startTime) / 1000;
-    const estimated = progress.complexity.estimatedSeconds;
 
-    // Calculate progress percentage (capped at 90% until completion)
-    const rawPercent = Math.min(
+    // Increment progress slightly (simulated progress)
+    // In real usage, progress should be updated via updateProgress()
+    const newPercent = Math.min(
       this.MAX_PROGRESS_BEFORE_COMPLETE,
-      Math.floor((elapsed / estimated) * 100)
+      progress.currentPercent + 5
     );
 
-    // Only update if progress increased by at least 5%
-    if (rawPercent <= progress.currentPercent + 5) {
+    // Only update if progress increased
+    if (newPercent <= progress.currentPercent) {
       return;
     }
 
-    progress.currentPercent = rawPercent;
+    progress.currentPercent = newPercent;
     progress.lastUpdateTime = Date.now();
-
-    // Determine current step based on progress
-    const stepIndex = Math.floor(
-      (rawPercent / 100) * progress.complexity.estimatedSteps
-    );
-    progress.currentStep = this.getStepDescription(stepIndex, progress.complexity);
 
     logger.debug({
       taskId,
-      percent: rawPercent,
+      percent: newPercent,
       elapsed,
-      estimated,
     }, 'Updating progress');
 
     // Send updated progress card
     const card = this.buildProgressCard({
       taskId,
       status: 'running',
-      percent: rawPercent,
+      percent: newPercent,
       message: '任务执行中',
-      eta: Math.max(0, estimated - elapsed),
+      currentStep: progress.currentStep,
+    });
+
+    await progress.sendCard(card);
+  }
+
+  /**
+   * Manually update progress for a task.
+   *
+   * @param chatId - Chat ID
+   * @param update - Progress update data
+   */
+  async updateProgressManually(chatId: string, update: ProgressUpdate): Promise<void> {
+    const progress = this.activeProgress.get(chatId);
+    if (!progress) {
+      logger.debug({ chatId }, 'No active progress to update');
+      return;
+    }
+
+    if (progress.status !== 'running') {
+      logger.debug({ chatId, status: progress.status }, 'Task not running, skipping update');
+      return;
+    }
+
+    progress.currentStep = update.currentStep;
+    if (update.percent !== undefined) {
+      progress.currentPercent = Math.min(
+        this.MAX_PROGRESS_BEFORE_COMPLETE,
+        Math.max(0, update.percent)
+      );
+    }
+    progress.lastUpdateTime = Date.now();
+
+    logger.debug({
+      taskId: progress.taskId,
+      percent: progress.currentPercent,
+      step: update.currentStep,
+    }, 'Manual progress update');
+
+    // Send updated progress card
+    const card = this.buildProgressCard({
+      taskId: progress.taskId,
+      status: 'running',
+      percent: progress.currentPercent,
+      message: update.message || '任务执行中',
       currentStep: progress.currentStep,
     });
 
@@ -216,7 +261,6 @@ export class TaskProgressService {
       status: success ? 'completed' : 'failed',
       percent: 100,
       message: success ? '任务完成' : '任务失败',
-      eta: 0,
       currentStep: summary || (success ? '所有步骤已完成' : '任务执行失败'),
     });
 
@@ -227,14 +271,14 @@ export class TaskProgressService {
       taskId: progress.taskId,
       chatId: progress.chatId,
       userMessage: progress.userMessage,
-      taskType: progress.complexity.reasoning.taskType,
-      complexityScore: progress.complexity.complexityScore,
-      estimatedSeconds: progress.complexity.estimatedSeconds,
+      taskType: 'general',
+      complexityScore: 0, // No longer using complexity scoring
+      estimatedSeconds: 0,
       actualSeconds: elapsed,
       success,
       startedAt: progress.startTime,
       completedAt: Date.now(),
-      keyFactors: progress.complexity.reasoning.keyFactors,
+      keyFactors: [],
     };
 
     await taskHistoryStorage.recordTask(record);
@@ -243,7 +287,6 @@ export class TaskProgressService {
       taskId: progress.taskId,
       success,
       elapsed,
-      estimated: progress.complexity.estimatedSeconds,
     }, 'Task completed and recorded');
 
     // Remove from active tracking
@@ -275,8 +318,6 @@ export class TaskProgressService {
   /**
    * Pause a tracked task.
    *
-   * Issue #857 Phase 5: Support task pause/resume
-   *
    * @param chatId - Chat ID to pause task for
    * @returns true if task was paused, false if no task to pause
    */
@@ -297,13 +338,11 @@ export class TaskProgressService {
     progress.lastUpdateTime = Date.now();
 
     // Send paused card
-    const elapsed = (Date.now() - progress.startTime) / 1000;
     const card = this.buildProgressCard({
       taskId: progress.taskId,
       status: 'paused',
       percent: progress.currentPercent,
       message: '任务已暂停',
-      eta: Math.max(0, progress.complexity.estimatedSeconds - elapsed),
       currentStep: progress.currentStep,
     });
 
@@ -315,8 +354,6 @@ export class TaskProgressService {
 
   /**
    * Resume a paused task.
-   *
-   * Issue #857 Phase 5: Support task pause/resume
    *
    * @param chatId - Chat ID to resume task for
    * @returns true if task was resumed, false if no task to resume
@@ -338,13 +375,11 @@ export class TaskProgressService {
     progress.lastUpdateTime = Date.now();
 
     // Send resumed card
-    const elapsed = (Date.now() - progress.startTime) / 1000;
     const card = this.buildProgressCard({
       taskId: progress.taskId,
       status: 'running',
       percent: progress.currentPercent,
       message: '任务已恢复',
-      eta: Math.max(0, progress.complexity.estimatedSeconds - elapsed),
       currentStep: progress.currentStep,
     });
 
@@ -356,8 +391,6 @@ export class TaskProgressService {
 
   /**
    * Cancel a tracked task.
-   *
-   * Issue #857 Phase 5: Support task cancellation
    *
    * @param chatId - Chat ID to cancel task for
    * @returns true if task was cancelled, false if no task to cancel
@@ -387,7 +420,6 @@ export class TaskProgressService {
       status: 'cancelled',
       percent: progress.currentPercent,
       message: '任务已取消',
-      eta: 0,
       currentStep: '用户取消了任务',
     });
 
@@ -398,14 +430,14 @@ export class TaskProgressService {
       taskId: progress.taskId,
       chatId: progress.chatId,
       userMessage: progress.userMessage,
-      taskType: progress.complexity.reasoning.taskType,
-      complexityScore: progress.complexity.complexityScore,
-      estimatedSeconds: progress.complexity.estimatedSeconds,
+      taskType: 'general',
+      complexityScore: 0,
+      estimatedSeconds: 0,
       actualSeconds: elapsed,
       success: false,
       startedAt: progress.startTime,
       completedAt: Date.now(),
-      keyFactors: [...progress.complexity.reasoning.keyFactors, 'Cancelled by user'],
+      keyFactors: ['Cancelled by user'],
     };
 
     await taskHistoryStorage.recordTask(record);
@@ -429,10 +461,9 @@ export class TaskProgressService {
     status: TaskStatus;
     percent: number;
     message: string;
-    eta: number;
     currentStep: string;
   }): Record<string, unknown> {
-    const { taskId, status, percent, message, eta, currentStep } = params;
+    const { taskId, status, percent, message, currentStep } = params;
 
     const statusEmoji = {
       running: '🔄',
@@ -456,19 +487,8 @@ export class TaskProgressService {
       { tag: 'markdown', content: `**任务ID**: \`${taskId.slice(-8)}\`` },
       { tag: 'markdown', content: `**状态**: ${statusEmoji} ${message}` },
       { tag: 'markdown', content: `**进度**: ${progressBar} ${percent}%` },
+      { tag: 'markdown', content: `**当前步骤**: ${currentStep}` },
     ];
-
-    if (status === 'running' && eta > 0) {
-      elements.push({
-        tag: 'markdown',
-        content: `**预计剩余时间**: ${this.formatTime(eta)}`,
-      });
-    }
-
-    elements.push({
-      tag: 'markdown',
-      content: `**当前步骤**: ${currentStep}`,
-    });
 
     return {
       config: { wide_screen_mode: true },
@@ -487,34 +507,6 @@ export class TaskProgressService {
     const filled = Math.floor(percent / 5);
     const empty = 20 - filled;
     return '█'.repeat(filled) + '░'.repeat(empty);
-  }
-
-  /**
-   * Format time in human-readable format.
-   */
-  private formatTime(seconds: number): string {
-    if (seconds < 60) {
-      return `${Math.round(seconds)}秒`;
-    }
-    const minutes = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    if (minutes < 60) {
-      return secs > 0 ? `${minutes}分${secs}秒` : `${minutes}分钟`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`;
-  }
-
-  /**
-   * Get step description based on progress.
-   */
-  private getStepDescription(stepIndex: number, complexity: TaskComplexityResult): string {
-    const factors = complexity.reasoning.keyFactors;
-    if (factors.length === 0) {
-      return `步骤 ${stepIndex + 1}/${complexity.estimatedSteps}`;
-    }
-    return factors[stepIndex % factors.length] || `步骤 ${stepIndex + 1}/${complexity.estimatedSteps}`;
   }
 }
 

@@ -89,15 +89,6 @@ export {
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
 
-// Task Complexity Agent (Issue #857)
-export {
-  TaskComplexityAgent,
-  createTaskComplexityAgent,
-  type TaskComplexityAgentConfig,
-  type TaskComplexityResult,
-  type ComplexityLevel,
-} from './task-complexity-agent.js';
-
 // Task History Storage (Issue #857)
 export {
   TaskHistoryStorage,
@@ -105,6 +96,14 @@ export {
   type TaskRecord,
   type TaskTypeStats,
 } from './task-history.js';
+
+// Task Progress Service (Issue #857)
+export {
+  TaskProgressService,
+  taskProgressService,
+  type ProgressUpdate,
+  type ProgressCardConfig,
+} from './task-progress-service.js';
 
 // SubagentManager - Unified subagent spawning (Issue #997)
 export {
