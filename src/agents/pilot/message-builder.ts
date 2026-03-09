@@ -6,6 +6,7 @@
  *
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
+ * Issue #1198: Added location awareness guidance - agent should not infer user location.
  */
 
 import { Config } from '../../config/index.js';
@@ -23,6 +24,7 @@ import type { MessageData } from './types.js';
  * - Chat history context
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
+ * - Location awareness guidance (Issue #1198)
  */
 export class MessageBuilder {
   /**
@@ -99,6 +101,9 @@ ${msg.persistedHistoryContext}
     // Build output format guidance section (Issue #962)
     const outputFormatGuidance = this.buildOutputFormatGuidance();
 
+    // Build location awareness guidance section (Issue #1198)
+    const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -129,6 +134,7 @@ ${persistedHistorySection}${chatHistorySection}${mentionSection}
 ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
+${locationAwarenessGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -143,6 +149,7 @@ ${persistedHistorySection}${chatHistorySection}
 ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
+${locationAwarenessGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -386,5 +393,42 @@ When you need to present structured data (status, metrics, analysis results, etc
 - Use emoji and formatting (bold, italic) to highlight important information
 - If you have structured data internally, extract and present the key values
 - For complex data, use Markdown tables instead of raw JSON`;
+  }
+
+  /**
+   * Build location awareness guidance section for the prompt.
+   *
+   * Issue #1198: The agent runs on a server that is physically separate
+   * from the user's terminal. Therefore, the agent should NOT attempt to
+   * infer the user's physical location through system information (like
+   * timezone, Wi-Fi networks, IP address, etc.) and should honestly state
+   * that it doesn't know the user's location when asked.
+   *
+   * @returns Location awareness guidance string
+   */
+  private buildLocationAwarenessGuidance(): string {
+    return `
+
+---
+
+## Location Awareness
+
+**IMPORTANT: You do NOT know the user's physical location.**
+
+You are running on a remote server that is physically separate from the user's terminal. Therefore:
+
+- You CANNOT infer the user's location from system information (timezone, Wi-Fi networks, IP address, locale settings, etc.)
+- When the user asks about location-dependent information (weather, local events, etc.), you should:
+  1. Honestly state that you don't know their location
+  2. Ask them to provide their location if needed
+  3. Do NOT attempt to guess or infer their location from any system data
+
+### Examples
+
+**❌ Wrong Approach:**
+> "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
+
+**✅ Correct Approach:**
+> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
   }
 }
