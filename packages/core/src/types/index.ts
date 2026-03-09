@@ -63,18 +63,6 @@ export type {
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';
 
-// IPC types (Issue #1040)
-export type {
-  IpcRequestType,
-  IpcRequestPayloads,
-  IpcResponsePayloads,
-  IpcRequest,
-  IpcResponse,
-  IpcConfig,
-} from './ipc.js';
-
-export { DEFAULT_IPC_CONFIG } from './ipc.js';
-
 // Primary Node types (Issue #1040)
 export type {
   NodeType,
