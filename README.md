@@ -197,7 +197,16 @@ npm run build && npm start
    - Add event: `im.message.receive_v1`
    - This enables message receiving
 
-5. **Publish Bot**
+5. **Configure Permissions** (Important for Image/File Messages)
+   - Go to **Permissions & Scopes** (权限管理)
+   - Enable the following permissions for image/file support:
+     - `im:image` - 获取与发送图片消息
+     - `im:resource` - 获取图片资源
+     - `im:file` - 获取与发送文件消息
+   - **Publish a new version** after enabling permissions
+   - Without these permissions, image messages will appear as text placeholders (e.g., "这张图片")
+
+6. **Publish Bot**
    - Add bot to a group or enable in organization
    - Test by sending a message
 

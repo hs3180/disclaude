@@ -716,6 +716,17 @@ export class MessageHandler {
       logger.info({ messageId: message_id, chatId: chat_id }, 'Message received');
     }
 
+    // Issue #1205: Detect image permission issues
+    // When image permissions are not configured, Feishu sends text placeholders like "这张图片" or "[图片]"
+    // instead of actual image messages
+    if (text.includes('这张图片') || text.includes('[图片]') || text.includes('[image]')) {
+      logger.warn(
+        { messageId: message_id, chatId: chat_id, text },
+        'Image message received as text placeholder - likely missing image permissions. ' +
+        'Please enable "im:image", "im:resource", and "im:file" permissions in Feishu Open Platform.'
+      );
+    }
+
     // Log message
     await messageLogger.logIncomingMessage(
       message_id,
