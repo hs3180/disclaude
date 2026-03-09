@@ -54,7 +54,9 @@ export class MentionDetector {
         url: '/open-apis/bot/v3/info',
       });
 
-      const bot = response.data?.bot;
+      // Lark SDK returns response directly with bot/code/msg at top level
+      const responseRecord = response as unknown as Record<string, unknown>;
+      const bot = responseRecord.bot as { open_id?: string; app_id?: string } | undefined;
       if (bot?.open_id) {
         this.botInfo = {
           open_id: bot.open_id,
@@ -65,10 +67,21 @@ export class MentionDetector {
           'Bot info fetched for mention detection'
         );
       } else {
-        logger.warn('Failed to fetch bot info, mention detection may be less accurate');
+        logger.warn(
+          {
+            responseCode: responseRecord.code,
+            responseMsg: responseRecord.msg,
+            hasBot: !!bot,
+            botKeys: bot ? Object.keys(bot) : [],
+          },
+          'Failed to fetch bot info: no bot.open_id in response, mention detection may be less accurate'
+        );
       }
     } catch (error) {
-      logger.warn({ err: error }, 'Failed to fetch bot info, mention detection may be less accurate');
+      logger.warn(
+        { err: error, errorMessage: error instanceof Error ? error.message : String(error) },
+        'Failed to fetch bot info, mention detection may be less accurate'
+      );
     }
   }
 
