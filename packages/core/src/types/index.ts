@@ -38,6 +38,9 @@ export type {
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
+  FeishuApiAction,
+  FeishuApiRequestMessage,
+  FeishuApiResponseMessage,
 } from './websocket-messages.js';
 
 // Primary Node types (Issue #1040)
