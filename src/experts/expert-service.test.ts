@@ -259,6 +259,39 @@ describe('ExpertService', () => {
       expect(experts.length).toBe(2);
     });
   });
+
+  describe('findExperts', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'Expert 1');
+      service.registerExpert('user_2', 'Expert 2');
+      service.registerExpert('user_3', 'Expert 3');
+
+      service.addSkill('user_1', { name: 'React', level: 5 });
+      service.addSkill('user_2', { name: 'React', level: 4 });
+      service.addSkill('user_3', { name: 'React', level: 3 });
+    });
+
+    it('should return all matching experts', async () => {
+      const experts = await service.findExperts('React');
+      expect(experts.length).toBe(3);
+    });
+
+    it('should filter by minLevel', async () => {
+      const experts = await service.findExperts('React', { minLevel: 4 });
+      expect(experts.length).toBe(2);
+      expect(experts.every(e => e.skills.some(s => s.name === 'React' && s.level >= 4))).toBe(true);
+    });
+
+    it('should limit results', async () => {
+      const experts = await service.findExperts('React', { limit: 2 });
+      expect(experts.length).toBe(2);
+    });
+
+    it('should return empty array for no matches', async () => {
+      const experts = await service.findExperts('NonExistentSkill');
+      expect(experts).toEqual([]);
+    });
+  });
 });
 
 describe('isAvailabilityMatch', () => {
@@ -266,8 +299,7 @@ describe('isAvailabilityMatch', () => {
   let isAvailabilityMatch: (availability: string) => boolean;
 
   beforeAll(async () => {
-    const module = await import('./expert-service.js');
-    isAvailabilityMatch = module.isAvailabilityMatch;
+    ({ isAvailabilityMatch } = await import('./expert-service.js'));
   });
 
   it('should return true for "always"', () => {

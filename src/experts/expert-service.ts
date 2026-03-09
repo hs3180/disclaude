@@ -367,6 +367,41 @@ export class ExpertService {
   getFilePath(): string {
     return this.filePath;
   }
+
+  /**
+   * Find experts by skill - API for Agent use.
+   *
+   * This is the primary API for AI agents to query experts.
+   *
+   * @param skill - Skill name to search for
+   * @param options - Search options
+   * @returns Promise resolving to array of matching expert profiles
+   * @see Issue #536 - 专家查询与匹配
+   */
+  findExperts(
+    skill: string,
+    options?: {
+      /** Minimum skill level (1-5) */
+      minLevel?: number;
+      /** Only return currently available experts */
+      available?: boolean;
+      /** Maximum number of results */
+      limit?: number;
+    }
+  ): Promise<ExpertProfile[]> {
+    const { minLevel, available, limit } = options || {};
+
+    // Use searchBySkill for the actual search
+    let results = this.searchBySkill(skill, minLevel as SkillLevel | undefined, { available });
+
+    // Apply limit if specified
+    if (limit !== undefined && limit > 0) {
+      results = results.slice(0, limit);
+    }
+
+    logger.info({ skill, options, resultCount: results.length }, 'findExperts called');
+    return Promise.resolve(results);
+  }
 }
 
 // Singleton instance

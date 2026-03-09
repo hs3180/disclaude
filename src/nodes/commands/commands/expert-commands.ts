@@ -291,8 +291,7 @@ export class ExpertCommand implements Command {
     const filteredArgs = args.filter(arg => arg !== '--available' && arg !== '-a');
 
     // Get query and minLevel from filtered args
-    const actualQuery = filteredArgs[1];
-    const actualMinLevelStr = filteredArgs[2];
+    const [, actualQuery, actualMinLevelStr] = filteredArgs;
 
     if (!actualQuery) {
       return {
