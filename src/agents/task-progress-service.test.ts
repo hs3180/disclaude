@@ -199,4 +199,158 @@ describe('TaskProgressService', () => {
       expect(firstElement.content).toContain('任务ID');
     });
   });
+
+  describe('pauseTask', () => {
+    it('should pause a running task', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      mockSendCard.mockClear();
+
+      const result = await service.pauseTask(chatId);
+
+      expect(result).toBe(true);
+      expect(mockSendCard).toHaveBeenCalledTimes(1);
+
+      const taskInfo = service.getActiveTask(chatId);
+      expect(taskInfo?.status).toBe('paused');
+    });
+
+    it('should return false when no task to pause', async () => {
+      const result = await service.pauseTask('non-existent-chat');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when task is already paused', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      await service.pauseTask(chatId);
+      mockSendCard.mockClear();
+
+      const result = await service.pauseTask(chatId);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('resumeTask', () => {
+    it('should resume a paused task', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      await service.pauseTask(chatId);
+      mockSendCard.mockClear();
+
+      const result = await service.resumeTask(chatId);
+
+      expect(result).toBe(true);
+      expect(mockSendCard).toHaveBeenCalledTimes(1);
+
+      const taskInfo = service.getActiveTask(chatId);
+      expect(taskInfo?.status).toBe('running');
+    });
+
+    it('should return false when no task to resume', async () => {
+      const result = await service.resumeTask('non-existent-chat');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when task is running (not paused)', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      mockSendCard.mockClear();
+
+      const result = await service.resumeTask(chatId);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('cancelTask', () => {
+    it('should cancel a running task', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      mockSendCard.mockClear();
+
+      const result = await service.cancelTask(chatId);
+
+      expect(result).toBe(true);
+      expect(mockSendCard).toHaveBeenCalledTimes(1);
+      expect(service.hasActiveTask(chatId)).toBe(false);
+    });
+
+    it('should cancel a paused task', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      await service.pauseTask(chatId);
+      mockSendCard.mockClear();
+
+      const result = await service.cancelTask(chatId);
+
+      expect(result).toBe(true);
+      expect(service.hasActiveTask(chatId)).toBe(false);
+    });
+
+    it('should return false when no task to cancel', async () => {
+      const result = await service.cancelTask('non-existent-chat');
+      expect(result).toBe(false);
+    });
+
+    it('should send cancelled card with correct status', async () => {
+      const chatId = 'test-chat-id';
+      await service.startTracking({
+        chatId,
+        messageId: 'test-message-id',
+        userMessage: 'Complex task',
+        complexity: mockComplexity,
+        sendCard: mockSendCard,
+      });
+
+      mockSendCard.mockClear();
+
+      await service.cancelTask(chatId);
+
+      const cardArg = mockSendCard.mock.calls[0][0] as Record<string, unknown>;
+      const header = cardArg.header as Record<string, unknown>;
+      expect(header.template).toBe('grey');
+    });
+  });
 });
