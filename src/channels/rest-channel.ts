@@ -54,6 +54,12 @@ export interface RestChannelConfig extends ChannelConfig {
   fileStorageDir?: string;
   /** Maximum file size in bytes (default: 100MB) */
   maxFileSize?: number;
+  /** Session TTL in milliseconds (default: 3600000 = 1 hour) */
+  sessionTtl?: number;
+  /** Maximum number of sessions to keep (default: 10000) */
+  maxSessions?: number;
+  /** Cleanup interval in milliseconds (default: 60000 = 1 minute) */
+  cleanupInterval?: number;
 }
 
 /**
@@ -199,9 +205,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private enableCors: boolean;
   private fileStorageDir: string;
   private maxFileSize: number;
+  private sessionTtl: number;
+  private maxSessions: number;
+  private cleanupInterval: number;
 
   private server?: http.Server;
   private fileStorage?: FileStorageService;
+  private cleanupTimer?: NodeJS.Timeout;
 
   // Pending responses for sync mode (chatId -> PendingResponse)
   private pendingResponses = new Map<string, PendingResponse>();
@@ -223,6 +233,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.enableCors = config.enableCors ?? true;
     this.fileStorageDir = config.fileStorageDir || './data/rest-files';
     this.maxFileSize = config.maxFileSize ?? 100 * 1024 * 1024; // 100MB
+    this.sessionTtl = config.sessionTtl ?? 3600000; // 1 hour
+    this.maxSessions = config.maxSessions ?? 10000;
+    this.cleanupInterval = config.cleanupInterval ?? 60000; // 1 minute
 
     logger.info({ id: this.id, port: this.port }, 'RestChannel created');
   }
@@ -243,6 +256,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       });
     });
 
+    // Start session cleanup timer
+    this.startCleanupTimer();
+
     return new Promise((resolve, reject) => {
       this.server!.listen(this.port, this.host, () => {
         logger.info({ port: this.port, host: this.host }, 'RestChannel started');
@@ -257,6 +273,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   protected doStop(): Promise<void> {
+    // Stop cleanup timer
+    this.stopCleanupTimer();
+
     // Clear all pending responses
     for (const [_chatId, pending] of this.pendingResponses) {
       clearTimeout(pending.timeout);
@@ -970,6 +989,73 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     } catch (error) {
       logger.error({ err: error, fileId }, 'Failed to read file content');
       this.sendError(res, 500, 'Failed to read file content');
+    }
+  }
+
+  /**
+   * Start the session cleanup timer.
+   * Runs periodically to remove expired sessions and enforce max session limit.
+   */
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupExpiredSessions();
+    }, this.cleanupInterval);
+
+    // Prevent the timer from keeping the process alive
+    this.cleanupTimer.unref();
+
+    logger.info(
+      { ttl: this.sessionTtl, maxSessions: this.maxSessions, interval: this.cleanupInterval },
+      'Session cleanup timer started'
+    );
+  }
+
+  /**
+   * Stop the session cleanup timer.
+   */
+  private stopCleanupTimer(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+      logger.info('Session cleanup timer stopped');
+    }
+  }
+
+  /**
+   * Clean up expired sessions and enforce max session limit.
+   * @see Issue #1263 - RestChannel session state memory leak risk
+   */
+  private cleanupExpiredSessions(): void {
+    const now = Date.now();
+    let expiredCount = 0;
+    let evictedCount = 0;
+
+    // Remove expired sessions
+    for (const [chatId, session] of this.sessionStates) {
+      if (now - session.updatedAt > this.sessionTtl) {
+        this.sessionStates.delete(chatId);
+        expiredCount++;
+      }
+    }
+
+    // If still over maxSessions, remove oldest sessions
+    if (this.sessionStates.size > this.maxSessions) {
+      const entries = [...this.sessionStates.entries()];
+      // Sort by updatedAt (oldest first)
+      entries.sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+
+      const toEvict = entries.slice(0, this.sessionStates.size - this.maxSessions);
+      for (const [chatId] of toEvict) {
+        this.sessionStates.delete(chatId);
+        evictedCount++;
+      }
+    }
+
+    if (expiredCount > 0 || evictedCount > 0) {
+      logger.info(
+        { expiredCount, evictedCount, activeSessions: this.sessionStates.size },
+        'Session cleanup completed'
+      );
     }
   }
 }

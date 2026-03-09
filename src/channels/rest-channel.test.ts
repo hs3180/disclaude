@@ -748,4 +748,91 @@ describe('RestChannel', () => {
       expect(response.body.chatId).toBe('custom-prefix-chat');
     });
   });
+
+  describe('Session Cleanup (Issue #1263)', () => {
+    it('should accept sessionTtl config option', () => {
+      channel = new RestChannel({ port, sessionTtl: 1800000 }); // 30 minutes
+      expect(channel).toBeDefined();
+    });
+
+    it('should accept maxSessions config option', () => {
+      channel = new RestChannel({ port, maxSessions: 5000 });
+      expect(channel).toBeDefined();
+    });
+
+    it('should accept cleanupInterval config option', () => {
+      channel = new RestChannel({ port, cleanupInterval: 30000 }); // 30 seconds
+      expect(channel).toBeDefined();
+    });
+
+    it('should cleanup expired sessions on poll', async () => {
+      // Create channel with very short TTL for testing
+      channel = new RestChannel({
+        port,
+        sessionTtl: 100, // 100ms TTL
+        cleanupInterval: 50, // Check every 50ms
+      });
+      await channel.start();
+
+      // Create a session
+      await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/expiring-session',
+        body: { message: 'Test' },
+      });
+
+      // Wait for TTL to expire
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Poll the session - it should be cleaned up
+      const response = await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/expiring-session',
+      });
+
+      // Session should be gone (204 No Content)
+      expect(response.status).toBe(204);
+    });
+
+    it('should enforce max sessions limit', async () => {
+      // Create channel with low max sessions limit
+      channel = new RestChannel({
+        port,
+        maxSessions: 2,
+        cleanupInterval: 50,
+      });
+      await channel.start();
+
+      // Create 3 sessions
+      await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/session-1',
+        body: { message: 'Session 1' },
+      });
+
+      await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/session-2',
+        body: { message: 'Session 2' },
+      });
+
+      await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/session-3',
+        body: { message: 'Session 3' },
+      });
+
+      // Wait for cleanup to run
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // First session should be evicted (oldest)
+      const response = await simulateRequest({
+        method: 'POST',
+        path: '/api/chat/session-1',
+      });
+
+      // Session 1 should be gone
+      expect(response.status).toBe(204);
+    });
+  });
 });
