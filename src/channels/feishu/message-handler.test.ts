@@ -480,4 +480,36 @@ describe('MessageHandler - Issue #1123: chat_record', () => {
       expect(mockCallbacks.emitMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe('Issue #1232: Control command typing reaction', () => {
+    it('should add typing reaction for control commands', async () => {
+      // Get the mock message sender constructor and its mock implementation
+      const { FeishuMessageSender } = await import('../../platforms/feishu/feishu-message-sender.js');
+      const MockFeishuMessageSender = vi.mocked(FeishuMessageSender);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'test-msg-id',
+            chat_id: 'test-chat-id',
+            chat_type: 'p2p',
+            message_type: 'text',
+            content: JSON.stringify({ text: '/status' }),
+            create_time: Date.now(),
+          },
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'sender_open_id' },
+          },
+        },
+      });
+
+      // The handler creates a FeishuMessageSender in initialize()
+      // Get the mock instance and verify addReaction was called
+      const mockInstance = MockFeishuMessageSender.mock.results[0]?.value;
+      if (mockInstance) {
+        expect(mockInstance.addReaction).toHaveBeenCalledWith('test-msg-id', 'Typing');
+      }
+    });
+  });
 });

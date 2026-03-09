@@ -751,6 +751,9 @@ export class MessageHandler {
       const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
 
+      // Issue #1232: Add typing reaction for control commands
+      await this.addTypingReaction(message_id);
+
       const isControlCommand = commandRegistry.has(cmd);
 
       if (isControlCommand || !botMentioned) {
