@@ -73,24 +73,24 @@ gh pr view {number} --repo hs3180/disclaude \
 - 群聊名称格式：`PR #{number} 讨论: {PR标题}`
 - 讨论超时：60 分钟
 
-### 7. 在群聊中发送交互式卡片
+### 7. 在群聊中发送讨论引导卡片
 
-群聊创建后，使用 `send_message` 发送操作选项卡片：
+群聊创建后，使用 `send_message` 发送讨论引导卡片：
 
 **卡片内容**（format: "card"）：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "💬 PR 讨论区", "tag": "plain_text"}, "template": "blue"},
   "elements": [
+    {"tag": "markdown", "content": "请在下方进行讨论，讨论结束后点击按钮通知我。"},
+    {"tag": "hr"},
     {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
+      {"tag": "button", "text": {"content": "✅ 讨论结束，请总结结论", "tag": "plain_text"}, "value": "discussion_end", "type": "primary"},
+      {"tag": "button", "text": {"content": "⏳ 需要更多时间讨论", "tag": "plain_text"}, "value": "need_more_time", "type": "default"}
     ]},
     {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
+      {"tag": "plain_text", "content": "我会分析群聊消息，总结讨论结论，然后执行相应动作。"}
     ]}
   ]
 }
@@ -99,10 +99,8 @@ gh pr view {number} --repo hs3180/disclaude \
 **actionPrompts**：
 ```json
 {
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+  "discussion_end": "[讨论结束信号] 用户表示讨论已结束。请执行以下步骤：\n1. 使用 collect_discussion_conclusion 工具获取群聊消息\n2. 分析消息内容，总结讨论结论\n3. 根据结论执行相应动作（merge/request_changes/close/later）\n4. 报告执行结果\n5. 添加 processed label 并移除 pending label",
+  "need_more_time": "[用户请求] 用户需要更多时间讨论。请继续等待用户反馈，不要执行任何动作。"
 }
 ```
 
@@ -110,6 +108,70 @@ gh pr view {number} --repo hs3180/disclaude \
 
 ```bash
 gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
+```
+
+### 9. 根据讨论结论执行动作 ⚡ 关键步骤
+
+当用户点击"讨论结束"按钮后，使用 `collect_discussion_conclusion` 工具获取群聊消息，分析讨论内容，总结结论，然后执行相应动作：
+
+#### 9.1 获取群聊消息
+
+```json
+{
+  "chatId": "{讨论群聊ID}",
+  "maxMessages": 100
+}
+```
+
+#### 9.2 分析讨论结论
+
+根据消息内容判断用户意图：
+
+| 结论类型 | 关键词 | 执行动作 |
+|----------|--------|----------|
+| ✅ 合并 | "合并"、"通过"、"approve"、"可以合并" | 执行 merge |
+| 🔄 请求修改 | "修改"、"需要改"、"有问题"、"fix" | 添加评论请求修改 |
+| ❌ 关闭 | "关闭"、"不要了"、"放弃"、"reject" | 关闭 PR |
+| ⏳ 稍后 | "稍后"、"待定"、"下次"、"hold" | 标记为稍后处理 |
+
+#### 9.3 执行动作
+
+**合并 PR**：
+```bash
+# 先检查 CI 状态
+gh pr view {number} --repo hs3180/disclaude --json statusCheckRollup,mergeable
+
+# 如果 CI 通过且无冲突，执行合并
+gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch
+```
+
+**请求修改**：
+```bash
+# 询问用户具体需要修改什么
+# 然后添加评论
+gh pr comment {number} --repo hs3180/disclaude --body "请修改以下内容：\n{用户提供的具体内容}"
+```
+
+**关闭 PR**：
+```bash
+gh pr close {number} --repo hs3180/disclaude --comment "{关闭原因}"
+```
+
+**稍后处理**：
+```bash
+# 不执行任何动作，仅更新 label
+gh pr edit {number} --repo hs3180/disclaude --remove-label "pr-scanner:pending"
+```
+
+#### 9.4 完成处理
+
+动作执行后：
+```bash
+# 添加 processed label
+gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:processed" --remove-label "pr-scanner:pending"
+
+# 发送结果反馈到群聊
+# 使用 send_message 工具发送执行结果
 ```
 
 ## 状态管理

@@ -315,6 +315,109 @@ This tool initiates an async discussion. The conclusions will be returned when p
       }
     },
   },
+  {
+    name: 'collect_discussion_conclusion',
+    description: `Collect and summarize discussion conclusions from a group chat.
+
+Retrieves all messages from a group discussion and provides them for analysis. Use this tool when the discussion has concluded (user says "讨论结束", "达成共识", or timeout) to help decide the next action.
+
+---
+
+## 🎯 Use Cases
+
+1. **PR Review Decision**: Collect discussion about a PR and decide merge/request_changes/close/later
+2. **Feature Discussion**: Summarize team's decision on a feature proposal
+3. **Problem Resolution**: Collect conclusions from a troubleshooting discussion
+
+---
+
+## Parameters
+
+- **chatId**: The chat ID of the discussion group (required)
+- **maxMessages**: Maximum messages to collect (optional, default: 50)
+- **afterTime**: Only collect messages after this ISO timestamp (optional)
+
+---
+
+## Output
+
+Returns:
+- **messages**: All messages from the discussion
+- **suggestedAction**: Hint based on keyword detection (merge/request_changes/close/later)
+- **timeRange**: Discussion start and end time
+
+---
+
+## Workflow
+
+1. Call this tool when discussion has concluded
+2. Analyze the returned messages
+3. Summarize the discussion conclusion
+4. Decide and execute the appropriate action
+
+---
+
+## Note
+
+This tool provides messages for analysis. The agent should summarize the discussion and decide the action, not just follow the suggestedAction hint.`,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID of the discussion group'),
+      maxMessages: z.number().optional().describe('Maximum messages to collect (default: 50)'),
+      afterTime: z.string().optional().describe('Only collect messages after this ISO timestamp'),
+    }),
+    handler: async ({ chatId, maxMessages, afterTime }) => {
+      try {
+        // Check if Feishu client is available
+        if (!isLarkClientServiceInitialized()) {
+          return toolSuccess('⚠️ Feishu client not configured. Cannot collect discussion conclusion.');
+        }
+
+        const { collect_discussion_conclusion: collectConclusion } = await import('./tools/discussion-conclusion.js');
+        const result = await collectConclusion({ chatId, maxMessages, afterTime });
+
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.message}`);
+        }
+
+        // Format output for agent
+        let output = '## 📋 讨论消息收集完成\n\n';
+        output += `**消息数量**: ${result.messageCount}\n`;
+
+        if (result.timeRange) {
+          output += `**讨论时间**: ${result.timeRange.start} ~ ${result.timeRange.end}\n`;
+        }
+
+        if (result.suggestedAction) {
+          const actionLabels: Record<string, string> = {
+            merge: '✅ 合并',
+            request_changes: '🔄 请求修改',
+            close: '❌ 关闭',
+            later: '⏳ 稍后',
+          };
+          output += `**建议动作**: ${actionLabels[result.suggestedAction] || result.suggestedAction}\n`;
+        }
+
+        output += '\n### 💬 讨论消息\n\n';
+
+        for (const msg of result.messages || []) {
+          const sender = msg.senderType === 'app' ? '🤖 Bot' : `👤 ${msg.senderId || '用户'}`;
+          const time = new Date(msg.createTime).toLocaleString('zh-CN');
+          output += `**${sender}** (${time}):\n${msg.content}\n\n---\n\n`;
+        }
+
+        output += '### 📝 请总结讨论结论\n\n';
+        output += '请分析上述消息，总结讨论结论，并决定执行什么动作：\n';
+        output += '- **merge**: 合并 PR\n';
+        output += '- **request_changes**: 请求修改\n';
+        output += '- **close**: 关闭 PR\n';
+        output += '- **later**: 稍后处理\n';
+
+        return toolSuccess(output);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to collect discussion conclusion: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
 ];
 
 export const feishuSdkTools = feishuToolDefinitions.map(def => getProvider().createInlineTool(def));

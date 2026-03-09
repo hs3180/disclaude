@@ -41,6 +41,15 @@ export type {
   GetThreadMessagesToolResult,
 } from './thread-tools.js';
 
+// Discussion Conclusion (Issue #1152: Summarize group discussion conclusions)
+export {
+  collect_discussion_conclusion,
+} from './discussion-conclusion.js';
+export type {
+  CollectDiscussionConclusionResult,
+  DiscussionAction,
+} from './discussion-conclusion.js';
+
 // Study Guide Generator (NotebookLM M4)
 export {
   generate_summary,
