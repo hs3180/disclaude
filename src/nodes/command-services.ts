@@ -36,7 +36,7 @@ export interface CommandServicesDeps {
   /** Execution node registry */
   execNodeRegistry: ExecNodeRegistry;
   /** Send command to execution node */
-  sendCommand: (command: 'reset' | 'restart', chatId: string) => Promise<void>;
+  sendCommand: (command: 'reset' | 'restart', chatId: string, options?: { keepContext?: boolean }) => Promise<void>;
   /** Get Feishu client */
   getFeishuClient: () => lark.Client;
   /** Group service */
