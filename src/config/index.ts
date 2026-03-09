@@ -367,4 +367,24 @@ export class Config {
   static isAgentTeamsEnabled(): boolean {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
   }
+
+  /**
+   * Get session restoration configuration.
+   * Controls how chat history is loaded when agent starts or resets.
+   * @see Issue #1213
+   *
+   * @returns Session restoration configuration with defaults
+   */
+  static getSessionRestoreConfig(): {
+    historyDays: number;
+    maxContextLength: number;
+    loadOnReset: boolean;
+  } {
+    const config = fileConfigOnly.sessionRestore || {};
+    return {
+      historyDays: config.historyDays ?? 7,
+      maxContextLength: config.maxContextLength ?? 4000,
+      loadOnReset: config.loadOnReset ?? false,
+    };
+  }
 }

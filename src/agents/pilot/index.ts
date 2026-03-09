@@ -34,7 +34,6 @@
 
 import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
-import { SESSION_RESTORE } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
@@ -160,23 +159,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
   /**
    * Internal method to perform the actual history loading.
+   * Uses configurable parameters from Config.getSessionRestoreConfig().
    */
   private async doLoadPersistedHistory(): Promise<void> {
     try {
+      const sessionConfig = Config.getSessionRestoreConfig();
+
       this.logger.info(
-        { chatId: this.boundChatId, days: SESSION_RESTORE.HISTORY_DAYS },
+        { chatId: this.boundChatId, days: sessionConfig.historyDays },
         'Loading persisted chat history for session restoration'
       );
 
       const history = await messageLogger.getChatHistory(
         this.boundChatId,
-        SESSION_RESTORE.HISTORY_DAYS
+        sessionConfig.historyDays
       );
 
       if (history && history.trim()) {
         // Truncate if too long
-        this.persistedHistoryContext = history.length > SESSION_RESTORE.MAX_CONTEXT_LENGTH
-          ? history.slice(-SESSION_RESTORE.MAX_CONTEXT_LENGTH)
+        this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
+          ? history.slice(-sessionConfig.maxContextLength)
           : history;
 
         this.logger.info(
@@ -726,10 +728,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Reset the agent session (ChatAgent interface).
    *
    * Clears conversation history and state for this Pilot's bound chatId.
+   * By default, does NOT reload history context after reset, giving a clean session.
    *
    * @param chatId - Optional chat ID (must match bound chatId if provided)
+   * @param keepContext - If true, reloads history context after reset (default: false, uses config)
    */
-  reset(chatId?: string): void {
+  reset(chatId?: string, keepContext?: boolean): void {
     // Issue #644: If chatId is provided, it must match bound chatId
     if (chatId && chatId !== this.boundChatId) {
       this.logger.warn(
@@ -739,7 +743,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       return;
     }
 
-    this.logger.info({ chatId: this.boundChatId }, 'Resetting Pilot session');
+    this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting Pilot session');
 
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
@@ -763,6 +767,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
     this.historyLoaded = false;
+
+    // Issue #1213: Reload history only if explicitly requested or config says so
+    const shouldLoadContext = keepContext ?? Config.getSessionRestoreConfig().loadOnReset;
+    if (shouldLoadContext) {
+      this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
+      this.loadPersistedHistory().catch((err) => {
+        this.logger.error({ err, chatId: this.boundChatId }, 'Failed to reload history after reset');
+      });
+    }
   }
 
   /**

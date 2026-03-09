@@ -193,8 +193,9 @@ export interface ChatAgent extends Disposable {
    * Clears conversation history and state.
    *
    * @param chatId - Optional chat ID to reset specific session
+   * @param keepContext - If true, reloads history context after reset (default: false)
    */
-  reset(chatId?: string): void;
+  reset(chatId?: string, keepContext?: boolean): void;
 }
 
 // ============================================================================

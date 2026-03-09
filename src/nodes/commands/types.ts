@@ -159,7 +159,7 @@ export interface CommandServices {
   getNode: (nodeId: string) => { name: string } | undefined;
 
   /** Send a command to execution node */
-  sendCommand: (command: 'reset' | 'restart', chatId: string) => Promise<void>;
+  sendCommand: (command: 'reset' | 'restart', chatId: string, options?: { keepContext?: boolean }) => Promise<void>;
 
   /** Get Feishu client for group operations */
   getFeishuClient: () => lark.Client;
