@@ -70,7 +70,7 @@ vi.mock('net', () => ({
             const lines = data.split('\n').filter((l: string) => l.trim());
             for (const line of lines) {
               try {
-                const request = JSON.parse(line);
+                const _request = JSON.parse(line);
                 // Simulate server response
                 serverSocket.emit('data', line);
               } catch {
@@ -398,9 +398,13 @@ describe('UnixSocketIpcClient', () => {
       unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
       generateInteractionPrompt: (messageId, actionValue, actionText) => {
         const context = mockContexts.get(messageId);
-        if (!context) return undefined;
+        if (!context) {
+          return undefined;
+        }
         const template = context.actionPrompts[actionValue];
-        if (!template) return undefined;
+        if (!template) {
+          return undefined;
+        }
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
