@@ -12,6 +12,7 @@
  * - /expert list - List all experts
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  * @see Issue #538 - 积分系统 - 身价与消费
  */
 
@@ -112,7 +113,7 @@ export class ExpertCommand implements Command {
       default:
         return {
           success: false,
-          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert price <积分> - 设置每次咨询的积分\n- /expert search <技能> [最低等级]\n- /expert list - 列出所有专家`,
+          error: `❌ 未知子命令: ${subCommand || '(未指定)'}\n\n用法:\n- /expert register [名字] - 注册为专家\n- /expert profile - 查看档案\n- /expert skills add <技能> <等级1-5> [标签...]\n- /expert skills remove <技能>\n- /expert availability <时间>\n- /expert price <积分> - 设置每次咨询的积分\n- /expert search <技能> [最低等级] [--available|-a]\n- /expert list - 列出所有专家`,
         };
     }
   }
@@ -285,37 +286,51 @@ export class ExpertCommand implements Command {
     const { args } = context;
     const expertService = getExpertService();
 
-    const [, query, minLevelStr] = args;
+    // Check for --available flag
+    const hasAvailableFlag = args.includes('--available') || args.includes('-a');
+    const filteredArgs = args.filter(arg => arg !== '--available' && arg !== '-a');
 
-    if (!query) {
-      return { success: false, error: '❌ 请指定搜索关键词\n\n用法: /expert search <技能> [最低等级]' };
+    // Get query and minLevel from filtered args
+    const actualQuery = filteredArgs[1];
+    const actualMinLevelStr = filteredArgs[2];
+
+    if (!actualQuery) {
+      return {
+        success: false,
+        error: '❌ 请指定搜索关键词\n\n用法: /expert search <技能> [最低等级] [--available|-a]\n\n选项:\n  --available, -a  只显示当前可用的专家',
+      };
     }
 
-    const minLevel = minLevelStr ? parseSkillLevel(minLevelStr) : undefined;
-    const experts = expertService.searchBySkill(query, minLevel);
+    const minLevel = actualMinLevelStr ? parseSkillLevel(actualMinLevelStr) : undefined;
+    const experts = expertService.searchBySkill(actualQuery, minLevel, { available: hasAvailableFlag });
 
     if (experts.length === 0) {
+      const filterDesc = hasAvailableFlag ? ' (仅显示可用)' : '';
       return {
         success: true,
-        message: `🔍 未找到匹配 "${query}" 的专家`,
+        message: `🔍 未找到匹配 "${actualQuery}" 的专家${filterDesc}`,
       };
     }
 
     const lines: string[] = [
-      `🔍 **找到 ${experts.length} 位专家**`,
+      `🔍 **找到 ${experts.length} 位专家**${hasAvailableFlag ? ' (仅显示可用)' : ''}`,
       '',
     ];
 
     for (const expert of experts) {
       const matchingSkills = expert.skills.filter((s: SkillDeclaration) =>
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        (s.tags?.some((t: string) => t.toLowerCase().includes(query.toLowerCase())) ?? false)
+        s.name.toLowerCase().includes(actualQuery.toLowerCase()) ||
+        (s.tags?.some((t: string) => t.toLowerCase().includes(actualQuery.toLowerCase())) ?? false)
       );
 
-      lines.push(`👤 **${expert.name}**`);
+      const availabilityStatus = expertService.isExpertAvailable(expert.userId) ? '🟢' : '🔴';
+      lines.push(`👤 **${expert.name}** ${availabilityStatus}`);
       for (const skill of matchingSkills) {
         const stars = '⭐'.repeat(skill.level);
         lines.push(`   ${skill.name} ${stars}`);
+      }
+      if (expert.availability) {
+        lines.push(`   ⏰ ${expert.availability}`);
       }
       lines.push('');
     }

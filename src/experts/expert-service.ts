@@ -5,6 +5,7 @@
  * Stores expert metadata in workspace/experts.json.
  *
  * @see Issue #535 - 人类专家注册与技能声明
+ * @see Issue #536 - 专家查询与匹配
  */
 
 import * as fs from 'fs';
@@ -314,11 +315,16 @@ export class ExpertService {
    *
    * @param query - Skill name or tag to search for
    * @param minLevel - Minimum skill level filter (optional)
+   * @param options - Additional search options
    * @returns Array of matching expert profiles
    */
-  searchBySkill(query: string, minLevel?: SkillLevel): ExpertProfile[] {
+  searchBySkill(
+    query: string,
+    minLevel?: SkillLevel,
+    options?: { available?: boolean }
+  ): ExpertProfile[] {
     const queryLower = query.toLowerCase();
-    return Object.values(this.registry.experts).filter(expert => {
+    let results = Object.values(this.registry.experts).filter(expert => {
       return expert.skills.some(skill => {
         const nameMatch = skill.name.toLowerCase().includes(queryLower);
         const tagMatch = skill.tags?.some(t => t.toLowerCase().includes(queryLower)) ?? false;
@@ -326,6 +332,33 @@ export class ExpertService {
         return (nameMatch || tagMatch) && levelMatch;
       });
     });
+
+    // Filter by availability if requested
+    if (options?.available) {
+      results = results.filter(expert => this.isExpertAvailable(expert.userId));
+    }
+
+    return results;
+  }
+
+  /**
+   * Check if an expert is currently available.
+   *
+   * @param userId - Expert's user ID
+   * @returns Whether the expert is available
+   */
+  isExpertAvailable(userId: string): boolean {
+    const expert = this.registry.experts[userId];
+    if (!expert) {
+      return false;
+    }
+
+    // If no availability is set, consider expert as available
+    if (!expert.availability) {
+      return true;
+    }
+
+    return isAvailabilityMatch(expert.availability);
   }
 
   /**
@@ -347,4 +380,61 @@ export function getExpertService(): ExpertService {
     defaultInstance = new ExpertService();
   }
   return defaultInstance;
+}
+
+/**
+ * Check if current time matches the availability string.
+ *
+ * Supports formats:
+ * - "weekdays 10:00-18:00" - Monday to Friday, 10:00 to 18:00
+ * - "weekends 09:00-12:00" - Saturday and Sunday, 09:00 to 12:00
+ * - "daily 09:00-17:00" - Every day
+ * - "Mon-Fri 10:00-18:00" - Monday to Friday
+ * - "always" - Always available
+ *
+ * @param availability - Availability string
+ * @returns Whether current time matches
+ */
+export function isAvailabilityMatch(availability: string): boolean {
+  const now = new Date();
+  const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  const currentTime = currentHour * 60 + currentMinute;
+
+  const availLower = availability.toLowerCase().trim();
+
+  // "always" means always available
+  if (availLower === 'always') {
+    return true;
+  }
+
+  // Parse day range
+  let dayMatch = true;
+  let timeMatch = true;
+
+  // Check for day patterns
+  if (availLower.includes('weekdays') || availLower.includes('mon-fri') || availLower.includes('周一至周五')) {
+    dayMatch = currentDay >= 1 && currentDay <= 5;
+  } else if (availLower.includes('weekends') || availLower.includes('sat-sun') || availLower.includes('周末')) {
+    dayMatch = currentDay === 0 || currentDay === 6;
+  } else if (availLower.includes('daily') || availLower.includes('每天')) {
+    dayMatch = true;
+  }
+
+  // Parse time range (format: HH:MM-HH:MM or H:MM-H:MM)
+  const timeMatch_result = availLower.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+  if (timeMatch_result) {
+    const startHour = parseInt(timeMatch_result[1], 10);
+    const startMinute = parseInt(timeMatch_result[2], 10);
+    const endHour = parseInt(timeMatch_result[3], 10);
+    const endMinute = parseInt(timeMatch_result[4], 10);
+
+    const startTime = startHour * 60 + startMinute;
+    const endTime = endHour * 60 + endMinute;
+
+    timeMatch = currentTime >= startTime && currentTime <= endTime;
+  }
+
+  return dayMatch && timeMatch;
 }

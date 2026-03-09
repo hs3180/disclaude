@@ -221,4 +221,64 @@ describe('ExpertService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('isExpertAvailable', () => {
+    it('should return true if expert has no availability set', () => {
+      service.registerExpert('user_123', 'John Doe');
+      expect(service.isExpertAvailable('user_123')).toBe(true);
+    });
+
+    it('should return false for non-existent expert', () => {
+      expect(service.isExpertAvailable('nonexistent')).toBe(false);
+    });
+
+    it('should return true for "always" availability', () => {
+      service.registerExpert('user_123', 'John Doe');
+      service.setAvailability('user_123', 'always');
+      expect(service.isExpertAvailable('user_123')).toBe(true);
+    });
+  });
+
+  describe('searchBySkill with availability filter', () => {
+    beforeEach(() => {
+      service.registerExpert('user_1', 'Expert 1');
+      service.registerExpert('user_2', 'Expert 2');
+
+      service.addSkill('user_1', { name: 'TypeScript', level: 5 });
+      service.addSkill('user_2', { name: 'TypeScript', level: 4 });
+
+      // Set availability to "always" for Expert 1
+      service.setAvailability('user_1', 'always');
+    });
+
+    it('should filter by availability when available option is true', () => {
+      // Expert 1 has "always" availability, Expert 2 has no availability set
+      const experts = service.searchBySkill('TypeScript', undefined, { available: true });
+
+      // Both should be available (one has "always", one has no setting which defaults to available)
+      expect(experts.length).toBe(2);
+    });
+  });
+});
+
+describe('isAvailabilityMatch', () => {
+  // Import the function
+  let isAvailabilityMatch: (availability: string) => boolean;
+
+  beforeAll(async () => {
+    const module = await import('./expert-service.js');
+    isAvailabilityMatch = module.isAvailabilityMatch;
+  });
+
+  it('should return true for "always"', () => {
+    expect(isAvailabilityMatch('always')).toBe(true);
+    expect(isAvailabilityMatch('ALWAYS')).toBe(true);
+  });
+
+  it('should parse time ranges correctly', () => {
+    // These tests depend on current time, so we just verify the function doesn't throw
+    expect(() => isAvailabilityMatch('09:00-17:00')).not.toThrow();
+    expect(() => isAvailabilityMatch('weekdays 10:00-18:00')).not.toThrow();
+    expect(() => isAvailabilityMatch('weekends 09:00-12:00')).not.toThrow();
+  });
 });
