@@ -195,6 +195,14 @@ export interface ChatAgent extends Disposable {
    * @param chatId - Optional chat ID to reset specific session
    */
   reset(chatId?: string): void;
+
+  /**
+   * Check if the agent has an active session.
+   * Issue #1230: Used to determine if chat history context should be attached.
+   *
+   * @returns true if there's an active session, false if it's a new session
+   */
+  hasActiveSession(): boolean;
 }
 
 // ============================================================================

@@ -70,6 +70,12 @@ export interface MessageCallbacks {
       trigger?: string;
     };
   }) => Promise<boolean>;
+  /**
+   * Check if an agent session is currently active for a chat.
+   * Issue #1230: Used to determine if chat history context should be attached.
+   * Returns true if there's an active session, false if it's a new session.
+   */
+  isSessionActive?: (chatId: string) => boolean;
 }
 
 /**
@@ -852,15 +858,21 @@ export class MessageHandler {
       }
     }
 
-    // Get chat history context for passive mode
+    // Get chat history context for passive mode or new session
+    // Issue #1230: Attach context only when:
+    // 1. New agent session (session not active yet)
+    // 2. Group chat passive mode (bot mentioned in group chat)
+    // NOT for already-active 1:1 conversations where agent already knows the context
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    const isNewSession = !this.callbacks.isSessionActive?.(chat_id);
+    const shouldAttachContext = isNewSession || isPassiveModeTrigger;
     let chatHistoryContext: string | undefined;
 
-    if (isPassiveModeTrigger) {
+    if (shouldAttachContext) {
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
       logger.debug(
-        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext?.length },
-        'Including chat history context for passive mode trigger'
+        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext?.length, isNewSession, isPassiveModeTrigger },
+        'Including chat history context'
       );
     }
 
