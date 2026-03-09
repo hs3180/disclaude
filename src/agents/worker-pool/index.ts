@@ -96,3 +96,22 @@ export type {
 // Components
 export { TaskQueue } from './task-queue.js';
 export { WorkerPool } from './worker-pool.js';
+
+// Phase 2 Components (Issue #897)
+export { TaskDecomposer } from './task-decomposer.js';
+export type {
+  DecompositionStrategy,
+  DecompositionOptions,
+  SubtaskDefinition,
+  DecompositionResult,
+  ExecutionPlan,
+} from './task-decomposer.js';
+
+export { ResultAggregator } from './result-aggregator.js';
+export type {
+  AggregationStrategy,
+  AggregationOptions,
+  AggregatedResult,
+  AggregationProgress,
+  AggregationProgressCallback,
+} from './result-aggregator.js';
