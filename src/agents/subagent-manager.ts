@@ -542,7 +542,7 @@ ${options.prompt}
     this.notifyStatusChange(handle);
 
     // Execute discussion
-    let discussionResult: DiscussionResult = {
+    const discussionResult: DiscussionResult = {
       subagentId,
       chatId: options.chatId,
       topic: options.prompt,
