@@ -38,6 +38,7 @@ vi.mock('../config/index.js', () => ({
       rotate: false,
       sdkDebug: false,
     })),
+    isAgentTeamsEnabled: vi.fn(() => false),
   },
 }));
 
