@@ -58,32 +58,31 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 3: Production Image (Python-based for data analysis)
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/python:3.11-slim AS production
+# Using Python 3.12 Alpine for smaller image size (~50MB base)
+# Node.js 20 installed via apk for Agent SDK compatibility
+FROM docker.m.daocloud.io/library/python:3.12-alpine AS production
 WORKDIR /app
 
-# Install Node.js 20 from NodeSource
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies including Node.js 20
+# Note: Alpine uses apk instead of apt-get
+RUN apk add --no-cache \
     curl \
-    ca-certificates && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     procps \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install GitHub CLI (gh)
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg && \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && \
-    rm -rf /var/lib/apt/lists/*
+    nodejs \
+    npm \
+    github-cli \
+    # Build dependencies for matplotlib and native extensions
+    gcc \
+    musl-dev \
+    libffi-dev \
+    freetype-dev \
+    libpng-dev
 
 # Install Python data analysis libraries
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
+# Using --break-system-packages for pip in Alpine
+RUN pip install --no-cache-dir --upgrade pip --break-system-packages && \
+    pip install --no-cache-dir --break-system-packages \
     pandas \
     numpy \
     scipy \
@@ -101,8 +100,9 @@ RUN npm config set registry https://registry.npmmirror.com && \
     npm install -g pm2@latest
 
 # Create non-root user for running the application
-RUN groupadd -g 1001 disclaude && \
-    useradd -r -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -c "Disclaude user" disclaude
+# Alpine uses addgroup/adduser instead of groupadd/useradd
+RUN addgroup -g 1001 disclaude && \
+    adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
 
 # Create directories for runtime with proper permissions
 RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.claude/backups /app/.claude/debug /app/.pm2 && \
