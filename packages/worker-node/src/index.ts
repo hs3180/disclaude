@@ -10,6 +10,9 @@
  * - (Future) Scheduler
  * - (Future) File transfer client
  *
+ * Note: The actual WorkerNode implementation is currently in src/nodes/worker-node.ts
+ * and will be migrated in a subsequent phase as part of Issue #1041.
+ *
  * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
 
@@ -18,4 +21,4 @@ export type { WorkerNodeConfig } from '@disclaude/core';
 export { getWorkerNodeCapabilities } from '@disclaude/core';
 
 // Package version
-export const WORKER_NODE_VERSION = '0.0.2';
+export const WORKER_NODE_VERSION = '0.0.3';
