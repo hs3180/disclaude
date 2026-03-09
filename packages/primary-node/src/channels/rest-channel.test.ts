@@ -270,10 +270,11 @@ describe('RestChannel', () => {
       channel = new RestChannel({ port: TEST_PORT });
       await channel.start();
 
-      expect(channel.checkHealth()).toBe(true);
+      // Access protected method for testing
+      expect((channel as any).checkHealth()).toBe(true);
 
       await channel.stop();
-      expect(channel.checkHealth()).toBe(false);
+      expect((channel as any).checkHealth()).toBe(false);
     });
   });
 });
