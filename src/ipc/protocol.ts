@@ -1,130 +1,19 @@
 /**
  * IPC Protocol definitions for cross-process communication.
  *
- * Defines the message format and types for Unix Socket IPC.
+ * Re-exported from @disclaude/core for backward compatibility.
+ * New code should import directly from '@disclaude/core'.
  *
+ * @deprecated Import from '@disclaude/core' instead
  * @module ipc/protocol
  */
 
-/**
- * IPC request types.
- */
-export type IpcRequestType =
-  | 'ping'
-  | 'getActionPrompts'
-  | 'registerActionPrompts'
-  | 'unregisterActionPrompts'
-  | 'generateInteractionPrompt'
-  | 'cleanupExpiredContexts'
-  // Feishu API operations (Issue #1035)
-  | 'feishuSendMessage'
-  | 'feishuSendCard'
-  | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
-
-/**
- * IPC request payload types.
- */
-export interface IpcRequestPayloads {
-  ping: Record<string, never>;
-  getActionPrompts: { messageId: string };
-  registerActionPrompts: {
-    messageId: string;
-    chatId: string;
-    actionPrompts: Record<string, string>;
-  };
-  unregisterActionPrompts: { messageId: string };
-  generateInteractionPrompt: {
-    messageId: string;
-    actionValue: string;
-    actionText?: string;
-    actionType?: string;
-    formData?: Record<string, unknown>;
-  };
-  cleanupExpiredContexts: Record<string, never>;
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: {
-    chatId: string;
-    text: string;
-    threadId?: string;
-  };
-  feishuSendCard: {
-    chatId: string;
-    card: Record<string, unknown>;
-    threadId?: string;
-    description?: string;
-  };
-  feishuUploadFile: {
-    chatId: string;
-    filePath: string;
-    threadId?: string;
-  };
-  feishuGetBotInfo: Record<string, never>;
-}
-
-/**
- * IPC response payload types.
- */
-export interface IpcResponsePayloads {
-  ping: { pong: true };
-  getActionPrompts: { prompts: Record<string, string> | null };
-  registerActionPrompts: { success: true };
-  unregisterActionPrompts: { success: boolean };
-  generateInteractionPrompt: { prompt: string | null };
-  cleanupExpiredContexts: { cleaned: number };
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: { success: boolean; messageId?: string };
-  feishuSendCard: { success: boolean; messageId?: string };
-  feishuUploadFile: {
-    success: boolean;
-    fileKey?: string;
-    fileType?: string;
-    fileName?: string;
-    fileSize?: number;
-  };
-  feishuGetBotInfo: {
-    openId: string;
-    name?: string;
-    avatarUrl?: string;
-  };
-}
-
-/**
- * Generic IPC request structure.
- */
-export interface IpcRequest<T extends IpcRequestType = IpcRequestType> {
-  type: T;
-  id: string;
-  payload: IpcRequestPayloads[T];
-}
-
-/**
- * Generic IPC response structure.
- */
-export interface IpcResponse<T extends IpcRequestType = IpcRequestType> {
-  id: string;
-  success: boolean;
-  payload?: IpcResponsePayloads[T];
-  error?: string;
-}
-
-/**
- * IPC configuration.
- */
-export interface IpcConfig {
-  /** Unix socket file path */
-  socketPath: string;
-  /** Connection timeout in milliseconds */
-  timeout: number;
-  /** Maximum retry attempts */
-  maxRetries: number;
-}
-
-/**
- * Default IPC configuration.
- */
-export const DEFAULT_IPC_CONFIG: IpcConfig = {
-  socketPath: '/tmp/disclaude-interactive.ipc',
-  timeout: 5000,
-  maxRetries: 3,
-};
+export {
+  DEFAULT_IPC_CONFIG,
+  type IpcConfig,
+  type IpcRequest,
+  type IpcRequestPayloads,
+  type IpcRequestType,
+  type IpcResponse,
+  type IpcResponsePayloads,
+} from '@disclaude/core';
