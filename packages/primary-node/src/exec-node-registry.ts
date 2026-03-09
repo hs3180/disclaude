@@ -90,15 +90,13 @@ export class ExecNodeRegistry extends EventEmitter {
   registerNode(ws: WebSocket, msg: RegisterMessage, clientIp?: string): string {
     const { nodeId, name } = msg;
 
-    // Close existing connection with same nodeId if exists
+    // Handle existing connection with same nodeId
+    // Fix race condition: save old WebSocket, register new node first, then close old connection
+    // This ensures that when the close event fires, the new node is already in the map
     const existing = this.execNodes.get(nodeId);
-    if (existing && existing.ws) {
-      logger.warn({ nodeId }, 'Closing existing connection for nodeId');
-      existing.ws.close();
-      this.execNodes.delete(nodeId);
-    }
+    const oldWs = existing?.ws;
 
-    // Register the new node
+    // Register the new node (replaces old one in the map)
     this.execNodes.set(nodeId, {
       ws,
       nodeId,
@@ -107,6 +105,12 @@ export class ExecNodeRegistry extends EventEmitter {
       clientIp,
       isLocal: false,
     });
+
+    // Now close the old connection after the new one is registered
+    if (oldWs) {
+      logger.warn({ nodeId }, 'Closing existing connection for nodeId');
+      oldWs.close();
+    }
 
     logger.info({ nodeId, name: msg.name, clientIp, totalNodes: this.execNodes.size }, 'Worker Node registered');
     this.emit('node:registered', nodeId);
