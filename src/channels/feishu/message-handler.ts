@@ -120,13 +120,13 @@ export class MessageHandler {
     // Initialize FileHandler
     this.fileHandler = new FeishuFileHandler({
       attachmentManager,
-      downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string) => {
+      downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string, parentId?: string) => {
         if (!this.client) {
           logger.error({ fileKey }, 'Client not initialized for file download');
           return { success: false };
         }
         try {
-          const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId);
+          const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId, parentId);
           return { success: true, filePath };
         } catch (error) {
           logger.error({ err: error, fileKey, messageType }, 'File download failed');
@@ -567,6 +567,7 @@ export class MessageHandler {
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
       // Issue #1205: Log complete message structure for debugging message_id + file_key pairing
       // This helps identify if the message_id being used matches the file_key in the content
+      // Also log parent_id which may help with forwarded images
       logger.info(
         {
           chatId: chat_id,
@@ -577,7 +578,8 @@ export class MessageHandler {
         },
         'Processing file/image message'
       );
-      const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id);
+      // Issue #1205: Pass parent_id to handle forwarded images where image_key may belong to original message
+      const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id, parent_id);
       if (!result.success) {
         // Issue #1205: Include message_id in error logging for debugging pairing issues
         logger.error(

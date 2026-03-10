@@ -68,7 +68,8 @@ describe('FeishuFileHandler', () => {
         'img_key_123',
         'image',
         'image_img_key_123',
-        'msg-456'
+        'msg-456',
+        undefined
       );
     });
 
@@ -93,7 +94,8 @@ describe('FeishuFileHandler', () => {
         'file_key_789',
         'file',
         'document.pdf',
-        'msg-456'
+        'msg-456',
+        undefined
       );
     });
 
@@ -113,6 +115,33 @@ describe('FeishuFileHandler', () => {
 
       expect(result.success).toBe(true);
       expect(result.filePath).toBe('/tmp/video.mp4');
+    });
+
+    it('should pass parentId to downloadFile for forwarded images (Issue #1205)', async () => {
+      const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
+      mockDownload.mockResolvedValue({
+        success: true,
+        filePath: '/tmp/forwarded_image.png',
+      });
+
+      const result = await handler.handleFileMessage(
+        'chat-123',
+        'image',
+        JSON.stringify({ image_key: 'img_key_forwarded' }),
+        'msg-new-789',
+        'msg-original-456' // parentId - the original message containing the image
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.filePath).toBe('/tmp/forwarded_image.png');
+      // Verify parentId is passed to downloadFile
+      expect(mockDownload).toHaveBeenCalledWith(
+        'img_key_forwarded',
+        'image',
+        'image_img_key_forwarded',
+        'msg-new-789',
+        'msg-original-456'
+      );
     });
 
     it('should return error when no file_key found', async () => {

@@ -170,11 +170,15 @@ function mapToFileType(fileType: string, fileName?: string): string {
  * IMPORTANT: For user-uploaded files in messages, we MUST use the message-resource API,
  * NOT the direct image.get or file.download APIs. Those only work for files uploaded by the bot.
  *
+ * Issue #1205: For forwarded images, the message_id may not match the image_key.
+ * We try the primary message_id first, then fallback to parentId if provided.
+ *
  * @param client - Lark API client
  * @param fileKey - Feishu file key (image_key or file_key)
  * @param fileType - File type (image, file, media, etc.)
  * @param fileName - Optional original filename
  * @param messageId - The message ID containing the file (REQUIRED for user uploads)
+ * @param parentId - Optional parent message ID (for forwarded/replied messages)
  * @returns Local file path
  */
 export async function downloadFile(
@@ -182,7 +186,8 @@ export async function downloadFile(
   fileKey: string,
   fileType: string,
   fileName?: string,
-  messageId?: string
+  messageId?: string,
+  parentId?: string
 ): Promise<string> {
   await ensureAttachmentsDir();
 
@@ -203,10 +208,10 @@ export async function downloadFile(
   const localFileName = `${timestamp}_${baseFileName}${extension}`;
   const localPath = path.join(getAttachmentsDir(), localFileName);
 
-  logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
+  logger.info({ fileKey, fileType, fileName, messageId, parentId, localPath }, 'Downloading file from Feishu');
 
   try {
-    let fileResource: FileResourceResponse;
+    let fileResource: FileResourceResponse | undefined;
 
     // For user-uploaded files in messages, we MUST use messageResource.get API
     // This API retrieves files from messages regardless of who uploaded them
@@ -220,16 +225,52 @@ export async function downloadFile(
 
       logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
+      // Issue #1205: Try primary message_id first
       // SDK type doesn't include params.type, so we need to cast
-      fileResource = await client.im.messageResource.get({
-        path: {
-          message_id: messageId,
-          file_key: fileKey,
-        },
-        params: {
-          type: apiFileType,
-        },
-      }) as unknown as FileResourceResponse;
+      try {
+        fileResource = await client.im.messageResource.get({
+          path: {
+            message_id: messageId,
+            file_key: fileKey,
+          },
+          params: {
+            type: apiFileType,
+          },
+        }) as unknown as FileResourceResponse;
+      } catch (primaryError) {
+        // Issue #1205: If primary message_id fails and we have a parentId, try that
+        // This handles forwarded images where the image_key belongs to the original message
+        if (parentId && parentId !== messageId) {
+          logger.warn(
+            { messageId, parentId, fileKey, error: primaryError },
+            'Primary message_id download failed, trying parentId as fallback (may be forwarded image)'
+          );
+          try {
+            fileResource = await client.im.messageResource.get({
+              path: {
+                message_id: parentId,
+                file_key: fileKey,
+              },
+              params: {
+                type: apiFileType,
+              },
+            }) as unknown as FileResourceResponse;
+            logger.info(
+              { parentId, fileKey },
+              'Successfully downloaded using parentId fallback'
+            );
+          } catch {
+            // parentId also failed, keep the original error
+            logger.error(
+              { parentId, fileKey, error: primaryError },
+              'parentId fallback also failed'
+            );
+            throw primaryError;
+          }
+        } else {
+          throw primaryError;
+        }
+      }
     } else if (fileType === 'image') {
       // Fallback: Try direct image API (only works for bot-uploaded images)
       // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
@@ -257,7 +298,7 @@ export async function downloadFile(
     if (!fileResource) {
       // Log the pairing that caused the failure for debugging
       logger.error(
-        { messageId, fileKey, fileType, apiCall: 'messageResource.get' },
+        { messageId, parentId, fileKey, fileType, apiCall: 'messageResource.get' },
         'Feishu API returned null/undefined - possible message_id and file_key mismatch'
       );
       throw new Error(`Empty response from Feishu API. This may indicate message_id (${messageId}) and file_key (${fileKey}) do not match.`);
@@ -296,6 +337,7 @@ export async function downloadFile(
       fileKey,
       fileType,
       messageId,
+      parentId,
       errorMessage: apiError.message,
       errorCode: apiError.code,
     };
