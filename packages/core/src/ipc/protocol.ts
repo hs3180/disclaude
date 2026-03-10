@@ -121,10 +121,22 @@ export interface IpcConfig {
 }
 
 /**
+ * Get the default IPC socket path.
+ * Uses unique path per process to avoid conflicts in parallel tests.
+ */
+function getDefaultSocketPath(): string {
+  // In test environment, use process-specific socket path to avoid conflicts
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+    return `/tmp/disclaude-interactive-${process.pid}.ipc`;
+  }
+  return '/tmp/disclaude-interactive.ipc';
+}
+
+/**
  * Default IPC configuration.
  */
 export const DEFAULT_IPC_CONFIG: IpcConfig = {
-  socketPath: '/tmp/disclaude-interactive.ipc',
+  get socketPath() { return getDefaultSocketPath(); },
   timeout: 5000,
   maxRetries: 3,
 };
