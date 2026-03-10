@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "@disclaude/core": "*",
+    "cron": "^3.1.6",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.9.3"
   }
