@@ -128,12 +128,13 @@ export class AgentPool {
    * If the ChatAgent exists, calls its reset method.
    *
    * @param chatId - The chat identifier
+   * @param keepContext - If true, reloads history context after reset (default: false)
    */
-  reset(chatId: string): void {
+  reset(chatId: string, keepContext?: boolean): void {
     const agent = this.chatAgents.get(chatId);
     if (agent) {
-      this.log.debug({ chatId }, 'Resetting ChatAgent for chatId');
-      agent.reset(chatId);
+      this.log.debug({ chatId, keepContext }, 'Resetting ChatAgent for chatId');
+      agent.reset(chatId, keepContext);
     }
   }
 

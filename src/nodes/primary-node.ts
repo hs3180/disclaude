@@ -699,8 +699,8 @@ export class PrimaryNode extends EventEmitter {
       isRunning: () => this.running,
       getLocalNodeId: () => this.localNodeId,
       execNodeRegistry: this.execNodeRegistry,
-      sendCommand: async (cmd: 'reset' | 'restart', chatId: string) => {
-        await this.sendCommand({ type: 'command', command: cmd, chatId });
+      sendCommand: async (cmd: 'reset' | 'restart', chatId: string, options?: { keepContext?: boolean }) => {
+        await this.sendCommand({ type: 'command', command: cmd, chatId, keepContext: options?.keepContext });
       },
       getFeishuClient: () => this.getFeishuClient(),
       groupService: this.groupService,
@@ -768,14 +768,15 @@ export class PrimaryNode extends EventEmitter {
 
     // Handle locally
     if (execNode.isLocal && this.agentPool) {
-      const { command, chatId } = message;
-      logger.info({ command, chatId }, 'Executing command locally');
+      const { command, chatId, keepContext } = message;
+      logger.info({ command, chatId, keepContext }, 'Executing command locally');
 
       try {
         if (command === 'reset' || command === 'restart') {
           // Issue #644: Reset the Pilot for this chatId via AgentPool
-          this.agentPool.reset(chatId);
-          logger.info({ chatId }, `Pilot ${command} executed for chatId`);
+          // Issue #1213: Pass keepContext option
+          this.agentPool.reset(chatId, keepContext);
+          logger.info({ chatId, keepContext }, `Pilot ${command} executed for chatId`);
         }
       } catch (error) {
         const err = error as Error;

@@ -38,7 +38,30 @@ export type {
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
+  FeishuApiAction,
+  FeishuApiRequestMessage,
+  FeishuApiResponseMessage,
 } from './websocket-messages.js';
+
+// Channel types (Issue #1040)
+export type {
+  IncomingMessage,
+  OutgoingMessage,
+  OutgoingContentType,
+  MessageAttachment,
+  ControlCommand,
+  ControlCommandType,
+  ControlResponse,
+  ChannelStatus,
+  MessageHandler,
+  ControlHandler,
+  IChannel,
+  ChannelConfig,
+  ChannelFactory,
+  ChannelCapabilities,
+} from './channel.js';
+
+export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';
 
 // Primary Node types (Issue #1040)
 export type {

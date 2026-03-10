@@ -19,13 +19,15 @@
  *  特点：无通信能力，必须连接主节点                              │
  * └─────────────────────────────────────────────────────────────┘
  * ```
+ *
+ * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
 
 import * as path from 'path';
 import WebSocket from 'ws';
 import { Config } from '../config/index.js';
 import { AgentFactory, AgentPool } from '../agents/index.js';
-import { createLogger } from '../utils/logger.js';
+import { createLogger } from '@disclaude/core';
 import {
   ScheduleManager,
   Scheduler,

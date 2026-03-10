@@ -4,7 +4,7 @@
  * Primary Node process for disclaude.
  *
  * This package contains:
- * - Channels (Feishu, REST)
+ * - Channels (Feishu, REST, Ruliu)
  * - PrimaryNode implementation
  * - Platform adapters
  * - IPC server
@@ -15,16 +15,89 @@
 
 // Re-export types from @disclaude/core
 export type {
+  // Node types
   NodeType,
   NodeCapabilities,
   BaseNodeConfig,
-  RestChannelConfig,
-  FileStorageConfig,
   PrimaryNodeConfig,
   PrimaryNodeExecInfo,
+  RestChannelConfig,
+  FileStorageConfig,
+
+  // Channel types
+  IncomingMessage,
+  OutgoingMessage,
+  OutgoingContentType,
+  MessageAttachment,
+  ControlCommand,
+  ControlCommandType,
+  ControlResponse,
+  ChannelStatus,
+  MessageHandler,
+  ControlHandler,
+  IChannel,
+  ChannelConfig,
+  ChannelFactory,
+  ChannelCapabilities,
+
+  // IPC types
+  IpcRequestType,
+  IpcRequestPayloads,
+  IpcResponsePayloads,
+  IpcRequest,
+  IpcResponse,
+  IpcConfig,
+
+  // WebSocket message types
+  PromptMessage,
+  CommandMessage,
+  RegisterMessage,
+  FeedbackMessage,
+  CardActionMessage,
+  CardContextMessage,
+  ExecNodeInfo,
 } from '@disclaude/core';
 
-export { getNodeCapabilities } from '@disclaude/core';
+// Re-export constants and utilities from @disclaude/core
+export {
+  getNodeCapabilities,
+  DEFAULT_CHANNEL_CAPABILITIES,
+  DEFAULT_IPC_CONFIG,
+  createLogger,
+} from '@disclaude/core';
 
-// Placeholder - code will be migrated from src/ in subsequent issues
+// Channel base class
+export { BaseChannel } from './channels/base-channel.js';
+
+// IPC module
+export {
+  // Types re-exported above
+  UnixSocketIpcServer,
+  UnixSocketIpcClient,
+  getIpcClient,
+  resetIpcClient,
+  createInteractiveMessageHandler,
+  type IpcRequestHandler,
+  type InteractiveMessageHandlers,
+  type FeishuApiHandlers,
+  type FeishuHandlersContainer,
+  type IpcAvailabilityStatus,
+  type IpcUnavailableReason,
+} from './ipc/index.js';
+
+// Node services (Issue #1040)
+export {
+  ExecNodeRegistry,
+  type ConnectedExecNode,
+  type ExecNodeRegistryConfig,
+} from './exec-node-registry.js';
+
+export {
+  WebSocketServerService,
+  type WebSocketServerServiceConfig,
+  type IFileStorageService,
+  type FileTransferAPIHandler,
+} from './websocket-server-service.js';
+
+// Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
