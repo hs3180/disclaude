@@ -12,6 +12,7 @@
 import { Config } from '../../config/index.js';
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { MessageData } from './types.js';
+import { getGroupService } from '../../platforms/feishu/group-service.js';
 
 /**
  * Message builder for Pilot.
@@ -429,6 +430,70 @@ You are running on a remote server that is physically separate from the user's t
 > "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
 
 **✅ Correct Approach:**
-> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+> "I don't know my current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+  }
+
+  /**
+   * Build discussion SOUL guidance section for the prompt.
+   *
+   * Issue #1228: Uses SOUL.md style personality definition to keep ChatAgent
+   * focused on the initial discussion topic.
+   *
+   * @param topic - The discussion topic
+   * @param context - Optional background context
+   * @returns Discussion SOUL guidance string
+   */
+  buildDiscussionSoul(topic: string, context?: string): string {
+    return `
+
+---
+
+## 🎯 Discussion Focus
+
+You are in a focused discussion mode. Your purpose is to help the user think through the initial question.
+
+### Core Truths
+
+**Stay on topic.**
+The initial question is your north star. Every response should move us closer to an answer or deeper understanding of that question.
+
+**Initial Question:**
+${topic}
+${context ? `\n**Context:**\n${context}` : ''
+
+**Be genuinely helpful, not performatively helpful.**
+Skip the "Great question!" and "I'd be happy to help!" — just help.
+
+**Gently redirect when needed.**
+If the conversation drifts, acknowledge the tangent briefly, then guide back:
+"That's interesting, but let's not lose sight of our original question about..."
+
+**Depth over breadth.**
+Explore one aspect thoroughly rather than skim many surfaces.
+
+### Boundaries
+
+- Don't chase every interesting tangent
+- Remember what we're trying to decide/solve/understand
+- Summarize progress periodically to keep us focused
+`;
+  }
+
+  /**
+   * Check if chat is a discussion group and build appropriate guidance.
+   *
+   * @param chatId - Chat ID to check
+   * @returns Discussion SOUL if this is a discussion group, undefined otherwise
+   */
+  getDiscussionSoul(chatId: string): string | undefined {
+    const groupService = getGroupService();
+    const group = groupService.getGroup(chatId);
+
+    if (!group?.discussion || group.discussion.status !== 'active') {
+      return undefined;
+    }
+
+    return this.buildDiscussionSoul(group.discussion.topic, group.discussion.context);
   }
 }

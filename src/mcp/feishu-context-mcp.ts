@@ -294,6 +294,13 @@ This tool initiates an async discussion. The conclusions will be returned when p
           name: topic,
           createdAt: Date.now(),
           initialMembers: members || [],
+          // Issue #1228: Register discussion info for focus-keeping SOUL
+          discussion: {
+            topic,
+            context,
+            timeout: (timeout || 30) * 60 * 1000, // Convert to milliseconds
+            status: 'active',
+          },
         });
 
         // Send the initial topic message

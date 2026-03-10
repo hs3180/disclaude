@@ -17,6 +17,22 @@ import { createDiscussionChat } from './chat-ops.js';
 const logger = createLogger('GroupService');
 
 /**
+ * Discussion information for a group chat.
+ *
+ * @see Issue #1228 - 讨论焦点保持
+ */
+export interface DiscussionInfo {
+  /** The discussion topic/question */
+  topic: string;
+  /** Background context for the discussion */
+  context?: string;
+  /** Discussion timeout in milliseconds */
+  timeout: number;
+  /** Discussion status */
+  status: 'active' | 'concluded' | 'timeout';
+}
+
+/**
  * Group metadata.
  */
 export interface GroupInfo {
@@ -37,6 +53,13 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * Discussion information for focus-keeping.
+   * When set, ChatAgent will use Discussion SOUL to stay on topic.
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  discussion?: DiscussionInfo;
 }
 
 /**
@@ -228,6 +251,85 @@ export class GroupService {
    */
   listTopicGroups(): GroupInfo[] {
     return Object.values(this.registry.groups).filter(g => g.isTopicGroup === true);
+  }
+
+  /**
+   * Register discussion info for a group.
+   *
+   * @param chatId - Group chat ID
+   * @param discussion - Discussion information
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  registerDiscussion(chatId: string, discussion: DiscussionInfo): void {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot register discussion: group not found');
+      return;
+    }
+    group.discussion = discussion;
+    this.save();
+    logger.info({ chatId, topic: discussion.topic }, 'Discussion registered');
+  }
+
+  /**
+   * Get discussion info for a group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Discussion info or undefined if not a discussion group
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  getDiscussion(chatId: string): DiscussionInfo | undefined {
+    return this.registry.groups[chatId]?.discussion;
+  }
+
+  /**
+   * Check if a group is a discussion group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Whether the group has discussion info
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  isDiscussionGroup(chatId: string): boolean {
+    const group = this.registry.groups[chatId];
+    return group?.discussion !== undefined;
+  }
+
+  /**
+   * Update discussion status.
+   *
+   * @param chatId - Group chat ID
+   * @param status - New status
+   * @returns Whether the update succeeded
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  updateDiscussionStatus(chatId: string, status: DiscussionInfo['status']): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group?.discussion) {
+      logger.warn({ chatId }, 'Cannot update discussion status: no discussion found');
+      return false;
+    }
+
+    group.discussion.status = status;
+    this.save();
+    logger.info({ chatId, status }, 'Discussion status updated');
+    return true;
+  }
+
+  /**
+   * List all active discussions.
+   *
+   * @returns Array of group info with active discussions
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  listActiveDiscussions(): GroupInfo[] {
+    return Object.values(this.registry.groups).filter(
+      g => g.discussion?.status === 'active'
+    );
   }
 
   /**

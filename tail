@@ -1,0 +1,62 @@
+npm warn config production Use `--omit=dev` instead.
+
+> disclaude@0.3.3 build
+> npm run build:packages && tsup
+
+npm warn config production Use `--omit=dev` instead.
+
+> disclaude@0.3.3 build:packages
+> npm run build -ws
+
+npm warn config production Use `--omit=dev` instead.
+
+> @disclaude/core@0.0.1 build
+> tsc -b
+
+sh: 1: tsc: not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /tmp/tmp.8uDG9f7NyL/packages/core
+npm error workspace @disclaude/core@0.0.1
+npm error location /tmp/tmp.8uDG9f7NyL/packages/core
+npm error command failed
+npm error command sh -c tsc -b
+
+
+> @disclaude/mcp-server@0.0.1 build
+> tsc -b
+
+sh: 1: tsc: not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /tmp/tmp.8uDG9f7NyL/packages/mcp-server
+npm error workspace @disclaude/mcp-server@0.0.1
+npm error location /tmp/tmp.8uDG9f7NyL/packages/mcp-server
+npm error command failed
+npm error command sh -c tsc -b
+
+
+> @disclaude/primary-node@0.0.1 build
+> tsc -b
+
+sh: 1: tsc: not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /tmp/tmp.8uDG9f7NyL/packages/primary-node
+npm error workspace @disclaude/primary-node@0.0.1
+npm error location /tmp/tmp.8uDG9f7NyL/packages/primary-node
+npm error command failed
+npm error command sh -c tsc -b
+
+
+> @disclaude/worker-node@0.0.3 build
+> tsc -b
+
+sh: 1: tsc: not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /tmp/tmp.8uDG9f7NyL/packages/worker-node
+npm error workspace @disclaude/worker-node@0.0.3
+npm error location /tmp/tmp.8uDG9f7NyL/packages/worker-node
+npm error command failed
+npm error command sh -c tsc -b
