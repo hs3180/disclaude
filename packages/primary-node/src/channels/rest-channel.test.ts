@@ -8,8 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 
-// Test port - use non-default port for testing
-const TEST_PORT = 3099;
+// Generate a random port to avoid conflicts with other test runs
+// Use port in the 31000-31999 range which is less commonly used
+const TEST_PORT = 31000 + Math.floor(Math.random() * 999);
 
 // Create mock logger with hoisted definition
 const mockLogger = vi.hoisted(() => ({
