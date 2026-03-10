@@ -23,7 +23,8 @@ export type FileDownloadFunction = (
   messageType: string,
   fileName?: string,
   messageId?: string,
-  parentId?: string
+  parentId?: string,
+  rootId?: string
 ) => Promise<{ success: boolean; filePath?: string }>;
 
 /**
@@ -55,7 +56,8 @@ export class FeishuFileHandler implements IFileHandler {
     messageType: 'image' | 'file' | 'media',
     content: string,
     messageId: string,
-    parentId?: string
+    parentId?: string,
+    rootId?: string
   ): Promise<FileHandlerResult> {
     try {
       logger.info({ chatId, messageType, messageId }, 'File/image message received');
@@ -85,12 +87,14 @@ export class FeishuFileHandler implements IFileHandler {
       // This helps identify mismatch issues between the message containing the file
       // and the file_key being downloaded
       // Issue #1290: Also log parentId for quoted/forwarded images
+      // Issue #1205: Also log rootId for thread-based forwarded images
       logger.info(
         {
           chatId,
           messageType,
           messageId,
           parentId,
+          rootId,
           fileKey,
           fileName,
           pairing: `message_id=${messageId} + file_key=${fileKey}`,
@@ -99,8 +103,8 @@ export class FeishuFileHandler implements IFileHandler {
       );
 
       // Download file to local storage
-      // Issue #1290: Pass parentId for quoted/forwarded image fallback
-      const downloadResult = await this.downloadFile(fileKey, messageType, fileName, messageId, parentId);
+      // Issue #1290: Pass parentId and rootId for quoted/forwarded image fallback
+      const downloadResult = await this.downloadFile(fileKey, messageType, fileName, messageId, parentId, rootId);
       if (!downloadResult.success || !downloadResult.filePath) {
         const errorDetail = downloadResult.filePath ? 'Download returned success but no path' : 'Download failed';
         logger.error(

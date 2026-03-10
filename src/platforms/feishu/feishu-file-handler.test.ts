@@ -1,7 +1,7 @@
 /**
  * Tests for FeishuFileHandler.
  *
- * Tests the file handling functionality for Feishu platform:
+ * Tests the file handling functionality for Feishu platform
  * - File message processing
  * - Image message processing
  * - Upload prompt generation
@@ -22,30 +22,24 @@ vi.mock('../../utils/logger.js', () => ({
     trace: vi.fn(),
   })),
 }));
-
 describe('FeishuFileHandler', () => {
   let handler: FeishuFileHandler;
   let mockAttachmentManager: IAttachmentManager;
   let mockDownloadFile: FileDownloadFunction;
-
   beforeEach(() => {
     vi.clearAllMocks();
-
     mockAttachmentManager = {
       hasAttachments: vi.fn(),
       getAttachments: vi.fn().mockReturnValue([]),
       addAttachment: vi.fn(),
       clearAttachments: vi.fn(),
     };
-
     mockDownloadFile = vi.fn();
-
     handler = new FeishuFileHandler({
       attachmentManager: mockAttachmentManager,
       downloadFile: mockDownloadFile,
     });
   });
-
   describe('handleFileMessage', () => {
     it('should handle image message correctly', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
@@ -53,14 +47,12 @@ describe('FeishuFileHandler', () => {
         success: true,
         filePath: '/tmp/test_image.png',
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'image',
         JSON.stringify({ image_key: 'img_key_123' }),
-        'msg-456'
+        'msg-456',
       );
-
       expect(result.success).toBe(true);
       expect(result.filePath).toBe('/tmp/test_image.png');
       expect(result.fileKey).toBe('img_key_123');
@@ -69,24 +61,22 @@ describe('FeishuFileHandler', () => {
         'image',
         'image_img_key_123',
         'msg-456',
+        undefined,
         undefined
       );
     });
-
     it('should handle file message correctly', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
         filePath: '/tmp/document.pdf',
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'file',
         JSON.stringify({ file_key: 'file_key_789', file_name: 'document.pdf' }),
         'msg-456'
       );
-
       expect(result.success).toBe(true);
       expect(result.filePath).toBe('/tmp/document.pdf');
       expect(result.fileKey).toBe('file_key_789');
@@ -95,28 +85,25 @@ describe('FeishuFileHandler', () => {
         'file',
         'document.pdf',
         'msg-456',
+        undefined,
         undefined
       );
     });
-
     it('should handle media message correctly', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
         filePath: '/tmp/video.mp4',
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'media',
         JSON.stringify({ file_key: 'media_key_abc', file_name: 'video.mp4' }),
         'msg-456'
       );
-
       expect(result.success).toBe(true);
       expect(result.filePath).toBe('/tmp/video.mp4');
     });
-
     it('should return error when no file_key found', async () => {
       const result = await handler.handleFileMessage(
         'chat-123',
@@ -124,29 +111,24 @@ describe('FeishuFileHandler', () => {
         JSON.stringify({ other_field: 'value' }),
         'msg-456'
       );
-
       expect(result.success).toBe(false);
       expect(result.error).toBe('No file_key found');
     });
-
     it('should return error when download fails', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: false,
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'file',
         JSON.stringify({ file_key: 'key_123', file_name: 'test.txt' }),
         'msg-456'
       );
-
       expect(result.success).toBe(false);
       expect(result.error).toContain('Download failed');
       expect(result.error).toContain('key_123');
     });
-
     it('should handle invalid JSON content', async () => {
       const result = await handler.handleFileMessage(
         'chat-123',
@@ -154,34 +136,28 @@ describe('FeishuFileHandler', () => {
         'not valid json',
         'msg-456'
       );
-
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
     });
-
     it('should add attachment to manager on success', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
         filePath: '/tmp/test.png',
       });
-
       await handler.handleFileMessage(
         'chat-123',
         'image',
         JSON.stringify({ image_key: 'img_key' }),
         'msg-456'
       );
-
       const mockAdd = mockAttachmentManager.addAttachment as ReturnType<typeof vi.fn>;
       expect(mockAdd).toHaveBeenCalled();
-
       const [[chatId, attachment]] = mockAdd.mock.calls;
       expect(chatId).toBe('chat-123');
       expect(attachment.fileKey).toBe('img_key');
       expect(attachment.messageId).toBe('msg-456');
     });
-
     // Issue #1290: Tests for parentId parameter
     it('should pass parentId to downloadFile for quoted images', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
@@ -189,51 +165,74 @@ describe('FeishuFileHandler', () => {
         success: true,
         filePath: '/tmp/quoted_image.png',
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'image',
         JSON.stringify({ image_key: 'img_key_quoted' }),
         'msg-new-789',
-        'msg-original-456' // parentId for quoted image
+        'msg-original-456', // parentId for quoted image
+        undefined // rootId not provided
       );
-
       expect(result.success).toBe(true);
       expect(mockDownload).toHaveBeenCalledWith(
         'img_key_quoted',
         'image',
         'image_img_key_quoted',
         'msg-new-789',
-        'msg-original-456'
+        'msg-original-456',
+        undefined // rootId
       );
     });
-
     it('should handle quoted file message with parentId', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
         filePath: '/tmp/quoted_doc.pdf',
       });
-
       const result = await handler.handleFileMessage(
         'chat-123',
         'file',
         JSON.stringify({ file_key: 'file_key_quoted', file_name: 'quoted_doc.pdf' }),
         'msg-new-123',
-        'msg-original-456'
+        'msg-original-456',
+        undefined // rootId not provided
       );
-
       expect(result.success).toBe(true);
       expect(mockDownload).toHaveBeenCalledWith(
         'file_key_quoted',
         'file',
         'quoted_doc.pdf',
         'msg-new-123',
-        'msg-original-456'
+        'msg-original-456',
+        undefined // rootId
+      );
+    });
+    // Issue #1205: Tests for rootId parameter (thread-based forwarded images)
+    it('should pass rootId to downloadFile for thread-based forwarded images', async () => {
+      const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
+      mockDownload.mockResolvedValue({
+        success: true,
+        filePath: '/tmp/thread_image.png',
+      });
+      const result = await handler.handleFileMessage(
+        'chat-123',
+        'image',
+        JSON.stringify({ image_key: 'img_key_thread' }),
+        'msg-new-789',
+        undefined, // parentId not provided
+        'msg-root-456' // rootId for thread-based forwarded image
+      );
+      expect(result.success).toBe(true);
+      expect(mockDownload).toHaveBeenCalledWith(
+        'img_key_thread',
+        'image',
+        'image_img_key_thread',
+        'msg-new-789',
+        undefined,
+        'msg-root-456'
       );
     });
   });
-
   describe('buildUploadPrompt', () => {
     it('should generate prompt with basic file info', () => {
       const attachment: FileAttachment = {
@@ -244,16 +243,13 @@ describe('FeishuFileHandler', () => {
         messageId: 'msg-456',
         timestamp: Date.now(),
       };
-
       const prompt = handler.buildUploadPrompt(attachment);
-
       expect(prompt).toContain('User uploaded a file');
       expect(prompt).toContain('file_name: test.pdf');
       expect(prompt).toContain('file_type: file');
       expect(prompt).toContain('file_key: key_123');
       expect(prompt).toContain('local_path: /tmp/test.pdf');
     });
-
     it('should include file size when available', () => {
       const attachment: FileAttachment = {
         fileKey: 'key_123',
@@ -264,12 +260,9 @@ describe('FeishuFileHandler', () => {
         timestamp: Date.now(),
         fileSize: 5 * 1024 * 1024, // 5 MB
       };
-
       const prompt = handler.buildUploadPrompt(attachment);
-
       expect(prompt).toContain('file_size_mb: 5.00');
     });
-
     it('should include mime type when available', () => {
       const attachment: FileAttachment = {
         fileKey: 'key_123',
@@ -280,12 +273,9 @@ describe('FeishuFileHandler', () => {
         timestamp: Date.now(),
         mimeType: 'application/pdf',
       };
-
       const prompt = handler.buildUploadPrompt(attachment);
-
       expect(prompt).toContain('mime_type: application/pdf');
     });
-
     it('should handle image file type', () => {
       const attachment: FileAttachment = {
         fileKey: 'img_key',
@@ -295,12 +285,9 @@ describe('FeishuFileHandler', () => {
         messageId: 'msg-456',
         timestamp: Date.now(),
       };
-
       const prompt = handler.buildUploadPrompt(attachment);
-
       expect(prompt).toContain('file_type: image');
     });
-
     it('should include instruction text', () => {
       const attachment: FileAttachment = {
         fileKey: 'key',
@@ -309,9 +296,7 @@ describe('FeishuFileHandler', () => {
         messageId: 'msg',
         timestamp: Date.now(),
       };
-
       const prompt = handler.buildUploadPrompt(attachment);
-
       expect(prompt).toContain('wait for the user\'s instructions');
     });
   });

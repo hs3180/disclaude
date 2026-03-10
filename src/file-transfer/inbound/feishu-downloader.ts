@@ -179,6 +179,7 @@ function mapToFileType(fileType: string, fileName?: string): string {
  * @param fileName - Optional original filename
  * @param messageId - The message ID containing the file (REQUIRED for user uploads)
  * @param parentId - Optional parent message ID (for quoted/forwarded messages)
+ * @param rootId - Optional root message ID (for thread-based forwarded messages)
  * @returns Local file path
  */
 export async function downloadFile(
@@ -187,7 +188,8 @@ export async function downloadFile(
   fileType: string,
   fileName?: string,
   messageId?: string,
-  parentId?: string
+  parentId?: string,
+  rootId?: string
 ): Promise<string> {
   await ensureAttachmentsDir();
 
@@ -208,7 +210,7 @@ export async function downloadFile(
   const localFileName = `${timestamp}_${baseFileName}${extension}`;
   const localPath = path.join(getAttachmentsDir(), localFileName);
 
-  logger.info({ fileKey, fileType, fileName, messageId, parentId, localPath }, 'Downloading file from Feishu');
+  logger.info({ fileKey, fileType, fileName, messageId, parentId, rootId, localPath }, 'Downloading file from Feishu');
 
   try {
     let fileResource: FileResourceResponse | undefined;
@@ -238,33 +240,75 @@ export async function downloadFile(
           },
         }) as unknown as FileResourceResponse;
       } catch (primaryError) {
-        // Issue #1290: If primary message_id fails and we have a parentId, try fallback
+        // Issue #1205: Enhanced fallback chain for forwarded/quoted images
+        // Try parentId first, then rootId as last resort
+        const fallbackChain: Array<{ id: string; type: string }> = [];
+
+        // Add parentId to fallback chain if available and different from messageId
         if (parentId && parentId !== messageId) {
+          fallbackChain.push({ id: parentId, type: 'parentId' });
+        }
+
+        // Add rootId to fallback chain if available and different from messageId and parentId
+        if (rootId && rootId !== messageId && rootId !== parentId) {
+          fallbackChain.push({ id: rootId, type: 'rootId' });
+        }
+
+        if (fallbackChain.length > 0) {
           logger.info(
-            { messageId, parentId, fileKey, error: (primaryError as Error).message },
-            'Primary message_id download failed, trying parentId fallback for quoted/forwarded image'
+            {
+              messageId,
+              parentId,
+              rootId,
+              fileKey,
+              error: (primaryError as Error).message,
+              fallbackChain: fallbackChain.map(f => f.type),
+            },
+            'Primary message_id download failed, trying fallback chain for quoted/forwarded image'
           );
-          try {
-            fileResource = await client.im.messageResource.get({
-              path: {
-                message_id: parentId,
-                file_key: fileKey,
+
+          let lastError: Error = primaryError as Error;
+          let fallbackSucceeded = false;
+
+          for (const fallback of fallbackChain) {
+            try {
+              logger.debug({ fallbackId: fallback.id, fallbackType: fallback.type, fileKey }, `Trying ${fallback.type} fallback`);
+              fileResource = await client.im.messageResource.get({
+                path: {
+                  message_id: fallback.id,
+                  file_key: fileKey,
+                },
+                params: {
+                  type: apiFileType,
+                },
+              }) as unknown as FileResourceResponse;
+              logger.info({ [fallback.type]: fallback.id, fileKey }, `${fallback.type} fallback succeeded`);
+              fallbackSucceeded = true;
+              break;
+            } catch (fallbackError) {
+              logger.warn(
+                { [fallback.type]: fallback.id, fileKey, error: (fallbackError as Error).message },
+                `${fallback.type} fallback failed, continuing to next option`
+              );
+              lastError = fallbackError as Error;
+            }
+          }
+
+          if (!fallbackSucceeded) {
+            logger.error(
+              {
+                messageId,
+                parentId,
+                rootId,
+                fileKey,
+                triedFallbacks: fallbackChain.map(f => f.type),
               },
-              params: {
-                type: apiFileType,
-              },
-            }) as unknown as FileResourceResponse;
-            logger.info({ parentId, fileKey }, 'parentId fallback succeeded');
-          } catch (fallbackError) {
-            // Fallback also failed, throw the original error
-            logger.warn(
-              { parentId, fileKey, error: (fallbackError as Error).message },
-              'parentId fallback also failed'
+              'All fallback attempts failed for forwarded/quoted image'
             );
-            throw primaryError;
+            throw lastError;
           }
         } else {
-          // No parentId available or same as messageId, throw original error
+          // No fallback options available, throw original error
           throw primaryError;
         }
       }
@@ -334,6 +378,8 @@ export async function downloadFile(
       fileKey,
       fileType,
       messageId,
+      parentId,
+      rootId,
       errorMessage: apiError.message,
       errorCode: apiError.code,
     };
