@@ -95,8 +95,9 @@ export class SchedulerService {
       cooldownManager: this.cooldownManager,
       callbacks: {
         // Directly route messages through PrimaryNode's handleFeedback
-        sendMessage: async (chatId: string, message: string) => {
+        sendMessage: (chatId: string, message: string): Promise<void> => {
           this.callbacks.handleFeedback({ type: 'text', chatId, text: message });
+          return Promise.resolve();
         },
       },
       // Provide the executor function for dependency injection

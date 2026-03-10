@@ -272,7 +272,7 @@ export class WorkerNode {
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
         const agent = AgentFactory.createScheduleAgent(chatId, {
-          sendMessage: async (chatId_: string, text: string, parentMessageId?: string) => {
+          sendMessage: (chatId_: string, text: string, parentMessageId?: string): Promise<void> => {
             const ctx = this.activeFeedbackChannels.get(chatId_);
             if (ctx) {
               ctx.sendFeedback({ type: 'text', chatId: chatId_, text, threadId: parentMessageId ?? ctx.threadId });
@@ -281,8 +281,9 @@ export class WorkerNode {
                 this.ws.send(JSON.stringify({ type: 'text', chatId: chatId_, text, threadId: parentMessageId }));
               }
             }
+            return Promise.resolve();
           },
-          sendCard: async (chatId_: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+          sendCard: (chatId_: string, card: Record<string, unknown>, description?: string, parentMessageId?: string): Promise<void> => {
             const ctx = this.activeFeedbackChannels.get(chatId_);
             if (ctx) {
               ctx.sendFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: parentMessageId ?? ctx.threadId });
@@ -291,6 +292,7 @@ export class WorkerNode {
                 this.ws.send(JSON.stringify({ type: 'card', chatId: chatId_, card, text: description, threadId: parentMessageId }));
               }
             }
+            return Promise.resolve();
           },
           sendFile: async (chatId_: string, filePath: string) => {
             const ctx = this.activeFeedbackChannels.get(chatId_);
