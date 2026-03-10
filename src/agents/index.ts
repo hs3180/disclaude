@@ -119,3 +119,24 @@ export {
   type SubagentHandle,
   type SubagentStatusCallback,
 } from './subagent-manager.js';
+
+// ETA Prediction System (Issue #1234)
+// Uses Markdown-based storage for task records and rules
+export {
+  ETAPredictionService,
+  etaPredictionService,
+  type ETAPrediction,
+  type TaskContext,
+} from './eta-prediction.js';
+
+export {
+  ETATaskRecords,
+  etaTaskRecords,
+  type TaskRecordEntry,
+} from './eta-task-records.js';
+
+export {
+  ETARules,
+  etaRules,
+  type RuleUpdate,
+} from './eta-rules.js';
