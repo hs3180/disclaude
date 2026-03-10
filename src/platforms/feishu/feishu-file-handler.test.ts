@@ -69,7 +69,7 @@ describe('FeishuFileHandler', () => {
         'image',
         'image_img_key_123',
         'msg-456',
-        undefined
+        []
       );
     });
 
@@ -95,7 +95,7 @@ describe('FeishuFileHandler', () => {
         'file',
         'document.pdf',
         'msg-456',
-        undefined
+        []
       );
     });
 
@@ -182,8 +182,8 @@ describe('FeishuFileHandler', () => {
       expect(attachment.messageId).toBe('msg-456');
     });
 
-    // Issue #1290: Tests for parentId parameter
-    it('should pass parentId to downloadFile for quoted images', async () => {
+    // Issue #1205: Tests for fallbackIds parameter (enhanced from Issue #1290)
+    it('should pass fallbackIds to downloadFile for quoted/forwarded images', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
@@ -195,7 +195,7 @@ describe('FeishuFileHandler', () => {
         'image',
         JSON.stringify({ image_key: 'img_key_quoted' }),
         'msg-new-789',
-        'msg-original-456' // parentId for quoted image
+        ['msg-parent-456', 'msg-root-789'] // fallbackIds for quoted/forwarded image
       );
 
       expect(result.success).toBe(true);
@@ -204,11 +204,11 @@ describe('FeishuFileHandler', () => {
         'image',
         'image_img_key_quoted',
         'msg-new-789',
-        'msg-original-456'
+        ['msg-parent-456', 'msg-root-789']
       );
     });
 
-    it('should handle quoted file message with parentId', async () => {
+    it('should handle quoted file message with fallbackIds', async () => {
       const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
       mockDownload.mockResolvedValue({
         success: true,
@@ -220,7 +220,7 @@ describe('FeishuFileHandler', () => {
         'file',
         JSON.stringify({ file_key: 'file_key_quoted', file_name: 'quoted_doc.pdf' }),
         'msg-new-123',
-        'msg-original-456'
+        ['msg-original-456']
       );
 
       expect(result.success).toBe(true);
@@ -229,7 +229,7 @@ describe('FeishuFileHandler', () => {
         'file',
         'quoted_doc.pdf',
         'msg-new-123',
-        'msg-original-456'
+        ['msg-original-456']
       );
     });
   });
