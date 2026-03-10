@@ -19,8 +19,7 @@ import {
 } from '../platforms/feishu/chat-ops.js';
 import type { GroupService } from '../platforms/feishu/group-service.js';
 import type { TaskStateManager } from '../utils/task-state-manager.js';
-import type { ExecNodeRegistry } from './exec-node-registry.js';
-import type { DebugGroupService } from './debug-group-service.js';
+import type { ExecNodeRegistry, DebugGroupService } from '@disclaude/primary-node';
 import type { ScheduleManagement } from './schedule-management.js';
 import type { SkillAgentManager } from '../agents/skill-agent-manager.js';
 import type { CommandServices, ManagedGroupInfo, StartSkillAgentOptions } from './commands/types.js';
