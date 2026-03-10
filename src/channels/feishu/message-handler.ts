@@ -344,6 +344,96 @@ export class MessageHandler {
   }
 
   /**
+   * Get forwarded/packed chat history content using upper_message_id.
+   * Issue #846: Support reading forwarded chat history via upper_message_id
+   *
+   * When a user forwards a conversation in Feishu, the message may contain
+   * an upper_message_id field pointing to the original packed message.
+   * This method fetches that message and extracts its content.
+   *
+   * @param upperMessageId - The upper message ID (original forwarded message)
+   * @returns Formatted forwarded chat history or undefined if not available
+   */
+  private async getForwardedChatHistory(upperMessageId: string): Promise<string | undefined> {
+    if (!this.client) {
+      return undefined;
+    }
+
+    try {
+      const { getLarkClientService } = await import('../../services/index.js');
+      const larkService = getLarkClientService();
+      const message = await larkService.getMessage(upperMessageId);
+
+      if (!message) {
+        logger.debug({ upperMessageId }, 'Forwarded message not found or no permission');
+        return undefined;
+      }
+
+      logger.info(
+        { upperMessageId, messageType: message.messageType },
+        'Fetching forwarded message content via upper_message_id'
+      );
+
+      // Handle chat_record type messages (packed conversation history)
+      if (message.messageType === 'chat_record') {
+        const formattedContent = this.parseChatRecordContent(message.content);
+        if (formattedContent) {
+          return formattedContent;
+        }
+      }
+
+      // Handle text messages that might contain forwarded content
+      if (message.messageType === 'text') {
+        try {
+          const parsed = JSON.parse(message.content);
+          const text = parsed.text || message.content;
+          if (text.trim()) {
+            return `📋 **转发的消息**:\n\n${text}`;
+          }
+        } catch {
+          if (message.content.trim()) {
+            return `📋 **转发的消息**:\n\n${message.content}`;
+          }
+        }
+      }
+
+      // Handle post messages
+      if (message.messageType === 'post') {
+        try {
+          const parsed = JSON.parse(message.content);
+          if (parsed.content && Array.isArray(parsed.content)) {
+            let text = '';
+            for (const row of parsed.content) {
+              if (Array.isArray(row)) {
+                for (const segment of row) {
+                  if (segment?.tag === 'text' && segment.text) {
+                    text += segment.text;
+                  }
+                }
+              }
+            }
+            if (text.trim()) {
+              return `📋 **转发的消息**:\n\n${text}`;
+            }
+          }
+        } catch {
+          // Fall through
+        }
+      }
+
+      // For other message types, indicate the type
+      logger.debug(
+        { upperMessageId, messageType: message.messageType },
+        'Forwarded message has unsupported type'
+      );
+      return undefined;
+    } catch (error) {
+      logger.debug({ err: error, upperMessageId }, 'Failed to get forwarded message content');
+      return undefined;
+    }
+  }
+
+  /**
    * Format timestamp to readable date string.
    * Issue #1123: Enhanced chat_record formatting
    *
@@ -528,7 +618,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id, upper_message_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -849,6 +939,20 @@ export class MessageHandler {
           { messageId: message_id, parent_id, quotedLength: quotedMessageContext.length },
           'Including quoted message context for reply'
         );
+      }
+    }
+
+    // Issue #846: Get forwarded chat history if upper_message_id is present
+    let forwardedChatHistory: string | undefined;
+    if (upper_message_id) {
+      forwardedChatHistory = await this.getForwardedChatHistory(upper_message_id);
+      if (forwardedChatHistory) {
+        logger.info(
+          { messageId: message_id, upper_message_id, historyLength: forwardedChatHistory.length },
+          'Including forwarded chat history via upper_message_id'
+        );
+        // Prepend forwarded history to the enhanced text
+        enhancedText = `${forwardedChatHistory}\n\n---\n\n用户消息: ${text}`;
       }
     }
 
