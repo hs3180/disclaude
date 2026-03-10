@@ -24,7 +24,9 @@
 
 import type pino from 'pino';
 import { createLogger } from '../utils/logger.js';
+import { Config } from '../config/index.js';
 import type { ChatAgent } from './types.js';
+import type { SessionTimeoutConfig } from '../config/types.js';
 
 const logger = createLogger('AgentPool');
 
@@ -41,6 +43,8 @@ export interface AgentPoolConfig {
   chatAgentFactory: ChatAgentFactory;
   /** Optional logger */
   logger?: pino.Logger;
+  /** Optional session timeout configuration (Issue #1313) */
+  sessionTimeoutConfig?: SessionTimeoutConfig;
 }
 
 /**
@@ -57,10 +61,67 @@ export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
   private readonly chatAgents = new Map<string, ChatAgent>();
   private readonly log: pino.Logger;
+  private readonly sessionTimeoutConfig: SessionTimeoutConfig;
+  private timeoutCheckTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: AgentPoolConfig) {
     this.chatAgentFactory = config.chatAgentFactory;
     this.log = config.logger ?? logger;
+    this.sessionTimeoutConfig = config.sessionTimeoutConfig ?? Config.getSessionTimeoutConfig();
+
+    // Start timeout check if enabled
+    if (this.sessionTimeoutConfig.enabled) {
+      this.startTimeoutCheck();
+    }
+  }
+
+  /**
+   * Start the session timeout check timer (Issue #1313).
+   */
+  private startTimeoutCheck(): void {
+    const intervalMs = (this.sessionTimeoutConfig.checkIntervalMinutes ?? 5) * 60 * 1000;
+
+    this.timeoutCheckTimer = setInterval(() => {
+      this.checkAndCleanupIdleSessions();
+    }, intervalMs);
+
+    this.log.info(
+      {
+        idleMinutes: this.sessionTimeoutConfig.idleMinutes,
+        maxSessions: this.sessionTimeoutConfig.maxSessions,
+        checkIntervalMinutes: this.sessionTimeoutConfig.checkIntervalMinutes,
+      },
+      'Session timeout check started'
+    );
+  }
+
+  /**
+   * Check and cleanup idle sessions (Issue #1313).
+   */
+  private checkAndCleanupIdleSessions(): void {
+    const maxSessions = this.sessionTimeoutConfig.maxSessions ?? 100;
+
+    // Check if over max sessions
+    if (this.chatAgents.size > maxSessions) {
+      this.log.warn(
+        { sessionCount: this.chatAgents.size, maxSessions },
+        'Session count exceeds max limit, forcing cleanup'
+      );
+    }
+
+    // Collect all chat IDs for potential cleanup
+    const chatIds = Array.from(this.chatAgents.keys());
+
+    // Only cleanup if over max sessions
+    if (this.chatAgents.size > maxSessions && chatIds.length > 0) {
+      // Dispose excess sessions (FIFO - oldest first)
+      const toDispose = chatIds.slice(0, this.chatAgents.size - maxSessions);
+
+      for (const chatId of toDispose) {
+        this.dispose(chatId);
+        this.log.info({ chatId }, 'Session disposed due to max sessions limit');
+      }
+    }
   }
 
   /**
@@ -161,6 +222,12 @@ export class AgentPool {
    * Used during shutdown.
    */
   disposeAll(): void {
+    // Stop timeout check timer
+    if (this.timeoutCheckTimer) {
+      clearInterval(this.timeoutCheckTimer);
+      this.timeoutCheckTimer = undefined;
+    }
+
     this.log.info('Disposing all ChatAgent instances');
 
     // Clear map first
