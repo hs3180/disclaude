@@ -255,12 +255,45 @@ export async function downloadFile(
     // Check if response contains file resource
     // Issue #1205: Enhanced validation and logging for message_id + file_key pairing
     if (!fileResource) {
-      // Log the pairing that caused the failure for debugging
-      logger.error(
-        { messageId, fileKey, fileType, apiCall: 'messageResource.get' },
-        'Feishu API returned null/undefined - possible message_id and file_key mismatch'
-      );
-      throw new Error(`Empty response from Feishu API. This may indicate message_id (${messageId}) and file_key (${fileKey}) do not match.`);
+      // Issue #1205: For images, try fallback to direct image.get API
+      // This handles cases like forwarded images where message_id and image_key don't match
+      if (fileType === 'image') {
+        logger.warn(
+          { messageId, fileKey, fileType },
+          'messageResource.get returned empty, trying fallback to image.get API'
+        );
+        try {
+          fileResource = await client.im.image.get({
+            path: {
+              image_key: fileKey,
+            },
+          }) as unknown as FileResourceResponse;
+
+          if (fileResource && typeof fileResource.writeFile === 'function') {
+            logger.info(
+              { messageId, fileKey },
+              'Fallback to image.get API succeeded'
+            );
+          } else {
+            fileResource = undefined;
+          }
+        } catch (fallbackError) {
+          logger.warn(
+            { err: fallbackError, messageId, fileKey },
+            'Fallback to image.get API also failed'
+          );
+          fileResource = undefined;
+        }
+      }
+
+      // If still no valid response, throw error
+      if (!fileResource) {
+        logger.error(
+          { messageId, fileKey, fileType, apiCall: 'messageResource.get' },
+          'Feishu API returned null/undefined - possible message_id and file_key mismatch'
+        );
+        throw new Error(`Empty response from Feishu API. This may indicate message_id (${messageId}) and file_key (${fileKey}) do not match.`);
+      }
     }
 
     // Validate that the response has the expected writeFile method

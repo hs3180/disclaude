@@ -245,6 +245,8 @@ describe('downloadFile', () => {
   it('should throw error when API returns empty response', async () => {
     const mockClient = createMockClient();
     (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // Issue #1205: Also mock fallback to return null so error is thrown
+    (mockClient.im.image.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     await expect(
       downloadFile(
@@ -255,6 +257,52 @@ describe('downloadFile', () => {
         'message_123'
       )
     ).rejects.toThrow('Empty response from Feishu API');
+  });
+
+  it('should fallback to image.get API when messageResource.get returns empty for images', async () => {
+    const mockClient = createMockClient();
+    const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+    // messageResource.get returns empty
+    (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // But image.get succeeds (fallback)
+    (mockClient.im.image.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      writeFile: mockWriteFile,
+    });
+
+    const result = await downloadFile(
+      mockClient as unknown as Parameters<typeof downloadFile>[0],
+      'file_key_123',
+      'image',
+      'test.png',
+      'message_123'
+    );
+
+    // Verify fallback was called
+    expect(mockClient.im.image.get).toHaveBeenCalledWith({
+      path: {
+        image_key: 'file_key_123',
+      },
+    });
+    expect(mockWriteFile).toHaveBeenCalled();
+    expect(result).toContain('test.png');
+  });
+
+  it('should not fallback to image.get for non-image types', async () => {
+    const mockClient = createMockClient();
+    (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    await expect(
+      downloadFile(
+        mockClient as unknown as Parameters<typeof downloadFile>[0],
+        'file_key_123',
+        'file',
+        'test.pdf',
+        'message_123'
+      )
+    ).rejects.toThrow('Empty response from Feishu API');
+
+    // Verify image.get was NOT called for non-image types
+    expect(mockClient.im.image.get).not.toHaveBeenCalled();
   });
 
   it('should handle API errors', async () => {
