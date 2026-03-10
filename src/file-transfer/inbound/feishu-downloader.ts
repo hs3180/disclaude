@@ -173,12 +173,20 @@ function mapToFileType(fileType: string, fileName?: string): string {
  * Issue #1290: For quoted/forwarded images, the message_id may not match the image_key.
  * We try the primary message_id first, then fallback to parentId if provided.
  *
+ * Issue #1205: Extended fallback mechanism to try multiple message IDs:
+ * - Primary message_id (first try)
+ * - parentId (for quoted/reply messages)
+ * - rootId (for thread messages)
+ * - upperMessageId (for packed chat history)
+ *
  * @param client - Lark API client
  * @param fileKey - Feishu file key (image_key or file_key)
  * @param fileType - File type (image, file, media, etc.)
  * @param fileName - Optional original filename
  * @param messageId - The message ID containing the file (REQUIRED for user uploads)
  * @param parentId - Optional parent message ID (for quoted/forwarded messages)
+ * @param rootId - Optional root message ID (for thread messages)
+ * @param upperMessageId - Optional upper message ID (for packed chat history)
  * @returns Local file path
  */
 export async function downloadFile(
@@ -187,7 +195,9 @@ export async function downloadFile(
   fileType: string,
   fileName?: string,
   messageId?: string,
-  parentId?: string
+  parentId?: string,
+  rootId?: string,
+  upperMessageId?: string
 ): Promise<string> {
   await ensureAttachmentsDir();
 
@@ -208,7 +218,7 @@ export async function downloadFile(
   const localFileName = `${timestamp}_${baseFileName}${extension}`;
   const localPath = path.join(getAttachmentsDir(), localFileName);
 
-  logger.info({ fileKey, fileType, fileName, messageId, parentId, localPath }, 'Downloading file from Feishu');
+  logger.info({ fileKey, fileType, fileName, messageId, parentId, rootId, upperMessageId, localPath }, 'Downloading file from Feishu');
 
   try {
     let fileResource: FileResourceResponse | undefined;
@@ -226,6 +236,7 @@ export async function downloadFile(
       logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
       // Issue #1290: Try primary message_id first
+      // Issue #1205: Extended to try multiple fallback IDs in sequence
       try {
         // SDK type doesn't include params.type, so we need to cast
         fileResource = await client.im.messageResource.get({
@@ -238,33 +249,57 @@ export async function downloadFile(
           },
         }) as unknown as FileResourceResponse;
       } catch (primaryError) {
-        // Issue #1290: If primary message_id fails and we have a parentId, try fallback
-        if (parentId && parentId !== messageId) {
+        // Issue #1205: Build list of fallback IDs to try
+        // Order: parentId (quoted/reply), rootId (thread), upperMessageId (packed history)
+        const fallbackIds = [
+          { id: parentId, name: 'parentId', reason: 'quoted/forwarded image' },
+          { id: rootId, name: 'rootId', reason: 'thread message' },
+          { id: upperMessageId, name: 'upperMessageId', reason: 'packed chat history' },
+        ].filter(item => item.id && item.id !== messageId);
+
+        if (fallbackIds.length > 0) {
           logger.info(
-            { messageId, parentId, fileKey, error: (primaryError as Error).message },
-            'Primary message_id download failed, trying parentId fallback for quoted/forwarded image'
+            { messageId, fileKey, error: (primaryError as Error).message, fallbackIds: fallbackIds.map(f => f.name) },
+            'Primary message_id download failed, trying fallback IDs'
           );
-          try {
-            fileResource = await client.im.messageResource.get({
-              path: {
-                message_id: parentId,
-                file_key: fileKey,
-              },
-              params: {
-                type: apiFileType,
-              },
-            }) as unknown as FileResourceResponse;
-            logger.info({ parentId, fileKey }, 'parentId fallback succeeded');
-          } catch (fallbackError) {
-            // Fallback also failed, throw the original error
+
+          let lastError = primaryError;
+          for (const fallback of fallbackIds) {
+            try {
+              logger.debug(
+                { fallbackId: fallback.id, fallbackName: fallback.name, fileKey },
+                `Trying ${fallback.name} fallback for ${fallback.reason}`
+              );
+              fileResource = await client.im.messageResource.get({
+                path: {
+                  message_id: fallback.id!,
+                  file_key: fileKey,
+                },
+                params: {
+                  type: apiFileType,
+                },
+              }) as unknown as FileResourceResponse;
+              logger.info({ fallbackId: fallback.id, fallbackName: fallback.name, fileKey }, `${fallback.name} fallback succeeded`);
+              break; // Success, exit the fallback loop
+            } catch (fallbackError) {
+              logger.debug(
+                { fallbackId: fallback.id, fallbackName: fallback.name, fileKey, error: (fallbackError as Error).message },
+                `${fallback.name} fallback failed, trying next`
+              );
+              lastError = fallbackError as Error;
+            }
+          }
+
+          // If all fallbacks failed, throw the original error
+          if (!fileResource) {
             logger.warn(
-              { parentId, fileKey, error: (fallbackError as Error).message },
-              'parentId fallback also failed'
+              { messageId, fileKey, triedFallbacks: fallbackIds.map(f => f.name) },
+              'All fallback IDs failed'
             );
-            throw primaryError;
+            throw lastError;
           }
         } else {
-          // No parentId available or same as messageId, throw original error
+          // No fallback IDs available, throw original error
           throw primaryError;
         }
       }
