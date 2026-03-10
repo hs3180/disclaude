@@ -378,13 +378,11 @@ export class Config {
   static getSessionRestoreConfig(): {
     historyDays: number;
     maxContextLength: number;
-    loadOnReset: boolean;
   } {
     const config = fileConfigOnly.sessionRestore || {};
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
-      loadOnReset: config.loadOnReset ?? false,
     };
   }
 }

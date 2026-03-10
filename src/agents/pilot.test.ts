@@ -45,7 +45,6 @@ vi.mock('../config/index.js', () => ({
     getSessionRestoreConfig: vi.fn(() => ({
       historyDays: 7,
       maxContextLength: 4000,
-      loadOnReset: false,
     })),
   },
 }));
