@@ -371,7 +371,7 @@ export class Config {
   /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.
-   * @see Issue #1213
+   * @see Issue #1213, Issue #1311
    *
    * @returns Session restoration configuration with defaults
    */
@@ -379,12 +379,25 @@ export class Config {
     historyDays: number;
     maxContextLength: number;
     loadOnReset: boolean;
+    compression: {
+      enabled: boolean;
+      threshold: number;
+      keepRecentMessages: number;
+      summaryMaxLength: number;
+    };
   } {
     const config = fileConfigOnly.sessionRestore || {};
+    const compressionConfig = config.compression || {};
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
       loadOnReset: config.loadOnReset ?? false,
+      compression: {
+        enabled: compressionConfig.enabled ?? false,
+        threshold: compressionConfig.threshold ?? 10000,
+        keepRecentMessages: compressionConfig.keepRecentMessages ?? 4,
+        summaryMaxLength: compressionConfig.summaryMaxLength ?? 2000,
+      },
     };
   }
 }
