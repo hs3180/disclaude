@@ -310,6 +310,21 @@ export interface MessagingConfig {
 }
 
 /**
+ * Context compression configuration (Issue #1311).
+ * Controls AI-based summarization of chat history to reduce token usage.
+ */
+export interface ContextCompressionConfig {
+  /** Enable AI-based context compression (default: false) */
+  enabled?: boolean;
+  /** Character threshold to trigger compression (default: 10000) */
+  threshold?: number;
+  /** Number of recent messages to keep un-compressed (default: 4) */
+  keepRecentMessages?: number;
+  /** Maximum length of generated summary in characters (default: 2000) */
+  summaryMaxLength?: number;
+}
+
+/**
  * Session restoration configuration (Issue #1213).
  * Controls how chat history is loaded when agent starts or resets.
  */
@@ -320,6 +335,8 @@ export interface SessionRestoreConfig {
   maxContextLength?: number;
   /** Whether to load history on reset (default: false) */
   loadOnReset?: boolean;
+  /** Context compression configuration (Issue #1311) */
+  compression?: ContextCompressionConfig;
 }
 
 /**

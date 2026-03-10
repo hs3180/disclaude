@@ -46,6 +46,7 @@ import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
 import { TaskComplexityAgent } from '../task-complexity-agent.js';
 import { taskProgressService } from '../task-progress-service.js';
+import { createHistoryCompressor } from './history-compressor.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -164,6 +165,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /**
    * Internal method to perform the actual history loading.
    * Uses configurable parameters from Config.getSessionRestoreConfig().
+   * Issue #1311: Supports AI-based context compression.
    */
   private async doLoadPersistedHistory(): Promise<void> {
     try {
@@ -174,13 +176,37 @@ export class Pilot extends BaseAgent implements ChatAgent {
         'Loading persisted chat history for session restoration'
       );
 
-      const history = await messageLogger.getChatHistory(
+      let history = await messageLogger.getChatHistory(
         this.boundChatId,
         sessionConfig.historyDays
       );
 
       if (history && history.trim()) {
-        // Truncate if too long
+        // Issue #1311: Apply AI-based compression if enabled and history exceeds threshold
+        if (sessionConfig.compression.enabled && history.length > sessionConfig.compression.threshold) {
+          try {
+            this.logger.info(
+              { chatId: this.boundChatId, historyLength: history.length },
+              'Starting AI-based context compression'
+            );
+
+            const compressor = createHistoryCompressor();
+            history = await compressor.compress(history);
+
+            this.logger.info(
+              { chatId: this.boundChatId, compressedLength: history.length },
+              'Context compression completed'
+            );
+          } catch (compressionError) {
+            this.logger.warn(
+              { err: compressionError, chatId: this.boundChatId },
+              'Context compression failed, using original history'
+            );
+            // Continue with original history on compression error
+          }
+        }
+
+        // Truncate if still too long after compression
         this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
           ? history.slice(-sessionConfig.maxContextLength)
           : history;
