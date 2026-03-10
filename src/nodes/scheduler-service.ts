@@ -26,9 +26,7 @@ import {
   ScheduleFileWatcher,
   CooldownManager,
 } from '@disclaude/worker-node';
-import type { TaskExecutor } from '@disclaude/worker-node';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
-
 import { AgentFactory } from '../agents/index.js';
 
 const logger = createLogger('SchedulerService');
@@ -97,39 +95,22 @@ export class SchedulerService {
       cooldownManager: this.cooldownManager,
       callbacks: {
         // Directly route messages through PrimaryNode's handleFeedback
-        // This ensures scheduled task messages are delivered even though
-        // they don't go through PrimaryNode's activeFeedbackChannels map
-        sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-          this.callbacks.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
-          return Promise.resolve();
-        },
-        sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-          this.callbacks.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
-          return Promise.resolve();
-        },
-        sendFile: async (chatId: string, filePath: string) => {
-          try {
-            await this.callbacks.sendFile(chatId, filePath);
-          } catch (error) {
-            logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
-          }
+        sendMessage: async (chatId: string, message: string) => {
+          this.callbacks.handleFeedback({ type: 'text', chatId, text: message });
         },
       },
       // Provide the executor function for dependency injection
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
         const agent = AgentFactory.createScheduleAgent(chatId, {
-          sendMessage: async (text: string, threadMessageId?: string) => {
-            this.callbacks.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
+          sendMessage: async (chatId_: string, text: string, parentMessageId?: string) => {
+            this.callbacks.handleFeedback({ type: 'text', chatId: chatId_, text, threadId: parentMessageId });
           },
-          sendCard: async (card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
-            this.callbacks.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
+          sendCard: async (chatId_: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+            this.callbacks.handleFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: parentMessageId });
           },
-          sendFile: async (filePath: string) => {
-            await this.callbacks.sendFile(chatId, filePath);
-          },
-          handleFeedback: (feedback) => {
-            this.callbacks.handleFeedback(feedback);
+          sendFile: async (chatId_: string, filePath: string) => {
+            await this.callbacks.sendFile(chatId_, filePath);
           },
         });
 
