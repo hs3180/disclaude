@@ -19,6 +19,10 @@
  * Refactored (Issue #283): Uses ReflectionController instead of DialogueOrchestrator.
  * Refactored (Issue #417): Removed Reporter, using message level system instead.
  * Simplified (Issue #413): Uses SkillAgent instead of Evaluator/Executor classes.
+ *
+ * @deprecated Use schedule-driven task scanner instead. See examples/schedules/task-scanner.example.md
+ * This module will be removed in a future version.
+ * Issue: #1309
  */
 
 import * as path from 'path';

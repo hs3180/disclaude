@@ -21,6 +21,9 @@
  * - Clear phase separation
  *
  * @module task/reflection
+ * @deprecated Use schedule-driven task scanner instead. See examples/schedules/task-scanner.example.md
+ * This module will be removed in a future version.
+ * Issue: #1309
  */
 
 import { createLogger } from '../utils/logger.js';

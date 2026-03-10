@@ -7,6 +7,10 @@
  * - Loop: find task → execute → wait (if no task)
  * - No queue, no concurrent execution
  * - Uses fs.watch when idle (no polling when no work)
+ *
+ * @deprecated Use schedule-driven task scanner instead. See examples/schedules/task-scanner.example.md
+ * This module will be removed in a future version.
+ * Issue: #1309
  */
 
 import * as fs from 'fs';

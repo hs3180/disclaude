@@ -7,6 +7,14 @@
  * - Task history listing
  *
  * Issue #468: 任务控制指令 - deep task 执行管理
+ *
+ * @deprecated Use file-based state management instead. See examples/schedules/task-scanner.example.md
+ * Task state is now determined by file existence:
+ * - final_result.md exists = completed
+ * - running.lock exists = running
+ * - failed.md exists = failed
+ * This module will be removed in a future version.
+ * Issue: #1309
  */
 
 import * as fs from 'fs/promises';
