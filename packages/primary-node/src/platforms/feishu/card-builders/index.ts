@@ -1,10 +1,7 @@
 /**
- * Feishu Card Builders - Re-export from @disclaude/primary-node.
+ * Feishu Card Builders.
  *
- * @deprecated Import from '@disclaude/primary-node' instead.
- * This file will be removed in a future version.
- *
- * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
+ * Platform-specific card builders for Feishu interactive messages.
  */
 
 export {
@@ -17,7 +14,7 @@ export {
   type PostLinkElement,
   type PostImageElement,
   type PostContent,
-} from '@disclaude/primary-node';
+} from './content-builder.js';
 
 export {
   buildButton,
@@ -44,8 +41,9 @@ export {
   type MenuAction,
   type CardHeaderConfig,
   type CardConfig,
-} from '@disclaude/primary-node';
+} from './interactive-card-builder.js';
 
 export {
   extractCardTextContent,
-} from '@disclaude/primary-node';
+} from './card-text-extractor.js';
+
