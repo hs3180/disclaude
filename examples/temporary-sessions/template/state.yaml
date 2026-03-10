@@ -1,0 +1,17 @@
+# 临时会话状态文件
+# 此文件由临时会话管理系统自动更新
+
+status: pending          # pending | sent | replied | expired
+
+# 通道信息（发送后填充）
+chatId: null
+messageId: null
+
+# 时间戳
+createdAt: null          # ISO 8601 格式，创建时填充
+sentAt: null             # 发送时间
+expiresAt: null          # 过期时间
+repliedAt: null          # 用户响应时间
+
+# 用户响应
+response: null           # 用户选择的选项值
