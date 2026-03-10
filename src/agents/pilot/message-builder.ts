@@ -7,6 +7,7 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1267: Added extensibility guidance - proactively suggest custom Skill creation.
  */
 
 import { Config } from '../../config/index.js';
@@ -25,6 +26,7 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Extensibility guidance (Issue #1267)
  */
 export class MessageBuilder {
   /**
@@ -104,6 +106,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build extensibility guidance section (Issue #1267)
+    const extensibilityGuidance = this.buildExtensibilityGuidance();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -135,6 +140,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${extensibilityGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -150,6 +156,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${extensibilityGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -430,5 +437,101 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+
+  /**
+   * Build extensibility guidance section for the prompt.
+   *
+   * Issue #1267: Proactively guide users to create custom Skills when their requests
+   * cannot be fulfilled with existing capabilities but could be solved through
+   * the Skill extension mechanism.
+   *
+   * This guidance encourages the agent to:
+   * - Recognize scenarios where custom Skills would help
+   * - Proactively suggest creating a Skill to the user
+   * - Provide guidance on Skill design and implementation
+   *
+   * @returns Extensibility guidance string
+   */
+  private buildExtensibilityGuidance(): string {
+    return `
+
+---
+
+## Extensibility & Custom Skills
+
+**Proactively help users extend capabilities through custom Skills.**
+
+When you encounter requests that cannot be fulfilled with existing tools but could be automated or customized, **proactively suggest creating a custom Skill**.
+
+### When to Suggest a Custom Skill
+
+Recognize these scenarios and actively offer to help create a Skill:
+
+| Scenario | Example Request | Skill Opportunity |
+|----------|-----------------|-------------------|
+| **External API Integration** | "Can you call our company's internal API?" | Create a Skill to integrate the API |
+| **Automation/Scheduled Tasks** | "Can you monitor this website daily?" | Create a Skill for scheduled monitoring |
+| **Domain-Specific Workflows** | "Can you help with our CRM workflow?" | Create a Skill tailored to the workflow |
+| **Repeated Similar Requests** | User asks for the same thing multiple times | Create a Skill to automate it |
+| **"Can you" Questions** | "Can you support X?" | Explain Skill capability and offer to create one |
+
+### How to Respond
+
+**❌ Don't just say "I can't do that" or "That's not supported"**
+
+**✅ Instead, guide the user:**
+
+1. **Acknowledge the request** - Show you understand their need
+2. **Explain the solution** - "This can be done through a custom Skill"
+3. **Offer to help** - "I can help you design and create this Skill"
+4. **Explain benefits** - Skills are reusable, configurable, and can be scheduled
+
+### Example Responses
+
+**Scenario: User wants to monitor a website for price changes**
+
+> I understand you want to monitor price changes on that website. While I don't have a built-in tool for that specific site, **this is a perfect use case for a custom Skill!**
+>
+> A Skill can:
+> - Periodically check the website for changes
+> - Send you notifications when prices change
+> - Be scheduled to run automatically (daily, hourly, etc.)
+>
+> Would you like me to help you create this Skill? I can:
+> 1. Design the monitoring logic
+> 2. Set up the notification mechanism
+> 3. Configure the schedule
+
+**Scenario: User asks "Can you call our internal API?"**
+
+> I can help you integrate with your company's internal API through a **custom Skill**. This would allow you to:
+> - Make authenticated requests to your API
+> - Process and format the responses
+> - Reuse this integration in future conversations
+>
+> To get started, I'll need:
+> - The API endpoint URL
+> - Authentication method (API key, OAuth, etc.)
+> - What operations you need to perform
+>
+> Shall we create this Skill together?
+
+### Skill Creation Quick Reference
+
+Users can create Skills by adding a \`SKILL.md\` file in the \`.claude/skills/<skill-name>/\` directory. Each Skill is a Markdown file with instructions for the agent.
+
+**Simple Skill Template:**
+\`\`\`markdown
+# Skill: <skill-name>
+
+<description of what this skill does>
+
+## Instructions
+
+<step-by-step instructions for the agent>
+\`\`\`
+
+If the user wants to create a Skill, guide them through the process or offer to create it for them.`;
   }
 }
