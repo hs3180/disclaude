@@ -14,6 +14,11 @@ import { buildTextContent } from './card-builders/content-builder.js';
 import { extractCardTextContent } from './card-builders/card-text-extractor.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { retry } from '../../utils/retry.js';
+import {
+  processDiscussionEnd,
+  detectDiscussionEnd,
+  removeTriggerPhrase,
+} from '../../channels/feishu/discussion-end-detector.js';
 
 /**
  * Feishu Message Sender Configuration.
@@ -41,6 +46,12 @@ export class FeishuMessageSender implements IMessageSender {
 
   async sendText(chatId: string, text: string, threadId?: string): Promise<void> {
     try {
+      // Issue #1229: Detect discussion end trigger and clean content
+      const detectionResult = detectDiscussionEnd(text);
+      const cleanedText = detectionResult.detected
+        ? removeTriggerPhrase(text, detectionResult)
+        : text;
+
       const messageData: {
         receive_id: string;
         msg_type: string;
@@ -49,7 +60,7 @@ export class FeishuMessageSender implements IMessageSender {
       } = {
         receive_id: chatId,
         msg_type: 'text',
-        content: buildTextContent(text),
+        content: buildTextContent(cleanedText),
       };
 
       if (threadId) {
@@ -78,15 +89,31 @@ export class FeishuMessageSender implements IMessageSender {
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
-        await messageLogger.logOutgoingMessage(botMessageId, chatId, text);
+        await messageLogger.logOutgoingMessage(botMessageId, chatId, cleanedText);
       }
 
-      const safeText = text || '';
+      const safeText = cleanedText || '';
       const preview = safeText.length > 100 ? `${safeText.substring(0, 100)}...` : safeText;
       this.logger.debug(
         { chatId, messageType: 'text', preview, botMessageId, threadId },
         'Message sent'
       );
+
+      // Issue #1229: Process discussion end trigger after message is sent
+      if (detectionResult.detected) {
+        this.logger.info(
+          {
+            chatId,
+            type: detectionResult.type,
+            summary: detectionResult.summary,
+          },
+          'Discussion end trigger detected in outgoing message'
+        );
+        // Process discussion end asynchronously (don't block)
+        processDiscussionEnd(chatId, text, this.client).catch((error) => {
+          this.logger.error({ err: error, chatId }, 'Failed to process discussion end');
+        });
+      }
     } catch (error) {
       handleError(
         error,
