@@ -170,15 +170,15 @@ function mapToFileType(fileType: string, fileName?: string): string {
  * IMPORTANT: For user-uploaded files in messages, we MUST use the message-resource API,
  * NOT the direct image.get or file.download APIs. Those only work for files uploaded by the bot.
  *
- * Issue #1290: For quoted/forwarded images, the message_id may not match the image_key.
- * We try the primary message_id first, then fallback to parentId if provided.
+ * Issue #1205: For quoted/forwarded images, the message_id may not match the image_key.
+ * We try the primary message_id first, then fallback to any provided fallback IDs.
  *
  * @param client - Lark API client
  * @param fileKey - Feishu file key (image_key or file_key)
  * @param fileType - File type (image, file, media, etc.)
  * @param fileName - Optional original filename
  * @param messageId - The message ID containing the file (REQUIRED for user uploads)
- * @param parentId - Optional parent message ID (for quoted/forwarded messages)
+ * @param fallbackIds - Optional array of fallback message IDs to try (for forwarded/quoted images)
  * @returns Local file path
  */
 export async function downloadFile(
@@ -187,7 +187,7 @@ export async function downloadFile(
   fileType: string,
   fileName?: string,
   messageId?: string,
-  parentId?: string
+  fallbackIds?: string[]
 ): Promise<string> {
   await ensureAttachmentsDir();
 
@@ -208,7 +208,7 @@ export async function downloadFile(
   const localFileName = `${timestamp}_${baseFileName}${extension}`;
   const localPath = path.join(getAttachmentsDir(), localFileName);
 
-  logger.info({ fileKey, fileType, fileName, messageId, parentId, localPath }, 'Downloading file from Feishu');
+  logger.info({ fileKey, fileType, fileName, messageId, fallbackIds, localPath }, 'Downloading file from Feishu');
 
   try {
     let fileResource: FileResourceResponse | undefined;
@@ -225,48 +225,57 @@ export async function downloadFile(
 
       logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
-      // Issue #1290: Try primary message_id first
-      try {
-        // SDK type doesn't include params.type, so we need to cast
-        fileResource = await client.im.messageResource.get({
-          path: {
-            message_id: messageId,
-            file_key: fileKey,
-          },
-          params: {
-            type: apiFileType,
-          },
-        }) as unknown as FileResourceResponse;
-      } catch (primaryError) {
-        // Issue #1290: If primary message_id fails and we have a parentId, try fallback
-        if (parentId && parentId !== messageId) {
-          logger.info(
-            { messageId, parentId, fileKey, error: (primaryError as Error).message },
-            'Primary message_id download failed, trying parentId fallback for quoted/forwarded image'
-          );
-          try {
-            fileResource = await client.im.messageResource.get({
-              path: {
-                message_id: parentId,
-                file_key: fileKey,
-              },
-              params: {
-                type: apiFileType,
-              },
-            }) as unknown as FileResourceResponse;
-            logger.info({ parentId, fileKey }, 'parentId fallback succeeded');
-          } catch (fallbackError) {
-            // Fallback also failed, throw the original error
-            logger.warn(
-              { parentId, fileKey, error: (fallbackError as Error).message },
-              'parentId fallback also failed'
-            );
-            throw primaryError;
+      // Issue #1205: Try primary message_id first, then fallback IDs
+      // Build list of IDs to try: primary message_id first, then all fallback IDs
+      const idsToTry = [messageId, ...(fallbackIds || [])].filter(
+        (id): id is string => typeof id === 'string' && id.length > 0
+      );
+
+      // Remove duplicates while preserving order
+      const uniqueIdsToTry = [...new Set(idsToTry)];
+
+      let lastError: Error | undefined;
+
+      for (const currentId of uniqueIdsToTry) {
+        try {
+          // SDK type doesn't include params.type, so we need to cast
+          fileResource = await client.im.messageResource.get({
+            path: {
+              message_id: currentId,
+              file_key: fileKey,
+            },
+            params: {
+              type: apiFileType,
+            },
+          }) as unknown as FileResourceResponse;
+
+          // If successful, break out of the loop
+          if (fileResource) {
+            if (currentId !== messageId) {
+              logger.info(
+                { originalMessageId: messageId, successfulId: currentId, fileKey },
+                'Download succeeded using fallback message_id'
+              );
+            }
+            break;
           }
-        } else {
-          // No parentId available or same as messageId, throw original error
-          throw primaryError;
+        } catch (error) {
+          lastError = error as Error;
+          logger.debug(
+            { messageId: currentId, fileKey, error: (error as Error).message },
+            'Download attempt failed for this message_id'
+          );
+          // Continue to try next ID
         }
+      }
+
+      // If all IDs failed and we have a lastError, throw it
+      if (!fileResource && lastError) {
+        logger.warn(
+          { messageId, fallbackIds, fileKey, error: lastError.message },
+          'All message_id attempts failed for file download'
+        );
+        throw lastError;
       }
     } else if (fileType === 'image') {
       // Fallback: Try direct image API (only works for bot-uploaded images)

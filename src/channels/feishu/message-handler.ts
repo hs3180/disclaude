@@ -120,13 +120,13 @@ export class MessageHandler {
     // Initialize FileHandler
     this.fileHandler = new FeishuFileHandler({
       attachmentManager,
-      downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string, parentId?: string) => {
+      downloadFile: async (fileKey: string, messageType: string, fileName?: string, messageId?: string, fallbackIds?: string[]) => {
         if (!this.client) {
           logger.error({ fileKey }, 'Client not initialized for file download');
           return { success: false };
         }
         try {
-          const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId, parentId);
+          const filePath = await downloadFile(this.client, fileKey, messageType, fileName, messageId, fallbackIds);
           return { success: true, filePath };
         } catch (error) {
           logger.error({ err: error, fileKey, messageType }, 'File download failed');
@@ -528,7 +528,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id, root_id, upper_message_id } = message;
 
     // Bot replies to user message by setting parent_id = message_id
     // Feishu automatically handles thread affiliation
@@ -568,18 +568,28 @@ export class MessageHandler {
       // Issue #1205: Log complete message structure for debugging message_id + file_key pairing
       // This helps identify if the message_id being used matches the file_key in the content
       // Issue #1290: Also log parent_id which may help with quoted/forwarded images
+      // Issue #1205: Also log root_id and upper_message_id for more fallback options
       logger.info(
         {
           chatId: chat_id,
           messageType: message_type,
           messageId: message_id,
           parentId: parent_id,
+          rootId: root_id,
+          upperMessageId: upper_message_id,
           contentPreview: content.substring(0, 200),
         },
         'Processing file/image message'
       );
-      // Issue #1290: Pass parent_id to handle quoted/forwarded images where image_key may belong to original message
-      const result = await this.fileHandler.handleFileMessage(chat_id, message_type, content, message_id, parent_id);
+      // Issue #1205: Pass multiple fallback IDs to handle forwarded/quoted images
+      // Priority: parent_id (reply) -> root_id (thread) -> upper_message_id (forwarded history)
+      const result = await this.fileHandler.handleFileMessage(
+        chat_id,
+        message_type,
+        content,
+        message_id,
+        [parent_id, root_id, upper_message_id].filter(Boolean) as string[]
+      );
       if (!result.success) {
         // Issue #1205: Include message_id in error logging for debugging pairing issues
         logger.error(
