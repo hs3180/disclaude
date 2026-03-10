@@ -245,4 +245,62 @@ export class ConversationSessionManager {
     this.sessions.clear();
     this.logger.info('All sessions closed');
   }
+
+  /**
+   * Mark a session as processing (task in progress).
+   * Used to prevent timeout during task execution.
+   * @see Issue #1313
+   *
+   * @param chatId - The chat identifier
+   * @param isProcessing - Whether the session is processing
+   */
+  setProcessing(chatId: string, isProcessing: boolean): void {
+    const session = this.sessions.get(chatId);
+    if (session) {
+      session.isProcessing = isProcessing;
+      if (isProcessing) {
+        session.lastActivity = Date.now();
+      }
+      this.logger.debug({ chatId, isProcessing }, 'Session processing state updated');
+    }
+  }
+
+  /**
+   * Check if a session is currently processing.
+   * @see Issue #1313
+   *
+   * @param chatId - The chat identifier
+   * @returns true if session is processing, false otherwise
+   */
+  isProcessing(chatId: string): boolean {
+    const session = this.sessions.get(chatId);
+    return session?.isProcessing ?? false;
+  }
+
+  /**
+   * Get all sessions that have been idle for longer than the specified threshold.
+   * Excludes sessions that are currently processing.
+   * @see Issue #1313
+   *
+   * @param idleMs - Idle threshold in milliseconds
+   * @returns Array of chatIds that are idle
+   */
+  getIdleSessions(idleMs: number): string[] {
+    const now = Date.now();
+    const idleChatIds: string[] = [];
+
+    for (const [chatId, session] of this.sessions) {
+      // Skip if session is closed or currently processing
+      if (session.closed || session.isProcessing) {
+        continue;
+      }
+      // Check if idle time exceeds threshold
+      const idleTime = now - session.lastActivity;
+      if (idleTime >= idleMs) {
+        idleChatIds.push(chatId);
+      }
+    }
+
+    return idleChatIds;
+  }
 }

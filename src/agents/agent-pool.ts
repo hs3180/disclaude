@@ -25,6 +25,8 @@
 import type pino from 'pino';
 import { createLogger } from '../utils/logger.js';
 import type { ChatAgent } from './types.js';
+import { Config } from '../../config/index.js';
+import { SessionTimeoutManager } from '../conversation/session-timeout-manager.js';
 
 const logger = createLogger('AgentPool');
 
@@ -45,48 +47,51 @@ export interface AgentPoolConfig {
 
 /**
  * AgentPool - Manages ChatAgent instances per chatId.
- *
- * Ensures complete isolation between different chat sessions by
- * giving each chatId its own ChatAgent instance.
- *
- * Lifecycle: ChatAgents are long-lived and persist across sessions.
- * Other agent types (ScheduleAgent, TaskAgent, SkillAgent) are not
- * managed here - they should be created and disposed as needed.
  */
 export class AgentPool {
+  private readonly log: pino.Logger;
   private readonly chatAgentFactory: ChatAgentFactory;
   private readonly chatAgents = new Map<string, ChatAgent>();
-  private readonly log: pino.Logger;
+  private readonly lastActivityTimes = new Map<string, number>();
+  private timeoutManager?: SessionTimeoutManager;
 
   constructor(config: AgentPoolConfig) {
-    this.chatAgentFactory = config.chatAgentFactory;
-    this.log = config.logger ?? logger;
-  }
-
-  /**
-   * Get or create a ChatAgent instance for the given chatId.
-   *
-   * If a ChatAgent already exists for this chatId, returns it.
-   * Otherwise, creates a new ChatAgent using the factory.
-   *
-   * @param chatId - The chat identifier
-   * @returns The ChatAgent instance for this chatId
-   */
-  getOrCreateChatAgent(chatId: string): ChatAgent {
-    let agent = this.chatAgents.get(chatId);
-    if (!agent) {
-      this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
-      agent = this.chatAgentFactory(chatId);
-      this.chatAgents.set(chatId, agent);
+    if (config.logger) {
+      this.log = config.logger;
+    } else {
+      this.log = createLogger('AgentPool');
     }
-    return agent;
+    this.chatAgentFactory = config.chatAgentFactory;
+
+    // Initialize timeout manager if configured
+    const timeoutConfig = Config.getSessionRestoreConfig().sessionTimeout;
+    if (timeoutConfig.enabled) {
+      this.timeoutManager = new SessionTimeoutManager({
+        logger: this.log,
+        sessionManager: this,
+        enabled: timeoutConfig.enabled,
+        idleMinutes: timeoutConfig.idleMinutes,
+        maxSessions: timeoutConfig.maxSessions,
+        checkIntervalMinutes: timeoutConfig.checkIntervalMinutes,
+        onSessionTimeout: async (chatId: string) => {
+          // Call dispose to close the agent and release resources
+          await this.dispose(chatId);
+          this.log.info({ chatId }, 'Session closed due to timeout');
+        },
+      });
+    }
   }
 
   /**
-   * Check if a ChatAgent exists for the given chatId.
+   * Get or create a ChatAgent for the chatId.
+   *
+   * This method is non-blocking - it calls chatAgentFactory to creates a new agent.
+   * Based on boundChatId, this is returned.
+   * The message routing,,
+   * this system can be expanded to include multiple agents for different chatIds.
    *
    * @param chatId - The chat identifier
-   * @returns true if a ChatAgent exists
+   * @returns true if a ChatAgent exists, false otherwise
    */
   has(chatId: string): boolean {
     return this.chatAgents.has(chatId);
@@ -103,6 +108,29 @@ export class AgentPool {
   }
 
   /**
+   * Get or create a ChatAgent for the chatId.
+   *
+   * This method is non-blocking - it calls chatAgentFactory to creates a new agent.
+   * Based on boundChatId, this is returned.
+   * The message routing,,
+   * this system can be expanded to include multiple agents for different chatIds.
+   *
+   * @param chatId - The chat identifier
+   * @returns The ChatAgent instance
+   */
+  getOrCreate(chatId: string): ChatAgent {
+    let agent = this.chatAgents.get(chatId);
+    if (!agent) {
+      this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
+      agent = this.chatAgentFactory(chatId);
+      this.chatAgents.set(chatId, agent);
+    }
+    // Update last activity time
+    this.lastActivityTimes.set(chatId, Date.now());
+    return agent;
+  }
+
+  /**
    * Dispose and remove the ChatAgent for a chatId.
    *
    * This properly disposes the ChatAgent's resources before removing it.
@@ -110,31 +138,47 @@ export class AgentPool {
    * @param chatId - The chat identifier
    * @returns true if a ChatAgent was disposed, false if not found
    */
-  dispose(chatId: string): boolean {
+  async dispose(chatId: string): Promise<boolean> {
     const agent = this.chatAgents.get(chatId);
     if (!agent) {
       return false;
     }
 
-    this.log.info({ chatId }, 'Disposing ChatAgent instance for chatId');
-    this.chatAgents.delete(chatId);
-    agent.dispose();
-    return true;
+    // Clear lastActivity tracking
+    this.lastActivityTimes.delete(chatId);
+
+    // Close the agent
+    try {
+      agent.dispose();
+      this.log.debug({ chatId }, 'ChatAgent disposed');
+      return true;
+    } catch (err) {
+      this.log.error({ err, chatId }, 'Error disposing ChatAgent');
+      return false;
+    }
   }
 
   /**
-   * Reset the ChatAgent for a chatId (clear conversation context).
+   * Reset a ChatAgent for the chatId.
    *
-   * If the ChatAgent exists, calls its reset method.
+   * This method is non-blocking - it calls chatAgentFactory to creates a new agent.
+   * Based on boundChatId, this is returned.
+   * The message routing,,
+   * this system can be expanded to include multiple agents for different chatIds.
    *
-   * @param chatId - The chat identifier
-   * @param keepContext - If true, reloads history context after reset (default: false)
+   * @param chatId - The chat identifier (optional)
+   * @param keepContext - Whether to preserve context on reset
+   * @returns true if a ChatAgent exists, false otherwise
    */
-  reset(chatId: string, keepContext?: boolean): void {
-    const agent = this.chatAgents.get(chatId);
+  reset(chatId?: string, keepContext?: boolean): void {
+    // Find agent to reset (use boundChatId if no chatId provided)
+    const targetChatId = chatId ?? Array.from(this.chatAgents.keys())[0];
+    const agent = this.chatAgents.get(targetChatId);
     if (agent) {
-      this.log.debug({ chatId, keepContext }, 'Resetting ChatAgent for chatId');
-      agent.reset(chatId, keepContext);
+      // Clear lastActivity tracking before reset
+      this.lastActivityTimes.delete(targetChatId);
+      agent.reset(targetChatId, keepContext);
+      this.log.info({ chatId: targetChatId, keepContext }, 'Resetting ChatAgent for chatId');
     }
   }
 
@@ -157,15 +201,29 @@ export class AgentPool {
   }
 
   /**
+   * Get the lastActivity times for all chatIds.
+   * Used by SessionTimeoutManager to determine which sessions should be checked for timeout.
+   */
+  getLastActivityTimes(): Map<string, number> {
+    return this.lastActivityTimes;
+  }
+
+  /**
    * Dispose all ChatAgents and clear the pool.
    * Used during shutdown.
    */
   disposeAll(): void {
     this.log.info('Disposing all ChatAgent instances');
 
+    // Stop timeout manager first
+    if (this.timeoutManager) {
+      this.timeoutManager.stop();
+    }
+
     // Clear map first
     const agents = Array.from(this.chatAgents.entries());
     this.chatAgents.clear();
+    this.lastActivityTimes.clear();
 
     // Then dispose all agents
     for (const [chatId, agent] of agents) {

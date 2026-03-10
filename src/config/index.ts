@@ -379,12 +379,25 @@ export class Config {
     historyDays: number;
     maxContextLength: number;
     loadOnReset: boolean;
+    sessionTimeout: {
+      enabled: boolean;
+      idleMinutes: number;
+      maxSessions: number;
+      checkIntervalMinutes: number;
+    };
   } {
     const config = fileConfigOnly.sessionRestore || {};
+    const timeoutConfig = config.sessionTimeout || {};
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
       loadOnReset: config.loadOnReset ?? false,
+      sessionTimeout: {
+        enabled: timeoutConfig.enabled ?? false,
+        idleMinutes: timeoutConfig.idleMinutes ?? 30,
+        maxSessions: timeoutConfig.maxSessions ?? 100,
+        checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+      },
     };
   }
 }

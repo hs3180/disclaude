@@ -310,6 +310,21 @@ export interface MessagingConfig {
 }
 
 /**
+ * Session timeout configuration (Issue #1313).
+ * Controls automatic session management for idle chats.
+ */
+export interface SessionTimeoutConfig {
+  /** Enable session timeout management (default: false) */
+  enabled?: boolean;
+  /** Idle minutes before session is closed (default: 30) */
+  idleMinutes?: number;
+  /** Maximum concurrent sessions (default: 100, 0 = unlimited) */
+  maxSessions?: number;
+  /** Check interval in minutes for timeout detection (default: 5) */
+  checkIntervalMinutes?: number;
+}
+
+/**
  * Session restoration configuration (Issue #1213).
  * Controls how chat history is loaded when agent starts or resets.
  */
@@ -320,6 +335,8 @@ export interface SessionRestoreConfig {
   maxContextLength?: number;
   /** Whether to load history on reset (default: false) */
   loadOnReset?: boolean;
+  /** Session timeout configuration (Issue #1313) */
+  sessionTimeout?: SessionTimeoutConfig;
 }
 
 /**
