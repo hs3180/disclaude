@@ -96,14 +96,6 @@ vi.mock('../platforms/feishu/interaction-manager.js', () => ({
   })),
 }));
 
-vi.mock('../feishu/task-flow-orchestrator.js', () => ({
-  TaskFlowOrchestrator: vi.fn(),
-}));
-
-vi.mock('../utils/task-tracker.js', () => ({
-  TaskTracker: vi.fn(),
-}));
-
 vi.mock('../nodes/commands/command-registry.js', () => ({
   getCommandRegistry: vi.fn(() => ({
     has: (name: string) => ['reset', 'status', 'help', 'restart', 'list-nodes', 'switch-node',

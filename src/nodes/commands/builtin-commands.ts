@@ -11,7 +11,6 @@
  * - passive-command.ts: PassiveCommand
  * - debug-commands.ts: SetDebugCommand, ShowDebugCommand, ClearDebugCommand
  * - schedule-command.ts: ScheduleCommand
- * - task-command.ts: TaskCommand
  * - topic-group-command.ts: TopicGroupCommand
  *
  * Issue #696: 拆分 builtin-commands.ts
@@ -41,7 +40,6 @@ import {
   ShowDebugCommand,
   ClearDebugCommand,
   ScheduleCommand,
-  TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
 } from './commands/index.js';
@@ -65,7 +63,6 @@ export {
   ShowDebugCommand,
   ClearDebugCommand,
   ScheduleCommand,
-  TaskCommand,
   TopicGroupCommand,
   ExpertCommand,
 };
@@ -95,8 +92,6 @@ export function registerDefaultCommands(
   registry.register(new ClearDebugCommand());
   // Issue #469: Schedule management command
   registry.register(new ScheduleCommand());
-  // Issue #468: Task control command
-  registry.register(new TaskCommand());
   // Issue #721: Topic group command for BBS mode
   registry.register(new TopicGroupCommand());
   // Issue #535: Expert registration and skill management

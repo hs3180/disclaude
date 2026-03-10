@@ -13,8 +13,6 @@ import { createLogger } from '../utils/logger.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { InteractionManager } from '../platforms/feishu/interaction-manager.js';
 import type { WelcomeService } from '../platforms/feishu/welcome-service.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { TaskTracker } from '../utils/task-tracker.js';
 import { attachmentManager } from '../file-transfer/inbound/index.js';
 import { BaseChannel } from './base-channel.js';
 import {
@@ -101,14 +99,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private welcomeHandler: WelcomeHandler;
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
-  private taskTracker: TaskTracker;
-  private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     this.appId = config.appId || Config.FEISHU_APP_ID;
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
-    this.taskTracker = new TaskTracker();
 
     // Initialize modular components
     this.passiveModeManager = new PassiveModeManager();
@@ -318,29 +313,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_file',
       ],
     };
-  }
-
-  /**
-   * Get the TaskFlowOrchestrator for this channel.
-   */
-  getTaskFlowOrchestrator(): TaskFlowOrchestrator | undefined {
-    return this.taskFlowOrchestrator;
-  }
-
-  /**
-   * Initialize TaskFlowOrchestrator with callbacks.
-   */
-  async initTaskFlowOrchestrator(callbacks: {
-    sendMessage: (chatId: string, text: string) => Promise<void>;
-    sendCard: (chatId: string, card: Record<string, unknown>, description?: string) => Promise<void>;
-    sendFile: (chatId: string, filePath: string) => Promise<void>;
-  }): Promise<void> {
-    this.taskFlowOrchestrator = new TaskFlowOrchestrator(
-      this.taskTracker,
-      callbacks,
-      logger
-    );
-    await this.taskFlowOrchestrator.start();
   }
 
   // Delegate passive mode methods to PassiveModeManager

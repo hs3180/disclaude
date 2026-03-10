@@ -33,8 +33,6 @@ import {
   Scheduler,
   ScheduleFileWatcher,
 } from '../schedule/index.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 import { FileClient } from '../file-transfer/node-transfer/file-client.js';
 import type { WorkerNodeConfig, NodeCapabilities } from './types.js';
@@ -85,7 +83,6 @@ export class WorkerNode {
   // Scheduler
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
-  private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   constructor(config: WorkerNodeConfig) {
     this.nodeId = config.nodeId || `worker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -340,48 +337,13 @@ export class WorkerNode {
       },
     });
 
-    // Initialize TaskFlowOrchestrator
-    const taskTracker = new TaskTracker();
-    this.taskFlowOrchestrator = new TaskFlowOrchestrator(
-      taskTracker,
-      {
-        sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
-          } else {
-            logger.warn({ chatId }, 'Cannot send message: WebSocket not connected');
-          }
-          return Promise.resolve();
-        },
-        sendCard: (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string): Promise<void> => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'card', chatId, card, threadId: threadMessageId }));
-          } else {
-            logger.warn({ chatId }, 'Cannot send card: WebSocket not connected');
-          }
-          return Promise.resolve();
-        },
-        sendFile: (chatId: string, filePath: string): Promise<void> => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
-          } else {
-            logger.warn({ chatId }, 'Cannot send file: WebSocket not connected');
-          }
-          return Promise.resolve();
-        },
-      },
-      logger
-    );
-
     // Start scheduler and file watcher
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
-    await this.taskFlowOrchestrator.start();
 
     console.log('✓ Execution capability initialized');
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
-    console.log('✓ TaskFlowOrchestrator started');
   }
 
   /**

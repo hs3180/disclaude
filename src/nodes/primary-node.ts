@@ -42,8 +42,6 @@ import { RestChannel } from '../channels/rest-channel.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, CardActionMessage, FeishuApiRequestMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
 import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
-import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
-import { TaskTracker } from '../utils/task-tracker.js';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { SchedulerService } from './scheduler-service.js';
 import { UnifiedMessageRouter } from './unified-message-router.js';
@@ -66,8 +64,6 @@ import {
 // Schedule management (Issue #469)
 import { ScheduleManager } from '../schedule/schedule-manager.js';
 import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
-// Task management (Issue #468)
-import { getTaskStateManager } from '../utils/task-state-manager.js';
 // Extracted modules (Issue #695)
 import { ScheduleManagement } from './schedule-management.js';
 // Issue #893: Removed triggerNextStepRecommendation - now using in-prompt guidance
@@ -137,7 +133,6 @@ export class PrimaryNode extends EventEmitter {
   // Local execution
   private agentPool?: AgentPool;
   private activeFeedbackChannels = new Map<string, FeedbackContext>();
-  private taskFlowOrchestrator?: TaskFlowOrchestrator;
 
   // Group management (Issue #486)
   private groupService: GroupService;
@@ -235,13 +230,6 @@ export class PrimaryNode extends EventEmitter {
             action: message.action,
           });
         },
-      });
-
-      // Initialize TaskFlowOrchestrator for Feishu channel
-      void feishuChannel.initTaskFlowOrchestrator({
-        sendMessage: this.sendMessage.bind(this),
-        sendCard: this.sendCard.bind(this),
-        sendFile: this.sendFileToUser.bind(this),
       });
 
       // Issue #463: Initialize WelcomeService and set to FeishuChannel
@@ -574,30 +562,9 @@ export class PrimaryNode extends EventEmitter {
       sendMessage: (chatId, text, threadId) => this.sendMessage(chatId, text, threadId),
     });
 
-    // Initialize TaskFlowOrchestrator
-    const taskTracker = new TaskTracker();
-    this.taskFlowOrchestrator = new TaskFlowOrchestrator(
-      taskTracker,
-      {
-        sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-          return this.sendMessage(chatId, text, threadMessageId);
-        },
-        sendCard: (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string): Promise<void> => {
-          return this.sendCard(chatId, card, undefined, threadMessageId);
-        },
-        sendFile: (chatId: string, filePath: string): Promise<void> => {
-          return this.sendFileToUser(chatId, filePath);
-        },
-      },
-      logger
-    );
-
-    await this.taskFlowOrchestrator.start();
-
     console.log('✓ Local execution capability initialized');
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
-    console.log('✓ TaskFlowOrchestrator started');
   }
 
   /**
@@ -693,7 +660,6 @@ export class PrimaryNode extends EventEmitter {
 
     // Build command context with services using factory (Issue #695)
     const debugGroupService = getDebugGroupService();
-    const taskStateManager = getTaskStateManager();
 
     const services = buildCommandServices({
       isRunning: () => this.running,
@@ -706,7 +672,6 @@ export class PrimaryNode extends EventEmitter {
       groupService: this.groupService,
       debugGroupService,
       scheduleManagement: this.scheduleManagement!,
-      taskStateManager,
       getChannelStatus: () => this.messageRouter.getChannels().map(ch => `${ch.name}: ${ch.status}`).join(', '),
       getChannels: () => this.messageRouter.getChannels(),
       skillAgentManager: this.skillAgentManager!,

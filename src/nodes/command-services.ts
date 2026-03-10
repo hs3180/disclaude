@@ -18,7 +18,6 @@ import {
   getBotChats,
 } from '../platforms/feishu/chat-ops.js';
 import type { GroupService } from '../platforms/feishu/group-service.js';
-import type { TaskStateManager } from '../utils/task-state-manager.js';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
 import type { DebugGroupService } from './debug-group-service.js';
 import type { ScheduleManagement } from './schedule-management.js';
@@ -45,8 +44,6 @@ export interface CommandServicesDeps {
   debugGroupService: DebugGroupService;
   /** Schedule management */
   scheduleManagement: ScheduleManagement;
-  /** Task state manager */
-  taskStateManager: TaskStateManager;
   /** Get channel status list */
   getChannelStatus: () => string;
   /** Get channels for passive mode operations */
@@ -71,7 +68,6 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     groupService,
     debugGroupService,
     scheduleManagement,
-    taskStateManager,
     getChannelStatus,
     getChannels,
     skillAgentManager,
@@ -124,17 +120,6 @@ export function buildCommandServices(deps: CommandServicesDeps): CommandServices
     isScheduleRunning: (taskId: string) => scheduleManagement.isScheduleRunning(taskId),
     getScheduleCooldownStatus: (taskId: string, cooldownPeriod?: number) => scheduleManagement.getScheduleCooldownStatus(taskId, cooldownPeriod),
     clearScheduleCooldown: (taskId: string) => scheduleManagement.clearScheduleCooldown(taskId),
-
-    // Task management
-    startTask: (prompt: string, chatId: string, userId?: string) => taskStateManager.startTask(prompt, chatId, userId),
-    getCurrentTask: () => taskStateManager.getCurrentTask(),
-    updateTaskProgress: (progress: number, currentStep?: string) => taskStateManager.updateProgress(progress, currentStep),
-    pauseTask: () => taskStateManager.pauseTask(),
-    resumeTask: () => taskStateManager.resumeTask(),
-    cancelTask: () => taskStateManager.cancelTask(),
-    completeTask: () => taskStateManager.completeTask(),
-    setTaskError: (error: string) => taskStateManager.setTaskError(error),
-    listTaskHistory: (limit?: number) => taskStateManager.listTaskHistory(limit),
 
     // Passive mode management
     setPassiveMode: (chatId: string, disabled: boolean) => {

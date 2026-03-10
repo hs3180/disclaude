@@ -111,14 +111,6 @@ vi.mock('../platforms/feishu/interaction-manager.js', () => ({
   })),
 }));
 
-vi.mock('../feishu/task-flow-orchestrator.js', () => ({
-  TaskFlowOrchestrator: vi.fn(),
-}));
-
-vi.mock('../utils/task-tracker.js', () => ({
-  TaskTracker: vi.fn(),
-}));
-
 import { FeishuChannel } from './feishu-channel.js';
 
 describe('FeishuChannel - Bot Mention Detection (Issue #681)', () => {

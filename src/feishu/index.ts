@@ -7,5 +7,4 @@
  */
 
 // Re-export commonly used components
-export { TaskFlowOrchestrator } from './task-flow-orchestrator.js';
 export { messageLogger } from './message-logger.js';

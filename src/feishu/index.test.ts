@@ -6,11 +6,6 @@ import { describe, it, expect } from 'vitest';
 
 describe('Feishu Module Exports', () => {
   describe('Module Structure', () => {
-    it('should export TaskFlowOrchestrator class', async () => {
-      const module = await import('./index.js');
-      expect(module.TaskFlowOrchestrator).toBeDefined();
-    });
-
     it('should export messageLogger', async () => {
       const module = await import('./index.js');
       expect(module.messageLogger).toBeDefined();
