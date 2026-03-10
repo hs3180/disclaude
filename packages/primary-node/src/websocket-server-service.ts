@@ -27,6 +27,7 @@ import type {
   FeishuApiResponseMessage,
   NodeCapabilities,
   FileStorageConfig,
+  FileRef,
 } from '@disclaude/core';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
 
@@ -40,6 +41,22 @@ export interface IFileStorageService {
   initialize(): Promise<void>;
   shutdown(): void;
   getStats(): unknown;
+  storeFromLocal(
+    localPath: string,
+    fileName: string,
+    mimeType?: string,
+    source?: 'user' | 'agent',
+    chatId?: string
+  ): Promise<FileRef>;
+  storeFromBase64(
+    content: string,
+    fileName: string,
+    mimeType?: string,
+    userId?: string,
+    chatId?: string
+  ): Promise<FileRef>;
+  get(fileId: string): { ref: FileRef } | undefined;
+  getContent(fileId: string): Promise<string>;
 }
 
 /**

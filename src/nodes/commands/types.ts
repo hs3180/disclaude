@@ -8,6 +8,10 @@
  */
 
 import type * as lark from '@larksuiteoapi/node-sdk';
+import type { ExecNodeInfo } from '@disclaude/core';
+
+// Re-export for backward compatibility
+export type { ExecNodeInfo } from '@disclaude/core';
 
 /**
  * Command category for grouping related commands.
@@ -38,17 +42,6 @@ export interface ScheduleTaskInfo {
   createdAt?: string;
   /** Cooldown period in milliseconds (Issue #869) */
   cooldownPeriod?: number;
-}
-
-/**
- * Execution node info for status display.
- */
-export interface ExecNodeInfo {
-  nodeId: string;
-  name: string;
-  status: string;
-  isLocal: boolean;
-  activeChats: number;
 }
 
 /**

@@ -44,16 +44,18 @@ import type { FileRef } from '../file-transfer/types.js';
 import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import { ExecNodeRegistry } from './exec-node-registry.js';
+import {
+  ExecNodeRegistry,
+  WebSocketServerService,
+  CardActionRouter,
+  getDebugGroupService,
+} from '@disclaude/primary-node';
 import { SchedulerService } from './scheduler-service.js';
 import { UnifiedMessageRouter } from './unified-message-router.js';
-import { WebSocketServerService } from './websocket-server-service.js';
 import type { PrimaryNodeConfig, NodeCapabilities } from './types.js';
 // Group management (Issue #486)
 import { GroupService, getGroupService } from '../platforms/feishu/group-service.js';
 import { createFeishuClient } from '../platforms/feishu/create-feishu-client.js';
-// Debug group (Issue #487)
-import { getDebugGroupService } from './debug-group-service.js';
 // Command system (Issue #463)
 import {
   getCommandRegistry,
@@ -71,8 +73,6 @@ import { getTaskStateManager } from '../utils/task-state-manager.js';
 import { ScheduleManagement } from './schedule-management.js';
 // Issue #893: Removed triggerNextStepRecommendation - now using in-prompt guidance
 import { buildCommandServices } from './command-services.js';
-// Issue #935: Card action routing to Worker Nodes
-import { CardActionRouter } from './card-action-router.js';
 // Issue #455: Skill Agent System
 import { SkillAgentManager, initSkillAgentManager } from '../agents/skill-agent-manager.js';
 // Issue #1032: Unified Lark Client Service

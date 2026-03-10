@@ -9,7 +9,7 @@
  */
 
 import type { FilterReason } from '../config/types.js';
-import { getDebugGroupService, type DebugGroupInfo } from '../nodes/debug-group-service.js';
+import { getDebugGroupService, type DebugGroupInfo } from '@disclaude/primary-node';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('FilteredMessageForwarder');

@@ -56,3 +56,16 @@ export {
 
 // Legacy (deprecated, use UnifiedMessageRouter instead)
 export { FeedbackRouter, type FeedbackRouterConfig } from './feedback-router.js';
+
+// Re-export from @disclaude/primary-node for backward compatibility (Issue #1040)
+export {
+  ExecNodeRegistry,
+  WebSocketServerService,
+  CardActionRouter,
+  DebugGroupService,
+  getDebugGroupService,
+  type ConnectedExecNode,
+  type WebSocketServerServiceConfig,
+  type CardActionRouterConfig,
+  type DebugGroupInfo,
+} from '@disclaude/primary-node';
