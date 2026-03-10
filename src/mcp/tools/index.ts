@@ -65,3 +65,11 @@ export type {
   StudyGuideOptions,
   StudyGuideResult,
 } from './study-guide-generator.js';
+
+// Task Status Tool (Issue #857: Reporter Agent)
+export {
+  get_current_task_status,
+  taskStatusSchema,
+  taskStatusToolDefinition,
+} from './task-status.js';
+export type { TaskStatusResult } from './task-status.js';

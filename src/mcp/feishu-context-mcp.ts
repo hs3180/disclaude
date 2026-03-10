@@ -11,6 +11,8 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  get_current_task_status,
+  taskStatusToolDefinition,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -30,6 +32,8 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { get_current_task_status } from './tools/task-status.js';
+export type { TaskStatusResult } from './tools/task-status.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -125,7 +129,8 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
   // ============================================================================
   // Issue #1155: Consolidated tools to reduce token overhead
   // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
-  // Core tools: send_message, send_file
+  // Issue #857: Added get_current_task_status for Reporter Agent
+  // Core tools: send_message, send_file, get_current_task_status
   // ============================================================================
   {
     name: 'send_message',
@@ -213,6 +218,45 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_current_task_status',
+    description: `Get the current task status for progress reporting.
+
+Returns information about the currently running task:
+- Task ID and description (prompt)
+- Current status: running, paused, completed, cancelled, error
+- Progress percentage (0-100)
+- Current step description
+- Time elapsed (seconds)
+- Estimated time remaining (if available)
+
+Use this tool to:
+1. Check if a task is still running before reporting
+2. Get progress information for status updates
+3. Determine what to report to the user`,
+    parameters: z.object({}),
+    handler: async () => {
+      try {
+        const result = await get_current_task_status();
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify(result, null, 2),
+          }],
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: false,
+              message: `Failed to get task status: ${error instanceof Error ? error.message : String(error)}`,
+            }, null, 2),
+          }],
+        };
       }
     },
   },
