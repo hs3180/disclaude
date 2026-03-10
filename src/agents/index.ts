@@ -119,3 +119,26 @@ export {
   type SubagentHandle,
   type SubagentStatusCallback,
 } from './subagent-manager.js';
+
+// ETA Task Records - Markdown-based task records (Issue #1234)
+export {
+  ETATaskRecords,
+  etaTaskRecords,
+  type ETATaskRecord,
+} from './eta-records.js';
+
+// ETA Rules - Markdown-based estimation rules (Issue #1234)
+export {
+  ETARules,
+  etaRules,
+  type TaskTypeBaseline,
+  type ETAEstimationRule,
+} from './eta-rules.js';
+
+// ETA Prediction Service (Issue #1234)
+export {
+  ETAPredictionService,
+  etaPredictionService,
+  type ETAPrediction,
+  type TaskContext,
+} from './eta-prediction-service.js';
