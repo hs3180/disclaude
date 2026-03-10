@@ -364,6 +364,8 @@ export class ScheduleFileWatcher {
   private watcher: fs.FSWatcher | null = null;
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private running = false;
+  /** Reuse ScheduleFileScanner for parsing (avoids code duplication) */
+  private fileScanner: ScheduleFileScanner;
 
   constructor(options: ScheduleFileWatcherOptions) {
     this.schedulesDir = options.schedulesDir;
@@ -371,6 +373,9 @@ export class ScheduleFileWatcher {
     this.onFileChanged = options.onFileChanged;
     this.onFileRemoved = options.onFileRemoved;
     this.debounceMs = options.debounceMs ?? 100;
+    // Create scanner for reuse (avoids duplicating parseFile logic)
+    this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir });
+    logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileScanner created');
   }
 
   /**
@@ -472,7 +477,8 @@ export class ScheduleFileWatcher {
 
         if (exists) {
           // File added or renamed to this name
-          const task = await this.parseFile(filePath);
+          // Reuse fileScanner for parsing (avoids code duplication)
+          const task = await this.fileScanner.parseFile(filePath);
           if (task) {
             logger.info({ taskId, filename }, 'Schedule file added');
             this.onFileAdded(task);
@@ -484,7 +490,8 @@ export class ScheduleFileWatcher {
         }
       } else if (eventType === 'change') {
         // File modified
-        const task = await this.parseFile(filePath);
+        // Reuse fileScanner for parsing (avoids code duplication)
+        const task = await this.fileScanner.parseFile(filePath);
         if (task) {
           logger.info({ taskId, filename }, 'Schedule file changed');
           this.onFileChanged(task);
@@ -504,42 +511,6 @@ export class ScheduleFileWatcher {
       return true;
     } catch {
       return false;
-    }
-  }
-
-  /**
-   * Parse a schedule file (uses shared parseScheduleFrontmatter).
-   */
-  private async parseFile(filePath: string): Promise<ScheduleFileTask | null> {
-    try {
-      const content = await fsPromises.readFile(filePath, 'utf-8');
-      const stats = await fsPromises.stat(filePath);
-
-      const { frontmatter, contentStart } = parseScheduleFrontmatter(content);
-      if (!frontmatter['name'] || !frontmatter['cron'] || !frontmatter['chatId']) {
-        return null;
-      }
-
-      const prompt = content.slice(contentStart).trim();
-      const fileName = path.basename(filePath);
-
-      return {
-        id: generateTaskId(fileName),
-        name: frontmatter['name'] as string,
-        cron: frontmatter['cron'] as string,
-        chatId: frontmatter['chatId'] as string,
-        prompt,
-        enabled: (frontmatter['enabled'] as boolean) ?? true,
-        blocking: (frontmatter['blocking'] as boolean) ?? true,
-        cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
-        createdBy: frontmatter['createdBy'] as string | undefined,
-        createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
-        sourceFile: filePath,
-        fileMtime: stats.mtime,
-      };
-    } catch (error) {
-      logger.error({ err: error, filePath }, 'Failed to parse schedule file');
-      return null;
     }
   }
 }
