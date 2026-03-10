@@ -69,6 +69,8 @@ describe('FeishuFileHandler', () => {
         'image',
         'image_img_key_123',
         'msg-456',
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -95,6 +97,8 @@ describe('FeishuFileHandler', () => {
         'file',
         'document.pdf',
         'msg-456',
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -204,7 +208,9 @@ describe('FeishuFileHandler', () => {
         'image',
         'image_img_key_quoted',
         'msg-new-789',
-        'msg-original-456'
+        'msg-original-456',
+        undefined,
+        undefined
       );
     });
 
@@ -229,7 +235,39 @@ describe('FeishuFileHandler', () => {
         'file',
         'quoted_doc.pdf',
         'msg-new-123',
-        'msg-original-456'
+        'msg-original-456',
+        undefined,
+        undefined
+      );
+    });
+
+    // Issue #1205: Tests for rootId and upperMessageId parameters
+    it('should pass rootId and upperMessageId to downloadFile (Issue #1205)', async () => {
+      const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
+      mockDownload.mockResolvedValue({
+        success: true,
+        filePath: '/tmp/thread_image.png',
+      });
+
+      const result = await handler.handleFileMessage(
+        'chat-123',
+        'image',
+        JSON.stringify({ image_key: 'img_key_thread' }),
+        'msg-reply-789',
+        'msg-parent-456',
+        'msg-root-123',      // rootId for thread messages
+        'msg-upper-abc'      // upperMessageId for packed history
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockDownload).toHaveBeenCalledWith(
+        'img_key_thread',
+        'image',
+        'image_img_key_thread',
+        'msg-reply-789',
+        'msg-parent-456',
+        'msg-root-123',
+        'msg-upper-abc'
       );
     });
   });

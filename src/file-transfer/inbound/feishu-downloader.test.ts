@@ -294,7 +294,8 @@ describe('downloadFile', () => {
   });
 
   // Issue #1290: Tests for parentId fallback for quoted/forwarded images
-  describe('parentId fallback (Issue #1290)', () => {
+  // Issue #1205: Extended to test multiple fallback IDs
+  describe('fallback mechanism (Issue #1290, #1205)', () => {
     it('should fallback to parentId when primary message_id fails', async () => {
       const mockClient = createMockClient();
       const mockWriteFile = vi.fn().mockResolvedValue(undefined);
@@ -345,10 +346,94 @@ describe('downloadFile', () => {
       expect(result).toContain('quoted.png');
     });
 
-    it('should throw error when both message_id and parentId fail', async () => {
+    it('should fallback to rootId when parentId fails (Issue #1205)', async () => {
+      const mockClient = createMockClient();
+      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+
+      // First call with message_id fails
+      // Second call with parentId fails
+      // Third call with rootId succeeds
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error('message_id mismatch'))
+        .mockRejectedValueOnce(new Error('parentId mismatch'))
+        .mockResolvedValueOnce({
+          writeFile: mockWriteFile,
+        });
+
+      const result = await downloadFile(
+        mockClient as unknown as Parameters<typeof downloadFile>[0],
+        'img_key_thread',
+        'image',
+        'thread.png',
+        'msg_reply_123',     // Reply message ID
+        'msg_parent_456',    // Parent ID (direct parent in thread)
+        'msg_root_789'       // Root ID (root of the thread)
+      );
+
+      // Should have called API three times
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(3);
+
+      // Third call should use rootId as fallback
+      expect(mockClient.im.messageResource.get).toHaveBeenNthCalledWith(3, {
+        path: {
+          message_id: 'msg_root_789',
+          file_key: 'img_key_thread',
+        },
+        params: {
+          type: 'image',
+        },
+      });
+
+      expect(mockWriteFile).toHaveBeenCalled();
+      expect(result).toContain('thread.png');
+    });
+
+    it('should fallback to upperMessageId when other fallbacks fail (Issue #1205)', async () => {
+      const mockClient = createMockClient();
+      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+
+      // All previous calls fail, upperMessageId succeeds
+      (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error('message_id mismatch'))
+        .mockRejectedValueOnce(new Error('parentId mismatch'))
+        .mockRejectedValueOnce(new Error('rootId mismatch'))
+        .mockResolvedValueOnce({
+          writeFile: mockWriteFile,
+        });
+
+      const result = await downloadFile(
+        mockClient as unknown as Parameters<typeof downloadFile>[0],
+        'img_key_packed',
+        'image',
+        'packed.png',
+        'msg_forwarded_123',
+        'msg_parent_456',
+        'msg_root_789',
+        'msg_upper_abc'      // Upper message ID (from packed history)
+      );
+
+      // Should have called API four times
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(4);
+
+      // Fourth call should use upperMessageId as fallback
+      expect(mockClient.im.messageResource.get).toHaveBeenNthCalledWith(4, {
+        path: {
+          message_id: 'msg_upper_abc',
+          file_key: 'img_key_packed',
+        },
+        params: {
+          type: 'image',
+        },
+      });
+
+      expect(mockWriteFile).toHaveBeenCalled();
+      expect(result).toContain('packed.png');
+    });
+
+    it('should throw error when all fallback IDs fail', async () => {
       const mockClient = createMockClient();
 
-      // Both calls fail
+      // All calls fail
       (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>)
         .mockRejectedValue(new Error('API Error'));
 
@@ -359,15 +444,16 @@ describe('downloadFile', () => {
           'image',
           'test.png',
           'msg_new_123',
-          'msg_original_456'
+          'msg_parent_456',
+          'msg_root_789'
         )
       ).rejects.toThrow('API Error');
 
-      // Should have tried both message_id and parentId
-      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(2);
+      // Should have tried all fallback IDs
+      expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(3);
     });
 
-    it('should not try parentId fallback when parentId equals message_id', async () => {
+    it('should not try fallback when fallback ID equals message_id', async () => {
       const mockClient = createMockClient();
       (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('API Error')
@@ -380,15 +466,16 @@ describe('downloadFile', () => {
           'image',
           'test.png',
           'msg_123',
-          'msg_123' // Same as message_id
+          'msg_123', // Same as message_id
+          'msg_123'  // Same as message_id
         )
       ).rejects.toThrow('API Error');
 
-      // Should only try once since parentId equals message_id
+      // Should only try once since all fallback IDs equal message_id
       expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(1);
     });
 
-    it('should not try parentId fallback when parentId is undefined', async () => {
+    it('should not try fallback when no fallback IDs provided', async () => {
       const mockClient = createMockClient();
       (mockClient.im.messageResource.get as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('API Error')
@@ -401,11 +488,11 @@ describe('downloadFile', () => {
           'image',
           'test.png',
           'msg_123'
-          // No parentId
+          // No fallback IDs
         )
       ).rejects.toThrow('API Error');
 
-      // Should only try once since no parentId
+      // Should only try once since no fallback IDs
       expect(mockClient.im.messageResource.get).toHaveBeenCalledTimes(1);
     });
 
@@ -424,7 +511,9 @@ describe('downloadFile', () => {
         'image',
         'test.png',
         'msg_123',
-        'msg_parent_456' // parentId available but not needed
+        'msg_parent_456',
+        'msg_root_789',
+        'msg_upper_abc'
       );
 
       // Should only call API once since first try succeeded

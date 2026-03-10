@@ -17,13 +17,16 @@ const logger = createLogger('FeishuFileHandler');
 
 /**
  * File download function type.
+ * Issue #1205: Added rootId and upperMessageId for additional fallback scenarios
  */
 export type FileDownloadFunction = (
   fileKey: string,
   messageType: string,
   fileName?: string,
   messageId?: string,
-  parentId?: string
+  parentId?: string,
+  rootId?: string,
+  upperMessageId?: string
 ) => Promise<{ success: boolean; filePath?: string }>;
 
 /**
@@ -55,7 +58,9 @@ export class FeishuFileHandler implements IFileHandler {
     messageType: 'image' | 'file' | 'media',
     content: string,
     messageId: string,
-    parentId?: string
+    parentId?: string,
+    rootId?: string,
+    upperMessageId?: string
   ): Promise<FileHandlerResult> {
     try {
       logger.info({ chatId, messageType, messageId }, 'File/image message received');
@@ -85,12 +90,15 @@ export class FeishuFileHandler implements IFileHandler {
       // This helps identify mismatch issues between the message containing the file
       // and the file_key being downloaded
       // Issue #1290: Also log parentId for quoted/forwarded images
+      // Issue #1205: Also log rootId and upperMessageId for additional fallback scenarios
       logger.info(
         {
           chatId,
           messageType,
           messageId,
           parentId,
+          rootId,
+          upperMessageId,
           fileKey,
           fileName,
           pairing: `message_id=${messageId} + file_key=${fileKey}`,
@@ -100,7 +108,16 @@ export class FeishuFileHandler implements IFileHandler {
 
       // Download file to local storage
       // Issue #1290: Pass parentId for quoted/forwarded image fallback
-      const downloadResult = await this.downloadFile(fileKey, messageType, fileName, messageId, parentId);
+      // Issue #1205: Pass rootId and upperMessageId for additional fallback scenarios
+      const downloadResult = await this.downloadFile(
+        fileKey,
+        messageType,
+        fileName,
+        messageId,
+        parentId,
+        rootId,
+        upperMessageId
+      );
       if (!downloadResult.success || !downloadResult.filePath) {
         const errorDetail = downloadResult.filePath ? 'Download returned success but no path' : 'Download failed';
         logger.error(
