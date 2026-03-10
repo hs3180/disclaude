@@ -11,6 +11,7 @@ import {
   send_file,
   send_interactive_message,
   setMessageSentCallback,
+  start_discussion,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
 
@@ -30,6 +31,8 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { start_discussion } from './tools/start-discussion.js';
+export type { StartDiscussionParams, StartDiscussionResult } from './tools/start-discussion.js';
 
 // Start IPC server on module load for cross-process communication
 // This allows the main process to query interactive contexts
@@ -125,7 +128,8 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
   // ============================================================================
   // Issue #1155: Consolidated tools to reduce token overhead
   // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
-  // Core tools: send_message, send_file
+  // Issue #631: Added start_discussion (offline question mechanism)
+  // Core tools: send_message, send_file, start_discussion
   // ============================================================================
   {
     name: 'send_message',
@@ -213,6 +217,71 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'start_discussion',
+    description: `Start an offline discussion group for non-blocking communication.
+
+## Purpose
+
+Issue #631: 离线提问 - Agent 不阻塞工作的留言机制
+
+When the agent needs to discuss something with the user but doesn't want to block
+current work, it can create a discussion group and leave a message for the user
+to respond to later.
+
+## Features
+
+- Creates a new group chat OR uses existing chat
+- Sends context message for user to review later
+- Non-blocking: returns immediately after sending
+- User can reply when convenient
+
+## Parameters
+
+- **chatId**: (optional) Use existing chat instead of creating new one
+- **members**: (optional) Member open_ids for new group (at least one required if no chatId)
+- **topic**: (optional) Discussion topic (used for group name)
+- **context**: (required) Context information to send to the discussion
+
+## Examples
+
+### Create new discussion with members
+\`\`\`json
+{
+  "members": ["ou_xxx", "ou_yyy"],
+  "topic": "API Integration Discussion",
+  "context": "We need to discuss the authentication flow for the new API integration..."
+}
+\`\`\`
+
+### Use existing chat
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "context": "Following up on our previous discussion about..."
+}
+\`\`\`
+
+## Notes
+
+- Bot messages are filtered, so the user needs to reply to trigger ChatAgent
+- The context message will be visible in chat history when user responds
+- This is designed for non-urgent discussions that don't require immediate response`,
+    parameters: z.object({
+      chatId: z.string().optional(),
+      members: z.array(z.string()).optional(),
+      topic: z.string().optional(),
+      context: z.string(),
+    }),
+    handler: async ({ chatId, members, topic, context }) => {
+      try {
+        const result = await start_discussion({ chatId, members, topic, context });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion start failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

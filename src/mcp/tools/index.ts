@@ -29,6 +29,10 @@ export {
 // Ask User tool (Human-in-the-Loop)
 export { ask_user } from './ask-user.js';
 
+// Start Discussion tool (Issue #631: 离线提问)
+export { start_discussion } from './start-discussion.js';
+export type { StartDiscussionParams, StartDiscussionResult } from './start-discussion.js';
+
 // Thread Tools (Issue #873: Topic group extension)
 export {
   reply_in_thread,
