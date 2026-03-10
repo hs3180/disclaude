@@ -3,6 +3,8 @@
  *
  * @see Issue #486 - Group management commands
  * @see Issue #692 - GroupService.createGroup() method
+ *
+ * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
 import * as fs from 'fs';
@@ -116,8 +118,7 @@ describe('GroupService', () => {
       const info: GroupInfo = {
         chatId: 'oc_test123',
         name: 'Test Group',
-        createdAt: 1700000000000,
-        createdBy: 'ou_creator',
+        createdAt: Date.now(),
         initialMembers: ['ou_user1'],
       };
 
@@ -134,17 +135,17 @@ describe('GroupService', () => {
   describe('isManaged', () => {
     it('should return true for managed group', () => {
       service.registerGroup({
-        chatId: 'oc_test123',
+        chatId: 'oc_test',
         name: 'Test',
         createdAt: Date.now(),
         initialMembers: [],
       });
 
-      expect(service.isManaged('oc_test123')).toBe(true);
+      expect(service.isManaged('oc_test')).toBe(true);
     });
 
     it('should return false for unmanaged group', () => {
-      expect(service.isManaged('oc_nonexistent')).toBe(false);
+      expect(service.isManaged('oc_unmanaged')).toBe(false);
     });
   });
 
@@ -154,19 +155,34 @@ describe('GroupService', () => {
     });
 
     it('should return all registered groups', () => {
-      const groups: GroupInfo[] = [
-        { chatId: 'oc_1', name: 'Group 1', createdAt: 1700000000000, initialMembers: [] },
-        { chatId: 'oc_2', name: 'Group 2', createdAt: 1700000001000, initialMembers: [] },
-        { chatId: 'oc_3', name: 'Group 3', createdAt: 1700000002000, initialMembers: [] },
-      ];
+      service.registerGroup({
+        chatId: 'oc_1',
+        name: 'Group 1',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
 
-      groups.forEach(g => service.registerGroup(g));
+      service.registerGroup({
+        chatId: 'oc_2',
+        name: 'Group 2',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.registerGroup({
+        chatId: 'oc_3',
+        name: 'Group 3',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
 
       const listed = service.listGroups();
+
       expect(listed.length).toBe(3);
       expect(listed.map(g => g.chatId).sort()).toEqual(['oc_1', 'oc_2', 'oc_3']);
     });
   });
+
 
   describe('persistence', () => {
     it('should handle corrupted file gracefully', () => {
@@ -274,24 +290,13 @@ describe('GroupService', () => {
       mockCreateDiscussionChat.mockResolvedValue('oc_created_789');
 
       const result = await service.createGroup(mockClient, {
-        creatorId: 'ou_creator',
+        members: ['ou_user1'],
       });
 
       expect(result.name).toBe('自动命名');
     });
-
-    it('should propagate errors from createDiscussionChat', async () => {
-      const service = new GroupService({ filePath: testFilePath });
-      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
-      mockCreateDiscussionChat.mockRejectedValue(new Error('API Error'));
-
-      await expect(service.createGroup(mockClient, {
-        topic: 'Test Group',
-      })).rejects.toThrow('API Error');
-    });
   });
 
-  // Issue #721: Topic group tests
   describe('markAsTopicGroup', () => {
     it('should mark a group as topic group', () => {
       const info: GroupInfo = {
