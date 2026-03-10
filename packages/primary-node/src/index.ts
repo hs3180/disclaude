@@ -175,5 +175,19 @@ export {
   type CardConfig,
 } from './platforms/index.js';
 
+// Routers (Issue #1040)
+export {
+  CardActionRouter,
+  type CardActionRouterConfig,
+} from './routers/card-action-router.js';
+
+// Services (Issue #1040)
+export {
+  DebugGroupService,
+  getDebugGroupService,
+  resetDebugGroupService,
+  type DebugGroupInfo,
+} from './services/index.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
