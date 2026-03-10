@@ -108,5 +108,34 @@ export {
   type FileTransferAPIHandler,
 } from './websocket-server-service.js';
 
+// Platform adapters (Issue #1040)
+export {
+  // Chat operations
+  createDiscussionChat,
+  dissolveChat,
+  addMembers,
+  removeMembers,
+  getMembers,
+  getBotChats,
+  type CreateDiscussionOptions,
+  type ChatOpsConfig,
+  type BotChatInfo,
+  // Group service
+  GroupService,
+  getGroupService,
+  type GroupInfo,
+  type CreateGroupOptions,
+  type GroupServiceConfig,
+  // Welcome service
+  WelcomeService,
+  initWelcomeService,
+  getWelcomeService,
+  resetWelcomeService,
+  type WelcomeServiceConfig,
+  // Feishu client factory
+  createFeishuClient,
+  type CreateFeishuClientOptions,
+} from './platforms/index.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
