@@ -32,7 +32,7 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
-} from '../schedule/index.js';
+} from '@disclaude/worker-node';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';

@@ -8,10 +8,8 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import type { ScheduleManager } from '../schedule/schedule-manager.js';
-import type { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
-import type { SchedulerService } from './scheduler-service.js';
-import type { ScheduleTaskInfo } from './commands/types.js';
+import type { ScheduleManager } from '@disclaude/worker-node';
+import type { ScheduleFileScanner } from '@disclaude/worker-node';
 
 const logger = createLogger('ScheduleManagement');
 

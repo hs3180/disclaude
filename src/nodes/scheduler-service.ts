@@ -25,8 +25,11 @@ import {
   Scheduler,
   ScheduleFileWatcher,
   CooldownManager,
-} from '../schedule/index.js';
+} from '@disclaude/worker-node';
+import type { TaskExecutor } from '@disclaude/worker-node';
 import type { FeedbackMessage } from '../types/websocket-messages.js';
+
+import { AgentFactory } from '../agents/index.js';
 
 const logger = createLogger('SchedulerService');
 
@@ -111,6 +114,30 @@ export class SchedulerService {
             logger.error({ err: error, chatId, filePath }, 'Failed to send file for scheduled task');
           }
         },
+      },
+      // Provide the executor function for dependency injection
+      executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
+        // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+        const agent = AgentFactory.createScheduleAgent(chatId, {
+          sendMessage: async (text: string, threadMessageId?: string) => {
+            this.callbacks.handleFeedback({ type: 'text', chatId, text, threadId: threadMessageId });
+          },
+          sendCard: async (card: Record<string, unknown>, description?: string, threadMessageId?: string) => {
+            this.callbacks.handleFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId });
+          },
+          sendFile: async (filePath: string) => {
+            await this.callbacks.sendFile(chatId, filePath);
+          },
+          handleFeedback: (feedback) => {
+            this.callbacks.handleFeedback(feedback);
+          },
+        });
+
+        try {
+          await agent.executeOnce(chatId, prompt, undefined, userId);
+        } finally {
+          agent.dispose();
+        }
       },
     });
 

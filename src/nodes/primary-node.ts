@@ -64,8 +64,7 @@ import {
   initWelcomeService,
 } from '../platforms/feishu/welcome-service.js';
 // Schedule management (Issue #469)
-import { ScheduleManager } from '../schedule/schedule-manager.js';
-import { ScheduleFileScanner } from '../schedule/schedule-watcher.js';
+import { ScheduleManager, ScheduleFileScanner } from '@disclaude/worker-node';
 // Task management (Issue #468)
 import { getTaskStateManager } from '../utils/task-state-manager.js';
 // Extracted modules (Issue #695)
