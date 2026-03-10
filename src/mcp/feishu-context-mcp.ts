@@ -13,9 +13,6 @@ import {
   setMessageSentCallback,
 } from './tools/index.js';
 import { startIpcServer } from './tools/interactive-message.js';
-import { getGroupService } from '../platforms/feishu/group-service.js';
-import { createDiscussionChat } from '../platforms/feishu/chat-ops.js';
-import { getLarkClientService, isLarkClientServiceInitialized } from '../services/index.js';
 
 // Re-export
 export type { MessageSentCallback } from './tools/types.js';
@@ -127,7 +124,8 @@ export const feishuContextTools = {
 export const feishuToolDefinitions: InlineToolDefinition[] = [
   // ============================================================================
   // Issue #1155: Consolidated tools to reduce token overhead
-  // Reduced to 4 core tools: send_message, send_file, start_group_discussion
+  // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
+  // Core tools: send_message, send_file
   // ============================================================================
   {
     name: 'send_message',
@@ -215,103 +213,6 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
-  },
-  {
-    name: 'start_group_discussion',
-    description: `Start a group discussion on a topic and collect conclusions.
-
-Creates a temporary group chat, invites members, and facilitates a discussion on the given topic. After the discussion concludes, the group is dissolved and the conclusions are returned.
-
----
-
-## 🎯 Use Cases
-
-1. **Deep Dive Discussion**: When a topic needs more thorough discussion than the main chat allows
-2. **Stakeholder Input**: Gather input from specific people on a decision
-3. **Problem Solving**: Collaboratively solve complex problems with relevant team members
-
----
-
-## Parameters
-
-- **topic**: The discussion topic/question (required)
-- **members**: Array of member open_ids to invite (optional, defaults to current user)
-- **context**: Background context for the discussion (optional)
-- **timeout**: Discussion timeout in minutes (optional, default: 30)
-
----
-
-## Example
-
-\`\`\`json
-{
-  "topic": "Should we migrate to TypeScript?",
-  "members": ["ou_xxx", "ou_yyy"],
-  "context": "We are considering migrating our codebase from JavaScript to TypeScript.",
-  "timeout": 60
-}
-\`\`\`
-
----
-
-## Workflow
-
-1. Creates a new group chat with the topic as the name
-2. Invites specified members
-3. Posts the topic and context as the first message
-4. Facilitates the discussion (monitors for conclusion signals)
-5. Collects and summarizes conclusions
-6. Dissolves the group and returns conclusions
-
----
-
-## Note
-
-This tool initiates an async discussion. The conclusions will be returned when participants reach consensus or timeout expires.`,
-    parameters: z.object({
-      topic: z.string().describe('The discussion topic/question'),
-      members: z.array(z.string()).optional().describe('Array of member open_ids to invite'),
-      context: z.string().optional().describe('Background context for the discussion'),
-      timeout: z.number().optional().describe('Discussion timeout in minutes (default: 30)'),
-    }),
-    handler: async ({ topic, members, context, timeout }) => {
-      try {
-        // Check if Feishu client is available
-        if (!isLarkClientServiceInitialized()) {
-          return toolSuccess('⚠️ Feishu client not configured. Cannot create group discussion.');
-        }
-        const client = getLarkClientService().getClient();
-
-        // Create the discussion group
-        const chatId = await createDiscussionChat(client, { topic, members });
-
-        // Register the group for tracking
-        const groupService = getGroupService();
-        groupService.registerGroup({
-          chatId,
-          name: topic,
-          createdAt: Date.now(),
-          initialMembers: members || [],
-        });
-
-        // Send the initial topic message
-        let initialMessage = `## 🎯 讨论话题\n\n**${topic}**\n\n`;
-        if (context) {
-          initialMessage += `### 背景\n${context}\n\n`;
-        }
-        initialMessage += `---\n请在 ${timeout || 30} 分钟内完成讨论。达成结论后请明确说明。`;
-
-        await send_message({
-          content: initialMessage,
-          format: 'text',
-          chatId,
-        });
-
-        return toolSuccess(`✅ 群聊讨论已启动\n- 群聊ID: ${chatId}\n- 话题: ${topic}\n- 成员数: ${members?.length || 0}\n- 超时: ${timeout || 30} 分钟\n\n请在群聊中进行讨论。讨论完成后，系统将收集结论并解散群聊。`);
-      } catch (error) {
-        return toolSuccess(`⚠️ Failed to start group discussion: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
