@@ -7,9 +7,11 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1315: Added SOUL.md support for Agent personality/behavior definition.
  */
 
 import { Config } from '../../config/index.js';
+import { soulLoader, formatSoulForPrompt } from '../../config/soul-loader.js';
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { MessageData } from './types.js';
 
@@ -25,8 +27,30 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Agent personality (SOUL.md) (Issue #1315)
  */
 export class MessageBuilder {
+  /** Cached SOUL section content (Issue #1315) */
+  private soulSection: string | null = null;
+
+  /**
+   * Set the SOUL section content.
+   * Called by Pilot agent after loading SOUL.md files.
+   *
+   * @param soulContent - Formatted SOUL content or null to disable
+   */
+  setSoulSection(soulContent: string | null): void {
+    this.soulSection = soulContent;
+  }
+
+  /**
+   * Get the current SOUL section content.
+   *
+   * @returns Cached SOUL section or null
+   */
+  getSoulSection(): string | null {
+    return this.soulSection;
+  }
   /**
    * Build enhanced content with Feishu context.
    *
@@ -104,6 +128,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build SOUL section (Issue #1315)
+    const soulSection = this.soulSection || '';
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -121,7 +148,7 @@ To notify the user in your FINAL response, use:
 - This triggers a Feishu notification to the user`
         : '';
 
-      return `You are responding in a Feishu chat.
+      return `${soulSection}You are responding in a Feishu chat.
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
@@ -140,7 +167,7 @@ ${locationAwarenessGuidance}
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
     }
 
-    return `You are responding in a Feishu chat.
+    return `${soulSection}You are responding in a Feishu chat.
 
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}

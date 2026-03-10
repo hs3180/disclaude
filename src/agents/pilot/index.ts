@@ -34,6 +34,7 @@
 
 import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
+import { soulLoader, formatSoulForPrompt } from '../../config/soul-loader.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
@@ -112,6 +113,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
 
+    // Load SOUL.md content (Issue #1315)
+    this.loadSoulContent();
+
     // Initialize task complexity agent (Issue #857)
     this.complexityAgent = new TaskComplexityAgent({
       ...config,
@@ -130,6 +134,32 @@ export class Pilot extends BaseAgent implements ChatAgent {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Load SOUL.md content and set it to MessageBuilder (Issue #1315).
+   *
+   * This method loads the merged SOUL.md content from multiple sources:
+   * 1. config/SOUL.md - System default personality (lowest priority)
+   * 2. skills/{skill}/SOUL.md - Skill-specific personality (medium priority)
+   * 3. ~/.disclaude/SOUL.md - User-defined personality (highest priority)
+   *
+   * Higher priority files override lower priority ones for each section.
+   */
+  private async loadSoulContent(): Promise<void> {
+    try {
+      const soul = await soulLoader.getSoul();
+      if (soul) {
+        const formattedSoul = formatSoulForPrompt(soul);
+        this.messageBuilder.setSoulSection(formattedSoul);
+        this.logger.info({ source: soul.source }, 'SOUL.md loaded and applied');
+      } else {
+        this.logger.debug('No SOUL.md files found, using default behavior');
+      }
+    } catch (error) {
+      // Non-fatal: continue without SOUL if loading fails
+      this.logger.warn({ error }, 'Failed to load SOUL.md, continuing without personality');
+    }
   }
 
   /**
