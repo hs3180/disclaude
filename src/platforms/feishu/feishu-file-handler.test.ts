@@ -68,7 +68,8 @@ describe('FeishuFileHandler', () => {
         'img_key_123',
         'image',
         'image_img_key_123',
-        'msg-456'
+        'msg-456',
+        undefined
       );
     });
 
@@ -93,7 +94,8 @@ describe('FeishuFileHandler', () => {
         'file_key_789',
         'file',
         'document.pdf',
-        'msg-456'
+        'msg-456',
+        undefined
       );
     });
 
@@ -178,6 +180,57 @@ describe('FeishuFileHandler', () => {
       expect(chatId).toBe('chat-123');
       expect(attachment.fileKey).toBe('img_key');
       expect(attachment.messageId).toBe('msg-456');
+    });
+
+    // Issue #1290: Tests for parentId parameter
+    it('should pass parentId to downloadFile for quoted images', async () => {
+      const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
+      mockDownload.mockResolvedValue({
+        success: true,
+        filePath: '/tmp/quoted_image.png',
+      });
+
+      const result = await handler.handleFileMessage(
+        'chat-123',
+        'image',
+        JSON.stringify({ image_key: 'img_key_quoted' }),
+        'msg-new-789',
+        'msg-original-456' // parentId for quoted image
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockDownload).toHaveBeenCalledWith(
+        'img_key_quoted',
+        'image',
+        'image_img_key_quoted',
+        'msg-new-789',
+        'msg-original-456'
+      );
+    });
+
+    it('should handle quoted file message with parentId', async () => {
+      const mockDownload = mockDownloadFile as ReturnType<typeof vi.fn>;
+      mockDownload.mockResolvedValue({
+        success: true,
+        filePath: '/tmp/quoted_doc.pdf',
+      });
+
+      const result = await handler.handleFileMessage(
+        'chat-123',
+        'file',
+        JSON.stringify({ file_key: 'file_key_quoted', file_name: 'quoted_doc.pdf' }),
+        'msg-new-123',
+        'msg-original-456'
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockDownload).toHaveBeenCalledWith(
+        'file_key_quoted',
+        'file',
+        'quoted_doc.pdf',
+        'msg-new-123',
+        'msg-original-456'
+      );
     });
   });
 
