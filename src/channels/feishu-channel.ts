@@ -316,6 +316,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportedMcpTools: [
         'send_message',
         'send_file',
+        'start_group_discussion',  // Issue #946: 御书房体验
       ],
     };
   }

@@ -7,6 +7,7 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #946: Added "御书房" review experience guidance for better user review workflow.
  */
 
 import { Config } from '../../config/index.js';
@@ -104,6 +105,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build review experience guidance section (Issue #946)
+    const reviewExperienceGuidance = this.buildReviewExperienceGuidance(capabilities);
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -135,6 +139,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${reviewExperienceGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -150,6 +155,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${reviewExperienceGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -430,5 +436,113 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+
+  /**
+   * Build review experience guidance section for the prompt.
+   *
+   * Issue #946: Provides "御书房" (Imperial Study) experience when AI needs user review.
+   *
+   * Core principles:
+   * - Independent group chat for each review request
+   * - Complete context presentation (what was done, what changed, why)
+   * - Effective user opinion solicitation via interactive cards
+   * - Accurate execution based on user decision
+   *
+   * @param capabilities - Channel capabilities to determine card support
+   * @returns Review experience guidance string
+   */
+  private buildReviewExperienceGuidance(capabilities?: ChannelCapabilities): string {
+    const supportsGroupDiscussion = capabilities?.supportedMcpTools?.includes('start_group_discussion') ?? true;
+    const supportsCards = capabilities?.supportsCard !== false;
+
+    if (!supportsGroupDiscussion) {
+      // Fallback for channels without group discussion support
+      return '';
+    }
+
+    const interactiveExample = supportsCards ? `
+\`\`\`json
+{
+  "content": {
+    "config": {"wide_screen_mode": true},
+    "header": {"title": {"content": "请审阅", "tag": "plain_text"}, "template": "blue"},
+    "elements": [
+      {"tag": "markdown", "content": "## 📋 任务完成摘要\\n\\n[描述你做了什么...]"},
+      {"tag": "hr"},
+      {"tag": "action", "actions": [
+        {"tag": "button", "text": {"content": "✅ 批准", "tag": "plain_text"}, "value": "approve", "type": "primary"},
+        {"tag": "button", "text": {"content": "🔄 需要修改", "tag": "plain_text"}, "value": "revise"},
+        {"tag": "button", "text": {"content": "❌ 拒绝", "tag": "plain_text"}, "value": "reject", "type": "danger"}
+      ]}
+    ]
+  },
+  "format": "card",
+  "chatId": "<new_group_chat_id>",
+  "actionPrompts": {
+    "approve": "[用户] 批准了方案，继续执行后续操作...",
+    "revise": "[用户] 要求修改。请询问具体需要修改的内容。",
+    "reject": "[用户] 拒绝了方案。请询问原因并记录。"
+  }
+}
+\`\`\`` : 'Use text-based options like "请回复：1. 批准 2. 需要修改 3. 拒绝"';
+
+    return `
+
+---
+
+## Review Experience (御书房体验)
+
+When you complete a task that requires user review/approval, provide a "御书房" (Imperial Study) experience:
+
+### Core Principles
+
+> **御书房体验 = 独立群聊 + 完整陈述 + 流程控制**
+
+### When to Use
+
+Use this workflow when:
+- You've made changes that need user approval (code changes, configuration updates, etc.)
+- The task outcome has significant impact and requires explicit confirmation
+- User review is explicitly requested
+
+### Workflow
+
+1. **Create Independent Group Chat**
+   Use \`start_group_discussion\` tool:
+   \`\`\`json
+   {
+     "topic": "📋 Review: [Task Summary]",
+     "context": "## 任务背景\\n[What was requested...]\\n\\n## 完成内容\\n[What was done...]",
+     "timeout": 60
+   }
+   \`\`\`
+
+2. **Present Complete Context**
+   In the group chat, clearly state:
+   - **背景**: What was requested and why
+   - **做了什么**: Specific actions taken
+   - **改了什么**: Files/code/configurations changed
+   - **为什么**: Rationale for decisions made
+   - **影响**: Potential impact of changes
+
+3. **Solicit User Decision**
+   Send an interactive card with action options:
+${interactiveExample}
+
+4. **Execute Based on Decision**
+   - **Approve**: Proceed with the action (merge, deploy, etc.)
+   - **Revise**: Ask for specific changes needed, then update
+   - **Reject**: Record the rejection reason, no further action needed
+
+5. **Confirm Completion**
+   After executing the user's decision, ask: "任务已完成，还有其他需要处理的吗？"
+
+### Key Points
+
+- **One thing at a time**: Focus on one review request per group chat
+- **Be concise**: Present information efficiently, don't overwhelm
+- **Clear actions**: Make options unambiguous
+- **Follow through**: Execute exactly what the user decided`;
   }
 }
