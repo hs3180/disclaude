@@ -43,7 +43,5 @@ export {
   type CardConfig,
 } from './interactive-card-builder.js';
 
-export {
-  extractCardTextContent,
-} from './card-text-extractor.js';
+export { extractCardTextContent } from './card-text-extractor.js';
 
