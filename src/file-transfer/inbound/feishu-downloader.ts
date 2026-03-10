@@ -206,7 +206,7 @@ export async function downloadFile(
   logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
 
   try {
-    let fileResource: FileResourceResponse;
+    let fileResource: FileResourceResponse | undefined;
 
     // For user-uploaded files in messages, we MUST use messageResource.get API
     // This API retrieves files from messages regardless of who uploaded them
