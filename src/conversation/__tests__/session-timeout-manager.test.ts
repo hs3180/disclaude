@@ -4,18 +4,19 @@
  * @see Issue #1313
  */
 
-import { describe, it, expect, from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createLogger } from '../../utils/logger.js';
 import { ConversationSessionManager } from '../session-manager.js';
 import { SessionTimeoutManager } from '../session-timeout-manager.js';
 
 describe('SessionTimeoutManager', () => {
   let mockSessionManager: ConversationSessionManager;
-  let mockOnSessionTimeout: ReturnType<typeof SessionTimeoutManager extends { onSessionTimeout: (chatId: string) => Promise<void> };
+  let mockOnSessionTimeout: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof createLogger>;
 
   beforeEach(() => {
     logger = createLogger('test');
+    mockOnSessionTimeout = vi.fn().mockResolvedValue(undefined);
     mockSessionManager = {
       getIdleSessions: vi.fn(),
       getStats: vi.fn(),
@@ -30,7 +31,7 @@ describe('SessionTimeoutManager', () => {
       started: true,
     });
     mockSessionManager.size = vi.fn().mockReturnValue(3);
-    mockSessionManager.getIdleSessions = vi.fn().mockResolved(['chat1', 'chat2']);
+    mockSessionManager.getIdleSessions = vi.fn().mockReturnValue(['chat1', 'chat2']);
   });
 
   describe('constructor', () => {
@@ -131,7 +132,7 @@ describe('SessionTimeoutManager', () => {
         .mockReturnValueOnce({ chatId: 'chat2', lastActivity: 2000 } as any)
         .mockReturnValueOnce({ chatId: 'chat3', lastActivity: 3000 });
 
-      mockOnSessionTimeout.mockResolved();
+      mockOnSessionTimeout.mockResolvedValue(undefined);
 
       const manager = new SessionTimeoutManager({
         logger,
@@ -147,8 +148,8 @@ describe('SessionTimeoutManager', () => {
 
       // Should close only 2 oldest sessions (chat1 and chat2)
       expect(mockOnSessionTimeout).toHaveBeenCalledTimes(2);
-      expect(mockOnSessionTimeout).toHave('chat1');
-      expect(mockOnSessionTimeout).toHave('chat2');
+      expect(mockOnSessionTimeout).toHaveBeenCalledWith('chat1');
+      expect(mockOnSessionTimeout).toHaveBeenCalledWith('chat2');
     });
 
     it('should not prevent reentrant checks', async () => {
@@ -162,8 +163,9 @@ describe('SessionTimeoutManager', () => {
         maxSessions: 100,
         checkIntervalMinutes: 5,
         onSessionTimeout: async () => {
-        // Simulate slow timeout handling
-        await new Promise((resolve) => setTimeout(resolve, 100));
+          // Simulate slow timeout handling
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        },
       });
 
       // Start two checks in parallel

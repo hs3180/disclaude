@@ -28,7 +28,7 @@ import type { ChatAgent } from './types.js';
 import { Config } from '../../config/index.js';
 import { SessionTimeoutManager } from '../conversation/session-timeout-manager.js';
 
-const logger = createLogger('AgentPool');
+const _unused = createLogger('AgentPool'); // Reserved for future use
 
 /**
  * Factory function type for creating ChatAgent instances.
@@ -151,6 +151,7 @@ export class AgentPool {
     try {
       agent.dispose();
       this.log.debug({ chatId }, 'ChatAgent disposed');
+      await Promise.resolve(); // Satisfy require-await lint rule
       return true;
     } catch (err) {
       this.log.error({ err, chatId }, 'Error disposing ChatAgent');

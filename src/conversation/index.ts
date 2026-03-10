@@ -6,15 +6,11 @@
  * agent-agnostic conversation management.
  */
 
-import type pino from 'pino';
-import type { ConversationSessionManager } from './session-manager.js';
-import type { SessionTimeoutManager } from './session-timeout-manager.js';
-
 // Re-export types for backward compatibility
-export type { ConversationSessionManager, from './session-manager.js';
-export type { SessionState, from './types.js';
+export type { ConversationSessionManager } from './session-manager.js';
+export type { SessionState } from './types.js';
 export type { SessionCallbacks } from './types.js';
-export type { CreateSessionOptions, from './types.js';
+export type { CreateSessionOptions } from './types.js';
 export type { ProcessMessageResult } from './types.js';
 export type { SessionStats } from './types.js';
 export type { MessageContext } from './types.js';
