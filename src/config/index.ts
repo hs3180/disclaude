@@ -385,4 +385,21 @@ export class Config {
       maxContextLength: config.maxContextLength ?? 4000,
     };
   }
+
+  /**
+   * Get session timeout configuration.
+   * Controls automatic session cleanup for idle chats.
+   * @see Issue #1313
+   *
+   * @returns Session timeout configuration with defaults
+   */
+  static getSessionTimeoutConfig(): import('./types.js').SessionTimeoutConfig {
+    const config = fileConfigOnly.sessionRestore?.sessionTimeout || {};
+    return {
+      enabled: config.enabled ?? false,
+      idleMinutes: config.idleMinutes ?? 30,
+      maxSessions: config.maxSessions ?? 100,
+      checkIntervalMinutes: config.checkIntervalMinutes ?? 5,
+    };
+  }
 }

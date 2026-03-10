@@ -62,6 +62,14 @@ export {
   type ConversationSessionManagerConfig,
 } from './session-manager.js';
 
+// Session timeout management (Issue #1313)
+export {
+  SessionTimeoutManager,
+  type SessionTimeoutManagerConfig,
+  type ResolvedTimeoutConfig,
+  type DisposeSessionCallback,
+} from './session-timeout-manager.js';
+
 // Message queue
 export { MessageQueue } from './message-queue.js';
 

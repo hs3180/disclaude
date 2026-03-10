@@ -41,6 +41,8 @@ export interface SessionState {
   started: boolean;
   /** Current thread root message ID for replies */
   currentThreadRootId?: string;
+  /** Whether the session is currently processing a task (Issue #1313) */
+  isProcessing?: boolean;
 }
 
 /**

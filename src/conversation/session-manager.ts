@@ -229,6 +229,61 @@ export class ConversationSessionManager {
   }
 
   /**
+   * Set processing state for a session (Issue #1313).
+   * Used to prevent timeout during active task execution.
+   *
+   * @param chatId - The chat identifier
+   * @param isProcessing - Whether the session is processing a task
+   */
+  setProcessing(chatId: string, isProcessing: boolean): void {
+    const session = this.sessions.get(chatId);
+    if (session) {
+      session.isProcessing = isProcessing;
+      if (isProcessing) {
+        session.lastActivity = Date.now();
+      }
+      this.logger.debug({ chatId, isProcessing }, 'Session processing state updated');
+    }
+  }
+
+  /**
+   * Check if a session is currently processing (Issue #1313).
+   *
+   * @param chatId - The chat identifier
+   * @returns true if session is processing, false otherwise
+   */
+  isProcessing(chatId: string): boolean {
+    const session = this.sessions.get(chatId);
+    return session?.isProcessing ?? false;
+  }
+
+  /**
+   * Get idle sessions that can be timed out (Issue #1313).
+   *
+   * @param idleTimeoutMs - Idle timeout in milliseconds
+   * @returns Array of chatIds that are idle and can be closed
+   */
+  getIdleSessions(idleTimeoutMs: number): string[] {
+    const now = Date.now();
+    const idleChatIds: string[] = [];
+
+    for (const [chatId, session] of this.sessions) {
+      // Skip if session is processing or already closed
+      if (session.isProcessing || session.closed) {
+        continue;
+      }
+
+      // Check if idle time exceeds threshold
+      const idleTime = now - session.lastActivity;
+      if (idleTime > idleTimeoutMs) {
+        idleChatIds.push(chatId);
+      }
+    }
+
+    return idleChatIds;
+  }
+
+  /**
    * Close all sessions and clear tracking.
    * Used during shutdown.
    */
