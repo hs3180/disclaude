@@ -12,17 +12,31 @@ import type { Command, CommandContext, CommandResult } from '../types.js';
 
 /**
  * Reset Command - Reset the conversation session.
+ *
+ * Issue #1213: Supports optional `--keep-context` flag to preserve history.
  */
 export class ResetCommand implements Command {
   readonly name = 'reset';
   readonly category = 'session' as const;
   readonly description = '重置对话';
+  readonly usage = '/reset [--keep-context]  # 使用 --keep-context 保留历史上下文';
 
   async execute(context: CommandContext): Promise<CommandResult> {
-    await context.services.sendCommand('reset', context.chatId);
+    // Check for --keep-context flag (Issue #1213)
+    const keepContext = context.args.includes('--keep-context');
+
+    await context.services.sendCommand('reset', context.chatId, { keepContext });
+
+    if (keepContext) {
+      return {
+        success: true,
+        message: '✅ **对话已重置**\n\n新的会话已启动，历史上下文已保留。',
+      };
+    }
+
     return {
       success: true,
-      message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
+      message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。\n\n💡 使用 `/reset --keep-context` 可保留历史上下文。',
     };
   }
 }

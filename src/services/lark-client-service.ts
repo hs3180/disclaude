@@ -11,6 +11,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
 import { createFeishuClient, CreateFeishuClientOptions } from '../platforms/feishu/create-feishu-client.js';
 import { buildTextContent } from '../platforms/feishu/card-builders/content-builder.js';
+import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from '../feishu/message-logger.js';
 import { retry } from '../utils/retry.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';
@@ -204,9 +205,11 @@ export class LarkClientService {
 
       const botMessageId = response?.data?.message_id;
       if (botMessageId) {
+        // Issue #1231: Only log user-visible content, not full JSON structure
+        // If description is provided, use it; otherwise extract text from card
         const cardContent = options?.description
-          ? `[Card] ${options.description}\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``
-          : `[Interactive Card]\n\`\`\`json\n${JSON.stringify(card, null, 2)}\n\`\`\``;
+          ? `[Card] ${options.description}`
+          : extractCardTextContent(card);
         await messageLogger.logOutgoingMessage(botMessageId, chatId, cardContent);
       }
 

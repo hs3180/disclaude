@@ -41,6 +41,13 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
+  # Enable Claude Code Agent Teams mode
+  # When enabled, the agent can spawn and coordinate multiple teammate sessions
+  # for parallel work on complex tasks.
+  # @see https://code.claude.com/docs/en/agent-teams
+  # Default: false
+  # enableAgentTeams: true
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------
@@ -232,6 +239,25 @@ tools:
     #   args: ["./my-mcp-server.js"]
     #   env:
     #     CUSTOM_VAR: "value"
+
+# -----------------------------------------------------------------------------
+# Session Restoration Configuration (Issue #1213)
+# -----------------------------------------------------------------------------
+# Controls how chat history is loaded when agent starts or resets.
+sessionRestore:
+  # Number of days to look back for chat history
+  # Default: 7
+  historyDays: 7
+
+  # Maximum characters for restored session context
+  # Default: 4000
+  maxContextLength: 4000
+
+  # Whether to load history on reset (default: false)
+  # When false: /reset gives a clean session without history
+  # When true: /reset reloads history context
+  # Users can override with /reset --keep-context
+  loadOnReset: false
 
 # -----------------------------------------------------------------------------
 # Global Environment Variables

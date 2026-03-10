@@ -44,6 +44,13 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /**
+   * Enable Claude Code Agent Teams mode.
+   * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
+   * This allows the agent to spawn and coordinate multiple teammate sessions.
+   * @see https://code.claude.com/docs/en/agent-teams
+   */
+  enableAgentTeams?: boolean;
 }
 
 /**
@@ -303,6 +310,19 @@ export interface MessagingConfig {
 }
 
 /**
+ * Session restoration configuration (Issue #1213).
+ * Controls how chat history is loaded when agent starts or resets.
+ */
+export interface SessionRestoreConfig {
+  /** Number of days to look back for chat history (default: 7) */
+  historyDays?: number;
+  /** Maximum characters for restored session context (default: 4000) */
+  maxContextLength?: number;
+  /** Whether to load history on reset (default: false) */
+  loadOnReset?: boolean;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -336,6 +356,8 @@ export interface DisclaudeConfig {
   channels?: ChannelsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Session restoration configuration (Issue #1213) */
+  sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

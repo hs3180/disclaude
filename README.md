@@ -180,6 +180,10 @@ npm run build && npm start
 
 ### Feishu/Lark Bot Configuration
 
+> 📖 **详细配置指南**: 请参阅 [飞书应用配置指南](docs/feishu-setup.md) 获取完整的配置步骤、权限说明和常见问题解答。
+
+#### 快速配置步骤
+
 1. **Create App**
    - Go to [Feishu Open Platform](https://open.feishu.cn/) or [Lark Developer](https://open.larksuite.com/)
    - Create a new app → Get App ID & App Secret
