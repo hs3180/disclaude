@@ -411,7 +411,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, isSessionActive: this.isSessionActive },
       'processMessage called'
     );
 
@@ -424,13 +424,24 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.startAgentLoop();
     }
 
+    // Issue #1230: Only use chatHistoryContext for new sessions
+    // For active sessions, agent already knows the conversation context
+    const effectiveChatHistoryContext = this.isSessionActive ? undefined : chatHistoryContext;
+    if (chatHistoryContext && this.isSessionActive) {
+      this.logger.debug(
+        { chatId, messageId },
+        'Ignoring chatHistoryContext for active session - agent already knows the context'
+      );
+    }
+
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    // Issue #1230: Only include chatHistoryContext for new sessions
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text, messageId, senderOpenId, attachments, chatHistoryContext,
+      text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
     }, chatId, capabilities);
 

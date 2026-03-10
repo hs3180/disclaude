@@ -852,15 +852,21 @@ export class MessageHandler {
       }
     }
 
-    // Get chat history context for passive mode
+    // Get chat history context
+    // Issue #1230: Attach context for:
+    // 1. Group chat passive mode (bot mentioned in group chat) - always needed
+    // 2. New agent session - agent will decide whether to use it based on its state
+    // NOT for already-active 1:1 conversations where agent already knows the context
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
 
-    if (isPassiveModeTrigger) {
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
+    // Issue #1230: Always get context, agent will decide whether to use it
+    // This allows new sessions to have context without message-handler needing to check session state
+    chatHistoryContext = await this.getChatHistoryContext(chat_id);
+    if (chatHistoryContext) {
       logger.debug(
-        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext?.length },
-        'Including chat history context for passive mode trigger'
+        { messageId: message_id, chatId: chat_id, historyLength: chatHistoryContext.length, isPassiveModeTrigger },
+        'Chat history context available'
       );
     }
 
