@@ -189,5 +189,11 @@ export {
   type DebugGroupInfo,
 } from './services/index.js';
 
+// PrimaryNode main class (Issue #1040)
+export {
+  PrimaryNode,
+  type PrimaryNodeOptions,
+} from './primary-node.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
