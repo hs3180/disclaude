@@ -839,9 +839,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
     this.firstMessageHistoryContext = undefined;
     this.firstMessageHistoryLoaded = false;
 
-    // Issue #1213: Reload history only if explicitly requested or config says so
-    const shouldLoadContext = keepContext ?? Config.getSessionRestoreConfig().loadOnReset;
-    if (shouldLoadContext) {
+    // Issue #1213: Reload history only if explicitly requested via keepContext
+    if (keepContext) {
       this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
       this.loadPersistedHistory().catch((err) => {
         this.logger.error({ err, chatId: this.boundChatId }, 'Failed to reload history after reset');

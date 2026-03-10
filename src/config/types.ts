@@ -318,8 +318,6 @@ export interface SessionRestoreConfig {
   historyDays?: number;
   /** Maximum characters for restored session context (default: 4000) */
   maxContextLength?: number;
-  /** Whether to load history on reset (default: false) */
-  loadOnReset?: boolean;
 }
 
 /**
