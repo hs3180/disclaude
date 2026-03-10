@@ -28,6 +28,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 vi.mock('../config/index.js', () => ({
   Config: {
     getWorkspaceDir: vi.fn(() => '/test/workspace'),
+    getSkillsDir: vi.fn(() => '/test/skills'),
     getAgentConfig: vi.fn(() => ({
       apiKey: 'test-key',
       model: 'test-model',

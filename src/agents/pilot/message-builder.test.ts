@@ -13,6 +13,8 @@ import { MessageBuilder } from './message-builder.js';
 vi.mock('../../config/index.js', () => ({
   Config: {
     getMcpServersConfig: vi.fn(() => null),
+    getWorkspaceDir: vi.fn(() => '/workspace'),
+    getSkillsDir: vi.fn(() => '/skills'),
   },
 }));
 
