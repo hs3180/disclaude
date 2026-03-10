@@ -82,7 +82,7 @@ export function createInteractiveMessageHandler(
   handlers: InteractiveMessageHandlers,
   feishuHandlersContainer?: FeishuHandlersContainer
 ): IpcRequestHandler {
-  // eslint-disable-next-line require-await
+   
   return async (request: IpcRequest): Promise<IpcResponse> => {
     try {
       switch (request.type) {

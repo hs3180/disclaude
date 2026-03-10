@@ -39,6 +39,11 @@ vi.mock('../config/index.js', () => ({
       sdkDebug: false,
     })),
     isAgentTeamsEnabled: vi.fn(() => false),
+    getSessionRestoreConfig: vi.fn(() => ({
+      historyDays: 7,
+      maxContextLength: 4000,
+      loadOnReset: false,
+    })),
   },
 }));
 

@@ -96,7 +96,7 @@ export class TaskComplexityAgent extends BaseAgent {
     super(config);
     this.complexityThreshold = config.complexityThreshold ?? 7;
     // minConfidence is stored for future use in confidence filtering
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     config.minConfidence ?? 0.5;
   }
 

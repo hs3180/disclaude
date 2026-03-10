@@ -398,13 +398,9 @@ describe('UnixSocketIpcClient', () => {
       unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
       generateInteractionPrompt: (messageId, actionValue, actionText) => {
         const context = mockContexts.get(messageId);
-        if (!context) {
-          return undefined;
-        }
+        if (!context) {return undefined;}
         const template = context.actionPrompts[actionValue];
-        if (!template) {
-          return undefined;
-        }
+        if (!template) {return undefined;}
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
