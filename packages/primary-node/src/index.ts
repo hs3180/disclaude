@@ -93,6 +93,15 @@ export {
 } from './exec-node-registry.js';
 
 export {
+  ExecNodeManager,
+  type ConnectedExecNode as ManagedExecNode,
+} from './exec-node-manager.js';
+
+export {
+  ChannelManager,
+} from './channel-manager.js';
+
+export {
   WebSocketServerService,
   type WebSocketServerServiceConfig,
   type IFileStorageService,
