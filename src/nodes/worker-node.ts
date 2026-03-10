@@ -255,7 +255,7 @@ export class WorkerNode {
     this.scheduler = new Scheduler({
       scheduleManager,
       callbacks: {
-        sendMessage: async (chatId: string, message: string) => {
+        sendMessage: (chatId: string, message: string): Promise<void> => {
           const ctx = this.activeFeedbackChannels.get(chatId);
           if (ctx) {
             ctx.sendFeedback({ type: 'text', chatId, text: message, threadId: ctx.threadId });
@@ -265,6 +265,7 @@ export class WorkerNode {
               this.ws.send(JSON.stringify({ type: 'text', chatId, text: message }));
             }
           }
+          return Promise.resolve();
         },
       },
       // Provide the executor function for dependency injection
