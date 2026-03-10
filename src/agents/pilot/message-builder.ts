@@ -10,6 +10,7 @@
  */
 
 import { Config } from '../../config/index.js';
+import { SoulLoader, formatSoulForPrompt } from '../../config/soul-loader.js';
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { MessageData } from './types.js';
 
@@ -25,8 +26,18 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - SOUL personality definition (Issue #1315)
  */
 export class MessageBuilder {
+  /** SOUL loader for personality definitions */
+  private readonly soulLoader: SoulLoader;
+
+  constructor() {
+    this.soulLoader = new SoulLoader({
+      configDir: Config.getWorkspaceDir(),
+      skillsDir: Config.getSkillsDir(),
+    });
+  }
   /**
    * Build enhanced content with Feishu context.
    *
@@ -104,6 +115,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build SOUL personality section (Issue #1315)
+    const soulSection = this.buildSoulSection();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -134,7 +148,7 @@ ${persistedHistorySection}${chatHistorySection}${mentionSection}
 ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
-${locationAwarenessGuidance}
+${locationAwarenessGuidance}${soulSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -149,7 +163,7 @@ ${persistedHistorySection}${chatHistorySection}
 ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
-${locationAwarenessGuidance}
+${locationAwarenessGuidance}${soulSection}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -430,5 +444,36 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+
+  /**
+   * Build SOUL personality section for the prompt.
+   *
+   * Issue #1315: SOUL.md defines the Agent's core values, boundaries, and
+   * lifecycle behavior through a "personality definition" design pattern.
+   * This allows the Agent to drive behavior through "self-awareness" rather
+   * than "rule constraints".
+   *
+   * @param skillName - Optional skill name for skill-specific SOUL
+   * @returns SOUL personality section string or empty string if no SOUL defined
+   */
+  private buildSoulSection(skillName?: string): string {
+    const soul = this.soulLoader.loadMergedSoul(skillName);
+    if (!soul) {
+      return '';
+    }
+
+    const formatted = formatSoulForPrompt(soul);
+    if (!formatted) {
+      return '';
+    }
+
+    return `
+
+---
+
+## Your Personality
+
+${formatted}`;
   }
 }

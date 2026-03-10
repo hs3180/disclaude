@@ -20,6 +20,8 @@ vi.mock('../../config/index.js', () => ({
     getMcpServersConfig: vi.fn(() => ({
       '4_5v_mcp': { command: 'test-command' },
     })),
+    getWorkspaceDir: vi.fn(() => '/workspace'),
+    getSkillsDir: vi.fn(() => '/skills'),
   },
 }));
 
