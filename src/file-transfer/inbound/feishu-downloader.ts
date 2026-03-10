@@ -170,11 +170,15 @@ function mapToFileType(fileType: string, fileName?: string): string {
  * IMPORTANT: For user-uploaded files in messages, we MUST use the message-resource API,
  * NOT the direct image.get or file.download APIs. Those only work for files uploaded by the bot.
  *
+ * Issue #1290: For quoted/forwarded images, the message_id may not match the image_key.
+ * We try the primary message_id first, then fallback to parentId if provided.
+ *
  * @param client - Lark API client
  * @param fileKey - Feishu file key (image_key or file_key)
  * @param fileType - File type (image, file, media, etc.)
  * @param fileName - Optional original filename
  * @param messageId - The message ID containing the file (REQUIRED for user uploads)
+ * @param parentId - Optional parent message ID (for quoted/forwarded messages)
  * @returns Local file path
  */
 export async function downloadFile(
@@ -182,7 +186,8 @@ export async function downloadFile(
   fileKey: string,
   fileType: string,
   fileName?: string,
-  messageId?: string
+  messageId?: string,
+  parentId?: string
 ): Promise<string> {
   await ensureAttachmentsDir();
 
@@ -203,10 +208,10 @@ export async function downloadFile(
   const localFileName = `${timestamp}_${baseFileName}${extension}`;
   const localPath = path.join(getAttachmentsDir(), localFileName);
 
-  logger.info({ fileKey, fileType, fileName, messageId, localPath }, 'Downloading file from Feishu');
+  logger.info({ fileKey, fileType, fileName, messageId, parentId, localPath }, 'Downloading file from Feishu');
 
   try {
-    let fileResource: FileResourceResponse;
+    let fileResource: FileResourceResponse | undefined;
 
     // For user-uploaded files in messages, we MUST use messageResource.get API
     // This API retrieves files from messages regardless of who uploaded them
@@ -220,16 +225,49 @@ export async function downloadFile(
 
       logger.debug({ messageId, fileKey, fileType, fileName, apiFileType }, 'Using file type for API call');
 
-      // SDK type doesn't include params.type, so we need to cast
-      fileResource = await client.im.messageResource.get({
-        path: {
-          message_id: messageId,
-          file_key: fileKey,
-        },
-        params: {
-          type: apiFileType,
-        },
-      }) as unknown as FileResourceResponse;
+      // Issue #1290: Try primary message_id first
+      try {
+        // SDK type doesn't include params.type, so we need to cast
+        fileResource = await client.im.messageResource.get({
+          path: {
+            message_id: messageId,
+            file_key: fileKey,
+          },
+          params: {
+            type: apiFileType,
+          },
+        }) as unknown as FileResourceResponse;
+      } catch (primaryError) {
+        // Issue #1290: If primary message_id fails and we have a parentId, try fallback
+        if (parentId && parentId !== messageId) {
+          logger.info(
+            { messageId, parentId, fileKey, error: (primaryError as Error).message },
+            'Primary message_id download failed, trying parentId fallback for quoted/forwarded image'
+          );
+          try {
+            fileResource = await client.im.messageResource.get({
+              path: {
+                message_id: parentId,
+                file_key: fileKey,
+              },
+              params: {
+                type: apiFileType,
+              },
+            }) as unknown as FileResourceResponse;
+            logger.info({ parentId, fileKey }, 'parentId fallback succeeded');
+          } catch (fallbackError) {
+            // Fallback also failed, throw the original error
+            logger.warn(
+              { parentId, fileKey, error: (fallbackError as Error).message },
+              'parentId fallback also failed'
+            );
+            throw primaryError;
+          }
+        } else {
+          // No parentId available or same as messageId, throw original error
+          throw primaryError;
+        }
+      }
     } else if (fileType === 'image') {
       // Fallback: Try direct image API (only works for bot-uploaded images)
       // Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
