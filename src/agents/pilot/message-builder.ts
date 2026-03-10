@@ -432,7 +432,6 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know my current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
   }
-  }
 
   /**
    * Build discussion SOUL guidance section for the prompt.
@@ -460,7 +459,7 @@ The initial question is your north star. Every response should move us closer to
 
 **Initial Question:**
 ${topic}
-${context ? `\n**Context:**\n${context}` : ''
+${context ? `\n**Context:**\n${context}` : ''}
 
 **Be genuinely helpful, not performatively helpful.**
 Skip the "Great question!" and "I'd be happy to help!" — just help.
