@@ -13,7 +13,7 @@ import {
   resetChannelMessageRouter,
   type ChannelMessageRouterOptions,
 } from './channel-message-router.js';
-import type { OutgoingMessage, IChannel } from '../channels/types.js';
+import type { OutgoingMessage, IChannel } from '@disclaude/primary-node';
 
 describe('ChannelMessageRouter', () => {
   let router: ChannelMessageRouter;

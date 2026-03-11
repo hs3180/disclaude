@@ -1,11 +1,12 @@
 /**
  * Tests for CLI argument parsing utilities.
+ *
+ * Note: Primary mode has been moved to @disclaude/primary-node package.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseGlobalArgs,
-  getPrimaryNodeConfig,
   getWorkerNodeConfig,
   type GlobalArgs,
 } from './cli-args.js';
@@ -24,10 +25,6 @@ vi.mock('../config/index.js', () => ({
         authToken: 'test-token',
       },
     })),
-    getChannelsConfig: vi.fn(() => ({
-      feishu: { enabled: false },
-      rest: { enabled: true, port: 3000 },
-    })),
   },
 }));
 
@@ -43,18 +40,19 @@ describe('cli-args', () => {
   });
 
   describe('parseGlobalArgs', () => {
-    it('should parse start command with primary mode', () => {
-      const args = ['start', '--mode', 'primary'];
-      const result = parseGlobalArgs(args);
-
-      expect(result.mode).toBe('primary');
-    });
-
     it('should parse start command with worker mode', () => {
       const args = ['start', '--mode', 'worker'];
       const result = parseGlobalArgs(args);
 
       expect(result.mode).toBe('worker');
+    });
+
+    it('should return null mode for primary mode (moved to @disclaude/primary-node)', () => {
+      const args = ['start', '--mode', 'primary'];
+      const result = parseGlobalArgs(args);
+
+      // primary mode is no longer supported in main package
+      expect(result.mode).toBeNull();
     });
 
     it('should return null mode for invalid mode', () => {
@@ -71,13 +69,6 @@ describe('cli-args', () => {
       expect(result.mode).toBeNull();
     });
 
-    it('should parse port argument', () => {
-      const args = ['start', '--mode', 'worker', '--port', '4000'];
-      const result = parseGlobalArgs(args);
-
-      expect(result.port).toBe(4000);
-    });
-
     it('should parse comm-url argument', () => {
       const args = ['start', '--mode', 'worker', '--comm-url', 'ws://example.com:3001'];
       const result = parseGlobalArgs(args);
@@ -86,7 +77,7 @@ describe('cli-args', () => {
     });
 
     it('should parse auth-token argument', () => {
-      const args = ['start', '--mode', 'primary', '--auth-token', 'my-token'];
+      const args = ['start', '--mode', 'worker', '--auth-token', 'my-token'];
       const result = parseGlobalArgs(args);
 
       expect(result.authToken).toBe('my-token');
@@ -96,8 +87,6 @@ describe('cli-args', () => {
       const args: string[] = [];
       const result = parseGlobalArgs(args);
 
-      expect(result.port).toBe(3001);
-      expect(result.host).toBe('0.0.0.0');
       expect(result.commUrl).toBe('ws://localhost:3001');
     });
 
@@ -105,32 +94,14 @@ describe('cli-args', () => {
       const args = [
         'start',
         '--mode', 'worker',
-        '--port', '5000',
         '--auth-token', 'secret',
+        '--comm-url', 'ws://primary:3001',
       ];
       const result = parseGlobalArgs(args);
 
       expect(result.mode).toBe('worker');
-      expect(result.port).toBe(5000);
       expect(result.authToken).toBe('secret');
-    });
-  });
-
-  describe('getPrimaryNodeConfig', () => {
-    it('should extract primary node config from global args', () => {
-      const globalArgs: GlobalArgs = {
-        mode: 'primary',
-        port: 3001,
-        host: 'localhost',
-        commUrl: 'ws://localhost:3001',
-        authToken: 'test-token',
-      };
-
-      const config = getPrimaryNodeConfig(globalArgs);
-
-      expect(config.port).toBe(3001);
-      expect(config.host).toBe('localhost');
-      expect(config.authToken).toBe('test-token');
+      expect(result.commUrl).toBe('ws://primary:3001');
     });
   });
 
@@ -138,8 +109,6 @@ describe('cli-args', () => {
     it('should extract worker node config from global args', () => {
       const globalArgs: GlobalArgs = {
         mode: 'worker',
-        port: 3001,
-        host: 'localhost',
         commUrl: 'ws://localhost:3001',
         authToken: 'test-token',
       };
