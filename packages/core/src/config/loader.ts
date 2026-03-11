@@ -1,5 +1,5 @@
 /**
- * Configuration file loader for Disclaude.
+ * Configuration file loader for Disclaude core.
  *
  * This module handles loading and parsing YAML configuration files.
  */
@@ -14,7 +14,7 @@ import type { DisclaudeConfig, LoadedConfig, ConfigFileInfo, ConfigValidationErr
 const logger = createLogger('ConfigLoader');
 
 /**
- * Configuration file names to search for, in priority order.
+ * Config file names to search for, in priority order.
  */
 const CONFIG_FILE_NAMES = [
   'disclaude.config.yaml',
@@ -32,10 +32,10 @@ const SEARCH_PATHS = [
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..') : '',
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..') : '',
   process.env.HOME || '', // Home directory
-].filter(Boolean);
+].filter(Boolean) as string[];
 
 /**
- * Find the configuration file in the search paths.
+ * Find configuration file by searching standard locations.
  *
  * @returns ConfigFileInfo with path and existence status
  */
@@ -59,14 +59,6 @@ export function findConfigFile(): ConfigFileInfo {
  *
  * @param filePath - Path to the configuration file (optional, will search if not provided)
  * @returns LoadedConfig object
- *
- * @example
- * ```typescript
- * const config = loadConfigFile();
- * if (config._fromFile) {
- *   console.log(`Loaded from ${config._source}`);
- * }
- * ```
  */
 export function loadConfigFile(filePath?: string): LoadedConfig {
   const fileInfo = filePath
@@ -113,19 +105,19 @@ export function loadConfigFile(filePath?: string): LoadedConfig {
  * @returns Configuration object from file
  */
 export function getConfigFromFile(fileConfig: LoadedConfig): DisclaudeConfig {
-  const { _source, _fromFile, ...config } = fileConfig;
-  return config;
+  const { _source, _fromFile, ...restConfig } = fileConfig;
+  return restConfig;
 }
 
 /**
- * Pre-loaded configuration set via CLI --config argument.
- * This allows the configuration to be set before the Config class is loaded.
+ * Pre-loaded configuration storage.
+ * Set via CLI --config argument before the Config class is loaded.
  */
 let preloadedConfig: LoadedConfig | null = null;
 
 /**
- * Set pre-loaded configuration from CLI --config argument.
- * Must be called before importing Config class.
+ * Set pre-loaded configuration via CLI --config argument.
+ * This allows the configuration to be set before the Config class is loaded.
  *
  * @param config - Pre-loaded configuration
  */
@@ -185,7 +177,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
  * Called early to provide clear error messages about missing required fields.
  *
  * @param config - Configuration to validate
- * @returns Validation result with errors if any
+ * @returns validation result with errors if any
  */
 export function validateRequiredConfig(config: DisclaudeConfig): {
   valid: boolean;

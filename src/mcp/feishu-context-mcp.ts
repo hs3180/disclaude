@@ -176,7 +176,13 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
       parentMessageId: z.string().optional(),
       actionPrompts: z.record(z.string(), z.string()).optional(),
     }),
-    handler: async ({ content, format, chatId, parentMessageId, actionPrompts }) => {
+    handler: async ({ content, format, chatId, parentMessageId, actionPrompts }: {
+      content: unknown;
+      format: 'text' | 'card';
+      chatId: string;
+      parentMessageId?: string;
+      actionPrompts?: Record<string, string>;
+    }) => {
       if (format === 'card' && typeof content === 'string') {
         return toolSuccess('❌ Error: When format="card", content must be an OBJECT.');
       }
@@ -196,7 +202,7 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
           return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
         }
         // Otherwise use regular send_message
-        const result = await send_message({ content, format, chatId, parentMessageId });
+        const result = await send_message({ content: content as string | Record<string, unknown>, format, chatId, parentMessageId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Message send failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -207,7 +213,7 @@ export const feishuToolDefinitions: InlineToolDefinition[] = [
     name: 'send_file',
     description: 'Send a file to a chat.',
     parameters: z.object({ filePath: z.string(), chatId: z.string() }),
-    handler: async ({ filePath, chatId }) => {
+    handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
       try {
         const result = await send_file({ filePath, chatId });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);

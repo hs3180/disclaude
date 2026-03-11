@@ -20,10 +20,12 @@
  * // Cleanup
  * channel.close();
  * ```
+ *
+ * @module agents/message-channel
  */
 
 import { createLogger } from '../utils/logger.js';
-import type { StreamingUserMessage } from '../sdk/index.js';
+import type { StreamingUserMessage } from '../sdk/types.js';
 
 const logger = createLogger('MessageChannel');
 

@@ -40,6 +40,8 @@ export interface BaseNodeConfig {
  * @see Issue #1028
  */
 export interface RestChannelConfig {
+  /** Enable/disable REST channel */
+  enabled?: boolean;
   /** Port for REST API server */
   port?: number;
   /** Host for REST API server */

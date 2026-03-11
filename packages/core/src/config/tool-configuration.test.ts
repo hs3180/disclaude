@@ -1,5 +1,5 @@
 /**
- * Tests for tool configuration (src/config/tool-configuration.ts)
+ * Tests for tool configuration (packages/core/src/config/tool-configuration.ts)
  *
  * Tests the following functionality:
  * - ALLOWED_TOOLS contains all expected SDK tools

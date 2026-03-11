@@ -2,6 +2,36 @@
  * Core type definitions for disclaude.
  */
 
+// Message level types (Issue #1040)
+export {
+  MessageLevel,
+  DEFAULT_USER_LEVELS,
+  ALL_LEVELS,
+} from './messaging.js';
+
+// Agent types (Issue #1040) - Extended types for application-level use
+export type {
+  ContentBlock,
+  ExtendedAgentMessageMetadata,
+  ParsedSDKMessage,
+  AgentMessage,
+  AgentOptions,
+  AgentInput,
+  ExtendedAgentMessageType,
+} from './agent.js';
+
+// Backward-compatible type aliases
+export type {
+  ExtendedAgentMessageMetadata as AgentMessageMetadata,
+  ExtendedAgentMessageType as AgentMessageType,
+} from './agent.js';
+
+// Re-export SDK types for backward compatibility
+export type {
+  StreamingUserMessage,
+  UserInput,
+} from '../sdk/types.js';
+
 // File transfer types
 export type {
   FileRef,

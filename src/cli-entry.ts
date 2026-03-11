@@ -8,7 +8,7 @@
 
 // Parse --config argument BEFORE importing Config
 // This must be done first to allow loading a custom config file
-import { loadConfigFile, setLoadedConfig } from './config/loader.js';
+import { loadConfigFile, setLoadedConfig, setRuntimeContext, type AgentRuntimeContext } from '@disclaude/core';
 import packageJson from '../package.json' with { type: 'json' };
 
 /**
@@ -73,6 +73,25 @@ async function loadDependencies(): Promise<void> {
 
   const cliArgsModule = await import('./utils/cli-args.js');
   ({ parseGlobalArgs } = cliArgsModule);
+
+  // Setup runtime context for core package (Issue #1040)
+  // This allows core agents to access config without direct coupling
+  const skillsIndexModule = await import('./skills/index.js');
+  const mcpModule = await import('./mcp/feishu-context-mcp.js');
+
+  const runtimeContext: AgentRuntimeContext = {
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => Config.getLoggingConfig(),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+    // Optional: Platform-specific callbacks (used by Pilot)
+    createMcpServer: async (_chatId: string) => {
+      return mcpModule.createFeishuSdkMcpServer();
+    },
+    findSkill: async (name: string) => (await skillsIndexModule.findSkill(name)) ?? undefined,
+  };
+  setRuntimeContext(runtimeContext);
 }
 
 /**

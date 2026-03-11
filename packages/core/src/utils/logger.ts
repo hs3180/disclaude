@@ -12,6 +12,9 @@
  */
 
 import pino, { Logger, Level, LoggerOptions } from 'pino';
+
+// Re-export Logger type for consumers
+export type { Logger } from 'pino';
 import path from 'path';
 import fs from 'fs';
 

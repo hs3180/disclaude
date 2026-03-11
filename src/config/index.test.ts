@@ -2,7 +2,7 @@
  * Tests for configuration index (src/config/index.ts)
  *
  * Tests the following functionality:
- * - Config class static properties
+ * - Config class static properties (extended from core)
  * - getAgentConfig() method
  * - getWorkspaceDir() method
  * - resolveWorkspace() method
@@ -11,6 +11,8 @@
  * - getToolConfig() method
  * - getLoggingConfig() method
  * - getRawConfig() method
+ * - getRestChannelConfig() method (extended)
+ * - getChannelsConfig() method (extended)
  * - Provider preference (GLM over Anthropic)
  */
 
@@ -32,69 +34,69 @@ describe('Config', () => {
 
   describe('Static Properties', () => {
     it('should have CONFIG_LOADED property', () => {
-      expect(typeof Config.CONFIG_LOADED).toBe('boolean');
-    });
+    expect(typeof Config.CONFIG_LOADED).toBe('boolean');
+  });
 
     it('should have CONFIG_SOURCE property', () => {
-      // CONFIG_SOURCE is undefined when no config file is found, string otherwise
-      expect(Config.CONFIG_SOURCE === undefined || typeof Config.CONFIG_SOURCE === 'string').toBe(true);
-    });
+    // CONFIG_SOURCE is undefined when no config file is found, string otherwise
+    expect(Config.CONFIG_SOURCE === undefined || typeof Config.CONFIG_SOURCE === 'string').toBe(true);
+  });
 
     it('should have WORKSPACE_DIR property', () => {
-      expect(typeof Config.WORKSPACE_DIR).toBe('string');
-    });
+    expect(typeof Config.WORKSPACE_DIR).toBe('string');
+  });
 
     it('should have FEISHU_APP_ID property', () => {
-      expect(typeof Config.FEISHU_APP_ID).toBe('string');
-    });
+    expect(typeof Config.FEISHU_APP_ID).toBe('string');
+  });
 
     it('should have FEISHU_APP_SECRET property', () => {
-      expect(typeof Config.FEISHU_APP_SECRET).toBe('string');
-    });
+    expect(typeof Config.FEISHU_APP_SECRET).toBe('string');
+  });
 
     it('should have FEISHU_CLI_CHAT_ID property', () => {
-      expect(typeof Config.FEISHU_CLI_CHAT_ID).toBe('string');
-    });
+    expect(typeof Config.FEISHU_CLI_CHAT_ID).toBe('string');
+  });
 
     it('should have GLM_API_KEY property', () => {
-      expect(typeof Config.GLM_API_KEY).toBe('string');
-    });
+    expect(typeof Config.GLM_API_KEY).toBe('string');
+  });
 
     it('should have GLM_MODEL property', () => {
-      expect(typeof Config.GLM_MODEL).toBe('string');
-    });
+    expect(typeof Config.GLM_MODEL).toBe('string');
+  });
 
     it('should have GLM_API_BASE_URL property', () => {
-      expect(typeof Config.GLM_API_BASE_URL).toBe('string');
-    });
+    expect(typeof Config.GLM_API_BASE_URL).toBe('string');
+  });
 
     it('should have ANTHROPIC_API_KEY property', () => {
-      expect(typeof Config.ANTHROPIC_API_KEY).toBe('string');
-    });
+    expect(typeof Config.ANTHROPIC_API_KEY).toBe('string');
+  });
 
     it('should have CLAUDE_MODEL property', () => {
-      expect(typeof Config.CLAUDE_MODEL).toBe('string');
-    });
+    expect(typeof Config.CLAUDE_MODEL).toBe('string');
+  });
 
     it('should have LOG_LEVEL property', () => {
-      expect(typeof Config.LOG_LEVEL).toBe('string');
-    });
+    expect(typeof Config.LOG_LEVEL).toBe('string');
+  });
 
     it('should have LOG_FILE property', () => {
-      expect(Config.LOG_FILE === undefined || typeof Config.LOG_FILE === 'string').toBe(true);
-    });
+    expect(Config.LOG_FILE === undefined || typeof Config.LOG_FILE === 'string').toBe(true);
+  });
 
     it('should have LOG_PRETTY property', () => {
-      expect(typeof Config.LOG_PRETTY).toBe('boolean');
-    });
+    expect(typeof Config.LOG_PRETTY).toBe('boolean');
+  });
 
     it('should have LOG_ROTATE property', () => {
-      expect(typeof Config.LOG_ROTATE).toBe('boolean');
-    });
+    expect(typeof Config.LOG_ROTATE).toBe('boolean');
+  });
 
     it('should have SKILLS_DIR property', () => {
-      expect(typeof Config.SKILLS_DIR).toBe('string');
-    });
+    expect(typeof Config.SKILLS_DIR).toBe('string');
+  });
   });
 
   describe('getWorkspaceDir()', () => {
@@ -209,7 +211,7 @@ describe('Config', () => {
     });
   });
 
-  describe('getRestChannelConfig()', () => {
+  describe('getRestChannelConfig() (extended)', () => {
     it('should return an object', () => {
       const restConfig = Config.getRestChannelConfig();
       expect(typeof restConfig).toBe('object');
@@ -248,6 +250,13 @@ describe('Config', () => {
     it('should have optional maxFileSize property', () => {
       const restConfig = Config.getRestChannelConfig();
       expect(restConfig.maxFileSize === undefined || typeof restConfig.maxFileSize === 'number').toBe(true);
+    });
+  });
+
+  describe('getChannelsConfig() (extended)', () => {
+    it('should return an object', () => {
+      const channelsConfig = Config.getChannelsConfig();
+      expect(typeof channelsConfig).toBe('object');
     });
   });
 

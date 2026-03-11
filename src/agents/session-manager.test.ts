@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionManager } from './session-manager.js';
-import type { QueryHandle } from '../sdk/types.js';
-import { MessageChannel } from './message-channel.js';
+import { MessageChannel,type QueryHandle } from '@disclaude/core';
 import type pino from 'pino';
 
 // Mock dependencies
-vi.mock('./message-channel.js');
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...mod,
+    MessageChannel: vi.fn(),
+  };
+});
 
 describe('SessionManager', () => {
   let sessionManager: SessionManager;

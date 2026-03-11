@@ -1,5 +1,5 @@
 /**
- * Tests for configuration loader (src/config/loader.ts)
+ * Tests for configuration loader (packages/core/src/config/loader.ts)
  *
  * Tests the following functionality:
  * - Finding configuration files in search paths

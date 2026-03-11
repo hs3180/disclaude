@@ -27,6 +27,9 @@ const mockSockets: MockSocket[] = [];
 let mockServer: MockServer | null = null;
 let serverConnectionHandler: ((socket: MockSocket) => void) | null = null;
 
+// Track active socket paths - use vi.hoisted to ensure it's available before mock hoisting
+const activeSocketPaths = vi.hoisted(() => new Set<string>());
+
 vi.mock('net', () => ({
   createServer: vi.fn((handler: (socket: MockSocket) => void) => {
     serverConnectionHandler = handler;
@@ -93,9 +96,6 @@ vi.mock('net', () => ({
     return socket;
   }),
 }));
-
-// Track active socket paths
-const activeSocketPaths = new Set<string>();
 
 // Mock fs module
 vi.mock('fs', () => ({

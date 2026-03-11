@@ -8,10 +8,9 @@
  */
 
 /**
- * All default SDK tools enabled for agents.
- *
- * This includes all built-in Claude Agent SDK tools except browser/OCR MCP tools
+ * All default SDK tools enabled for agents except browser/OCR MCP tools
  * which are configured separately by agents that need them.
+ * (e.g., Playwright, Feishu context).
  */
 export const ALLOWED_TOOLS = [
   // Skills & Agents
@@ -43,3 +42,7 @@ export const ALLOWED_TOOLS = [
   'TodoWrite',
 ] as const;
 
+/**
+ * Type for allowed tool names.
+ */
+export type AllowedToolName = (typeof ALLOWED_TOOLS)[number];

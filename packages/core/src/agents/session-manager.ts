@@ -14,9 +14,9 @@
  * ```
  */
 
-import { MessageChannel,  type QueryHandle,
-} from '@disclaude/core';
-import type pino from 'pino';
+import type { QueryHandle } from '../sdk/index.js';
+import { MessageChannel } from './message-channel.js';
+import type { Logger } from '../utils/logger.js';
 
 /**
  * Represents an active session for a chatId.
@@ -35,7 +35,7 @@ export interface PilotSession {
  */
 export interface SessionManagerConfig {
   /** Logger instance */
-  logger: pino.Logger;
+  logger: Logger;
 }
 
 /**
@@ -49,7 +49,7 @@ export interface SessionManagerConfig {
  * - Tracking active session count
  */
 export class SessionManager {
-  private readonly logger: pino.Logger;
+  private readonly logger: Logger;
   private readonly sessions = new Map<string, PilotSession>();
 
   constructor(config: SessionManagerConfig) {
