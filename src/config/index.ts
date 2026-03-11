@@ -5,8 +5,7 @@ export * from '@disclaude/core';
 export * from './types.js';
 
 // Extend Config with channel-specific methods
-import { Config as BaseConfig } from '@disclaude/core';
-import type { RestChannelConfig } from '@disclaude/core';
+import { Config as BaseConfig, type RestChannelConfig } from '@disclaude/core';
 
 /**
  * Channels configuration with REST channel support.

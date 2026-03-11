@@ -8,7 +8,7 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import type { IChannel, OutgoingMessage } from '../channels/types.js';
+import type { IChannel, OutgoingMessage } from '@disclaude/primary-node';
 
 const logger = createLogger('ChannelMessageRouter');
 

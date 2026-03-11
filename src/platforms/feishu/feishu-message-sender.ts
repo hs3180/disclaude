@@ -8,7 +8,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import path from 'path';
 import type { Logger } from 'pino';
-import type { IMessageSender } from '../../channels/adapters/types.js';
+import type { IMessageSender } from '@disclaude/core';
 import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { buildTextContent } from './card-builders/content-builder.js';
 import { extractCardTextContent } from './card-builders/card-text-extractor.js';

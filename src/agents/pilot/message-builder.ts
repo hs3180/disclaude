@@ -10,7 +10,7 @@
  */
 
 import { Config } from '../../config/index.js';
-import type { ChannelCapabilities } from '../../channels/types.js';
+import type { ChannelCapabilities } from '@disclaude/primary-node';
 import type { MessageData } from './types.js';
 
 /**

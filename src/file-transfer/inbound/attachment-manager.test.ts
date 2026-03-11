@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AttachmentManager } from './attachment-manager.js';
-import type { FileAttachment } from '../../channels/adapters/types.js';
+import type { FileAttachment } from '@disclaude/core';
 
 // Mock the import for FileAttachment type
 // We'll create test attachments inline
