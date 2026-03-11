@@ -92,7 +92,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       provider: z.string().describe('Provider name (e.g., "github", "gitlab", "notion")'),
       chatId: z.string().describe('Chat ID from the task context'),
     }),
-    handler: async ({ provider, chatId }) => {
+    handler: async ({ provider, chatId }: { provider: string; chatId: string }) => {
       try {
         const manager = getManager();
         const result = await manager.checkToken(chatId, provider);
@@ -124,7 +124,16 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       callbackUrl: z.string().describe('OAuth callback URL (must match the registered redirect URI)'),
       chatId: z.string().describe('Chat ID from the task context'),
     }),
-    handler: ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }) => {
+    handler: ({ providerName, authUrl, tokenUrl, clientId, clientSecret, scopes, callbackUrl, chatId }: {
+      providerName: string;
+      authUrl: string;
+      tokenUrl: string;
+      clientId: string;
+      clientSecret: string;
+      scopes: string;
+      callbackUrl: string;
+      chatId: string;
+    }) => {
       try {
         const provider: OAuthProviderConfig = {
           name: providerName,
@@ -162,7 +171,14 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       headers: z.record(z.string(), z.string()).optional().describe('Additional headers (Authorization header is added automatically)'),
       body: z.unknown().optional().describe('Request body (for POST/PUT/PATCH)'),
     }),
-    handler: async ({ chatId, provider, method, url, headers, body }) => {
+    handler: async ({ chatId, provider, method, url, headers, body }: {
+      chatId: string;
+      provider: string;
+      method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      url: string;
+      headers?: Record<string, string>;
+      body?: unknown;
+    }) => {
       try {
         const manager = getManager();
         const result = await manager.makeAuthenticatedRequest(chatId, provider, {
@@ -199,7 +215,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
     parameters: z.object({
       chatId: z.string().describe('Chat ID from the task context'),
     }),
-    handler: async ({ chatId }) => {
+    handler: async ({ chatId }: { chatId: string }) => {
       try {
         const manager = getManager();
         const providers = await manager.listAuthorizations(chatId);
@@ -223,7 +239,7 @@ export const authToolDefinitions: InlineToolDefinition[] = [
       chatId: z.string().describe('Chat ID from the task context'),
       provider: z.string().describe('Provider name to revoke'),
     }),
-    handler: async ({ chatId, provider }) => {
+    handler: async ({ chatId, provider }: { chatId: string; provider: string }) => {
       try {
         const manager = getManager();
         const deleted = await manager.revokeToken(chatId, provider);

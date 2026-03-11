@@ -4,7 +4,7 @@
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
  */
 
-import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig } from '../../types.js';
+import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -154,7 +154,7 @@ function adaptInlineMcpServer(config: InlineMcpServerConfig): unknown {
  * @param input - 统一输入（字符串或 UserInput 数组）
  * @returns Claude SDK 格式的输入
  */
-export function adaptInput(input: string | import('../../types.js').UserInput[]): unknown {
+export function adaptInput(input: string | UserInput[]): unknown {
   if (typeof input === 'string') {
     return input;
   }

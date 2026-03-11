@@ -6,7 +6,7 @@
 
 import type { ChannelCapabilities } from '../../channels/types.js';
 import type { FileRef } from '../../file-transfer/types.js';
-import type { BaseAgentConfig } from '../base-agent.js';
+import type { BaseAgentConfig } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.

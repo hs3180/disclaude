@@ -52,13 +52,13 @@ export {
 // Re-export SkillAgent interface as type alias for backward compatibility
 export type { SkillAgent as SkillAgentInterface } from './types.js';
 
-// Base class
+// Base class - imported from core (Issue #1040)
 export {
   BaseAgent,
   type SdkOptionsExtra,
   type IteratorYieldResult,
   type QueryStreamResult,
-} from './base-agent.js';
+} from '@disclaude/core';
 
 // Generic SkillAgent (Issue #413)
 export {
@@ -88,23 +88,6 @@ export {
 
 // Factory
 export { AgentFactory, type AgentCreateOptions } from './factory.js';
-
-// Task Complexity Agent (Issue #857)
-export {
-  TaskComplexityAgent,
-  createTaskComplexityAgent,
-  type TaskComplexityAgentConfig,
-  type TaskComplexityResult,
-  type ComplexityLevel,
-} from './task-complexity-agent.js';
-
-// Task History Storage (Issue #857)
-export {
-  TaskHistoryStorage,
-  taskHistoryStorage,
-  type TaskRecord,
-  type TaskTypeStats,
-} from './task-history.js';
 
 // SubagentManager - Unified subagent spawning (Issue #997)
 export {

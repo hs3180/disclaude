@@ -12,7 +12,7 @@
  */
 
 import { getProvider } from '../sdk/index.js';
-import type { AgentQueryOptions } from '../sdk/types.js';
+import type { AgentQueryOptions } from '@disclaude/core';
 import { Config } from '../config/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger } from '../utils/logger.js';

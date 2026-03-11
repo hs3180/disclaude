@@ -35,9 +35,9 @@
  * @module agents/types
  */
 
-import type { AgentMessage } from '../types/agent.js';
-import type { SdkInlineToolDefinition, SdkMcpServerConfig } from '@disclaude/core';
-import type { FileRef } from '../file-transfer/types.js';
+import type { AgentMessage } from '../types/index.js';
+import type { InlineToolDefinition, McpServerConfig } from '../sdk/index.js';
+import type { FileRef } from '../types/index.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -289,7 +289,7 @@ export interface Subagent extends Omit<SkillAgent, 'type'> {
    *
    * @returns Tool definition for MCP registration
    */
-  asTool(): SdkInlineToolDefinition;
+  asTool(): InlineToolDefinition;
 
   /**
    * Get MCP server configuration for standalone execution.
@@ -299,7 +299,7 @@ export interface Subagent extends Omit<SkillAgent, 'type'> {
    *
    * @returns MCP server configuration, or undefined if not applicable
    */
-  getMcpServer(): SdkMcpServerConfig | undefined;
+  getMcpServer(): McpServerConfig | undefined;
 }
 
 // ============================================================================
@@ -506,6 +506,108 @@ export interface AgentConfig {
   permissionMode?: 'default' | 'bypassPermissions';
 }
 
+// ============================================================================
+// Runtime Context Interface (Issue #1040)
+// ============================================================================
+
+/**
+ * Runtime context interface for dependency injection.
+ *
+ * Main package implements this interface and injects it into core
+ * to decouple agents from platform-specific dependencies.
+ *
+ * @example
+ * ```typescript
+ * // In main package (src/cli-entry.ts)
+ * import { setRuntimeContext } from '@disclaude/core';
+ *
+ * setRuntimeContext({
+ *   getWorkspaceDir: () => Config.getWorkspaceDir(),
+ *   getAgentConfig: () => Config.getAgentConfig(),
+ *   getLoggingConfig: () => Config.getLoggingConfig(),
+ *   getGlobalEnv: () => Config.getGlobalEnv(),
+ *   isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+ *   createMcpServer: (chatId) => createFeishuSdkMcpServer(chatId),
+ *   findSkill: (name) => findSkill(name),
+ * });
+ * ```
+ */
+export interface AgentRuntimeContext {
+  // Config-related methods
+  /** Get the workspace directory path */
+  getWorkspaceDir(): string;
+  /** Get agent configuration (API key, model, provider) */
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  /** Get logging configuration */
+  getLoggingConfig(): { sdkDebug: boolean };
+  /** Get global environment variables */
+  getGlobalEnv(): Record<string, string>;
+  /** Check if Agent Teams mode is enabled */
+  isAgentTeamsEnabled(): boolean;
+
+  // Platform adapters (optional - only needed for ChatAgent)
+  /** Create MCP server instance for a chatId */
+  createMcpServer?(chatId: string): Promise<unknown>;
+  /** Send a text message to a chat */
+  sendMessage?(chatId: string, text: string, parentMessageId?: string): Promise<void>;
+  /** Send an interactive card to a chat */
+  sendCard?(chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string): Promise<void>;
+  /** Send a file to a chat */
+  sendFile?(chatId: string, filePath: string): Promise<void>;
+
+  // Skill-related methods (optional)
+  /** Find a skill by name */
+  findSkill?(skillName: string): Promise<string | undefined>;
+}
+
+// Global runtime context (set by main package)
+let globalRuntimeContext: AgentRuntimeContext | null = null;
+
+/**
+ * Set the runtime context for agents.
+ * Must be called by main package before using any agents.
+ *
+ * @param ctx - Runtime context implementation
+ */
+export function setRuntimeContext(ctx: AgentRuntimeContext): void {
+  globalRuntimeContext = ctx;
+}
+
+/**
+ * Get the runtime context.
+ * Throws if context is not set.
+ *
+ * @returns The runtime context
+ * @throws Error if context not set
+ */
+export function getRuntimeContext(): AgentRuntimeContext {
+  if (!globalRuntimeContext) {
+    throw new Error('Runtime context not set. Call setRuntimeContext() first.');
+  }
+  return globalRuntimeContext;
+}
+
+/**
+ * Check if runtime context is set.
+ * Useful for conditional behavior during migration.
+ *
+ * @returns true if context is set
+ */
+export function hasRuntimeContext(): boolean {
+  return globalRuntimeContext !== null;
+}
+
+/**
+ * Clear the runtime context (for testing).
+ */
+export function clearRuntimeContext(): void {
+  globalRuntimeContext = null;
+}
+
+// ============================================================================
+// Agent Factory Types
+// ============================================================================
+
 /**
  * Factory for creating Agent instances.
  *
@@ -572,3 +674,4 @@ export interface AgentFactoryInterface {
    */
   createSubagent(name: string, ...args: unknown[]): Subagent;
 }
+

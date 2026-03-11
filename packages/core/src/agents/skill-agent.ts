@@ -32,10 +32,10 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { Config } from '../config/index.js';
-import type { AgentMessage } from '../types/agent.js';
-import { BaseAgent, type BaseAgentConfig } from '@disclaude/core';
+import type { AgentMessage } from '../types/index.js';
+import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import type { SkillAgent as SkillAgentInterface, UserInput } from './types.js';
+import { hasRuntimeContext, getRuntimeContext } from './types.js';
 
 /**
  * Options for SkillAgent execution.
@@ -62,6 +62,16 @@ function substituteTemplateVars(
     result = result.replaceAll(`{${key}}`, value);
   }
   return result;
+}
+
+/**
+ * Get workspace directory from runtime context.
+ */
+function getWorkspaceDir(): string {
+  if (hasRuntimeContext()) {
+    return getRuntimeContext().getWorkspaceDir();
+  }
+  return process.env.WORKSPACE_DIR || process.cwd();
 }
 
 /**
@@ -110,7 +120,7 @@ export class SkillAgent extends BaseAgent implements SkillAgentInterface {
     if (path.isAbsolute(skillPath)) {
       this.skillPath = skillPath;
     } else {
-      this.skillPath = path.join(Config.getWorkspaceDir(), skillPath);
+      this.skillPath = path.join(getWorkspaceDir(), skillPath);
     }
 
     // Extract skill name from path for logging

@@ -13,7 +13,7 @@ import type {
   ProviderInfo,
   StreamQueryResult,
   UserInput,
-} from './types';
+} from './types.js';
 
 /**
  * Agent SDK Provider 接口

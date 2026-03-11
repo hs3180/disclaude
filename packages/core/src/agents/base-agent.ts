@@ -11,21 +11,22 @@
  * @module agents/base-agent
  */
 
-import { getProvider } from '../sdk/index.js';
-import type { IAgentSDKProvider } from '../sdk/interface.js';
-import type {
-  AgentMessage as SDKAgentMessage,
-  AgentQueryOptions,
-  UserInput,
-  QueryHandle,
-  StreamingUserMessage,
-} from '../sdk/types.js';
+import {
+  getProvider,
+  type IAgentSDKProvider,
+  type AgentQueryOptions,
+  type UserInput,
+  type StreamingUserMessage,
+  type QueryHandle,
+  type AgentMessage as SdkAgentMessage,
+} from '../sdk/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
-import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
+import type { Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
-import type { AgentMessage, AgentInput } from '../types/agent.js';
+import type { AgentMessage } from '../types/index.js';
 import type { Disposable, BaseAgentConfig, AgentProvider } from './types.js';
+import { getRuntimeContext, hasRuntimeContext } from './types.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -56,7 +57,7 @@ export interface IteratorYieldResult {
     sessionId?: string;
   };
   /** SDK Agent message */
-  raw: SDKAgentMessage;
+  raw: SdkAgentMessage;
 }
 
 /**
@@ -101,7 +102,7 @@ export abstract class BaseAgent implements Disposable {
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
 
-  protected readonly logger: ReturnType<typeof createLogger>;
+  protected readonly logger: Logger;
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
@@ -111,16 +112,27 @@ export abstract class BaseAgent implements Disposable {
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
-    // Get provider from config, fallback to Config.getAgentConfig()
+    // Get provider from config, fallback to runtime context
     // This allows agents to be created with explicit provider setting
     // while maintaining backward compatibility
-    this.provider = config.provider ?? Config.getAgentConfig().provider;
+    this.provider = config.provider ?? this.getDefaultProvider();
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+  }
+
+  /**
+   * Get default provider from runtime context.
+   */
+  private getDefaultProvider(): AgentProvider {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getAgentConfig().provider;
+    }
+    // Default to anthropic if no runtime context
+    return 'anthropic';
   }
 
   /**
@@ -141,7 +153,7 @@ export abstract class BaseAgent implements Disposable {
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
     const options: AgentQueryOptions = {
-      cwd: extra.cwd ?? Config.getWorkspaceDir(),
+      cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       settingSources: ['project'],
     };
@@ -156,14 +168,14 @@ export abstract class BaseAgent implements Disposable {
 
     // Add MCP servers (convert to SDK format)
     if (extra.mcpServers) {
-      options.mcpServers = extra.mcpServers as Record<string, import('../sdk/types.js').McpServerConfig>;
+      options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
     }
 
     // Set environment
-    const loggingConfig = Config.getLoggingConfig();
+    const loggingConfig = this.getLoggingConfig();
     // Build global env with agent teams support
-    const globalEnv = { ...Config.getGlobalEnv() };
-    if (Config.isAgentTeamsEnabled()) {
+    const globalEnv = { ...this.getGlobalEnv() };
+    if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
     options.env = buildSdkEnv(
@@ -182,9 +194,51 @@ export abstract class BaseAgent implements Disposable {
   }
 
   /**
+   * Get workspace directory from runtime context.
+   */
+  protected getWorkspaceDir(): string {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getWorkspaceDir();
+    }
+    // Fallback to environment variable or current directory
+    return process.env.WORKSPACE_DIR || process.cwd();
+  }
+
+  /**
+   * Get logging config from runtime context.
+   */
+  protected getLoggingConfig(): { sdkDebug: boolean } {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getLoggingConfig();
+    }
+    // Fallback to environment variable
+    return { sdkDebug: process.env.SDK_DEBUG === 'true' };
+  }
+
+  /**
+   * Get global env from runtime context.
+   */
+  protected getGlobalEnv(): Record<string, string> {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getGlobalEnv();
+    }
+    return {};
+  }
+
+  /**
+   * Check if Agent Teams is enabled from runtime context.
+   */
+  protected isAgentTeamsEnabled(): boolean {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().isAgentTeamsEnabled();
+    }
+    return false;
+  }
+
+  /**
    * Convert SDK AgentMessage to legacy parsed format for compatibility.
    */
-  private convertToLegacyFormat(message: SDKAgentMessage): IteratorYieldResult['parsed'] {
+  private convertToLegacyFormat(message: SdkAgentMessage): IteratorYieldResult['parsed'] {
     return {
       type: message.type,
       content: message.content,
@@ -216,7 +270,7 @@ export abstract class BaseAgent implements Disposable {
    * @yields IteratorYieldResult with parsed and raw message
    */
   protected async *queryOnce(
-    input: AgentInput,
+    input: string | unknown[],
     options: AgentQueryOptions
   ): AsyncGenerator<IteratorYieldResult> {
     // Convert input to SDK format
@@ -304,14 +358,13 @@ export abstract class BaseAgent implements Disposable {
   /**
    * Convert legacy AsyncIterable<StreamingUserMessage> to SDK UserInput format.
    */
-  private convertInputToUserInput(input: AsyncIterable<unknown>): UserInput[] | string {
+  private convertInputToUserInput(input: unknown[]): UserInput[] | string {
     // For string input, just return it
     if (typeof input === 'string') {
       return input;
     }
 
-    // For AsyncIterable, we need to handle it in queryStream
-    // This is a fallback for non-streaming cases
+    // For array input, return empty array as fallback
     return [];
   }
 
