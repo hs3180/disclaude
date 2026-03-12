@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { InteractionManager } from './interaction-manager.js';
-import type { FeishuCardActionEvent } from '../../types/platform';
+import type { FeishuCardActionEvent } from '@disclaude/core';
 
 describe('InteractionManager', () => {
   let manager: InteractionManager;

@@ -5,7 +5,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { createFeishuClient } from './create-feishu-client.js';
-import { FEISHU_API } from '../../config/constants.js';
+
+// Mock FEISHU_API constants
+const MOCK_FEISHU_API = {
+  REQUEST_TIMEOUT_MS: 30000,
+  RETRY: {
+    MAX_RETRIES: 3,
+    INITIAL_DELAY_MS: 1000,
+    MAX_DELAY_MS: 10000,
+    BACKOFF_MULTIPLIER: 2,
+  },
+};
 
 // Mock axios
 vi.mock('axios', () => {
@@ -30,8 +40,10 @@ const mockAxiosInstance = {
   options: vi.fn(),
 };
 
-// Mock logger
-vi.mock('../../utils/logger.js', () => ({
+// Mock @disclaude/core
+vi.mock('@disclaude/core', () => ({
+  FEISHU_API: MOCK_FEISHU_API,
+  RETRYABLE_ERROR_CODES: ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'],
   createLogger: () => ({
     warn: vi.fn(),
     error: vi.fn(),
@@ -58,7 +70,7 @@ describe('createFeishuClient', () => {
     createFeishuClient('test-app-id', 'test-app-secret');
 
     expect(axios.create).toHaveBeenCalledWith({
-      timeout: FEISHU_API.REQUEST_TIMEOUT_MS,
+      timeout: MOCK_FEISHU_API.REQUEST_TIMEOUT_MS,
     });
   });
 
@@ -237,7 +249,7 @@ describe('createFeishuClient', () => {
       expect(error).toHaveProperty('code', 'ETIMEDOUT');
 
       // Initial attempt + MAX_RETRIES (3) = 4 total calls
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + FEISHU_API.RETRY.MAX_RETRIES);
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + MOCK_FEISHU_API.RETRY.MAX_RETRIES);
     });
 
     it('should use exponential backoff for delays', async () => {
@@ -270,7 +282,7 @@ describe('createFeishuClient', () => {
       vi.useRealTimers();
 
       // Verify it attempted multiple times (exponential backoff would cause delays)
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + FEISHU_API.RETRY.MAX_RETRIES);
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1 + MOCK_FEISHU_API.RETRY.MAX_RETRIES);
     });
   });
 });

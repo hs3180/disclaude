@@ -25,8 +25,8 @@ const mockClient = {
   },
 } as unknown as lark.Client;
 
-// Mock logger
-vi.mock('../../utils/logger.js', () => ({
+// Mock logger from @disclaude/core
+vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
     error: vi.fn(),

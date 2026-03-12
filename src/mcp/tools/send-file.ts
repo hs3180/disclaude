@@ -10,7 +10,7 @@ import { existsSync } from 'fs';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { createFeishuClient } from '@disclaude/primary-node';
 import { getIpcClient } from '../../ipc/unix-socket-client.js';
 import { DEFAULT_IPC_CONFIG } from '../../ipc/protocol.js';
 import type { SendFileResult } from './types.js';

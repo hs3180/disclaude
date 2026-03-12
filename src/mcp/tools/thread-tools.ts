@@ -14,7 +14,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../../utils/logger.js';
 import { Config } from '../../config/index.js';
-import { createFeishuClient } from '../../platforms/feishu/create-feishu-client.js';
+import { createFeishuClient } from '@disclaude/primary-node';
 import {
   replyInThread,
   getThreads,

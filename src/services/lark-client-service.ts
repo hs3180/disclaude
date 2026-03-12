@@ -9,9 +9,7 @@
 
 import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '../utils/logger.js';
-import { createFeishuClient, CreateFeishuClientOptions } from '../platforms/feishu/create-feishu-client.js';
-import { buildTextContent } from '../platforms/feishu/card-builders/content-builder.js';
-import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
+import { createFeishuClient, CreateFeishuClientOptions, buildTextContent, extractCardTextContent } from '@disclaude/primary-node';
 import { messageLogger } from '../feishu/message-logger.js';
 import { retry } from '../utils/retry.js';
 import { handleError, ErrorCategory } from '../utils/error-handler.js';

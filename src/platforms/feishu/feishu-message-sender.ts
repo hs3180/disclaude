@@ -10,8 +10,7 @@ import path from 'path';
 import type { Logger } from 'pino';
 import type { IMessageSender } from '@disclaude/core';
 import { handleError, ErrorCategory } from '../../utils/error-handler.js';
-import { buildTextContent } from './card-builders/content-builder.js';
-import { extractCardTextContent } from './card-builders/card-text-extractor.js';
+import { buildTextContent, extractCardTextContent } from '@disclaude/primary-node';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { retry } from '../../utils/retry.js';
 
