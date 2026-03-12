@@ -8,8 +8,7 @@
  * @see Issue #266
  */
 
-import type { AgentMessageType } from '@disclaude/core';
-import { MessageLevel } from '@disclaude/core';
+import { MessageLevel, type AgentMessageType } from '@disclaude/core';
 
 // Re-export MessageLevel for backward compatibility
 export { MessageLevel, DEFAULT_USER_LEVELS, ALL_LEVELS } from '@disclaude/core';
