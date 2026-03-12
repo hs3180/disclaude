@@ -18,7 +18,7 @@ import { Config } from '../config/index.js';
 import { AgentFactory, type PilotCallbacks } from '../agents/index.js';
 import { TaskFlowOrchestrator, type MessageCallbacks } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
-import { generateInteractionPrompt } from '../mcp/tools/interactive-message.js';
+import { generateInteractionPrompt } from '@disclaude/mcp-server';
 import type { Logger } from 'pino';
 
 const logger = createLogger('WorkerRunner');

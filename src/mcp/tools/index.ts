@@ -2,8 +2,13 @@
  * Tool implementations for MCP.
  *
  * @module mcp/tools
+ *
+ * @deprecated Import from '@disclaude/mcp-server' instead.
+ * Issue #1042: MCP Server migration to @disclaude/mcp-server package.
+ * This file is now a re-export wrapper for backward compatibility.
  */
 
+// Re-export types
 export type {
   SendMessageResult,
   SendFileResult,
@@ -13,44 +18,36 @@ export type {
   SendInteractiveResult,
   AskUserOptions,
   AskUserResult,
-} from './types.js';
+} from '@disclaude/mcp-server';
 
-export { send_message, setMessageSentCallback, getMessageSentCallback } from './send-message.js';
-export { send_file } from './send-file.js';
+// Re-export tools
 export {
+  send_message,
+  setMessageSentCallback,
+  getMessageSentCallback,
+  send_file,
   send_interactive_message,
   registerActionPrompts,
   getActionPrompts,
   unregisterActionPrompts,
   generateInteractionPrompt,
   cleanupExpiredContexts,
-} from './interactive-message.js';
-
-// Ask User tool (Human-in-the-Loop)
-export { ask_user } from './ask-user.js';
-
-// Thread Tools (Issue #873: Topic group extension)
-export {
+  ask_user,
   reply_in_thread,
   get_threads,
   get_thread_messages,
-} from './thread-tools.js';
-export type {
-  ReplyInThreadToolResult,
-  GetThreadsToolResult,
-  GetThreadMessagesToolResult,
-} from './thread-tools.js';
-
-// Study Guide Generator (NotebookLM M4)
-export {
   generate_summary,
   generate_qa_pairs,
   generate_flashcards,
   generate_quiz,
   create_study_guide,
-} from './study-guide-generator.js';
+} from '@disclaude/mcp-server';
 
+// Re-export types for thread tools and study guide
 export type {
+  ReplyInThreadToolResult,
+  GetThreadsToolResult,
+  GetThreadMessagesToolResult,
   SummaryOptions,
   SummaryResult,
   QAPair,
@@ -64,4 +61,4 @@ export type {
   QuizGeneratorResult,
   StudyGuideOptions,
   StudyGuideResult,
-} from './study-guide-generator.js';
+} from '@disclaude/mcp-server';

@@ -34,7 +34,7 @@
 
 import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
-import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
+import { createFeishuSdkMcpServer } from '@disclaude/mcp-server';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent, MessageChannel } from '@disclaude/core';
 import type { ChatAgent, UserInput } from '../types.js';

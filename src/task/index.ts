@@ -49,7 +49,7 @@ export {
   feishuContextTools,
   send_message,
   send_file,
-} from '../mcp/feishu-context-mcp.js';
+} from '@disclaude/mcp-server';
 
 // Note: task_done has been removed - completion is now detected via final_result.md
 
