@@ -21,7 +21,7 @@
  */
 
 // Node types
-export { WorkerNode } from './worker-node.js';
+export { WorkerNode, type WorkerNodeOptions, type WorkerNodeDependencies } from './worker-node.js';
 export {
   type NodeType,
   type BaseNodeConfig,

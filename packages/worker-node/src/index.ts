@@ -4,14 +4,10 @@
  * Worker Node process for disclaude.
  *
  * This package contains:
+ * - WorkerNode class (Issue #1041)
  * - WorkerNodeConfig type definition
  * - File transfer client (FileClient)
  * - Schedule module (ScheduleManager, Scheduler, etc.)
- * - (Future) Agent execution code
- * - (Future) WebSocket client
- *
- * Note: The actual WorkerNode implementation is currently in src/nodes/worker-node.ts
- * and will be migrated in a subsequent phase as part of Issue #1041.
  *
  * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
@@ -25,6 +21,35 @@ export type {
   FileDownloadResponse,
 } from '@disclaude/core';
 export { getWorkerNodeCapabilities } from '@disclaude/core';
+
+// WorkerNode class
+export { WorkerNode, type WorkerNodeOptions } from './worker-node.js';
+
+// Dependency interfaces (for external use)
+export type {
+  WorkerNodeDependencies,
+  ChatAgent,
+  AgentPoolInterface,
+  PilotCallbacks,
+  ChatAgentFactory,
+  ScheduleAgentFactory,
+  MessageCallbacks,
+  TaskFlowOrchestratorInterface,
+  TaskFlowOrchestratorFactory,
+  GenerateInteractionPromptCallback,
+  SchedulerInterface,
+  ScheduleFileWatcherInterface,
+  ScheduleManagerInterface,
+} from './types.js';
+
+// WebSocket message types (re-exported from @disclaude/core)
+export type {
+  PromptMessage,
+  CommandMessage,
+  FeedbackMessage,
+  CardActionMessage,
+  FeishuApiResponseMessage,
+} from './types.js';
 
 // File transfer client
 export { FileClient, type FileClientConfig } from './file-client/index.js';

@@ -3,11 +3,23 @@
  *
  * Runs the Worker Node which handles only execution tasks.
  * Connects to a Primary Node via WebSocket.
+ *
+ * Issue #1041: Creates dependency container for WorkerNode.
  */
 
-import { WorkerNode, type WorkerNodeConfig } from '../nodes/index.js';
+import {
+  WorkerNode,
+  type WorkerNodeDependencies,
+  type WorkerNodeConfig,
+} from '@disclaude/worker-node';
 import { createLogger } from '../utils/logger.js';
 import { parseGlobalArgs, type GlobalArgs } from '../utils/cli-args.js';
+import { Config } from '../config/index.js';
+import { AgentFactory, type PilotCallbacks } from '../agents/index.js';
+import { TaskFlowOrchestrator, type MessageCallbacks } from '../feishu/task-flow-orchestrator.js';
+import { TaskTracker } from '../utils/task-tracker.js';
+import { generateInteractionPrompt } from '../mcp/tools/interactive-message.js';
+import type { Logger } from 'pino';
 
 const logger = createLogger('WorkerRunner');
 
@@ -23,6 +35,35 @@ export function getWorkerNodeConfig(globalArgs: GlobalArgs): WorkerNodeConfig {
     nodeId: globalArgs.nodeId,
     nodeName: globalArgs.nodeName,
     reconnectInterval: 3000,
+  };
+}
+
+/**
+ * Create the dependency container for WorkerNode.
+ *
+ * Issue #1041: WorkerNode uses dependency injection to avoid
+ * importing from src/ directory.
+ */
+function createWorkerNodeDependencies(): WorkerNodeDependencies {
+  return {
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+
+    createChatAgent: (chatId: string, callbacks: PilotCallbacks) => {
+      return AgentFactory.createChatAgent('pilot', chatId, callbacks);
+    },
+
+    createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => {
+      return AgentFactory.createScheduleAgent(chatId, callbacks);
+    },
+
+    createTaskFlowOrchestrator: (messageCallbacks: MessageCallbacks, logger: Logger) => {
+      const taskTracker = new TaskTracker();
+      return new TaskFlowOrchestrator(taskTracker, messageCallbacks, logger);
+    },
+
+    generateInteractionPrompt,
+
+    logger,
   };
 }
 
@@ -53,8 +94,14 @@ export async function runWorkerNode(config?: WorkerNodeConfig): Promise<void> {
   console.log(`Primary URL: ${runnerConfig.primaryUrl}`);
   console.log();
 
-  // Create Worker Node
-  const workerNode = new WorkerNode(runnerConfig);
+  // Create dependency container
+  const dependencies = createWorkerNodeDependencies();
+
+  // Create Worker Node with dependencies
+  const workerNode = new WorkerNode({
+    config: runnerConfig,
+    dependencies,
+  });
 
   // Start Worker Node
   await workerNode.start();
@@ -65,7 +112,7 @@ export async function runWorkerNode(config?: WorkerNodeConfig): Promise<void> {
   const shutdown = async () => {
     logger.info('Shutting down Worker Node...');
     console.log('\nShutting down Worker Node...');
-    await workerNode.stop();
+    workerNode.stop();
     process.exit(0);
   };
 

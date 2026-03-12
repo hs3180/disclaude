@@ -1,62 +1,39 @@
 /**
  * Tests for Worker Node.
+ *
+ * Issue #1041: Tests use dependency injection to provide mock dependencies.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { WorkerNode } from './worker-node.js';
+import { WorkerNode, type WorkerNodeOptions } from '@disclaude/worker-node';
 import type { WorkerNodeConfig } from './types.js';
+import { createLogger } from '../utils/logger.js';
+import type { ChatAgent, PilotCallbacks, TaskFlowOrchestratorInterface, MessageCallbacks } from '@disclaude/worker-node';
+import type { Logger } from 'pino';
+
+const logger = createLogger('test-worker');
 
 // Mock dependencies
-vi.mock('../config/index.js', () => ({
-  Config: {
-    getWorkspaceDir: () => '/tmp/test-workspace',
-    getAgentConfig: () => ({ model: 'test-model' }),
-  },
-}));
+const mockChatAgent: ChatAgent = {
+  type: 'chat',
+  name: 'MockChatAgent',
+  processMessage: vi.fn(),
+  executeOnce: vi.fn(),
+  reset: vi.fn(),
+  dispose: vi.fn(),
+};
 
-vi.mock('../agents/index.js', () => ({
-  AgentFactory: {
-    createPilot: vi.fn(() => ({
-      processMessage: vi.fn(),
-      reset: vi.fn(),
-    })),
-  },
-}));
-
-vi.mock('../schedule/index.js', () => ({
-  ScheduleManager: vi.fn(() => ({
-    addTask: vi.fn(),
-    removeTask: vi.fn(),
-  })),
-  Scheduler: vi.fn(() => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-    addTask: vi.fn(),
-    removeTask: vi.fn(),
-  })),
-  ScheduleFileWatcher: vi.fn(() => ({
+const mockDependencies = {
+  getWorkspaceDir: () => '/tmp/test-workspace',
+  createChatAgent: vi.fn((_chatId: string, _callbacks: PilotCallbacks) => mockChatAgent),
+  createScheduleAgent: vi.fn((_chatId: string, _callbacks: PilotCallbacks) => ({ ...mockChatAgent })),
+  createTaskFlowOrchestrator: vi.fn((_callbacks: MessageCallbacks, _logger: Logger): TaskFlowOrchestratorInterface => ({
     start: vi.fn(),
     stop: vi.fn(),
   })),
-}));
-
-vi.mock('../feishu/task-flow-orchestrator.js', () => ({
-  TaskFlowOrchestrator: vi.fn(() => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-  })),
-}));
-
-vi.mock('../utils/task-tracker.js', () => ({
-  TaskTracker: vi.fn(),
-}));
-
-vi.mock('../transport/file-client.js', () => ({
-  FileClient: vi.fn(() => ({
-    uploadFile: vi.fn(),
-    downloadToFile: vi.fn(),
-  })),
-}));
+  generateInteractionPrompt: vi.fn(() => 'Mock prompt'),
+  logger,
+};
 
 describe('WorkerNode', () => {
   let workerNode: WorkerNode;
@@ -74,14 +51,18 @@ describe('WorkerNode', () => {
 
   afterEach(async () => {
     if (workerNode) {
-      await workerNode.stop();
+      workerNode.stop();
     }
     vi.clearAllMocks();
   });
 
   describe('constructor', () => {
     it('should create WorkerNode with config', () => {
-      workerNode = new WorkerNode(config);
+      const options: WorkerNodeOptions = {
+        config,
+        dependencies: mockDependencies,
+      };
+      workerNode = new WorkerNode(options);
       expect(workerNode).toBeDefined();
       expect(workerNode.getNodeId()).toBe('test-worker-id');
       expect(workerNode.getNodeName()).toBe('Test Worker');
@@ -89,7 +70,11 @@ describe('WorkerNode', () => {
 
     it('should auto-generate nodeId if not provided', () => {
       config.nodeId = undefined;
-      workerNode = new WorkerNode(config);
+      const options: WorkerNodeOptions = {
+        config,
+        dependencies: mockDependencies,
+      };
+      workerNode = new WorkerNode(options);
       expect(workerNode.getNodeId()).toBeDefined();
       expect(workerNode.getNodeId()).toMatch(/^worker-/);
     });
@@ -97,13 +82,21 @@ describe('WorkerNode', () => {
 
   describe('getCapabilities', () => {
     it('should return communication: false', () => {
-      workerNode = new WorkerNode(config);
+      const options: WorkerNodeOptions = {
+        config,
+        dependencies: mockDependencies,
+      };
+      workerNode = new WorkerNode(options);
       const capabilities = workerNode.getCapabilities();
       expect(capabilities.communication).toBe(false);
     });
 
     it('should return execution: true', () => {
-      workerNode = new WorkerNode(config);
+      const options: WorkerNodeOptions = {
+        config,
+        dependencies: mockDependencies,
+      };
+      workerNode = new WorkerNode(options);
       const capabilities = workerNode.getCapabilities();
       expect(capabilities.execution).toBe(true);
     });
@@ -111,7 +104,11 @@ describe('WorkerNode', () => {
 
   describe('isRunning', () => {
     it('should return false before start', () => {
-      workerNode = new WorkerNode(config);
+      const options: WorkerNodeOptions = {
+        config,
+        dependencies: mockDependencies,
+      };
+      workerNode = new WorkerNode(options);
       expect(workerNode.isRunning()).toBe(false);
     });
   });
