@@ -179,8 +179,8 @@ start_server() {
         log_info "Using config file: ${CONFIG_PATH}"
     fi
 
-    # Start server in background
-    node dist/cli-entry.js start --mode primary --rest-port "${REST_PORT}" --host "${HOST}" ${config_arg} > "${SERVER_LOG}" 2>&1 &
+    # Start server in background (using new primary-node CLI)
+    node packages/primary-node/dist/cli.js start --rest-port "${REST_PORT}" --host "${HOST}" ${config_arg} > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"

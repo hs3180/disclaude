@@ -4,10 +4,11 @@
  * This module provides platform adapter for Baidu Ruliu (InfoFlow).
  *
  * Issue #725: Ruliu platform adapter integration
+ * Issue #1040: Migrated to @disclaude/primary-node
  *
  * @example
  * ```typescript
- * import { RuliuPlatformAdapter } from './platforms/ruliu';
+ * import { RuliuPlatformAdapter } from '@disclaude/primary-node';
  *
  * const adapter = new RuliuPlatformAdapter({
  *   config: {
@@ -21,8 +22,11 @@
  *   },
  * });
  * ```
+ *
+ * @deprecated Import from @disclaude/primary-node instead
  */
 
+// Re-export from local files (keeping original implementation)
 export { RuliuPlatformAdapter, type RuliuPlatformAdapterConfig } from './ruliu-adapter.js';
 export { RuliuMessageSender, type RuliuMessageSenderConfig } from './ruliu-message-sender.js';
 export { RuliuWebhookHandler, type WebhookCallbacks, type RuliuWebhookHandlerConfig } from './ruliu-webhook-handler.js';

@@ -8,7 +8,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { IPlatformAdapter } from '../../channels/adapters/types.js';
+import type { IPlatformAdapter } from '@disclaude/core';
 import { createLogger } from '../../utils/logger.js';
 import { RuliuMessageSender, type RuliuMessageSenderConfig } from './ruliu-message-sender.js';
 import type { RuliuConfig } from './types.js';

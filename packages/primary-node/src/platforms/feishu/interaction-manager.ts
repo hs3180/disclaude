@@ -3,8 +3,6 @@
  *
  * Manages interactive card contexts and routes actions to handlers.
  * Supports timeout handling and automatic cleanup.
- *
- * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
 import { createLogger } from '@disclaude/core';
@@ -114,7 +112,7 @@ export class InteractionManager {
     const removed = this.interactions.delete(id);
     if (removed) {
       logger.debug({ id }, 'Interaction unregistered');
-    }
+      }
     return removed;
   }
 

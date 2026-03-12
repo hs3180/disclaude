@@ -14,8 +14,8 @@
  * ```
  */
 
-import type { QueryHandle } from '../sdk/types.js';
-import { MessageChannel } from './message-channel.js';
+import { MessageChannel,  type QueryHandle,
+} from '@disclaude/core';
 import type pino from 'pino';
 
 /**

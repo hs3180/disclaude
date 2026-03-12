@@ -8,7 +8,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { IMessageSender } from '../../channels/adapters/types.js';
+import type { IMessageSender } from '@disclaude/core';
 import { handleError, ErrorCategory } from '../../utils/error-handler.js';
 import { createLogger } from '../../utils/logger.js';
 import { retry } from '../../utils/retry.js';

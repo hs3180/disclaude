@@ -11,7 +11,7 @@ import type {
   FileAttachment,
   FileHandlerResult,
   IAttachmentManager,
-} from '../../channels/adapters/types.js';
+} from '@disclaude/core';
 
 const logger = createLogger('FeishuFileHandler');
 

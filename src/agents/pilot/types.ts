@@ -4,9 +4,9 @@
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
  */
 
-import type { ChannelCapabilities } from '../../channels/types.js';
+import type { ChannelCapabilities } from '@disclaude/primary-node';
 import type { FileRef } from '../../file-transfer/types.js';
-import type { BaseAgentConfig } from '../base-agent.js';
+import type { BaseAgentConfig } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.

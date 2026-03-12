@@ -32,7 +32,7 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
-} from '../schedule/index.js';
+} from '@disclaude/worker-node';
 import { TaskFlowOrchestrator } from '../feishu/task-flow-orchestrator.js';
 import { TaskTracker } from '../utils/task-tracker.js';
 import type { PromptMessage, CommandMessage, FeedbackMessage, RegisterMessage, CardActionMessage, FeishuApiResponseMessage } from '../types/websocket-messages.js';
@@ -251,75 +251,97 @@ export class WorkerNode {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const scheduleManager = new ScheduleManager({ schedulesDir });
-    // Issue #711: Scheduler no longer needs AgentPool
-    // Uses AgentFactory.createScheduleAgent directly
+    // Issue #1041: Scheduler uses dependency injection for task execution
     this.scheduler = new Scheduler({
       scheduleManager,
       callbacks: {
-        sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
+        sendMessage: (chatId: string, message: string): Promise<void> => {
           const ctx = this.activeFeedbackChannels.get(chatId);
           if (ctx) {
-            ctx.sendFeedback({ type: 'text', chatId, text, threadId: threadMessageId || ctx.threadId });
+            ctx.sendFeedback({ type: 'text', chatId, text: message, threadId: ctx.threadId });
           } else {
             // For scheduled tasks without active channel, send directly via WebSocket
             if (this.ws?.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
+              this.ws.send(JSON.stringify({ type: 'text', chatId, text: message }));
             }
           }
           return Promise.resolve();
         },
-        sendCard: (chatId: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-          const ctx = this.activeFeedbackChannels.get(chatId);
-          if (ctx) {
-            ctx.sendFeedback({ type: 'card', chatId, card, text: description, threadId: threadMessageId || ctx.threadId });
-          } else {
-            if (this.ws?.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({ type: 'card', chatId, card, text: description, threadId: threadMessageId }));
-            }
-          }
-          return Promise.resolve();
-        },
-        sendFile: async (chatId: string, filePath: string) => {
-          const ctx = this.activeFeedbackChannels.get(chatId);
-          if (ctx) {
-            try {
-              const fileRef = await this.fileClient.uploadFile(filePath, chatId);
-              ctx.sendFeedback({
-                type: 'file',
-                chatId,
-                fileRef,
-                fileName: fileRef.fileName,
-                fileSize: fileRef.size,
-                mimeType: fileRef.mimeType,
-                threadId: ctx.threadId,
-              });
-            } catch (error) {
-              logger.error({ err: error, chatId, filePath }, 'Failed to upload file');
-              ctx.sendFeedback({
-                type: 'error',
-                chatId,
-                error: `Failed to send file: ${(error as Error).message}`,
-                threadId: ctx.threadId,
-              });
-            }
-          } else {
-            try {
-              const fileRef = await this.fileClient.uploadFile(filePath, chatId);
+      },
+      // Provide the executor function for dependency injection
+      executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
+        // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+        const agent = AgentFactory.createScheduleAgent(chatId, {
+          sendMessage: (chatId_: string, text: string, parentMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId_);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'text', chatId: chatId_, text, threadId: parentMessageId ?? ctx.threadId });
+            } else {
               if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({
+                this.ws.send(JSON.stringify({ type: 'text', chatId: chatId_, text, threadId: parentMessageId }));
+              }
+            }
+            return Promise.resolve();
+          },
+          sendCard: (chatId_: string, card: Record<string, unknown>, description?: string, parentMessageId?: string): Promise<void> => {
+            const ctx = this.activeFeedbackChannels.get(chatId_);
+            if (ctx) {
+              ctx.sendFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: parentMessageId ?? ctx.threadId });
+            } else {
+              if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'card', chatId: chatId_, card, text: description, threadId: parentMessageId }));
+              }
+            }
+            return Promise.resolve();
+          },
+          sendFile: async (chatId_: string, filePath: string) => {
+            const ctx = this.activeFeedbackChannels.get(chatId_);
+            if (ctx) {
+              try {
+                const fileRef = await this.fileClient.uploadFile(filePath, chatId_);
+                ctx.sendFeedback({
                   type: 'file',
-                  chatId,
+                  chatId: chatId_,
                   fileRef,
                   fileName: fileRef.fileName,
                   fileSize: fileRef.size,
                   mimeType: fileRef.mimeType,
-                }));
+                  threadId: ctx.threadId,
+                });
+              } catch (error) {
+                logger.error({ err: error, chatId: chatId_, filePath }, 'Failed to upload file');
+                ctx.sendFeedback({
+                  type: 'error',
+                  chatId: chatId_,
+                  error: `Failed to send file: ${(error as Error).message}`,
+                  threadId: ctx.threadId,
+                });
               }
-            } catch (error) {
-              logger.error({ err: error, chatId, filePath }, 'Failed to upload file for scheduled task');
+            } else {
+              try {
+                const fileRef = await this.fileClient.uploadFile(filePath, chatId_);
+                if (this.ws?.readyState === WebSocket.OPEN) {
+                  this.ws.send(JSON.stringify({
+                    type: 'file',
+                    chatId: chatId_,
+                    fileRef,
+                    fileName: fileRef.fileName,
+                    fileSize: fileRef.size,
+                    mimeType: fileRef.mimeType,
+                  }));
+                }
+              } catch (error) {
+                logger.error({ err: error, chatId: chatId_, filePath }, 'Failed to upload file for scheduled task');
+              }
             }
-          }
-        },
+          },
+        });
+
+        try {
+          await agent.executeOnce(chatId, prompt, undefined, userId);
+        } finally {
+          agent.dispose();
+        }
       },
     });
 
