@@ -36,7 +36,7 @@
  */
 
 import type { AgentMessage } from '../types/agent.js';
-import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
+import type { SdkInlineToolDefinition, SdkMcpServerConfig } from '@disclaude/core';
 import type { FileRef } from '../file-transfer/types.js';
 
 // ============================================================================
@@ -289,7 +289,7 @@ export interface Subagent extends Omit<SkillAgent, 'type'> {
    *
    * @returns Tool definition for MCP registration
    */
-  asTool(): InlineToolDefinition;
+  asTool(): SdkInlineToolDefinition;
 
   /**
    * Get MCP server configuration for standalone execution.
@@ -299,7 +299,7 @@ export interface Subagent extends Omit<SkillAgent, 'type'> {
    *
    * @returns MCP server configuration, or undefined if not applicable
    */
-  getMcpServer(): McpServerConfig | undefined;
+  getMcpServer(): SdkMcpServerConfig | undefined;
 }
 
 // ============================================================================

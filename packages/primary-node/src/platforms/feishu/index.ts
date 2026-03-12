@@ -43,15 +43,14 @@ export {
   type CreateFeishuClientOptions,
 } from './create-feishu-client.js';
 
-// Interaction manager
+// Interaction Manager
 export {
   InteractionManager,
   type InteractionManagerConfig,
 } from './interaction-manager.js';
 
-// Card builders
+// Card Builders
 export {
-  // Content builders
   buildTextContent,
   buildPostContent,
   buildSimplePostContent,
@@ -61,7 +60,9 @@ export {
   type PostLinkElement,
   type PostImageElement,
   type PostContent,
-  // Card builders
+} from './card-builders/content-builder.js';
+
+export {
   buildButton,
   buildMenu,
   buildDiv,
@@ -86,7 +87,6 @@ export {
   type MenuAction,
   type CardHeaderConfig,
   type CardConfig,
-  // Text extractor
-  extractCardTextContent,
-} from './card-builders/index.js';
+} from './card-builders/interactive-card-builder.js';
 
+export { extractCardTextContent } from './card-builders/card-text-extractor.js';

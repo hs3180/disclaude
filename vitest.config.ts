@@ -75,7 +75,7 @@ export default defineConfig({
         branches: 70,
         statements: 70,
       },
-      include: ['src/**/*.ts'],
+      include: ['src/**/*.ts', 'packages/**/*.ts'],
     },
     setupFiles: ['./tests/setup.ts'],
   },

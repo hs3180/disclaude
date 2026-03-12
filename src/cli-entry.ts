@@ -8,7 +8,7 @@
 
 // Parse --config argument BEFORE importing Config
 // This must be done first to allow loading a custom config file
-import { loadConfigFile, setLoadedConfig } from './config/loader.js';
+import { loadConfigFile, setLoadedConfig, setRuntimeContext, type AgentRuntimeContext } from '@disclaude/core';
 import packageJson from '../package.json' with { type: 'json' };
 
 /**
@@ -73,6 +73,25 @@ async function loadDependencies(): Promise<void> {
 
   const cliArgsModule = await import('./utils/cli-args.js');
   ({ parseGlobalArgs } = cliArgsModule);
+
+  // Setup runtime context for core package (Issue #1040)
+  // This allows core agents to access config without direct coupling
+  const skillsIndexModule = await import('./skills/index.js');
+  const mcpModule = await import('./mcp/feishu-context-mcp.js');
+
+  const runtimeContext: AgentRuntimeContext = {
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => Config.getLoggingConfig(),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+    // Optional: Platform-specific callbacks (used by Pilot)
+    createMcpServer: (_chatId: string) => {
+      return Promise.resolve(mcpModule.createFeishuSdkMcpServer());
+    },
+    findSkill: async (name: string) => (await skillsIndexModule.findSkill(name)) ?? undefined,
+  };
+  setRuntimeContext(runtimeContext);
 }
 
 /**
@@ -81,7 +100,6 @@ async function loadDependencies(): Promise<void> {
 async function importRunners() {
   const runners = await import('./runners/index.js');
   return {
-    runPrimaryNode: runners.runPrimaryNode,
     runWorkerNode: runners.runWorkerNode,
   };
 }
@@ -101,45 +119,29 @@ function showHelp(): void {
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Usage:');
-  console.log('  disclaude start --mode primary       Primary Node (Comm + Exec, recommended)');
   console.log('  disclaude start --mode worker        Worker Node (Exec only, connects to Primary)');
   console.log('');
   console.log('Options:');
-  console.log('  --mode <primary|worker>              Select run mode (required for start)');
+  console.log('  --mode worker                        Select run mode (required for start)');
   console.log('  --config <path>                      Path to configuration file (default: auto-detect)');
-  console.log('  --port <port>                        WebSocket port for primary mode (default: 3001)');
-  console.log('  --rest-port <port>                   REST API port for primary mode (default: 3000)');
-  console.log('  --no-rest                            Disable REST channel');
   console.log('  --comm-url <url>                     Primary Node URL for worker mode (default: ws://localhost:3001)');
   console.log('  --node-id <id>                       Node ID for worker mode (auto-generated if not provided)');
   console.log('  --node-name <name>                   Display name for worker mode');
   console.log('');
   console.log('Node Types:');
-  console.log('  primary  - Self-contained node with both communication and execution');
-  console.log('             Recommended for single-machine deployment');
   console.log('  worker   - Execution-only node that connects to Primary Node');
   console.log('             For horizontal scaling');
   console.log('');
-  console.log('Channels (Primary Node):');
-  console.log('  - Feishu: Enabled when feishu.appId and feishu.appSecret are configured');
-  console.log('  - REST:   Enabled by default on port 3000, use --no-rest to disable');
+  console.log('Note:');
+  console.log('  Primary Node has been moved to @disclaude/primary-node package.');
+  console.log('  Install and run it separately for full communication capabilities.');
   console.log('');
   console.log('Examples:');
-  console.log('  # Single machine (recommended):');
-  console.log('  disclaude start --mode primary');
+  console.log('  # Start worker node connecting to Primary:');
+  console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-1');
   console.log('');
   console.log('  # With custom config file:');
-  console.log('  disclaude start --mode primary --config /path/to/config.yaml');
-  console.log('');
-  console.log('  # Horizontal scaling (multiple workers):');
-  console.log('  disclaude start --mode primary --port 3001');
-  console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-1');
-  console.log('  disclaude start --mode worker --comm-url ws://primary:3001 --node-name worker-2');
-  console.log('');
-  console.log('REST API Endpoints (when REST channel is enabled):');
-  console.log('  POST /api/chat          Send message (streaming response)');
-  console.log('  POST /api/chat/sync     Send message (synchronous response)');
-  console.log('  GET  /api/health        Health check');
+  console.log('  disclaude start --mode worker --config /path/to/config.yaml');
   console.log('');
 }
 
@@ -194,7 +196,7 @@ async function main(): Promise<void> {
 
   try {
     // Dynamically import runners to avoid loading unnecessary modules
-    const { runPrimaryNode, runWorkerNode } = await importRunners();
+    const { runWorkerNode } = await importRunners();
 
     // Show help if no command provided
     if (!process.argv[2] || process.argv[2] === '--help' || process.argv[2] === '-h') {
@@ -206,7 +208,7 @@ async function main(): Promise<void> {
     if (process.argv[2] !== 'start') {
       handleError(new Error(`Unknown command "${process.argv[2]}"`), {
         category: ErrorCategory.VALIDATION,
-        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode <primary|worker>"`
+        userMessage: `Unknown command "${process.argv[2]}". Use "disclaude start --mode worker"`
       }, {
         log: true,
         throwOnError: true
@@ -217,7 +219,7 @@ async function main(): Promise<void> {
     if (!mode) {
       handleError(new Error('Mode is required'), {
         category: ErrorCategory.VALIDATION,
-        userMessage: 'Mode is required. Use --mode <primary|worker>'
+        userMessage: 'Mode is required. Use --mode worker'
       }, {
         log: true,
         throwOnError: true
@@ -243,39 +245,8 @@ async function main(): Promise<void> {
     console.log('='.repeat(50));
     console.log();
 
-    // Run based on mode
-    switch (mode) {
-      case 'primary':
-        // Note: Feishu is optional now - REST channel can work without Feishu
-        const hasFeishuPrimary = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
-        const hasRestPrimary = globalArgs.enableRestChannel !== false;
-
-        if (!hasFeishuPrimary && !hasRestPrimary) {
-          handleError(new Error('No communication channel configured'), {
-            category: ErrorCategory.CONFIGURATION,
-            userMessage: 'Primary Node requires at least one channel. Configure Feishu (feishu.appId and feishu.appSecret) or enable REST channel.'
-          }, {
-            log: true,
-            throwOnError: true
-          });
-        }
-
-        await runPrimaryNode();
-        break;
-
-      case 'worker':
-        await runWorkerNode();
-        break;
-
-      default:
-        handleError(new Error(`Unknown mode "${mode}"`), {
-          category: ErrorCategory.VALIDATION,
-          userMessage: `Unknown mode "${mode}". Available modes: primary, worker`
-        }, {
-          log: true,
-          throwOnError: true
-        });
-    }
+    // Run worker mode
+    await runWorkerNode();
   } catch (error) {
     handleError(error, {
       category: ErrorCategory.UNKNOWN,

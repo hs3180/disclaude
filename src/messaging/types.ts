@@ -8,51 +8,10 @@
  * @see Issue #266
  */
 
-import type { AgentMessageType } from '../types/agent.js';
+import { MessageLevel, type AgentMessageType } from '@disclaude/core';
 
-/**
- * Message level enum for routing decisions.
- *
- * - DEBUG: Debug information → Admin only
- * - PROGRESS: Execution progress → Admin only
- * - INFO: General information → Admin only
- * - NOTICE: Notification → User + Admin
- * - IMPORTANT: Important information → User + Admin (strong alert)
- * - ERROR: Error information → User + Admin
- * - RESULT: Final result → User + Admin
- */
-export enum MessageLevel {
-  DEBUG = 'debug',
-  PROGRESS = 'progress',
-  INFO = 'info',
-  NOTICE = 'notice',
-  IMPORTANT = 'important',
-  ERROR = 'error',
-  RESULT = 'result',
-}
-
-/**
- * Default message levels visible to users.
- */
-export const DEFAULT_USER_LEVELS: MessageLevel[] = [
-  MessageLevel.NOTICE,
-  MessageLevel.IMPORTANT,
-  MessageLevel.ERROR,
-  MessageLevel.RESULT,
-];
-
-/**
- * All message levels (admin receives all).
- */
-export const ALL_LEVELS: MessageLevel[] = [
-  MessageLevel.DEBUG,
-  MessageLevel.PROGRESS,
-  MessageLevel.INFO,
-  MessageLevel.NOTICE,
-  MessageLevel.IMPORTANT,
-  MessageLevel.ERROR,
-  MessageLevel.RESULT,
-];
+// Re-export MessageLevel for backward compatibility
+export { MessageLevel, DEFAULT_USER_LEVELS, ALL_LEVELS } from '@disclaude/core';
 
 /**
  * Message routed through the routing system.

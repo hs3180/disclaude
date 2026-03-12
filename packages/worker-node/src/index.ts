@@ -6,9 +6,9 @@
  * This package contains:
  * - WorkerNodeConfig type definition
  * - File transfer client (FileClient)
+ * - Schedule module (ScheduleManager, Scheduler, etc.)
  * - (Future) Agent execution code
  * - (Future) WebSocket client
- * - (Future) Scheduler
  *
  * Note: The actual WorkerNode implementation is currently in src/nodes/worker-node.ts
  * and will be migrated in a subsequent phase as part of Issue #1041.
@@ -28,6 +28,28 @@ export { getWorkerNodeCapabilities } from '@disclaude/core';
 
 // File transfer client
 export { FileClient, type FileClientConfig } from './file-client/index.js';
+
+// Schedule module
+export {
+  ScheduleManager,
+  Scheduler,
+  ScheduleFileScanner,
+  ScheduleFileWatcher,
+  CooldownManager,
+  // Types
+  type ScheduledTask,
+  type ScheduleManagerOptions,
+  type SchedulerOptions,
+  type SchedulerCallbacks,
+  type TaskExecutor,
+  type ScheduleFileTask,
+  type ScheduleFileScannerOptions,
+  type OnFileAdded,
+  type OnFileChanged,
+  type OnFileRemoved,
+  type ScheduleFileWatcherOptions,
+  type CooldownManagerOptions,
+} from './schedule/index.js';
 
 // Package version
 export const WORKER_NODE_VERSION = '0.0.4';

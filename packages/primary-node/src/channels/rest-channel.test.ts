@@ -339,20 +339,6 @@ describe('RestChannel', () => {
       });
     });
 
-    describe('POST /api/chat/sync', () => {
-      it.skip('should accept sync mode request - requires messageHandler', async () => {
-        // This test requires a messageHandler to be set
-        const response = await simulateRequest({
-          method: 'POST',
-          path: '/api/chat/sync',
-          body: {
-            chatId: 'sync-chat',
-            message: 'Hello sync',
-          },
-        });
-        expect(response.status).toBe(200);
-      });
-    });
 
     describe('POST /api/chat/{chatId} (async mode)', () => {
       it('should return 204 for poll without session', async () => {

@@ -1,19 +1,17 @@
 /**
  * Node type definitions for Disclaude distributed architecture.
  *
- * This module defines the types used by Primary Node and Worker Node.
+ * This module defines the types used by Worker Node.
+ * Note: Primary Node types have been moved to @disclaude/primary-node package.
  */
-
-import type { FileStorageConfig } from '../file-transfer/node-transfer/file-storage.js';
-import type { IChannel } from '../channels/index.js';
-import type { RestChannelConfig } from '../channels/rest-channel.js';
 
 /**
  * Node type identifier.
- * - primary: Main node with both communication and execution capabilities
  * - worker: Worker node with execution-only capability
+ *
+ * Note: 'primary' type has been moved to @disclaude/primary-node package.
  */
-export type NodeType = 'primary' | 'worker';
+export type NodeType = 'worker';
 
 /**
  * Base configuration for all node types.
@@ -25,52 +23,6 @@ export interface BaseNodeConfig {
   nodeId?: string;
   /** Display name for this node */
   nodeName?: string;
-}
-
-/**
- * Configuration for Primary Node.
- * Primary Node has both communication (comm) and execution (exec) capabilities.
- */
-export interface PrimaryNodeConfig extends BaseNodeConfig {
-  type: 'primary';
-
-  // Communication capabilities
-  /** Port for WebSocket server (default: 3001) */
-  port?: number;
-  /** Host for WebSocket server */
-  host?: string;
-  /** REST channel port (default: 3000) */
-  restPort?: number;
-  /** Enable REST channel */
-  enableRestChannel?: boolean;
-  /** REST channel auth token */
-  restAuthToken?: string;
-  /**
-   * Full REST channel configuration from config file.
-   * Takes precedence over restPort and restAuthToken if provided.
-   * @see Issue #1028
-   */
-  restChannelConfig?: RestChannelConfig;
-  /** Feishu App ID */
-  appId?: string;
-  /** Feishu App Secret */
-  appSecret?: string;
-
-  // Custom channels
-  /** Custom communication channels to register */
-  channels?: IChannel[];
-
-  // File storage
-  /** File storage configuration */
-  fileStorage?: FileStorageConfig;
-
-  // Execution capabilities
-  /** Enable local execution (default: true) */
-  enableLocalExec?: boolean;
-
-  // Message routing (Issue #659)
-  /** Admin chat ID for debug/progress messages */
-  adminChatId?: string;
 }
 
 /**
@@ -94,7 +46,7 @@ export interface WorkerNodeConfig extends BaseNodeConfig {
 /**
  * Union type for all node configurations.
  */
-export type NodeConfig = PrimaryNodeConfig | WorkerNodeConfig;
+export type NodeConfig = WorkerNodeConfig;
 
 /**
  * Information about a connected execution node.
@@ -129,8 +81,6 @@ export interface NodeCapabilities {
  */
 export function getNodeCapabilities(type: NodeType): NodeCapabilities {
   switch (type) {
-    case 'primary':
-      return { communication: true, execution: true };
     case 'worker':
       return { communication: false, execution: true };
   }

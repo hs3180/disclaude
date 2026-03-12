@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FilteredMessageForwarder, type MessageSender } from './filtered-message-forwarder.js';
-import { getDebugGroupService } from '../nodes/debug-group-service.js';
+import { getDebugGroupService } from '@disclaude/primary-node';
 import type { FilterReason } from '../config/types.js';
 
 describe('FilteredMessageForwarder', () => {

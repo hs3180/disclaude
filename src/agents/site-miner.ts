@@ -19,9 +19,13 @@ import { Config } from '../config/index.js';
 import { createLogger } from '../utils/logger.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { checkCdpEndpointHealth, parseCdpEndpoint } from '../utils/cdp-health-check.js';
-import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import {
+  BaseAgent,
+  type BaseAgentConfig,
+  type SdkInlineToolDefinition,
+  type SdkMcpServerConfig,
+} from '@disclaude/core';
 import type { Subagent, UserInput, SubagentConfig } from './types.js';
-import type { InlineToolDefinition, McpServerConfig } from '../sdk/types.js';
 import type { AgentMessage } from '../types/agent.js';
 
 const logger = createLogger('SiteMiner');
@@ -294,7 +298,7 @@ export class SiteMiner extends BaseAgent implements Subagent {
    *
    * @returns Tool definition for MCP registration
    */
-  asTool(): InlineToolDefinition<SiteMinerOptions, SiteMinerResult> {
+  asTool(): SdkInlineToolDefinition<SiteMinerOptions, SiteMinerResult> {
     return {
       name: 'site_miner',
       description: `Extract information from a website using Playwright browser automation.
@@ -325,7 +329,7 @@ The tool returns structured results with extracted information and confidence sc
    *
    * @returns MCP server configuration with Playwright tools
    */
-  getMcpServer(): McpServerConfig | undefined {
+  getMcpServer(): SdkMcpServerConfig | undefined {
     const configuredMcpServers = Config.getMcpServersConfig();
 
     if (!configuredMcpServers?.playwright) {
@@ -374,7 +378,7 @@ The tool returns structured results with extracted information and confidence sc
       permissionMode: 'bypassPermissions',
       settingSources: ['project'],
       allowedTools: this.getAllowedTools(),
-      mcpServers: this.getMcpServersConfig() as Record<string, McpServerConfig>,
+      mcpServers: this.getMcpServersConfig() as Record<string, SdkMcpServerConfig>,
       env: buildSdkEnv(
         this.apiKey,
         this.apiBaseUrl,

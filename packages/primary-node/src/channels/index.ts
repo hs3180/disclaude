@@ -28,6 +28,16 @@ export type {
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from '@disclaude/core';
 
+// Adapter types
+export type {
+  FileAttachment,
+  FileHandlerResult,
+  IMessageSender,
+  IFileHandler,
+  IAttachmentManager,
+  IPlatformAdapter,
+} from './adapters/types.js';
+
 // Base class
 export { BaseChannel } from './base-channel.js';
 

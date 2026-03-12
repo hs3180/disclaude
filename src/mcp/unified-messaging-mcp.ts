@@ -217,16 +217,22 @@ export const unifiedMessagingToolDefinitions: InlineToolDefinition[] = [
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread replies'),
       actionPrompts: z.record(z.string(), z.string()).optional().describe('Optional action prompts for interactive cards'),
     }),
-    handler: async ({ content, format, chatId, parentMessageId, actionPrompts }) => {
+    handler: async ({ content, format, chatId, parentMessageId, actionPrompts }: {
+      content: string;
+      format: 'text' | 'card';
+      chatId: string;
+      parentMessageId?: string;
+      actionPrompts?: unknown;
+    }) => {
       try {
         // If actionPrompts provided with card, use interactive message
         if (actionPrompts && Object.keys(actionPrompts).length > 0 && format === 'card') {
           // Import send_interactive_message dynamically to avoid circular deps
           const { send_interactive_message } = await import('./feishu-context-mcp.js');
-          const cardContent = content as Record<string, unknown>;
+          const cardContent = content as unknown as Record<string, unknown>;
           const result = await send_interactive_message({
             card: cardContent,
-            actionPrompts,
+            actionPrompts: actionPrompts as Record<string, string>,
             chatId,
             parentMessageId
           });

@@ -8,27 +8,20 @@ import { Config } from '../config/index.js';
 
 /**
  * Run mode type.
+ * Note: 'primary' mode has been moved to @disclaude/primary-node package.
  */
-export type RunMode = 'primary' | 'worker';
+export type RunMode = 'worker';
 
 /**
  * Global CLI arguments interface.
  */
 export interface GlobalArgs {
-  /** Run mode (primary or worker) */
+  /** Run mode (worker only, primary mode moved to @disclaude/primary-node) */
   mode: RunMode | null;
-  /** Port for primary node (default: 3001) */
-  port: number;
-  /** Host for primary node */
-  host: string;
   /** Primary Node WebSocket URL for worker mode */
   commUrl: string;
   /** Authentication token */
   authToken?: string;
-  /** REST channel port */
-  restPort?: number;
-  /** Enable REST channel */
-  enableRestChannel?: boolean;
   /** Node ID for worker mode */
   nodeId?: string;
   /** Node name for worker mode */
@@ -50,24 +43,6 @@ export function parseConfigPath(args: string[] = process.argv.slice(2)): string 
     return args[index + 1];
   }
   return undefined;
-}
-
-/**
- * Primary Node configuration.
- */
-export interface PrimaryNodeConfig {
-  /** Port for WebSocket server */
-  port: number;
-  /** Host for WebSocket server */
-  host: string;
-  /** Authentication token */
-  authToken?: string;
-  /** REST channel port */
-  restPort?: number;
-  /** Enable REST channel */
-  enableRestChannel?: boolean;
-  /** REST channel auth token */
-  restAuthToken?: string;
 }
 
 /**
@@ -96,15 +71,6 @@ function parseArgValue(args: string[], flag: string): string | undefined {
 }
 
 /**
- * Parse an integer argument value.
- */
-function parseIntArg(value: string | undefined, defaultValue: number): number {
-  if (!value) {return defaultValue;}
-  const parsed = parseInt(value, 10);
-  return isNaN(parsed) ? defaultValue : parsed;
-}
-
-/**
  * Parse global CLI arguments.
  *
  * This is the main entry point for argument parsing.
@@ -112,63 +78,34 @@ function parseIntArg(value: string | undefined, defaultValue: number): number {
  */
 export function parseGlobalArgs(args: string[] = process.argv.slice(2)): GlobalArgs {
   const transportConfig = Config.getTransportConfig();
-  const channelsConfig = Config.getChannelsConfig();
 
   // Default values
-  const defaultPort = parseInt(process.env.PORT || '3001', 10);
-  const defaultHost = process.env.HOST || '0.0.0.0';
   const defaultCommUrl = process.env.COMM_URL || 'ws://localhost:3001';
   const defaultAuthToken = transportConfig.http?.authToken || process.env.AUTH_TOKEN;
-  const defaultRestPort = channelsConfig?.rest?.port || 3000;
-  const defaultEnableRest = channelsConfig?.rest?.enabled ?? true;
 
   // Parse mode
   let mode: RunMode | null = null;
   if (args[0] === 'start') {
     const modeValue = parseArgValue(args, '--mode');
-    if (modeValue && ['primary', 'worker'].includes(modeValue)) {
-      mode = modeValue as RunMode;
+    if (modeValue === 'worker') {
+      mode = modeValue;
     }
   }
 
   // Parse other arguments
-  const port = parseIntArg(parseArgValue(args, '--port'), defaultPort);
-  const host = parseArgValue(args, '--host') || defaultHost;
   const commUrl = parseArgValue(args, '--comm-url') || defaultCommUrl;
   const authToken = parseArgValue(args, '--auth-token') || defaultAuthToken;
-  const restPort = parseIntArg(parseArgValue(args, '--rest-port'), defaultRestPort);
-  const enableRestChannel = args.includes('--no-rest') ? false : defaultEnableRest;
   const nodeId = parseArgValue(args, '--node-id') || process.env.EXEC_NODE_ID;
   const nodeName = parseArgValue(args, '--node-name') || process.env.EXEC_NODE_NAME;
   const config = parseArgValue(args, '--config');
 
   return {
     mode,
-    port,
-    host,
     commUrl,
     authToken,
-    restPort,
-    enableRestChannel,
     nodeId,
     nodeName,
     config,
-  };
-}
-
-/**
- * Get Primary Node configuration from global args.
- */
-export function getPrimaryNodeConfig(globalArgs: GlobalArgs): PrimaryNodeConfig {
-  const channelsConfig = Config.getChannelsConfig();
-
-  return {
-    port: globalArgs.port,
-    host: globalArgs.host,
-    authToken: globalArgs.authToken,
-    restPort: globalArgs.restPort || channelsConfig?.rest?.port || 3000,
-    enableRestChannel: globalArgs.enableRestChannel ?? channelsConfig?.rest?.enabled ?? true,
-    restAuthToken: channelsConfig?.rest?.authToken,
   };
 }
 

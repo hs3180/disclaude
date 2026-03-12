@@ -34,7 +34,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Config } from '../config/index.js';
 import type { AgentMessage } from '../types/agent.js';
-import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
+import { BaseAgent, type BaseAgentConfig } from '@disclaude/core';
 import type { SkillAgent as SkillAgentInterface, UserInput } from './types.js';
 
 /**

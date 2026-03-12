@@ -1,0 +1,446 @@
+/**
+ * Shared utilities for Agent SDK integration.
+ */
+
+import type {
+  AgentMessage,
+  ContentBlock,
+  ParsedSDKMessage,
+} from '../types/agent.js';
+
+/**
+ * Get directory containing node executable.
+ * This is needed for SDK subprocess spawning to find node.
+ */
+export function getNodeBinDir(): string {
+  const {execPath} = process;
+  return execPath.substring(0, execPath.lastIndexOf('/'));
+}
+
+/**
+ * Truncate a string to a maximum length.
+ */
+function truncate(str: string, maxLength: number = 100): string {
+  if (str.length <= maxLength) {return str;}
+  return `${str.slice(0, maxLength - 3)  }...`;
+}
+
+/**
+ * Safely stringify an object for display.
+ */
+function safeStringify(obj: unknown, maxLength: number = 100): string {
+  try {
+    const str = JSON.stringify(obj);
+    return truncate(str, maxLength);
+  } catch {
+    return String(obj);
+  }
+}
+
+/**
+ * Format tool input for display, showing intent rather than raw parameters.
+ */
+function formatToolInput(toolName: string, input: Record<string, unknown> | undefined): string {
+  if (!input) {return '';}
+
+  switch (toolName) {
+    case 'Bash':
+      const cmd = input.command as string | undefined;
+      return `Running: ${cmd || '<no command>'}`;
+
+    case 'Edit':
+      const editPath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
+      return `Editing: ${editPath || '<unknown file>'}`;
+
+    case 'Read':
+      const readPath = input.file_path as string | undefined;
+      return `Reading: ${readPath || '<unknown file>'}`;
+
+    case 'Write': {
+      const writePath = input.file_path as string | undefined;
+      const writeContent = input.content as string | undefined;
+      const lineCount = writeContent ? writeContent.split('\n').length : 0;
+      return writePath
+        ? `Writing: ${writePath} (${lineCount} lines)`
+        : 'Writing: <unknown file>';
+    }
+
+    case 'Grep': {
+      const pattern = input.pattern as string | undefined;
+      const type = input.type as string | undefined;
+      if (pattern) {
+        return type ? `Searching for "${pattern}" in ${type} files` : `Searching for "${pattern}"`;
+      }
+      return `Searching: ${safeStringify(input, 60)}`;
+    }
+
+    case 'Glob':
+      const globPattern = input.pattern as string | undefined;
+      return `Finding files: ${globPattern || '<no pattern>'}`;
+
+    case 'WebSearch':
+      const query = input.query as string | undefined;
+      return `Searching web: "${query || '<no query>'}"`;
+
+    case 'WebFetch':
+      const url = input.url as string | undefined;
+      return `Fetching: ${url || '<no url>'}`;
+
+    case 'LSP':
+      const operation = input.operation as string | undefined;
+      return `LSP: ${operation || '<unknown operation>'}`;
+
+    default:
+      return safeStringify(input, 60);
+  }
+}
+
+/**
+ * Format Edit tool use with rich details showing what will be changed.
+ * Uses ANSI colors for console output.
+ */
+function formatEditToolUse(input: Record<string, unknown>): string {
+  // SDK uses snake_case for Edit tool parameters
+  const filePath = (input.file_path as string | undefined) || (input.filePath as string | undefined);
+  const oldString = (input.old_string as string | undefined) || (input.oldString as string | undefined);
+  const newString = (input.new_string as string | undefined) || (input.newString as string | undefined);
+
+  if (!filePath) {
+    return '🔧 Editing: <unknown file>';
+  }
+
+  // Build rich formatted output
+  const lines: string[] = [];
+
+  // Header with file path (cyan for file)
+  lines.push(`\x1b[36m📝 Editing:\x1b[0m \x1b[1;34m${filePath}\x1b[0m`);
+
+  // Show content preview if available
+  if (oldString !== undefined && newString !== undefined) {
+    // Truncate long strings for display
+    const maxPreview = 100;
+    const oldPreview = oldString.length > maxPreview
+      ? `${oldString.substring(0, maxPreview)  }...`
+      : oldString;
+    const newPreview = newString.length > maxPreview
+      ? `${newString.substring(0, maxPreview)  }...`
+      : newString;
+
+    // Before (dim for removal)
+    lines.push(`\x1b[90m  Before: ${oldPreview}\x1b[0m`);
+
+    // After (green for addition)
+    lines.push(`\x1b[92m  After:  ${newPreview}\x1b[0m`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Parse SDK message into structured format with type and metadata.
+ * Handles tool use, progress, results, and other message types.
+ *
+ * IMPORTANT: Accumulates ALL content blocks from assistant messages,
+ * not just the first one. This ensures all tool uses and text are sent.
+ *
+ * @deprecated Use SDK provider's message adapter instead. This function
+ * is kept for backward compatibility with existing tests.
+ *
+ * @param message - SDK message (type erased for SDK independence)
+ * @returns Parsed message structure
+ */
+export function parseSDKMessage(message: unknown): ParsedSDKMessage {
+  // Type guard: ensure message is an object with type property
+  if (!message || typeof message !== 'object') {
+    return { type: 'text', content: '' };
+  }
+
+  const msg = message as Record<string, unknown>;
+
+  const result: ParsedSDKMessage = {
+    type: 'text',
+    content: '',
+    metadata: {},
+  };
+
+  // Extract session_id from any message that has it
+  if ('session_id' in msg && msg.session_id) {
+    result.sessionId = msg.session_id as string;
+  }
+
+  switch (msg.type) {
+    case 'assistant': {
+      const apiMessage = msg.message as Record<string, unknown> | undefined;
+      if (!apiMessage || !Array.isArray(apiMessage.content)) {
+        return { type: 'text', content: '' };
+      }
+
+      // Check for tool_use blocks in content
+      const toolBlocks = apiMessage.content.filter(
+        (block: ContentBlock) => block.type === 'tool_use'
+      );
+
+      // Check for text blocks
+      const textBlocks = apiMessage.content.filter(
+        (block: ContentBlock) => block.type === 'text' && 'text' in block
+      );
+
+      // Accumulate all content blocks (tool uses + text)
+      const contentParts: string[] = [];
+
+      // Process all tool use blocks
+      for (const block of toolBlocks) {
+        if ('name' in block && 'input' in block) {
+          const toolName = block.name as string;
+          const input = block.input as Record<string, unknown> | undefined;
+
+          result.type = 'tool_use';
+          result.metadata = {
+            toolName,
+            toolInput: formatToolInput(toolName, input),
+            toolInputRaw: input,  // Save raw input for processing (e.g., building diff cards)
+          };
+
+          // Use rich formatting for Edit tool
+          if (toolName === 'Edit' && input) {
+            contentParts.push(formatEditToolUse(input));
+          } else {
+            contentParts.push(`🔧 ${formatToolInput(toolName, input)}`);
+          }
+        }
+      }
+
+      // Extract all text content
+      const textParts = textBlocks
+        .filter((block: ContentBlock) => 'text' in block)
+        .map((block: ContentBlock) => (block as { text: string }).text);
+
+      if (textParts.length > 0) {
+        contentParts.push(textParts.join(''));
+      }
+
+      // Return all accumulated content
+      if (contentParts.length > 0) {
+        result.content = contentParts.join('\n');
+        return result;
+      }
+
+      return { type: 'text', content: '' };
+    }
+
+    case 'tool_progress': {
+      // Tool execution progress update
+      // SDKToolProgressMessage has tool_name and elapsed_time_seconds fields
+      if ('tool_name' in msg && 'elapsed_time_seconds' in msg) {
+        const toolName = msg.tool_name as string;
+        const elapsed = msg.elapsed_time_seconds as number;
+        result.type = 'tool_progress';
+        result.content = `⏳ Running ${toolName} (${elapsed.toFixed(1)}s)`;
+        result.metadata = {
+          toolName,
+          elapsed,
+        };
+        return result;
+      }
+      return { type: 'text', content: '' };
+    }
+
+    case 'tool_use_summary': {
+      // Tool execution completed
+      // SDKToolUseSummaryMessage has summary field, not name
+      if ('summary' in msg) {
+        const summary = msg.summary as string;
+        result.type = 'tool_result';
+        result.content = `✓ ${summary}`;
+        return result;
+      }
+      return { type: 'text', content: '' };
+    }
+
+    case 'result': {
+      if (msg.subtype === 'success') {
+        // Successful completion with usage stats
+        let statsText = '✅ Complete';
+
+        if ('usage' in msg && msg.usage) {
+          const usage = msg.usage as { total_cost?: number; total_tokens?: number };
+          const parts: string[] = [];
+
+          if (usage.total_cost !== undefined) {
+            parts.push(`Cost: $${usage.total_cost.toFixed(4)}`);
+          }
+          if (usage.total_tokens !== undefined) {
+            parts.push(`Tokens: ${(usage.total_tokens / 1000).toFixed(1)}k`);
+          }
+
+          if (parts.length > 0) {
+            statsText += ` | ${  parts.join(' | ')}`;
+          }
+        }
+
+        result.type = 'result';
+        result.content = statsText;
+        result.metadata = {
+          cost: (msg.usage as { total_cost?: number })?.total_cost,
+          tokens: (msg.usage as { total_tokens?: number })?.total_tokens,
+        };
+        return result;
+      }
+
+      if (msg.subtype === 'error_during_execution' && 'errors' in msg) {
+        const errors = msg.errors as string[];
+        result.type = 'error';
+        result.content = `❌ Error: ${errors.join(', ')}`;
+        return result;
+      }
+
+      return { type: 'text', content: '' };
+    }
+
+    case 'system': {
+      if (msg.subtype === 'status') {
+        // System status update (e.g., compacting)
+        if ('status' in msg && msg.status === 'compacting') {
+          result.type = 'status';
+          result.content = '🔄 Compacting conversation history...';
+          return result;
+        }
+      }
+
+      if (msg.subtype === 'hook_started') {
+        // Hook execution started
+        if ('hook' in msg && 'event' in msg) {
+          const hook = msg.hook as string;
+          result.type = 'notification';
+          result.content = `🪝 Hook: ${hook}`;
+          result.metadata = { status: hook };
+          return result;
+        }
+      }
+
+      if (msg.subtype === 'hook_response') {
+        // Hook execution completed
+        if ('hook' in msg && 'outcome' in msg) {
+          const hook = msg.hook as string;
+          const outcome = msg.outcome as string;
+          result.type = 'notification';
+          result.content = `🪝 Hook ${hook}: ${outcome}`;
+          result.metadata = { status: outcome };
+          return result;
+        }
+      }
+
+      if (msg.subtype === 'task_notification') {
+        // Task completion notification
+        if ('status' in msg && 'task_id' in msg) {
+          const status = msg.status as string;
+          result.type = 'notification';
+          result.content = `📋 Task ${msg.task_id as string}: ${status}`;
+          result.metadata = { status };
+          return result;
+        }
+      }
+
+      // Ignore other system messages (init, etc.)
+      return { type: 'text', content: '' };
+    }
+
+    case 'user':
+    case 'stream_event':
+    default:
+      // Ignore user messages (echoes) and stream events
+      return { type: 'text', content: '' };
+  }
+}
+
+/**
+ * Extract text from AgentMessage.
+ * Handles both string content and array content with text blocks.
+ *
+ * This is the canonical extractText function - use this instead of
+ * duplicating the logic in agent classes.
+ *
+ * @param message - AgentMessage to extract text from
+ * @returns Extracted text content
+ */
+export function extractText(message: AgentMessage): string {
+  const { content } = message;
+
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: ContentBlock): block is ContentBlock & { text: string } =>
+        'text' in block && typeof block.text === 'string'
+      )
+      .map((block: ContentBlock & { text: string }) => block.text)
+      .join('');
+  }
+
+  return '';
+}
+
+/**
+ * Build SDK environment variables with unified apiBaseUrl handling.
+ * This function centralizes environment variable setup for all agents.
+ *
+ * IMPORTANT: SDK's env option completely replaces subprocess environment,
+ * so we MUST include PATH for node to be found. Without PATH, the SDK
+ * subprocess will fail with "spawn node ENOENT".
+ *
+ * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
+ * another Claude Code session (nested session detection).
+ *
+ * @param apiKey - API key for authentication
+ * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
+ * @param extraEnv - Optional extra environment variables to merge
+ * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @returns Environment object for SDK options
+ */
+export function buildSdkEnv(
+  apiKey: string,
+  apiBaseUrl?: string,
+  extraEnv?: Record<string, string | undefined>,
+  sdkDebug: boolean = true
+): Record<string, string | undefined> {
+  const nodeBinDir = getNodeBinDir();
+
+  // Ensure PATH includes node bin dir at the front
+  // SDK subprocess needs to find 'node' command
+  const originalPath = process.env.PATH || '';
+  const newPath = originalPath.includes(nodeBinDir)
+    ? originalPath
+    : `${nodeBinDir}:${originalPath}`;
+
+  // Priority (highest to lowest):
+  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
+  // 2. process.env (system environment)
+  // 3. extraEnv (caller-provided defaults)
+  // This ensures system env vars can't be accidentally overridden by extraEnv,
+  // but our critical values always take precedence.
+  const env: Record<string, string | undefined> = {
+    ...extraEnv,
+    ...(process.env as Record<string, string | undefined>),
+    ANTHROPIC_API_KEY: apiKey,
+    PATH: newPath,
+    // Enable SDK debug logging by default for better troubleshooting
+    // SDK subprocess errors go to stderr and are critical for debugging
+    // Can be disabled via config logging.sdkDebug: false
+    DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
+  };
+
+  // CRITICAL: Remove CLAUDECODE to allow SDK subprocess to run inside
+  // another Claude Code session. Without this, SDK will fail with:
+  // "Claude Code cannot be launched inside another Claude Code session"
+  // Must use delete to completely remove the key, not just set to undefined.
+  delete env.CLAUDECODE;
+
+  // Set base URL if provided (for GLM or custom endpoints)
+  if (apiBaseUrl) {
+    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  return env;
+}

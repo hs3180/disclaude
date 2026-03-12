@@ -36,16 +36,13 @@ import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
-import { BaseAgent } from '../base-agent.js';
+import { BaseAgent, MessageChannel } from '@disclaude/core';
 import type { ChatAgent, UserInput } from '../types.js';
 import type { AgentMessage } from '../../types/agent.js';
-import { MessageChannel } from '../message-channel.js';
 import { RestartManager } from '../restart-manager.js';
 import { ConversationOrchestrator } from '../../conversation/index.js';
 import { MessageBuilder } from './message-builder.js';
 import type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
-import { TaskComplexityAgent } from '../task-complexity-agent.js';
-import { taskProgressService } from '../task-progress-service.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
@@ -89,10 +86,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
-  // Task complexity tracking (Issue #857)
-  private readonly complexityAgent: TaskComplexityAgent;
-  private currentTaskId?: string;
-
   constructor(config: PilotConfig) {
     super(config);
 
@@ -111,12 +104,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
-
-    // Initialize task complexity agent (Issue #857)
-    this.complexityAgent = new TaskComplexityAgent({
-      ...config,
-      complexityThreshold: config.complexityThreshold ?? 7,
-    });
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -509,65 +496,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
     }
-
-    // Issue #857: Async complexity analysis for progress tracking
-    // Skip short messages and commands (likely simple queries)
-    if (text.length > 20 && !text.startsWith('/')) {
-      this.analyzeAndTrackComplexity(chatId, messageId, text).catch((err) => {
-        this.logger.debug({ err, chatId, messageId }, 'Complexity analysis failed (non-critical)');
-      });
-    }
-  }
-
-  /**
-   * Analyze message complexity and start progress tracking if needed.
-   *
-   * Issue #857: Uses TaskComplexityAgent to evaluate task complexity.
-   * If complexity exceeds threshold, starts progress tracking.
-   *
-   * @param chatId - Chat ID
-   * @param messageId - Message ID
-   * @param userMessage - User's message text
-   */
-  private async analyzeAndTrackComplexity(
-    chatId: string,
-    messageId: string,
-    userMessage: string
-  ): Promise<void> {
-    try {
-      const complexity = await this.complexityAgent.analyze({
-        chatId,
-        messageId,
-        userMessage,
-      });
-
-      this.logger.info({
-        chatId,
-        messageId,
-        complexityScore: complexity.complexityScore,
-        complexityLevel: complexity.complexityLevel,
-        shouldStartTaskAgent: complexity.recommendation.shouldStartTaskAgent,
-      }, 'Complexity analysis complete');
-
-      // Start progress tracking if complexity exceeds threshold
-      if (complexity.recommendation.shouldStartTaskAgent) {
-        this.currentTaskId = await taskProgressService.startTracking({
-          chatId,
-          messageId,
-          userMessage,
-          complexity,
-          sendCard: (card) => this.callbacks.sendCard(chatId, card),
-        });
-
-        this.logger.info({
-          chatId,
-          taskId: this.currentTaskId,
-          complexityScore: complexity.complexityScore,
-        }, 'Started progress tracking for complex task');
-      }
-    } catch (error) {
-      this.logger.debug({ err: error, chatId, messageId }, 'Complexity analysis error');
-    }
   }
 
   /**
@@ -700,12 +628,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
 
-          // Issue #857: Complete progress tracking if active
-          if (this.currentTaskId) {
-            await taskProgressService.completeTask(chatId, true, parsed.content?.slice(0, 200));
-            this.currentTaskId = undefined;
-          }
-
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
@@ -726,12 +648,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
       const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
-
-      // Issue #857: Complete progress tracking with failure
-      if (this.currentTaskId) {
-        await taskProgressService.completeTask(chatId, false, iteratorError.message);
-        this.currentTaskId = undefined;
-      }
 
       if (this.callbacks.onDone) {
         await this.callbacks.onDone(chatId, threadRoot);
