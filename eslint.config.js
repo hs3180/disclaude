@@ -8,19 +8,8 @@ import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 
 // Legacy test files that still use vi.mock() for external SDKs
-// These will be refactored in Epic 2-6 to use nock instead
-const legacyMockTestFiles = [
-  'src/agents/pilot.test.ts',
-  'src/channels/feishu-channel-bot-mention.test.ts',
-  'src/channels/feishu-channel-mention.test.ts',
-  'src/channels/feishu-channel-passive-mode.test.ts',
-  'src/channels/feishu/message-handler.test.ts', // Issue #1123: chat_record tests
-  'src/mcp/feishu-context-mcp.test.ts',
-  'src/mcp/feishu-mcp-server.test.ts',
-  'src/mcp/tools/interactive-message.test.ts',
-  'src/platforms/feishu/feishu-adapter.test.ts',
-  'src/platforms/feishu/feishu-message-sender.test.ts',
-];
+// These will be refactored to use nock instead
+const legacyMockTestFiles = [];
 
 export default [
   {
