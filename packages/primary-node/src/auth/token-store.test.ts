@@ -2,6 +2,8 @@
  * Tests for auth/token-store.ts
  */
 
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';

@@ -6,6 +6,8 @@
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder } from './message-builder.js';
 

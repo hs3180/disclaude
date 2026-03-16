@@ -264,7 +264,10 @@ export class SubagentManager {
     subagentId: string,
     options: SubagentOptions
   ): Promise<void> {
-    const handle = this.handles.get(subagentId)!;
+    const handle = this.handles.get(subagentId);
+    if (!handle) {
+      throw new Error(`Subagent handle not found: ${subagentId}`);
+    }
 
     // Verify skill exists
     const skillPath = await findSkill(options.name);
@@ -359,7 +362,10 @@ export class SubagentManager {
     subagentId: string,
     options: SubagentOptions
   ): Promise<void> {
-    const handle = this.handles.get(subagentId)!;
+    const handle = this.handles.get(subagentId);
+    if (!handle) {
+      throw new Error(`Subagent handle not found: ${subagentId}`);
+    }
 
     // Create agent using factory
     const agent = AgentFactory.createScheduleAgent(
@@ -410,7 +416,10 @@ export class SubagentManager {
     subagentId: string,
     options: SubagentOptions
   ): Promise<void> {
-    const handle = this.handles.get(subagentId)!;
+    const handle = this.handles.get(subagentId);
+    if (!handle) {
+      throw new Error(`Subagent handle not found: ${subagentId}`);
+    }
 
     // Create agent using factory
     const agent = AgentFactory.createTaskAgent(

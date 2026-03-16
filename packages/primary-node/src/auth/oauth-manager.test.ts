@@ -2,6 +2,8 @@
  * Tests for auth/oauth-manager.ts
  */
 
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';

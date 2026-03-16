@@ -7,6 +7,8 @@
  * @see Issue #1023 - Unit tests should not depend on external environment
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
