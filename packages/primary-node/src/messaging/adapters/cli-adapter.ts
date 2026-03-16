@@ -7,9 +7,8 @@
  * Issue #515: Universal Message Format + Channel Adapters (Phase 2)
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, type UniversalMessage, type SendResult, type MessageContent } from '@disclaude/core';
 import { cardToText, type IChannelAdapter, type ChannelCapabilities } from '../channel-adapter.js';
-import type { UniversalMessage, SendResult, MessageContent } from '../universal-message.js';
 
 const logger = createLogger('CliAdapter');
 

@@ -27,6 +27,4 @@ export type {
   ProcessMessageResult,
   SessionStats,
   ConversationMessageContext,
-  // Backward compatibility alias
-  ConversationMessageContext as ConversationMessageContextType
 } from './types.js';

@@ -41,4 +41,4 @@ export { TokenStore, getTokenStore } from '@disclaude/core';
 export { OAuthManager, getOAuthManager } from '@disclaude/core';
 
 // MCP tools (primary-node specific)
-export { authSdkTools, createAuthSdkMcpServer, createAuthCard } from './auth-mcp.js';
+export { createAuthCard } from './auth-mcp.js';

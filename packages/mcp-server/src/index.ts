@@ -80,14 +80,14 @@ export type {
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
-// IPC Client (Issue #1042: Migrated from src/ipc/)
+// IPC Client (re-exported from @disclaude/core for convenience)
 export {
   UnixSocketIpcClient,
   getIpcClient,
   resetIpcClient,
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
-} from './ipc-client/index.js';
+} from '@disclaude/core';
 
 // Unified Messaging MCP (Issue #1042: Migrated from src/mcp/)
 export {

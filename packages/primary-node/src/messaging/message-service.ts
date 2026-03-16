@@ -24,9 +24,8 @@
  * ```
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, type UniversalMessage, type SendResult, type CardContent } from '@disclaude/core';
 import { cardToText, getFallbackContentType, type IChannelAdapter, type ChannelCapabilities } from './channel-adapter.js';
-import type { UniversalMessage, SendResult, CardContent } from './universal-message.js';
 
 const logger = createLogger('MessageService');
 

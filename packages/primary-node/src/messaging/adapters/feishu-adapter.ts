@@ -8,19 +8,11 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createLogger } from '@disclaude/core';
+import { createLogger, type UniversalMessage, type SendResult, type MessageContent, type CardContent, type CardSection, type CardAction } from '@disclaude/core';
 import type {
   IChannelAdapter,
   ChannelCapabilities,
 } from '../channel-adapter.js';
-import type {
-  UniversalMessage,
-  SendResult,
-  MessageContent,
-  CardContent,
-  CardSection,
-  CardAction,
-} from '../universal-message.js';
 
 const logger = createLogger('FeishuAdapter');
 

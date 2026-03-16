@@ -20,7 +20,6 @@ export {
 export type {
   ContentBlock,
   ExtendedAgentMessageMetadata,
-  ParsedSDKMessage,
   AgentMessage,
   AgentOptions,
   AgentInput,

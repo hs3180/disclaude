@@ -34,12 +34,6 @@ export {
   type ReflectionContext,
 } from '@disclaude/core';
 
-// Worker-node specific implementations (not migrated to core)
-export {
-  parseBaseToolName,
-  isUserFeedbackTool,
-} from './mcp-utils.js';
-
 export {
   TaskFlowOrchestrator,
   type TaskFlowOrchestratorConfig,

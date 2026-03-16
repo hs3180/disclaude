@@ -67,7 +67,7 @@ export {
 } from '@disclaude/core';
 
 // Channel base class
-export { BaseChannel } from './channels/base-channel.js';
+export { BaseChannel } from '@disclaude/core';
 
 // IPC module
 export {
@@ -222,8 +222,6 @@ export {
 } from '@disclaude/core';
 
 export {
-  authSdkTools,
-  createAuthSdkMcpServer,
   createAuthCard,
 } from './auth/auth-mcp.js';
 

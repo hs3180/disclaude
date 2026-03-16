@@ -135,7 +135,7 @@ export {
   createMarkdownMessage,
   createCardMessage,
   createDoneMessage,
-} from './universal-message.js';
+} from '@disclaude/core';
 
 // Channel Adapters (Issue #515 Phase 2)
 export {

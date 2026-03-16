@@ -44,7 +44,6 @@ export {
 // SDK Utilities (Issue #1040)
 export {
   getNodeBinDir,
-  parseSDKMessage,
   extractText,
   buildSdkEnv,
 } from './sdk.js';
@@ -86,9 +85,3 @@ export {
 export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
-
-// MCP Utilities (Issue #1041 - migrated from worker-node)
-export {
-  parseBaseToolName,
-  isUserFeedbackTool,
-} from './mcp-utils.js';

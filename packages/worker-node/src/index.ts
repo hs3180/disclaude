@@ -78,8 +78,6 @@ export {
 // Task module (Issue #1041 - migrated from main package)
 export {
   DialogueMessageTracker,
-  parseBaseToolName,
-  isUserFeedbackTool,
   TaskFileManager,
   TaskTracker,
   TaskFileWatcher,

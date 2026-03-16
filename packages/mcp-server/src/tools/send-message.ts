@@ -5,9 +5,8 @@
  */
 
 import { existsSync } from 'fs';
-import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
+import { createLogger, DEFAULT_IPC_CONFIG, getIpcClient } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import { getIpcClient } from '../ipc-client/index.js';
 import type { SendMessageResult, MessageSentCallback } from './types.js';
 
 const logger = createLogger('SendMessage');
@@ -92,7 +91,7 @@ function getIpcErrorMessage(errorType?: string, originalError?: string): string 
  */
 function getFeishuCredentials(): { appId: string | undefined; appSecret: string | undefined } {
   // Dynamic import to avoid circular dependencies
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { Config } = require('@disclaude/core');
   return {
     appId: Config.FEISHU_APP_ID,
@@ -105,7 +104,7 @@ function getFeishuCredentials(): { appId: string | undefined; appSecret: string 
  */
 function getWorkspaceDir(): string {
   // Dynamic import to avoid circular dependencies
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { Config } = require('@disclaude/core');
   return Config.getWorkspaceDir();
 }

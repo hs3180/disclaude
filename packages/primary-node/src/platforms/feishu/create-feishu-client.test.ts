@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { createFeishuClient } from './create-feishu-client.js';
 
-// Mock FEISHU_API constants
-const MOCK_FEISHU_API = {
+// Mock FEISHU_API constants - use vi.hoisted to ensure initialization before mock hoisting
+const MOCK_FEISHU_API = vi.hoisted(() => ({
   REQUEST_TIMEOUT_MS: 30000,
   RETRY: {
     MAX_RETRIES: 3,
@@ -15,7 +15,7 @@ const MOCK_FEISHU_API = {
     MAX_DELAY_MS: 10000,
     BACKOFF_MULTIPLIER: 2,
   },
-};
+}));
 
 // Mock axios
 vi.mock('axios', () => {

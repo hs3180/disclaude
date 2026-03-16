@@ -33,7 +33,7 @@
  * ```
  */
 
-import type { UniversalMessage, SendResult, CardContent } from './universal-message.js';
+import type { UniversalMessage, SendResult, CardContent } from '@disclaude/core';
 
 // ============================================================================
 // Channel Capabilities
