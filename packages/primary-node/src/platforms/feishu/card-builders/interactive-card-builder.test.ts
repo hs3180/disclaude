@@ -2,6 +2,8 @@
  * Tests for Interactive Card Builder.
  */
 
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+
 import { describe, it, expect } from 'vitest';
 import {
   buildButton,

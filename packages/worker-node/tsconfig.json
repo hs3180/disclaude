@@ -24,6 +24,8 @@
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"],
   "references": [
-    { "path": "../core" }
+    { "path": "../core" },
+    { "path": "../primary-node" },
+    { "path": "../mcp-server" }
   ]
 }

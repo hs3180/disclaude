@@ -7,6 +7,8 @@
  * @see Issue #1023 - Unit tests should not depend on external environment
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -21,17 +23,21 @@ const mockLogger = vi.hoisted(() => ({
   trace: vi.fn(),
 }));
 
-vi.mock('@disclaude/core', () => ({
-  createLogger: vi.fn(() => mockLogger),
-  DEFAULT_CHANNEL_CAPABILITIES: {
-    supportsCard: true,
-    supportsThread: false,
-    supportsFile: false,
-    supportsMarkdown: true,
-    supportsMention: false,
-    supportsUpdate: false,
-  },
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    createLogger: vi.fn(() => mockLogger),
+    DEFAULT_CHANNEL_CAPABILITIES: {
+      supportsCard: true,
+      supportsThread: false,
+      supportsFile: false,
+      supportsMarkdown: true,
+      supportsMention: false,
+      supportsUpdate: false,
+    },
+  };
+});
 
 /**
  * Mock HTTP server for testing without real network.

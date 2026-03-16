@@ -8,8 +8,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { unlinkSync, existsSync } from 'fs';
-import { UnixSocketIpcServer, createInteractiveMessageHandler } from './unix-socket-server.js';
-import { UnixSocketIpcClient, getIpcClient, resetIpcClient } from './unix-socket-client.js';
+import {
+  UnixSocketIpcServer,
+  UnixSocketIpcClient,
+  getIpcClient,
+  resetIpcClient,
+  createInteractiveMessageHandler,
+} from '@disclaude/core';
 
 // Generate a unique socket path for each test
 function generateSocketPath(): string {

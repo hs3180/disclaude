@@ -2,18 +2,24 @@
  * Core type definitions for disclaude.
  */
 
-// Message level types (Issue #1040)
+// Message level types (Issue #1040, Issue #1041)
 export {
   MessageLevel,
   DEFAULT_USER_LEVELS,
   ALL_LEVELS,
+  // Routing types
+  type RoutedMessage,
+  type RoutedMessageMetadata,
+  type MessageRouteConfig,
+  type IMessageRouter,
+  type IMessageSender as IMessageRoutingSender,
+  mapAgentMessageTypeToLevel,
 } from './messaging.js';
 
 // Agent types (Issue #1040) - Extended types for application-level use
 export type {
   ContentBlock,
   ExtendedAgentMessageMetadata,
-  ParsedSDKMessage,
   AgentMessage,
   AgentOptions,
   AgentInput,

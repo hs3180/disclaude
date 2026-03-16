@@ -35,9 +35,8 @@
  * @module agents/types
  */
 
-import type { AgentMessage } from '../types/index.js';
+import type { AgentMessage, FileRef } from '../types/index.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/index.js';
-import type { FileRef } from '../types/index.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)

@@ -81,11 +81,15 @@ export class RuliuMessageSender implements IMessageSender {
         throw new Error(`API error ${result.errcode}: ${result.errmsg}`);
       }
 
-      this.accessToken = result.data!.access_token;
-      // Expire 5 minutes before actual expiry
-      this.tokenExpiresAt = Date.now() + (result.data!.expires_in - 300) * 1000;
+      if (!result.data) {
+        throw new Error('API response missing data field');
+      }
 
-      this.logger.debug({ expiresIn: result.data!.expires_in }, 'Access token obtained');
+      this.accessToken = result.data.access_token;
+      // Expire 5 minutes before actual expiry
+      this.tokenExpiresAt = Date.now() + (result.data.expires_in - 300) * 1000;
+
+      this.logger.debug({ expiresIn: result.data.expires_in }, 'Access token obtained');
       return this.accessToken;
     } catch (error) {
       this.logger.error({ err: error }, 'Failed to get access token');

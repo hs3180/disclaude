@@ -128,9 +128,9 @@ export class Config {
    * @returns Absolute path to the workspace directory
    */
   static getWorkspaceDir(): string {
-    const workspaceDir = this.WORKSPACE_DIR
+    const workspaceDir = this.WORKSPACE_DIR;
     logger.debug({ workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' }, 'Using workspace directory');
-    return workspaceDir
+    return workspaceDir;
   }
 
   /**
@@ -140,7 +140,7 @@ export class Config {
    * @returns Absolute path
    */
   static resolveWorkspace(relativePath: string): string {
-    return path.resolve(this.getWorkspaceDir(), relativePath)
+    return path.resolve(this.getWorkspaceDir(), relativePath);
   }
 
   /**
@@ -149,7 +149,7 @@ export class Config {
    * @returns Absolute path to the skills directory
    */
   static getSkillsDir(): string {
-    return this.SKILLS_DIR
+    return this.SKILLS_DIR;
   }
 
   /**
@@ -164,10 +164,10 @@ export class Config {
    * @throws Error if required configuration is missing
    */
   private static validateRequiredConfig(): void {
-    const errors: ConfigValidationError[] = []
+    const errors: ConfigValidationError[] = [];
 
     // Get provider preference from config file
-    const provider = fileConfigOnly.agent?.provider
+    const provider = fileConfigOnly.agent?.provider;
 
     // Determine which provider to validate based on config priority
     if (provider === 'glm') {
@@ -176,13 +176,13 @@ export class Config {
         errors.push({
           field: 'glm.apiKey',
           message: 'glm.apiKey is required when agent.provider is "glm"',
-        })
+        });
       }
       if (!this.GLM_MODEL) {
         errors.push({
           field: 'glm.model',
           message: 'glm.model is required when using GLM provider',
-        })
+        });
       }
     } else if (provider === 'anthropic') {
       // User explicitly chose Anthropic - only validate Anthropic config
@@ -190,13 +190,13 @@ export class Config {
         errors.push({
           field: 'ANTHROPIC_API_KEY',
           message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
-        })
+        });
       }
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
           message: 'agent.model is required when using Anthropic provider',
-        })
+        });
       }
     } else if (this.GLM_API_KEY) {
       // No explicit provider, but GLM is configured in config file - validate GLM
@@ -204,7 +204,7 @@ export class Config {
         errors.push({
           field: 'glm.model',
           message: 'glm.model is required when GLM API key is configured',
-        })
+        });
       }
     } else if (this.ANTHROPIC_API_KEY) {
       // Fallback to Anthropic (from environment variable)
@@ -212,26 +212,26 @@ export class Config {
         errors.push({
           field: 'agent.model',
           message: 'agent.model is required when using Anthropic (ANTHROPIC_API_KEY is set)',
-        })
+        });
       }
     } else {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
         message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
-      })
+      });
     }
 
     if (errors.length > 0) {
-      const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n')
-      logger.error({ errors }, 'Configuration validation failed')
+      const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n');
+      logger.error({ errors }, 'Configuration validation failed');
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
         'Please update your disclaude.config.yaml file:\n' +
         '  glm:\n' +
         '    apiKey: "your-key"\n' +
         '    model: "glm-5"'
-      )
+      );
     }
 
   }

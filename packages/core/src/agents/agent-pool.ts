@@ -22,8 +22,7 @@
  * - ScheduleAgent/TaskAgent/SkillAgent: Short-lived, not stored here
  */
 
-import { createLogger } from '../utils/logger.js';
-import type { Logger } from '../utils/logger.js';
+import { createLogger, type Logger } from '../utils/logger.js';
 import type { ChatAgent } from './types.js';
 
 const defaultLogger = createLogger('AgentPool');

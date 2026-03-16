@@ -7,6 +7,8 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
