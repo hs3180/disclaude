@@ -32,6 +32,7 @@ import {
   ScheduleFileWatcher,
 } from './schedule/index.js';
 import { FileClient } from './file-client/index.js';
+import { WorkerIpcServer, createIpcToWsBridge } from './ipc/index.js';
 import type {
   WorkerNodeDependencies,
   ChatAgent,
@@ -150,6 +151,9 @@ export class WorkerNode {
     timeout: NodeJS.Timeout;
   }>();
   private feishuApiRequestTimeout: number;
+
+  // Issue #1042: IPC Server for MCP Server connections
+  private ipcServer: WorkerIpcServer | null = null;
 
   // Scheduler
   private scheduler?: Scheduler;
@@ -743,6 +747,58 @@ export class WorkerNode {
     }, this.reconnectInterval);
   }
 
+  // ============================================================================
+  // IPC Server (Issue #1042)
+  // ============================================================================
+
+  /**
+   * Start the IPC server for MCP Server connections.
+   *
+   * The IPC server accepts connections from MCP Server child processes
+   * and bridges their requests to the Primary Node via WebSocket.
+   */
+  private async startIpcServer(): Promise<void> {
+    if (this.ipcServer) {
+      this.deps.logger.warn('IPC server already running');
+      return;
+    }
+
+    this.ipcServer = new WorkerIpcServer();
+
+    // Set up request handler that bridges to Primary Node via WebSocket
+    const requestHandler = createIpcToWsBridge(
+      () => this.ws,
+      { timeout: 30000 } // 30 second timeout
+    );
+    this.ipcServer.setRequestHandler(requestHandler);
+
+    await this.ipcServer.start();
+
+    // Set environment variable for child processes (MCP Server)
+    const socketPath = this.ipcServer.getSocketPath();
+    process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
+
+    this.deps.logger.info({ socketPath }, 'IPC server started for MCP Server connections');
+    console.log(`✓ IPC server started at ${socketPath}`);
+  }
+
+  /**
+   * Stop the IPC server.
+   */
+  private async stopIpcServer(): Promise<void> {
+    if (!this.ipcServer) {
+      return;
+    }
+
+    await this.ipcServer.stop();
+    this.ipcServer = null;
+
+    // Clear environment variable
+    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+
+    this.deps.logger.info('IPC server stopped');
+  }
+
   /**
    * Start the Worker Node.
    */
@@ -760,6 +816,9 @@ export class WorkerNode {
     console.log(`Node Name: ${this.nodeName}`);
     console.log(`Primary URL: ${this.primaryUrl}`);
     console.log();
+
+    // Issue #1042: Start IPC server for MCP Server connections
+    await this.startIpcServer();
 
     // Initialize Pilot
     await this.initPilot();
@@ -789,6 +848,11 @@ export class WorkerNode {
 
     // Stop task flow orchestrator
     this.taskFlowOrchestrator?.stop();
+
+    // Issue #1042: Stop IPC server
+    this.stopIpcServer().catch((err) => {
+      this.deps.logger.error({ err }, 'Error stopping IPC server');
+    });
 
     // Clear reconnect timer
     if (this.reconnectTimer) {
