@@ -4,11 +4,8 @@
  * @module mcp-server/tools/send-message
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
 import { existsSync } from 'fs';
 import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
-import { createFeishuClient } from '@disclaude/primary-node';
-import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getIpcClient } from '../ipc-client/index.js';
 import type { SendMessageResult, MessageSentCallback } from './types.js';
@@ -141,28 +138,30 @@ export async function send_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Issue #1035: Try IPC first if available
-    const useIpc = isIpcAvailable();
+    // Check IPC availability - IPC is required for sending messages
+    if (!isIpcAvailable()) {
+      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+      logger.error({ chatId }, errorMsg);
+      return {
+        success: false,
+        error: errorMsg,
+        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+      };
+    }
 
     if (format === 'text') {
       const textContent = typeof content === 'string' ? content : JSON.stringify(content);
 
-      if (useIpc) {
-        logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
-        const result = await sendMessageViaIpc(chatId, textContent, parentMessageId);
-        if (!result.success) {
-          const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-          logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');
-          return {
-            success: false,
-            error: result.error ?? 'Failed to send message via IPC',
-            message: errorMsg,
-          };
-        }
-      } else {
-        // Fallback: Create client directly
-        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-        await sendMessageToFeishu(client, chatId, 'text', JSON.stringify({ text: textContent }), parentMessageId);
+      logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
+      const result = await sendMessageViaIpc(chatId, textContent, parentMessageId);
+      if (!result.success) {
+        const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+        logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');
+        return {
+          success: false,
+          error: result.error ?? 'Failed to send message via IPC',
+          message: errorMsg,
+        };
       }
       logger.debug({ chatId, parentMessageId }, 'User feedback sent (text)');
     } else {
@@ -199,22 +198,16 @@ export async function send_message(params: {
         };
       }
 
-      if (useIpc) {
-        logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
-        const result = await sendCardViaIpc(chatId, cardContent, parentMessageId);
-        if (!result.success) {
-          const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-          logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC card message failed');
-          return {
-            success: false,
-            error: result.error ?? 'Failed to send card via IPC',
-            message: errorMsg,
-          };
-        }
-      } else {
-        // Fallback: Create client directly
-        const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-        await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(cardContent), parentMessageId);
+      logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
+      const result = await sendCardViaIpc(chatId, cardContent, parentMessageId);
+      if (!result.success) {
+        const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+        logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC card message failed');
+        return {
+          success: false,
+          error: result.error ?? 'Failed to send card via IPC',
+          message: errorMsg,
+        };
       }
       logger.debug({ chatId, parentMessageId }, 'User card sent');
     }

@@ -5,20 +5,32 @@
  * the MCP process and the main bot process.
  *
  * @module ipc
+ *
+ * @see Issue #1041 - IPC implementations migrated to @disclaude/core
  */
 
-// Re-export types from @disclaude/core
-export type {
-  IpcRequestType,
-  IpcRequestPayloads,
-  IpcResponsePayloads,
-  IpcRequest,
-  IpcResponse,
-  IpcConfig,
+// Re-export types and constants from @disclaude/core
+export {
+  DEFAULT_IPC_CONFIG,
+  type IpcConfig,
+  type IpcRequestType,
+  type IpcRequestPayloads,
+  type IpcResponsePayloads,
+  type IpcRequest,
+  type IpcResponse,
 } from '@disclaude/core';
 
-export { DEFAULT_IPC_CONFIG } from '@disclaude/core';
-
-// Server and client implementations
-export * from './unix-socket-server.js';
-export * from './unix-socket-client.js';
+// Re-export server and client implementations from @disclaude/core
+export {
+  UnixSocketIpcServer,
+  UnixSocketIpcClient,
+  getIpcClient,
+  resetIpcClient,
+  createInteractiveMessageHandler,
+  type IpcRequestHandler,
+  type InteractiveMessageHandlers,
+  type FeishuApiHandlers,
+  type FeishuHandlersContainer,
+  type IpcAvailabilityStatus,
+  type IpcUnavailableReason,
+} from '@disclaude/core';

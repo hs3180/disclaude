@@ -9,7 +9,8 @@
 
 import { existsSync } from 'fs';
 import { createConnection, type Socket } from 'net';
-import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
+import { createLogger } from '../utils/logger.js';
+import { DEFAULT_IPC_CONFIG } from './protocol.js';
 import type {
   IpcConfig,
   IpcRequest,
@@ -17,7 +18,7 @@ import type {
   IpcRequestType,
   IpcResponse,
   IpcResponsePayloads,
-} from '@disclaude/core';
+} from './protocol.js';
 
 const logger = createLogger('IpcClient');
 

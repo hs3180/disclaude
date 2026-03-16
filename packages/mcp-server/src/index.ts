@@ -52,18 +52,6 @@ export {
 // Tools - Ask User
 export { ask_user } from './tools/ask-user.js';
 
-// Tools - Thread Tools
-export {
-  reply_in_thread,
-  get_threads,
-  get_thread_messages,
-} from './tools/thread-tools.js';
-export type {
-  ReplyInThreadToolResult,
-  GetThreadsToolResult,
-  GetThreadMessagesToolResult,
-} from './tools/thread-tools.js';
-
 // Tools - Study Guide Generator
 export {
   generate_summary,
@@ -91,23 +79,6 @@ export type {
 
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
-
-// Utils - Feishu API
-export {
-  sendMessageToFeishu,
-  replyInThread,
-  getThreads,
-  getThreadMessages,
-} from './utils/feishu-api.js';
-
-export type {
-  SendMessageResult as FeishuSendMessageResult,
-  ReplyInThreadResult,
-  ThreadItem,
-  GetThreadsResult,
-  ThreadMessageItem,
-  GetThreadMessagesResult,
-} from './utils/feishu-api.js';
 
 // IPC Client (Issue #1042: Migrated from src/ipc/)
 export {

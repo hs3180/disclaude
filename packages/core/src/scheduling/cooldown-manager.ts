@@ -10,12 +10,12 @@
  *
  * Storage location: workspace/schedules/.cooldown/{task-id}.json
  *
- * @module @disclaude/worker-node/schedule
+ * @module @disclaude/core/scheduling
  */
 
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
-import { createLogger } from '@disclaude/core';
+import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('CooldownManager');
 

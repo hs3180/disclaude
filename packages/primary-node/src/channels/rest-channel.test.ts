@@ -21,17 +21,21 @@ const mockLogger = vi.hoisted(() => ({
   trace: vi.fn(),
 }));
 
-vi.mock('@disclaude/core', () => ({
-  createLogger: vi.fn(() => mockLogger),
-  DEFAULT_CHANNEL_CAPABILITIES: {
-    supportsCard: true,
-    supportsThread: false,
-    supportsFile: false,
-    supportsMarkdown: true,
-    supportsMention: false,
-    supportsUpdate: false,
-  },
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    createLogger: vi.fn(() => mockLogger),
+    DEFAULT_CHANNEL_CAPABILITIES: {
+      supportsCard: true,
+      supportsThread: false,
+      supportsFile: false,
+      supportsMarkdown: true,
+      supportsMention: false,
+      supportsUpdate: false,
+    },
+  };
+});
 
 /**
  * Mock HTTP server for testing without real network.

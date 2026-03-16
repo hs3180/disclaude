@@ -23,8 +23,7 @@
  */
 
 import { CronJob } from 'cron';
-import { createLogger } from '@disclaude/core';
-import { CooldownManager } from './cooldown-manager.js';
+import { createLogger, CooldownManager } from '@disclaude/core';
 import type { ScheduleManager, ScheduledTask } from './schedule-manager.js';
 
 const logger = createLogger('Scheduler');

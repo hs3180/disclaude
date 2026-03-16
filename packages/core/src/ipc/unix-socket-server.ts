@@ -10,8 +10,9 @@
 import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer, type Server, type Socket } from 'net';
-import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
-import type { IpcConfig, IpcRequest, IpcRequestPayloads, IpcResponse } from '@disclaude/core';
+import { createLogger } from '../utils/logger.js';
+import { DEFAULT_IPC_CONFIG } from './protocol.js';
+import type { IpcConfig, IpcRequest, IpcRequestPayloads, IpcResponse } from './protocol.js';
 
 const logger = createLogger('IpcServer');
 

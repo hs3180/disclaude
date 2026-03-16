@@ -7,17 +7,14 @@
  * @module mcp-server/tools/interactive-message
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
 import { existsSync } from 'fs';
 import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
 import {
-  createFeishuClient,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
 } from '@disclaude/primary-node';
-import { sendMessageToFeishu } from '../utils/feishu-api.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getMessageSentCallback, getFeishuCredentials } from './send-message.js';
 import { getIpcClient } from '../ipc-client/index.js';
@@ -268,29 +265,31 @@ export async function send_interactive_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Issue #1035: Try IPC first if available
-    const useIpc = isIpcAvailable();
+    // Check IPC availability - IPC is required for sending messages
+    if (!isIpcAvailable()) {
+      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+      logger.error({ chatId }, errorMsg);
+      return {
+        success: false,
+        error: errorMsg,
+        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+      };
+    }
+
     let messageId: string | undefined;
 
-    if (useIpc) {
-      logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
-      const result = await sendCardViaIpc(chatId, card, parentMessageId);
-      if (!result.success) {
-        const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-        logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
-        return {
-          success: false,
-          error: result.error ?? 'Failed to send interactive message via IPC',
-          message: errorMsg,
-        };
-      }
-      ({ messageId } = result);
-    } else {
-      // Fallback: Create client directly
-      const client = createFeishuClient(appId, appSecret, { domain: lark.Domain.Feishu });
-      const result = await sendMessageToFeishu(client, chatId, 'interactive', JSON.stringify(card), parentMessageId);
-      ({ messageId } = result);
+    logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
+    const result = await sendCardViaIpc(chatId, card, parentMessageId);
+    if (!result.success) {
+      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
+      return {
+        success: false,
+        error: result.error ?? 'Failed to send interactive message via IPC',
+        message: errorMsg,
+      };
     }
+    ({ messageId } = result);
 
     // Register action prompts if message was sent successfully
     if (messageId) {
