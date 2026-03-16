@@ -110,13 +110,25 @@ async function handleRequest(request: {
           tools: [
             {
               name: 'send_message',
-              description: 'Send a text message to a chat. Supports markdown formatting.',
+              description: `Send a message to a chat. Supports text, card, and interactive modes.
+
+## Modes
+1. **Text**: Simple text message
+2. **Card**: Display-only card (no interactions)
+3. **Interactive**: Card with buttons/actions (requires actionPrompts)
+
+## Parameters
+- **content**: Text string or card object
+- **format**: "text" or "card"
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+- **actionPrompts**: Optional, enables interactive mode. Maps button values to prompts.`,
               inputSchema: {
                 type: 'object',
                 properties: {
                   content: {
-                    type: 'string',
-                    description: 'The message content to send. Supports markdown formatting.',
+                    oneOf: [{ type: 'string' }, { type: 'object' }],
+                    description: 'The message content. String for text, object for card.',
                   },
                   format: {
                     type: 'string',
@@ -126,10 +138,19 @@ async function handleRequest(request: {
                   },
                   chatId: {
                     type: 'string',
-                    description: 'Target chat ID (optional if setChat was called)',
+                    description: 'Target chat ID',
+                  },
+                  parentMessageId: {
+                    type: 'string',
+                    description: 'Optional parent message ID for thread reply',
+                  },
+                  actionPrompts: {
+                    type: 'object',
+                    additionalProperties: { type: 'string' },
+                    description: 'Optional action prompts for interactive cards. Maps button values to prompts.',
                   },
                 },
-                required: ['content', 'format'],
+                required: ['content', 'format', 'chatId'],
               },
             },
             {
@@ -144,10 +165,10 @@ async function handleRequest(request: {
                   },
                   chatId: {
                     type: 'string',
-                    description: 'Target chat ID (optional if setChat was called)',
+                    description: 'Target chat ID',
                   },
                 },
-                required: ['filePath'],
+                required: ['filePath', 'chatId'],
               },
             },
           ],
@@ -160,9 +181,10 @@ async function handleRequest(request: {
       if (toolName === 'send_message') {
         const format = (toolArgs.format as 'text' | 'card') || 'text';
         const result = await send_message({
-          content: toolArgs.content as string,
+          content: toolArgs.content as string | Record<string, unknown>,
           format,
           chatId: (toolArgs.chatId as string) || '',
+          parentMessageId: toolArgs.parentMessageId as string | undefined,
         });
         return {
           jsonrpc: '2.0',

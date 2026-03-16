@@ -529,11 +529,31 @@ export class UnixSocketIpcClient {
 let ipcClientInstance: UnixSocketIpcClient | null = null;
 
 /**
+ * Get IPC socket path with fallback chain.
+ *
+ * Priority:
+ * 1. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Worker Node for MCP Server)
+ * 2. DISCLAUDE_IPC_SOCKET_PATH env var (manual override)
+ * 3. DEFAULT_IPC_CONFIG.socketPath (Primary Node default)
+ */
+export function getIpcSocketPath(): string {
+  return (
+    process.env.DISCLAUDE_WORKER_IPC_SOCKET ||
+    process.env.DISCLAUDE_IPC_SOCKET_PATH ||
+    DEFAULT_IPC_CONFIG.socketPath
+  );
+}
+
+/**
  * Get the global IPC client instance.
+ *
+ * Issue #1042: Uses socket path from environment variable if set.
+ * Priority: DISCLAUDE_WORKER_IPC_SOCKET > DISCLAUDE_IPC_SOCKET_PATH > default
  */
 export function getIpcClient(): UnixSocketIpcClient {
   if (!ipcClientInstance) {
-    ipcClientInstance = new UnixSocketIpcClient();
+    const socketPath = getIpcSocketPath();
+    ipcClientInstance = new UnixSocketIpcClient({ socketPath });
   }
   return ipcClientInstance;
 }

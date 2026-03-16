@@ -5,7 +5,7 @@
  */
 
 import { existsSync } from 'fs';
-import { createLogger, DEFAULT_IPC_CONFIG, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, getIpcSocketPath } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import type { SendMessageResult, MessageSentCallback } from './types.js';
 
@@ -34,9 +34,11 @@ function invokeMessageSentCallback(chatId: string): void {
 /**
  * Check if IPC is available for Feishu API calls.
  * Issue #1035: Prefer IPC when available for unified client management.
+ * Issue #1042: Use Worker Node IPC socket path if available.
  */
 function isIpcAvailable(): boolean {
-  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
+  const socketPath = getIpcSocketPath();
+  return existsSync(socketPath);
 }
 
 /**
