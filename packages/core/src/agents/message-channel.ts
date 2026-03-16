@@ -62,7 +62,10 @@ export class MessageChannel {
     while (!this.closed || this.queue.length > 0) {
       // Yield all queued messages
       while (this.queue.length > 0) {
-        yield this.queue.shift()!;
+        const msg = this.queue.shift();
+        if (msg) {
+          yield msg;
+        }
       }
 
       // Exit if closed after draining queue

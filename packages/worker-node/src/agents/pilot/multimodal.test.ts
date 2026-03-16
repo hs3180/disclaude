@@ -10,6 +10,8 @@
  * 4. Screenshot for code explanation
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder } from './message-builder.js';
 import type { FileRef } from '@disclaude/core';

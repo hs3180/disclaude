@@ -257,23 +257,24 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       logger.info({ storageDir: this.fileStorageDir }, 'File storage initialized');
     }
 
-    this.server = http.createServer((req, res) => {
+    const server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((error) => {
         logger.error({ err: error }, 'Failed to handle request');
         this.sendError(res, 500, 'Internal server error');
       });
     });
+    this.server = server;
 
     // Start session cleanup timer
     this.startSessionCleanup();
 
     return new Promise((resolve, reject) => {
-      this.server!.listen(this.port, this.host, () => {
+      server.listen(this.port, this.host, () => {
         logger.info({ port: this.port, host: this.host }, 'RestChannel started');
         resolve();
       });
 
-      this.server!.on('error', (error) => {
+      server.on('error', (error) => {
         logger.error({ err: error }, 'Failed to start RestChannel');
         reject(error);
       });

@@ -426,9 +426,10 @@ export class WorkerNode {
 
     this.deps.logger.info({ url: this.primaryUrl }, 'Connecting to Primary Node...');
 
-    this.ws = new WebSocket(this.primaryUrl);
+    const ws = new WebSocket(this.primaryUrl);
+    this.ws = ws;
 
-    this.ws.on('open', () => {
+    ws.on('open', () => {
       this.deps.logger.info('Connected to Primary Node');
       console.log('✓ Connected to Primary Node');
 
@@ -438,13 +439,13 @@ export class WorkerNode {
         nodeId: this.nodeId,
         name: this.nodeName,
       };
-      this.ws!.send(JSON.stringify(registerMsg));
+      ws.send(JSON.stringify(registerMsg));
       this.deps.logger.info({ nodeId: this.nodeId, name: this.nodeName }, 'Sent registration message');
 
       console.log();
     });
 
-    this.ws.on('message', async (data) => {
+    ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString()) as PromptMessage | CommandMessage | CardActionMessage | FeishuApiResponseMessage;
 
@@ -709,7 +710,7 @@ export class WorkerNode {
       }
     });
 
-    this.ws.on('close', () => {
+    ws.on('close', () => {
       this.deps.logger.info('Disconnected from Primary Node');
       console.log('Disconnected from Primary Node');
 
@@ -722,7 +723,7 @@ export class WorkerNode {
       }
     });
 
-    this.ws.on('error', (error) => {
+    ws.on('error', (error) => {
       this.deps.logger.error({ err: error }, 'WebSocket error');
     });
   }
