@@ -32,8 +32,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { createLogger } from '@disclaude/core';
-import type { IChannel } from '@disclaude/core';
+import { createLogger, type IChannel } from '@disclaude/core';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -138,6 +137,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize CardActionRouter
     this.cardActionRouter = new CardActionRouter({
+      // eslint-disable-next-line require-await
       sendToRemoteNode: async () => false, // Override in subclass
       isNodeConnected: () => false,
     });
@@ -238,6 +238,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Start the Primary Node.
    */
+  // eslint-disable-next-line require-await
   async start(): Promise<void> {
     if (this.running) {
       logger.warn('PrimaryNode already running');
@@ -253,6 +254,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Stop the Primary Node.
    */
+  // eslint-disable-next-line require-await
   async stop(): Promise<void> {
     if (!this.running) {
       logger.warn('PrimaryNode not running');

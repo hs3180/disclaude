@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "disclaude-mcp": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -17,7 +20,7 @@
   },
   "dependencies": {
     "@disclaude/core": "*",
-    "@larksuiteoapi/node-sdk": "^1.34.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

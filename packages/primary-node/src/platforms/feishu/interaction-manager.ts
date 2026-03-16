@@ -5,11 +5,11 @@
  * Supports timeout handling and automatic cleanup.
  */
 
-import { createLogger } from '@disclaude/core';
-import type {
-  FeishuCardActionEvent,
-  InteractionContext,
-  InteractionHandler,
+import {
+  createLogger,
+  type FeishuCardActionEvent,
+  type InteractionContext,
+  type InteractionHandler,
 } from '@disclaude/core';
 
 const logger = createLogger('InteractionManager');

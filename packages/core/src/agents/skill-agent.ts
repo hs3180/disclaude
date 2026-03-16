@@ -34,8 +34,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { AgentMessage } from '../types/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
-import type { SkillAgent as SkillAgentInterface, UserInput } from './types.js';
-import { hasRuntimeContext, getRuntimeContext } from './types.js';
+import { hasRuntimeContext, getRuntimeContext, type SkillAgent as SkillAgentInterface, type UserInput } from './types.js';
 
 /**
  * Options for SkillAgent execution.

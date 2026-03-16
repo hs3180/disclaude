@@ -19,6 +19,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.2.62",
     "@anthropic-ai/sdk": "^0.78.0",
     "@playwright/mcp": "^0.0.61",
+    "cron": "^3.1.6",
     "js-yaml": "^4.1.0",
     "pino": "^10.3.0",
     "pino-pretty": "^13.1.3",

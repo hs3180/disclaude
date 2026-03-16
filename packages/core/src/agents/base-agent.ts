@@ -21,12 +21,10 @@ import {
   type AgentMessage as SdkAgentMessage,
 } from '../sdk/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
-import { createLogger } from '../utils/logger.js';
-import type { Logger } from '../utils/logger.js';
+import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
-import type { Disposable, BaseAgentConfig, AgentProvider } from './types.js';
-import { getRuntimeContext, hasRuntimeContext } from './types.js';
+import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';

@@ -9,12 +9,12 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger } from '@disclaude/core';
-import type {
-  FileRef,
-  FileUploadRequest,
-  FileUploadResponse,
-  FileDownloadResponse,
+import {
+  createLogger,
+  type FileRef,
+  type FileUploadRequest,
+  type FileUploadResponse,
+  type FileDownloadResponse,
 } from '@disclaude/core';
 
 const logger = createLogger('FileClient');

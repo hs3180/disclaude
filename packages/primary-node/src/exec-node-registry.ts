@@ -18,8 +18,7 @@
 
 import { WebSocket } from 'ws';
 import { EventEmitter } from 'events';
-import { createLogger } from '@disclaude/core';
-import type { ExecNodeInfo, RegisterMessage } from '@disclaude/core';
+import { createLogger, type ExecNodeInfo, type RegisterMessage } from '@disclaude/core';
 
 const logger = createLogger('ExecNodeRegistry');
 

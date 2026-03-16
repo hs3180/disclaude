@@ -35,4 +35,5 @@ export {
   type OnFileRemoved,
   type ScheduleFileWatcherOptions,
 } from './schedule-watcher.js';
-export { CooldownManager, type CooldownManagerOptions } from './cooldown-manager.js';
+// CooldownManager re-exported from core (Issue #1041)
+export { CooldownManager, type CooldownManagerOptions } from '@disclaude/core';

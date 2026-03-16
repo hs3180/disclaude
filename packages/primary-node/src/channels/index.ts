@@ -39,7 +39,7 @@ export type {
 } from './adapters/types.js';
 
 // Base class
-export { BaseChannel } from './base-channel.js';
+export { BaseChannel } from '@disclaude/core';
 
 // REST Channel (Issue #1040)
 export { RestChannel, type RestChannelConfig, type IFileStorageService } from './rest-channel.js';

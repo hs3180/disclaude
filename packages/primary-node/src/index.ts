@@ -67,7 +67,7 @@ export {
 } from '@disclaude/core';
 
 // Channel base class
-export { BaseChannel } from './channels/base-channel.js';
+export { BaseChannel } from '@disclaude/core';
 
 // IPC module
 export {
@@ -195,5 +195,38 @@ export {
   type PrimaryNodeOptions,
 } from './primary-node.js';
 
+// Auth module (Issue #1041 - migrated to @disclaude/core)
+export type {
+  OAuthProviderConfig,
+  OAuthToken,
+  PKCECodes,
+  OAuthState,
+  AuthUrlResult,
+  CallbackResult,
+  TokenCheckResult,
+  ApiRequestConfig,
+  ApiResponse,
+  AuthConfig,
+} from '@disclaude/core';
+
+export {
+  encrypt,
+  decrypt,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+  TokenStore,
+  getTokenStore,
+  OAuthManager,
+  getOAuthManager,
+} from '@disclaude/core';
+
+export {
+  createAuthCard,
+} from './auth/auth-mcp.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
+
+// Messaging module (Issue #513, Issue #515)
+export * from './messaging/index.js';

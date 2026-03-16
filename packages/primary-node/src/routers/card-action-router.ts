@@ -11,8 +11,7 @@
  * @module routers/card-action-router
  */
 
-import { createLogger } from '@disclaude/core';
-import type { CardActionMessage } from '@disclaude/core';
+import { createLogger, type CardActionMessage } from '@disclaude/core';
 
 const logger = createLogger('CardActionRouter');
 

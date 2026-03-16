@@ -234,6 +234,7 @@ async function main(): Promise<void> {
   });
 
   // Set up control handler for commands like reset
+  // eslint-disable-next-line require-await
   restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
     logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
 
@@ -251,7 +252,7 @@ async function main(): Promise<void> {
   // Handle graceful shutdown
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
-    if (isShuttingDown) return;
+    if (isShuttingDown) {return;}
     isShuttingDown = true;
     logger.info('Shutting down Primary Node...');
 
