@@ -13,13 +13,12 @@
 
 import { z } from 'zod';
 import {
-  getProvider,
   createLogger,
   getOAuthManager,
   type SdkInlineToolDefinition as InlineToolDefinition,
   type OAuthProviderConfig,
+  type OAuthManager,
 } from '@disclaude/core';
-import type { OAuthManager } from '@disclaude/core';
 
 const logger = createLogger('AuthMCP');
 
@@ -259,22 +258,3 @@ export const authToolDefinitions: InlineToolDefinition[] = [
     },
   },
 ];
-
-/**
- * Auth MCP tools for Agent SDK (SDK-compatible format).
- *
- * @deprecated Use authToolDefinitions with getProvider().createMcpServer() instead.
- */
-export const authSdkTools = authToolDefinitions.map(def => getProvider().createInlineTool(def));
-
-/**
- * Create SDK MCP server for authentication tools.
- */
-export function createAuthSdkMcpServer() {
-  return getProvider().createMcpServer({
-    type: 'inline',
-    name: 'auth',
-    version: '1.0.0',
-    tools: authToolDefinitions,
-  });
-}

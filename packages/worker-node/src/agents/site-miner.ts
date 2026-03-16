@@ -47,9 +47,10 @@ const buildSdkEnv = (
   _globalEnv?: Record<string, string>,
   _debug?: boolean
 ): Record<string, string> => ({});
+// eslint-disable-next-line require-await
 const checkCdpEndpointHealth = async (_url: string): Promise<CdpHealthResult> => ({ healthy: true });
 const parseCdpEndpoint = (args: string[] | undefined): string | undefined => {
-  if (!args) return undefined;
+  if (!args) {return undefined;}
   const arg = args.find(a => a.startsWith('--cdp-endpoint='));
   return arg ? arg.split('=')[1] : undefined;
 };

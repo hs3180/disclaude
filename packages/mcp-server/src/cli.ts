@@ -208,6 +208,7 @@ async function handleRequest(request: {
 /**
  * Main entry point.
  */
+// eslint-disable-next-line require-await
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const options = parseArgs(args);
@@ -249,7 +250,7 @@ async function main(): Promise<void> {
     buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
     for (const line of lines) {
-      if (!line.trim()) continue;
+      if (!line.trim()) {continue;}
 
       try {
         const request = JSON.parse(line);

@@ -45,10 +45,9 @@
  * @module agents/factory
  */
 
-import { Config, findSkill } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
-import type { ChatAgent, SkillAgent as SkillAgentInterface, Subagent, BaseAgentConfig, AgentProvider } from '@disclaude/core';
 
 // Lazy-loaded SkillAgent class reference
 let _SkillAgentClass: typeof import('@disclaude/core').SkillAgentBase | null = null;

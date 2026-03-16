@@ -19,15 +19,15 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { EventEmitter } from 'events';
-import { createLogger } from '@disclaude/core';
-import type {
-  FeedbackMessage,
-  RegisterMessage,
-  FeishuApiRequestMessage,
-  FeishuApiResponseMessage,
-  NodeCapabilities,
-  FileStorageConfig,
-  FileRef,
+import {
+  createLogger,
+  type FeedbackMessage,
+  type RegisterMessage,
+  type FeishuApiRequestMessage,
+  type FeishuApiResponseMessage,
+  type NodeCapabilities,
+  type FileStorageConfig,
+  type FileRef,
 } from '@disclaude/core';
 import type { ExecNodeRegistry } from './exec-node-registry.js';
 

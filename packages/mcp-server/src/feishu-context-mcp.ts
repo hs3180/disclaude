@@ -5,8 +5,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider } from '@disclaude/core';
-import type { SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_message,
   send_file,

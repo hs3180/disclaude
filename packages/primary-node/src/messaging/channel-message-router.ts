@@ -7,8 +7,7 @@
  * Issue #513: Multi-channel message routing layer (Phase 1)
  */
 
-import { createLogger } from '@disclaude/core';
-import type { IChannel, OutgoingMessage } from '@disclaude/core';
+import { createLogger, type IChannel, type OutgoingMessage } from '@disclaude/core';
 
 const logger = createLogger('ChannelMessageRouter');
 

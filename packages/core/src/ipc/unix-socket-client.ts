@@ -10,14 +10,14 @@
 import { existsSync } from 'fs';
 import { createConnection, type Socket } from 'net';
 import { createLogger } from '../utils/logger.js';
-import { DEFAULT_IPC_CONFIG } from './protocol.js';
-import type {
-  IpcConfig,
-  IpcRequest,
-  IpcRequestPayloads,
-  IpcRequestType,
-  IpcResponse,
-  IpcResponsePayloads,
+import {
+  DEFAULT_IPC_CONFIG,
+  type IpcConfig,
+  type IpcRequest,
+  type IpcRequestPayloads,
+  type IpcRequestType,
+  type IpcResponse,
+  type IpcResponsePayloads,
 } from './protocol.js';
 
 const logger = createLogger('IpcClient');

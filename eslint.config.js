@@ -33,7 +33,13 @@ export default [
       sourceType: 'module',
       parser: tsParser,
       parserOptions: {
-        project: './tsconfig.json',
+        project: [
+          './tsconfig.json',
+          './packages/core/tsconfig.json',
+          './packages/primary-node/tsconfig.json',
+          './packages/mcp-server/tsconfig.json',
+          './packages/worker-node/tsconfig.json',
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },

@@ -8,16 +8,17 @@
  */
 
 import { existsSync } from 'fs';
-import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
 import {
+  createLogger,
+  DEFAULT_IPC_CONFIG,
+  getIpcClient,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-} from '@disclaude/primary-node';
+} from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { getMessageSentCallback, getFeishuCredentials } from './send-message.js';
-import { getIpcClient } from '../ipc-client/index.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
@@ -276,8 +277,6 @@ export async function send_interactive_message(params: {
       };
     }
 
-    let messageId: string | undefined;
-
     logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
     const result = await sendCardViaIpc(chatId, card, parentMessageId);
     if (!result.success) {
@@ -289,7 +288,7 @@ export async function send_interactive_message(params: {
         message: errorMsg,
       };
     }
-    ({ messageId } = result);
+    const { messageId } = result;
 
     // Register action prompts if message was sent successfully
     if (messageId) {

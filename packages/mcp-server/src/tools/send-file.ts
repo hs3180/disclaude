@@ -7,8 +7,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { existsSync } from 'fs';
-import { createLogger, DEFAULT_IPC_CONFIG } from '@disclaude/core';
-import { getIpcClient } from '../ipc-client/index.js';
+import { createLogger, DEFAULT_IPC_CONFIG, getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials, getWorkspaceDir } from './send-message.js';
 import type { SendFileResult } from './types.js';
 
@@ -83,11 +82,8 @@ export async function send_file(params: {
       };
     }
 
-    let fileSize: number;
-
     logger.debug({ chatId, filePath }, 'Using IPC for file upload');
-    const { fileSize: ipcFileSize } = await uploadFileViaIpc(chatId, resolvedPath);
-    fileSize = ipcFileSize;
+    const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath);
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
     const fileName = path.basename(resolvedPath);

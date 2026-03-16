@@ -30,10 +30,8 @@
  */
 
 import { z } from 'zod';
-import { createLogger, getProvider } from '@disclaude/core';
-import type { SdkInlineToolDefinition } from '@disclaude/core';
-import { send_message as send_message_impl, setMessageSentCallback } from './feishu-context-mcp.js';
-import type { MessageSentCallback } from './feishu-context-mcp.js';
+import { createLogger, getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { send_message as send_message_impl, setMessageSentCallback, type MessageSentCallback } from './feishu-context-mcp.js';
 
 const logger = createLogger('UnifiedMessagingMCP');
 

@@ -122,8 +122,8 @@ async function main(): Promise<void> {
 
   // Get configuration values
   const commUrl = options.commUrl ?? 'ws://localhost:3001';
-  const nodeId = options.nodeId;
-  const nodeName = options.nodeName;
+  const {nodeId} = options;
+  const {nodeName} = options;
 
   logger.info({ commUrl, nodeId, nodeName }, 'Starting Worker Node');
 
@@ -164,8 +164,9 @@ async function main(): Promise<void> {
 
   // Handle graceful shutdown
   let isShuttingDown = false;
+  // eslint-disable-next-line require-await
   const shutdown = async (): Promise<void> => {
-    if (isShuttingDown) return;
+    if (isShuttingDown) {return;}
     isShuttingDown = true;
     logger.info('Shutting down Worker Node...');
 
@@ -187,7 +188,7 @@ async function main(): Promise<void> {
     await workerNode.start();
 
     logger.info({ commUrl, nodeId, nodeName }, 'Worker Node started successfully');
-    console.log(`Worker Node started`);
+    console.log('Worker Node started');
     console.log(`Primary URL: ${commUrl}`);
     if (nodeId) {
       console.log(`Node ID: ${nodeId}`);

@@ -11,8 +11,13 @@ import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer, type Server, type Socket } from 'net';
 import { createLogger } from '../utils/logger.js';
-import { DEFAULT_IPC_CONFIG } from './protocol.js';
-import type { IpcConfig, IpcRequest, IpcRequestPayloads, IpcResponse } from './protocol.js';
+import {
+  DEFAULT_IPC_CONFIG,
+  type IpcConfig,
+  type IpcRequest,
+  type IpcRequestPayloads,
+  type IpcResponse,
+} from './protocol.js';
 
 const logger = createLogger('IpcServer');
 
@@ -77,7 +82,7 @@ export function createInteractiveMessageHandler(
   handlers: InteractiveMessageHandlers,
   feishuHandlersContainer?: FeishuHandlersContainer
 ): IpcRequestHandler {
-  // eslint-disable-next-line require-await
+   
   return async (request: IpcRequest): Promise<IpcResponse> => {
     try {
       switch (request.type) {

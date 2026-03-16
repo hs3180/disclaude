@@ -25,17 +25,13 @@
 
 import * as path from 'path';
 import WebSocket from 'ws';
-import { createLogger } from '@disclaude/core';
+import { createLogger, type WorkerNodeConfig, type NodeCapabilities } from '@disclaude/core';
 import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
 } from './schedule/index.js';
 import { FileClient } from './file-client/index.js';
-import type {
-  WorkerNodeConfig,
-  NodeCapabilities,
-} from '@disclaude/core';
 import type {
   WorkerNodeDependencies,
   ChatAgent,
