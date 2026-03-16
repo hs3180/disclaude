@@ -148,7 +148,152 @@ export {
 } from './agents/base-agent.js';
 
 // Skill Agent
+export { type SkillAgentExecuteOptions } from './agents/skill-agent.js';
+export { SkillAgent as SkillAgentBase } from './agents/skill-agent.js';
+
+// Skills module (Issue #430)
 export {
-  type SkillAgentExecuteOptions,
-  SkillAgent as SkillAgentBase,
-} from './agents/skill-agent.js';
+  type DiscoveredSkill,
+  type SkillSearchPath,
+  getDefaultSearchPaths,
+  findSkill,
+  listSkills,
+  skillExists,
+  readSkillContent,
+} from './skills/index.js';
+
+// Conversation module (Issue #1041)
+export {
+  MessageQueue,
+  ConversationSessionManager,
+  ConversationOrchestrator,
+  type ConversationOrchestratorConfig,
+  type ConversationSessionManagerConfig,
+  type QueuedMessage,
+  type SessionState,
+  type SessionCallbacks,
+  type CreateSessionOptions,
+  type ProcessMessageResult,
+  type SessionStats,
+  type ConversationMessageContext,
+} from './conversation/index.js';
+
+// Scheduling module (Issue #1041)
+export {
+  CooldownManager,
+  type CooldownManagerOptions,
+  // Issue #1041: Full schedule module migrated from worker-node
+  ScheduleFileScanner,
+  ScheduleFileWatcher,
+  ScheduleManager,
+  Scheduler,
+  type ScheduledTask,
+  type ScheduleFileTask,
+  type ScheduleFileScannerOptions,
+  type ScheduleFileWatcherOptions,
+  type ScheduleManagerOptions,
+  type SchedulerCallbacks,
+  type TaskExecutor,
+  type SchedulerOptions,
+  type OnFileAdded,
+  type OnFileChanged,
+  type OnFileRemoved,
+} from './scheduling/index.js';
+
+// Task module (Issue #1041 - migrated from worker-node)
+export type {
+  TaskDefinitionDetails,
+} from './task/index.js';
+
+export {
+  DialogueMessageTracker,
+  TaskTracker,
+  TaskFileManager,
+  TaskFileWatcher,
+  ReflectionController,
+  TerminationConditions,
+  DEFAULT_REFLECTION_CONFIG,
+  type TaskFileManagerConfig,
+  type TaskFileWatcherOptions,
+  type OnTaskCreated,
+  type ReflectionConfig,
+  type ReflectionMetrics,
+  type ReflectionEvent,
+  type ReflectionEvaluationResult,
+  type ReflectionContext,
+} from './task/index.js';
+
+// Queue module (Issue #1041)
+export {
+  TaskQueue,
+  type Task,
+  type BaseTaskOptions,
+  type TaskStatus,
+  type TaskPriority,
+  type TaskDependency,
+  type TaskResult,
+} from './queue/index.js';
+
+// Auth module (Issue #1041)
+export type {
+  OAuthProviderConfig,
+  OAuthToken,
+  PKCECodes,
+  OAuthState,
+  AuthUrlResult,
+  CallbackResult,
+  TokenCheckResult,
+  ApiRequestConfig,
+  ApiResponse,
+  AuthConfig,
+} from './auth/index.js';
+
+// Auth implementations (Issue #1041 - migrated from primary-node)
+export {
+  encrypt,
+  decrypt,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+  isEncrypted,
+  getEncryptionKey,
+  TokenStore,
+  getTokenStore,
+  OAuthManager,
+  getOAuthManager,
+} from './auth/index.js';
+
+// Messaging module (Issue #515 Phase 2 - migrated from primary-node)
+export type {
+  TextContent,
+  MarkdownContent,
+  CardContent,
+  FileContent,
+  DoneContent,
+  CardSection,
+  CardAction,
+  CardSectionType,
+  CardActionType,
+  MessageContent,
+  UniversalMessage,
+  UniversalMessageMetadata,
+  SendResult,
+} from './messaging/index.js';
+
+export {
+  isTextContent,
+  isMarkdownContent,
+  isCardContent,
+  isFileContent,
+  isDoneContent,
+  createTextMessage,
+  createMarkdownMessage,
+  createCardMessage,
+  createDoneMessage,
+} from './messaging/index.js';
+
+// Channels module (Issue #1041 - migrated from primary-node)
+export { BaseChannel } from './channels/index.js';
+
+// File module (Issue #1041 - migrated from worker-node)
+export { AttachmentManager, attachmentManager } from './file/index.js';
