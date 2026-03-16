@@ -29,6 +29,7 @@ export {
 export {
   UnixSocketIpcClient,
   getIpcClient,
+  getIpcSocketPath,
   resetIpcClient,
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,

@@ -7,7 +7,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { existsSync } from 'fs';
-import { createLogger, DEFAULT_IPC_CONFIG, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, getIpcSocketPath } from '@disclaude/core';
 import { getFeishuCredentials, getWorkspaceDir } from './send-message.js';
 import type { SendFileResult } from './types.js';
 
@@ -16,9 +16,11 @@ const logger = createLogger('SendFile');
 /**
  * Check if IPC is available for Feishu API calls.
  * Issue #1035: Prefer IPC when available for unified client management.
+ * Issue #1042: Use Worker Node IPC socket path if available.
  */
 function isIpcAvailable(): boolean {
-  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
+  const socketPath = getIpcSocketPath();
+  return existsSync(socketPath);
 }
 
 /**
