@@ -15,12 +15,17 @@ import {
   loadConfigFile,
   setLoadedConfig,
   createLogger,
+  getIpcSocketPath,
 } from '@disclaude/core';
+import { existsSync } from 'fs';
 import {
   setMessageSentCallback,
-  send_message,
   send_file,
+  send_text,
+  send_card,
+  send_interactive_message,
 } from './index.js';
+import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -102,39 +107,37 @@ async function handleRequest(request: {
 
   try {
     // Handle different MCP methods
-    if (method === 'tools/list') {
+    if (method === 'initialize') {
+      // MCP handshake - return server capabilities
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: {},
+          },
+          serverInfo: {
+            name: 'channel-mcp',
+            version: '0.0.1',
+          },
+        },
+      };
+    } else if (method === 'tools/list') {
       return {
         jsonrpc: '2.0',
         id,
         result: {
           tools: [
             {
-              name: 'send_message',
-              description: `Send a message to a chat. Supports text, card, and interactive modes.
-
-## Modes
-1. **Text**: Simple text message
-2. **Card**: Display-only card (no interactions)
-3. **Interactive**: Card with buttons/actions (requires actionPrompts)
-
-## Parameters
-- **content**: Text string or card object
-- **format**: "text" or "card"
-- **chatId**: Target chat ID
-- **parentMessageId**: Optional, for thread reply
-- **actionPrompts**: Optional, enables interactive mode. Maps button values to prompts.`,
+              name: 'send_text',
+              description: 'Send a plain text message to a chat.',
               inputSchema: {
                 type: 'object',
                 properties: {
-                  content: {
-                    oneOf: [{ type: 'string' }, { type: 'object' }],
-                    description: 'The message content. String for text, object for card.',
-                  },
-                  format: {
+                  text: {
                     type: 'string',
-                    description: 'Message format. Use "text" for plain text, "card" for interactive cards.',
-                    enum: ['text', 'card'],
-                    default: 'text',
+                    description: 'The text message content.',
                   },
                   chatId: {
                     type: 'string',
@@ -142,15 +145,105 @@ async function handleRequest(request: {
                   },
                   parentMessageId: {
                     type: 'string',
-                    description: 'Optional parent message ID for thread reply',
+                    description: 'Optional parent message ID for thread replies',
+                  },
+                },
+                required: ['text', 'chatId'],
+              },
+            },
+            {
+              name: 'send_card',
+              description: `Send a display-only card to a chat. No button interactions.
+
+## Card Structure
+A Feishu card object with config, header, and elements.
+
+## Type Constraints (IMPORTANT)
+- **card**: MUST be an object with config/header/elements, NOT an array or string
+- **chatId**: MUST be a non-empty string
+
+Example:
+\`\`\`json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "Title", "tag": "plain_text"}},
+  "elements": [{"tag": "markdown", "content": "Content"}]
+}
+\`\`\`
+
+**Reference:** https://open.feishu.cn/document/common-capabilities/message-card`,
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  card: {
+                    type: 'object',
+                    description: 'The card content object. MUST be an object, NOT an array or string.',
+                  },
+                  chatId: {
+                    type: 'string',
+                    description: 'Target chat ID',
+                  },
+                  parentMessageId: {
+                    type: 'string',
+                    description: 'Optional parent message ID for thread replies',
+                  },
+                },
+                required: ['card', 'chatId'],
+              },
+            },
+            {
+              name: 'send_interactive',
+              description: `Send an interactive card with buttons/actions to a chat.
+
+## Interactive Mode
+Requires actionPrompts to map button values to user messages.
+
+## Type Constraints (IMPORTANT)
+- **card**: MUST be an object with config/header/elements, NOT an array or string
+- **actionPrompts**: MUST be an object { [buttonValue: string]: string }, NOT an array or string
+- **chatId**: MUST be a non-empty string
+
+Example:
+\`\`\`json
+{
+  "card": {
+    "config": {},
+    "header": {"title": {"content": "Confirm?"}},
+    "elements": [
+      {"tag": "action", "actions": [
+        {"tag": "button", "text": {"content": "OK"}, "value": "ok"},
+        {"tag": "button", "text": {"content": "Cancel"}, "value": "cancel"}
+      ]}
+    ]
+  },
+  "actionPrompts": {
+    "ok": "[用户] 点击了确认",
+    "cancel": "[用户] 点击了取消"
+  }
+}
+\`\`\``,
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  card: {
+                    type: 'object',
+                    description: 'The card content object.',
                   },
                   actionPrompts: {
                     type: 'object',
                     additionalProperties: { type: 'string' },
-                    description: 'Optional action prompts for interactive cards. Maps button values to prompts.',
+                    description: 'Maps button values to user messages. MUST be an object, NOT an array or string.',
+                  },
+                  chatId: {
+                    type: 'string',
+                    description: 'Target chat ID',
+                  },
+                  parentMessageId: {
+                    type: 'string',
+                    description: 'Optional parent message ID for thread replies',
                   },
                 },
-                required: ['content', 'format', 'chatId'],
+                required: ['card', 'actionPrompts', 'chatId'],
               },
             },
             {
@@ -178,35 +271,218 @@ async function handleRequest(request: {
       const toolName = params?.name as string;
       const toolArgs = (params?.arguments || {}) as Record<string, unknown>;
 
-      if (toolName === 'send_message') {
-        const format = (toolArgs.format as 'text' | 'card') || 'text';
-        const result = await send_message({
-          content: toolArgs.content as string | Record<string, unknown>,
-          format,
-          chatId: (toolArgs.chatId as string) || '',
+      if (toolName === 'send_text') {
+        // Pre-validation
+        if (typeof toolArgs.text !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid text: must be a string' }],
+              isError: true,
+            },
+          };
+        }
+        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+
+        const result = await send_text({
+          text: toolArgs.text,
+          chatId: toolArgs.chatId,
           parentMessageId: toolArgs.parentMessageId as string | undefined,
         });
         return {
           jsonrpc: '2.0',
           id,
           result: {
-            content: result.success
-              ? result.message
-              : `⚠️ ${result.message}`,
+            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
           },
         };
-      } else if (toolName === 'send_file') {
-        const result = await send_file({
-          filePath: toolArgs.filePath as string,
-          chatId: (toolArgs.chatId as string) || '',
+      } else if (toolName === 'send_card') {
+        const card = toolArgs.card;
+        const chatId = toolArgs.chatId as string | undefined;
+
+        // Pre-validation: card must be an object
+        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}` }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: card structure
+        if (!isValidFeishuCard(card as Record<string, unknown>)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ Invalid card structure: ${getCardValidationError(card)}` }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: chatId
+        if (!chatId || typeof chatId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+
+        const result = await send_card({
+          card: card as Record<string, unknown>,
+          chatId,
+          parentMessageId: toolArgs.parentMessageId as string | undefined,
         });
         return {
           jsonrpc: '2.0',
           id,
           result: {
-            content: result.success
-              ? `File sent: ${result.message}`
-              : `⚠️ ${result.message}`,
+            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
+          },
+        };
+      } else if (toolName === 'send_interactive') {
+        const card = toolArgs.card;
+        const actionPrompts = toolArgs.actionPrompts;
+        const chatId = toolArgs.chatId as string | undefined;
+
+        // Pre-validation: card must be an object
+        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}` }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: card structure
+        if (!isValidFeishuCard(card as Record<string, unknown>)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ Invalid card structure: ${getCardValidationError(card)}` }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: actionPrompts must be an object (not array/string)
+        if (!actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: must be an object, got ${Array.isArray(actionPrompts) ? 'array' : typeof actionPrompts}` }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: actionPrompts non-empty
+        const promptKeys = Object.keys(actionPrompts);
+        if (promptKeys.length === 0) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid actionPrompts: must have at least one action' }],
+              isError: true,
+            },
+          };
+        }
+
+        // Pre-validation: actionPrompts values must be strings
+        for (const [key, value] of Object.entries(actionPrompts)) {
+          if (typeof value !== 'string') {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: value for "${key}" must be string, got ${typeof value}` }],
+                isError: true,
+              },
+            };
+          }
+        }
+
+        // Pre-validation: chatId
+        if (!chatId || typeof chatId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+
+        const result = await send_interactive_message({
+          card: card as Record<string, unknown>,
+          actionPrompts: actionPrompts as Record<string, string>,
+          chatId,
+          parentMessageId: toolArgs.parentMessageId as string | undefined,
+        });
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
+          },
+        };
+      } else if (toolName === 'send_file') {
+        // Pre-validation
+        if (typeof toolArgs.filePath !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid filePath: must be a string' }],
+              isError: true,
+            },
+          };
+        }
+        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+
+        const result = await send_file({
+          filePath: toolArgs.filePath,
+          chatId: toolArgs.chatId,
+        });
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : `⚠️ ${result.message}` }],
           },
         };
       } else {
@@ -254,6 +530,20 @@ async function main(): Promise<void> {
   }
 
   logger.info('Starting MCP Server (stdio mode)');
+
+  // Log startup environment for debugging MCP server spawn issues
+  const ipcSocket = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+  const ipcSocketPath = getIpcSocketPath();
+  const ipcAvailable = existsSync(ipcSocketPath);
+
+  logger.info({
+    nodeVersion: process.version,
+    cwd: process.cwd(),
+    ipcSocket,
+    ipcSocketPath,
+    ipcAvailable,
+    hasConfig: !!options.configPath,
+  }, 'MCP Server startup environment');
 
   // Set up message sent callback
   setMessageSentCallback((chatId: string) => {

@@ -3,9 +3,10 @@
  * CLI entry point for @disclaude/primary-node
  *
  * Usage:
- *   disclaude-primary start [--rest-port PORT] [--host HOST] [--config PATH]
+ *   disclaude-primary start [--config PATH]
  *
  * This starts the Primary Node with a REST channel for API access.
+ * All configuration (port, host, etc.) is read from the config file.
  *
  * @module primary-node/cli
  */
@@ -17,13 +18,15 @@ import {
   type IncomingMessage,
   type ControlCommand,
   type ControlResponse,
-  getProvider,
-  type AgentQueryOptions,
   Config,
-  buildSdkEnv,
+  type FeishuApiHandlers,
+  type DisclaudeConfigWithChannels,
 } from '@disclaude/core';
+import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
+import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
+import { PrimaryAgentPool } from './primary-agent-pool.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -32,8 +35,6 @@ const logger = createLogger('PrimaryNodeCLI');
  */
 interface CliOptions {
   command: 'start' | 'help';
-  restPort?: number;
-  host?: string;
   configPath?: string;
 }
 
@@ -45,20 +46,6 @@ function parseArgs(args: string[]): CliOptions {
 
     if (arg === 'start') {
       options.command = 'start';
-    } else if (arg === '--rest-port' || arg === '-p') {
-      const value = args[++i];
-      if (value) {
-        options.restPort = parseInt(value, 10);
-        if (isNaN(options.restPort)) {
-          console.error('Error: --rest-port requires a valid number');
-          process.exit(1);
-        }
-      }
-    } else if (arg === '--host' || arg === '-h') {
-      const value = args[++i];
-      if (value) {
-        options.host = value;
-      }
     } else if (arg === '--config' || arg === '-c') {
       const value = args[++i];
       if (value) {
@@ -86,15 +73,15 @@ Commands:
   start    Start the Primary Node server
 
 Options:
-  --rest-port, -p PORT    REST API port (default: 3099)
-  --host, -h HOST         Host to bind to (default: 127.0.0.1)
   --config, -c PATH       Path to configuration file
   --help                  Show this help message
 
+Configuration:
+  All settings (port, host, etc.) are read from the config file.
+  See disclaude.config.yaml for available options.
+
 Examples:
   disclaude-primary start
-  disclaude-primary start --rest-port 8080
-  disclaude-primary start --host 0.0.0.0 --rest-port 3000
   disclaude-primary start --config /path/to/disclaude.config.yaml
 `);
 }
@@ -124,11 +111,31 @@ async function main(): Promise<void> {
     logger.info({ path: config._source }, 'Configuration loaded successfully');
   }
 
-  // Get configuration values
-  const restPort = options.restPort ?? 3099;
-  const host = options.host ?? '127.0.0.1';
+  // Get configuration values from config file
+  const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
+  const restChannelConfig = rawConfig.channels?.rest as {
+    port?: number;
+    host?: string;
+    fileStorageDir?: string;
+  } | undefined;
 
-  logger.info({ restPort, host }, 'Starting Primary Node');
+  // Check if Feishu is configured
+  const hasFeishuConfig = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
+  const hasRestConfig = restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir;
+
+  // At least one channel must be configured
+  if (!hasFeishuConfig && !hasRestConfig) {
+    console.error('Error: At least one channel must be configured.');
+    console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
+    console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
+    process.exit(1);
+  }
+
+  const restPort = restChannelConfig?.port || 3000;
+  const host = restChannelConfig?.host || '0.0.0.0';
+  const fileStorageDir = restChannelConfig?.fileStorageDir || './data/rest-files';
+
+  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig }, 'Starting Primary Node');
 
   // Create PrimaryNode
   const primaryNode = new PrimaryNode({
@@ -136,21 +143,20 @@ async function main(): Promise<void> {
     enableLocalExec: true,
   });
 
-  // Create and register REST channel
-  const restChannelConfig: RestChannelConfig = {
-    port: restPort,
-    host,
-  };
+  // Create and register REST channel (if configured)
+  let restChannel: RestChannel | undefined;
+  if (hasRestConfig) {
+    const restConfig: RestChannelConfig = {
+      port: restPort,
+      host,
+      fileStorageDir,
+    };
+    restChannel = new RestChannel(restConfig);
+  }
 
-  const restChannel = new RestChannel(restChannelConfig);
-
-  // Get the SDK provider
-  const sdkProvider = getProvider();
-
-  // Get agent configuration from loaded config
-  let agentConfig: { apiKey: string; model: string; apiBaseUrl?: string };
+  // Get agent configuration from loaded config (validates API key is available)
   try {
-    agentConfig = Config.getAgentConfig();
+    const agentConfig = Config.getAgentConfig();
     logger.info(
       { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
       'Agent configuration loaded'
@@ -161,93 +167,171 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  /**
-   * Create SDK options for agent execution.
-   * Uses buildSdkEnv for proper environment setup including PATH and CLAUDECODE handling.
-   */
-  const createSdkOptions = (): AgentQueryOptions => {
-    // Use buildSdkEnv to properly set up environment:
-    // - Includes PATH for node to be found by subprocess
-    // - Removes CLAUDECODE to prevent nested session detection
-    // - Sets DEBUG_CLAUDE_AGENT_SDK for debug logging
-    const env = buildSdkEnv(
-      agentConfig.apiKey,
-      agentConfig.apiBaseUrl,
-      {}, // no extra env
-      true // enable SDK debug
-    );
+  // Create AgentPool for Primary Node
+  const agentPool = new PrimaryAgentPool();
 
-    return {
-      cwd: Config.getWorkspaceDir(),
-      model: agentConfig.model,
-      permissionMode: 'bypassPermissions',
-      settingSources: ['project'],
-      env,
-    };
-  };
+  // Set up REST channel handlers (if configured)
+  if (restChannel) {
+    // Create PilotCallbacks for REST channel
+    const createRestCallbacks = (_chatId: string): PilotCallbacks => ({
+      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+        await restChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text,
+          threadId: parentMessageId,
+        });
+      },
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+        await restChannel.sendMessage({
+          chatId,
+          type: 'card',
+          card,
+          description,
+          threadId: parentMessageId,
+        });
+      },
+      sendFile: async (chatId: string, filePath: string) => {
+        logger.warn({ chatId, filePath }, 'File sending not implemented for REST channel');
+      },
+      onDone: async (chatId: string, parentMessageId?: string) => {
+        logger.info({ chatId }, 'Task completed');
+        // Signal completion for sync mode
+        await restChannel.sendMessage({
+          chatId,
+          type: 'done',
+          threadId: parentMessageId,
+        });
+      },
+    });
 
-  // Set up message handler to process messages through agent
-  restChannel.onMessage(async (message: IncomingMessage) => {
-    const { chatId, content, messageId } = message;
-    logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from REST channel');
+    // Set up message handler to process messages through agent
+    restChannel.onMessage(async (message: IncomingMessage) => {
+      const { chatId, content, messageId, userId, metadata } = message;
+      logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from REST channel');
 
-    try {
-      const options = createSdkOptions();
+      const callbacks = createRestCallbacks(chatId);
+      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
 
-      // Process message through SDK
-      for await (const agentMessage of sdkProvider.queryOnce(content, options)) {
-        logger.debug({ chatId, type: agentMessage.type }, 'Agent message received');
+      // Extract context
+      const senderOpenId = userId;
+      const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
 
-        // Send message content to REST channel
-        if (agentMessage.content) {
-          await restChannel.sendMessage({
-            chatId,
-            type: 'text',
-            text: agentMessage.content,
-          });
-        }
-
-        // Check for completion (result type means query is done)
-        if (agentMessage.type === 'result') {
-          logger.info({ chatId }, 'Agent query completed');
-          // Signal completion for sync mode
-          await restChannel.sendMessage({
-            chatId,
-            type: 'done',
-          });
-        }
+      try {
+        // Use processMessage for streaming conversations (like Feishu)
+        agent.processMessage(chatId, content, messageId, senderOpenId, undefined, chatHistoryContext);
+      } catch (error) {
+        logger.error({ err: error, chatId, messageId }, 'Failed to process message');
+        await restChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        await restChannel.sendMessage({
+          chatId,
+          type: 'done',
+        });
       }
-    } catch (error) {
-      logger.error({ err: error, chatId, messageId }, 'Failed to process message');
-      // Send error response
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      await restChannel.sendMessage({
-        chatId,
-        type: 'text',
-        text: `❌ Error: ${errorMsg}`,
-      });
-      await restChannel.sendMessage({
-        chatId,
-        type: 'done',
-      });
-    }
-  });
+    });
 
-  // Set up control handler for commands like reset
-  // eslint-disable-next-line require-await
-  restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
-    logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
+    // Set up control handler for commands like reset
+    restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
+      logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
 
-    if (command.type === 'reset') {
-      // For queryOnce mode, there's no persistent session to reset
-      // Just return success
-      return { success: true, message: 'Session reset (no persistent state)' };
-    }
+      if (command.type === 'reset') {
+        agentPool.reset(command.chatId);
+        return { success: true, message: 'Session reset' };
+      }
 
-    return { success: false, error: `Unknown command: ${command.type}` };
-  });
+      return { success: false, error: `Unknown command: ${command.type}` };
+    });
 
-  primaryNode.registerChannel(restChannel);
+    primaryNode.registerChannel(restChannel);
+  }
+
+  // Check if Feishu is configured and start Feishu Channel
+  let feishuChannel: FeishuChannel | undefined;
+  if (Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET) {
+    logger.info('Starting Feishu Channel');
+
+    const feishuChannelConfig: FeishuChannelConfig = {
+      appId: Config.FEISHU_APP_ID,
+      appSecret: Config.FEISHU_APP_SECRET,
+    };
+
+    feishuChannel = new FeishuChannel(feishuChannelConfig);
+
+    // Create PilotCallbacks for Feishu channel
+    const createFeishuCallbacks = (): PilotCallbacks => ({
+      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+        await feishuChannel!.sendMessage({
+          chatId,
+          type: 'text',
+          text,
+          threadId: parentMessageId,
+        });
+      },
+      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
+        await feishuChannel!.sendMessage({
+          chatId,
+          type: 'card',
+          card,
+          description,
+          threadId: parentMessageId,
+        });
+      },
+      sendFile: async (chatId: string, filePath: string) => {
+        logger.warn({ chatId, filePath }, 'File sending not fully implemented');
+      },
+      onDone: async (chatId: string, _parentMessageId?: string) => {
+        logger.info({ chatId }, 'Task completed');
+      },
+    });
+
+    // Set up message handler for Feishu
+    feishuChannel.onMessage(async (message: IncomingMessage) => {
+      const { chatId, content, messageId, userId, metadata } = message;
+      logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from Feishu channel');
+
+      const callbacks = createFeishuCallbacks();
+      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
+
+      // Extract context
+      const senderOpenId = userId;
+      const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
+
+      try {
+        // Use processMessage for streaming conversations
+        agent.processMessage(chatId, content, messageId, senderOpenId, undefined, chatHistoryContext);
+      } catch (error) {
+        logger.error({ err: error, chatId, messageId }, 'Failed to process message');
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        await feishuChannel!.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ Error: ${errorMsg}`,
+        });
+      }
+    });
+
+    // Set up control handler for Feishu commands
+    feishuChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
+      logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command from Feishu');
+
+      if (command.type === 'reset') {
+        agentPool.reset(command.chatId);
+        return { success: true, message: 'Session reset' };
+      }
+
+      if (command.type === 'status') {
+        return { success: true, message: 'Feishu Channel: running' };
+      }
+
+      return { success: false, error: `Unknown command: ${command.type}` };
+    });
+
+    primaryNode.registerChannel(feishuChannel);
+  }
 
   // Handle graceful shutdown
   let isShuttingDown = false;
@@ -257,7 +341,13 @@ async function main(): Promise<void> {
     logger.info('Shutting down Primary Node...');
 
     try {
-      await restChannel.stop();
+      agentPool.disposeAll();
+      if (restChannel) {
+        await restChannel.stop();
+      }
+      if (feishuChannel) {
+        await feishuChannel.stop();
+      }
       await primaryNode.stop();
       logger.info('Primary Node stopped');
       process.exit(0);
@@ -274,11 +364,73 @@ async function main(): Promise<void> {
     // Start PrimaryNode
     await primaryNode.start();
 
-    // Start REST channel
-    await restChannel.start();
+    // Start REST channel if configured
+    if (restChannel) {
+      await restChannel.start();
+      logger.info({ restPort, host }, 'REST Channel started');
+      console.log(`REST Channel started on http://${host}:${restPort}`);
+    }
 
-    logger.info({ restPort, host }, 'Primary Node started successfully');
-    console.log(`Primary Node started on http://${host}:${restPort}`);
+    // Start Feishu channel if configured
+    if (feishuChannel) {
+      await feishuChannel.start();
+      logger.info('Feishu Channel started');
+
+      // Register Feishu handlers for IPC (Issue #1042)
+      // This enables MCP Server tools to send messages via IPC
+      const feishuHandlers: FeishuApiHandlers = {
+        sendMessage: async (chatId: string, text: string, threadId?: string) => {
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'text',
+            text,
+            threadId,
+          });
+        },
+        sendCard: async (
+          chatId: string,
+          card: Record<string, unknown>,
+          threadId?: string,
+          description?: string
+        ) => {
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'card',
+            card,
+            threadId,
+            description,
+          });
+        },
+        uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
+          // File upload via sendMessage with type: 'file'
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'file',
+            filePath,
+            threadId,
+          });
+          // Return minimal file info (actual implementation would need to upload and get file_key)
+          return {
+            fileKey: '',
+            fileType: 'file',
+            fileName: filePath.split('/').pop() || 'file',
+            fileSize: 0,
+          };
+        },
+        getBotInfo: async () => {
+          return feishuChannel.getBotInfo();
+        },
+      };
+      primaryNode.registerFeishuHandlers(feishuHandlers);
+      logger.info('Feishu IPC handlers registered');
+    }
+
+    logger.info({ hasRest: !!restChannel, hasFeishu: !!feishuChannel }, 'Primary Node started successfully');
+    if (restChannel) {
+      console.log(`Primary Node started on http://${host}:${restPort}`);
+    } else {
+      console.log('Primary Node started (Feishu only mode)');
+    }
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
     console.error('Failed to start Primary Node:', error instanceof Error ? error.message : String(error));

@@ -108,8 +108,9 @@ function adaptMcpServers(
       // inline 配置：转换为 SDK 实例
       result[name] = adaptInlineMcpServer(config);
     } else {
-      // stdio 模式：直接传递配置
+      // stdio 模式：传递完整配置，包括 type 字段
       result[name] = {
+        type: 'stdio',
         command: config.command,
         args: config.args,
         env: config.env,

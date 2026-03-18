@@ -21,8 +21,8 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
-    { "path": "./packages/primary-node" },
     { "path": "./packages/mcp-server" },
-    { "path": "./packages/worker-node" }
+    { "path": "./packages/worker-node" },
+    { "path": "./packages/primary-node" }
   ]
 }

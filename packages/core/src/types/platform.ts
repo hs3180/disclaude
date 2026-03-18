@@ -10,6 +10,8 @@ export interface FeishuMessageEvent {
     content: string;
     message_type: string;
     create_time?: number;
+    /** Parent message ID (for replies/quotes) */
+    parent_id?: string;
     mentions?: Array<{
       key: string;
       id: {
