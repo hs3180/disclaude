@@ -22,6 +22,7 @@ import {
   type FeishuCardActionEvent,
   type FeishuCardActionEventData,
   type IncomingMessage,
+  type MessageAttachment,
   type ControlCommand,
   type ControlResponse,
 } from '@disclaude/core';
@@ -56,6 +57,17 @@ export interface MessageCallbacks {
       trigger?: string;
     };
   }) => Promise<boolean>;
+}
+
+/**
+ * Result of resolving a quoted/replied message.
+ *
+ * @property text - Formatted quoted message text for display in the prompt
+ * @property attachment - Downloaded file attachment (only for image/file/media messages)
+ */
+interface QuotedMessageResult {
+  text: string;
+  attachment?: MessageAttachment;
 }
 
 /**
@@ -218,8 +230,12 @@ export class MessageHandler {
 
   /**
    * Get quoted/replied message content.
+   *
+   * Supports text, post, image, file, and media message types.
+   * For image/file/media, downloads the file and returns both a text prompt
+   * and a structured MessageAttachment so the agent can access the file.
    */
-  private async getQuotedMessageContext(parentId: string): Promise<string | undefined> {
+  private async getQuotedMessageContext(parentId: string): Promise<QuotedMessageResult | undefined> {
     if (!this.client) {
       return undefined;
     }
@@ -234,18 +250,22 @@ export class MessageHandler {
         },
       });
 
-      const message = response.data as { message?: { message_type?: string; content?: string } };
+      const message = response.data as { message?: { message_type?: string; content?: string; message_id?: string } };
       if (!message?.message) {
         return undefined;
       }
 
+      const msgType = message.message.message_type;
+      const msgContent = message.message.content || '{}';
+      const msgId = message.message.message_id || parentId;
+
       let quotedText = '';
       try {
-        if (message.message.message_type === 'text') {
-          const parsed = JSON.parse(message.message.content || '{}');
-          quotedText = parsed.text || message.message.content || '';
-        } else if (message.message.message_type === 'post') {
-          const parsed = JSON.parse(message.message.content || '{}');
+        if (msgType === 'text') {
+          const parsed = JSON.parse(msgContent);
+          quotedText = parsed.text || msgContent || '';
+        } else if (msgType === 'post') {
+          const parsed = JSON.parse(msgContent);
           if (parsed.content && Array.isArray(parsed.content)) {
             for (const row of parsed.content) {
               if (Array.isArray(row)) {
@@ -257,20 +277,93 @@ export class MessageHandler {
               }
             }
           }
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
+          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
-        quotedText = message.message.content || '';
+        quotedText = msgContent || '';
       }
 
       if (!quotedText.trim()) {
         return undefined;
       }
 
-      return `> **引用的消息**:\n> ${quotedText.split('\n').join('\n> ')}`;
+      return { text: `> **引用的消息**:\n> ${quotedText.split('\n').join('\n> ')}` };
     } catch (error) {
       logger.debug({ err: error, parentId }, 'Failed to get quoted message context');
       return undefined;
     }
+  }
+
+  /**
+   * Handle quoted/replied file/image/media message.
+   *
+   * Downloads the file to workspace and returns both a descriptive prompt
+   * and a structured MessageAttachment so the agent can access the file.
+   */
+  private async handleQuotedFileMessage(
+    messageType: string,
+    content: string,
+    messageId: string,
+  ): Promise<QuotedMessageResult | undefined> {
+    let fileKey: string | undefined;
+    let fileName: string | undefined;
+
+    try {
+      const parsed = JSON.parse(content);
+      if (messageType === 'image') {
+        fileKey = parsed.image_key;
+        fileName = `image_${fileKey}`;
+      } else {
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `file_${fileKey}`;
+      }
+    } catch {
+      logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
+      return undefined;
+    }
+
+    if (!fileKey) {
+      logger.warn({ messageType, messageId }, 'No file_key found in quoted message');
+      return undefined;
+    }
+
+    // Download file to workspace/downloads directory
+    let localPath: string | undefined;
+    if (this.client) {
+      try {
+        const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+        await fs.mkdir(downloadDir, { recursive: true });
+        localPath = path.join(downloadDir, String(fileName || fileKey));
+
+        logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+
+        const response = await this.client.im.messageResource.get({
+          path: { message_id: messageId, file_key: fileKey },
+          params: { type: messageType },
+        });
+        await response.writeFile(localPath);
+
+        logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+      } catch (downloadError) {
+        logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
+      }
+    }
+
+    const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : '媒体文件';
+    if (!localPath) {
+      return {
+        text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败，无法查看内容）`,
+      };
+    }
+
+    return {
+      text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}`,
+      attachment: {
+        fileName: fileName || fileKey,
+        filePath: localPath,
+      },
+    };
   }
 
   /**
@@ -530,9 +623,9 @@ export class MessageHandler {
     }
 
     // Get quoted/replied message context if this is a reply
-    let quotedMessageContext: string | undefined;
+    let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
     if (parent_id) {
-      quotedMessageContext = await this.getQuotedMessageContext(parent_id);
+      quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
     // Get chat history context for passive mode
@@ -545,12 +638,17 @@ export class MessageHandler {
 
     // Build metadata
     const metadata: Record<string, unknown> = {};
-    if (quotedMessageContext) {
-      metadata.quotedMessage = quotedMessageContext;
+    if (quotedMessageResult?.text) {
+      metadata.quotedMessage = quotedMessageResult.text;
     }
     if (chatHistoryContext) {
       metadata.chatHistoryContext = chatHistoryContext;
     }
+
+    // Build attachments from quoted message if available
+    const quotedAttachments = quotedMessageResult?.attachment
+      ? [quotedMessageResult.attachment]
+      : undefined;
 
     // Emit as incoming message
     await this.callbacks.emitMessage({
@@ -562,6 +660,7 @@ export class MessageHandler {
       timestamp: create_time,
       threadId,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      attachments: quotedAttachments,
     });
   }
 
