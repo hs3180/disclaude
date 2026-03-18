@@ -7,10 +7,8 @@
  * @module mcp-server/tools/interactive-message
  */
 
-import { existsSync } from 'fs';
 import {
   createLogger,
-  DEFAULT_IPC_CONFIG,
   getIpcClient,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
@@ -18,18 +16,12 @@ import {
   type FeishuHandlersContainer,
 } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import { getMessageSentCallback, getFeishuCredentials } from './send-message.js';
+import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { getFeishuCredentials } from './credentials.js';
+import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
-
-/**
- * Check if IPC is available for Feishu API calls.
- * Issue #1035: Prefer IPC when available for unified client management.
- */
-function isIpcAvailable(): boolean {
-  return existsSync(DEFAULT_IPC_CONFIG.socketPath);
-}
 
 /**
  * Send card message via IPC to PrimaryNode's LarkClientService.
@@ -44,23 +36,6 @@ async function sendCardViaIpc(
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
   return await ipcClient.feishuSendCard(chatId, card, threadId, description);
-}
-
-/**
- * Generate user-friendly error message based on IPC error type.
- * Issue #1088: Provide actionable error messages.
- */
-function getIpcErrorMessage(errorType?: string, originalError?: string): string {
-  switch (errorType) {
-    case 'ipc_unavailable':
-      return '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。';
-    case 'ipc_timeout':
-      return '❌ IPC 请求超时。服务可能过载，请稍后重试。';
-    case 'ipc_request_failed':
-      return `❌ IPC 请求失败: ${originalError ?? '未知错误'}`;
-    default:
-      return `❌ 交互消息发送失败: ${originalError ?? '未知错误'}`;
-  }
 }
 
 /**
@@ -358,8 +333,13 @@ export function unregisterFeishuHandlers(): void {
 
 /**
  * Start the IPC server for cross-process communication.
- * This allows other processes (e.g., the main bot process) to query
- * the interactive contexts stored in this process.
+ *
+ * IMPORTANT: This function should only be called by Primary/Worker Node,
+ * NOT by MCP Server child processes. MCP Server processes should connect
+ * as clients using getIpcClient().
+ *
+ * This allows other processes (e.g., MCP Server child processes) to query
+ * the interactive contexts stored in the Primary/Worker Node process.
  *
  * Issue #1116: Accept feishuHandlers to enable IPC-based Feishu API calls
  * in Primary Node standalone mode.
@@ -428,3 +408,9 @@ export function isIpcServerRunning(): boolean {
 export function getIpcServerSocketPath(): string | null {
   return ipcServer?.getSocketPath() ?? null;
 }
+
+/**
+ * Alias for send_interactive_message for consistency with other tool names.
+ * Sends an interactive card with clickable buttons to a Feishu chat.
+ */
+export const send_interactive = send_interactive_message;

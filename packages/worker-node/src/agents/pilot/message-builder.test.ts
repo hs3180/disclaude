@@ -178,6 +178,81 @@ describe('MessageBuilder', () => {
     });
   });
 
+  describe('buildToolsSection - MCP tool name format', () => {
+    // Access private method for testing
+    const getToolsSection = (mb: MessageBuilder, chatId: string, messageId: string, capabilities?: any) =>
+      (mb as any).buildToolsSection(chatId, messageId, capabilities);
+
+    it('should include full MCP tool name mcp__channel-mcp__send_text', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text'] }
+      );
+
+      expect(result).toContain('mcp__channel-mcp__send_text');
+      expect(result).toContain('chat-123');
+      expect(result).toContain('msg-456');
+    });
+
+    it('should include send_card when available', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text', 'send_card'] }
+      );
+
+      expect(result).toContain('mcp__channel-mcp__send_card');
+    });
+
+    it('should include send_interactive when available', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text', 'send_interactive'] }
+      );
+
+      expect(result).toContain('mcp__channel-mcp__send_interactive');
+    });
+
+    it('should include IMPORTANT warning to use correct tool', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text'] }
+      );
+
+      expect(result).toContain('**IMPORTANT**');
+      expect(result).toContain('Do NOT use any other MCP server');
+    });
+
+    it('should include full MCP tool name mcp__channel-mcp__send_file when available', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text', 'send_file'] }
+      );
+
+      expect(result).toContain('mcp__channel-mcp__send_file');
+    });
+
+    it('should not include send_file when not in supportedMcpTools', () => {
+      const result = getToolsSection(
+        new MessageBuilder(),
+        'chat-123',
+        'msg-456',
+        { supportedMcpTools: ['send_text'] }
+      );
+
+      expect(result).toContain('send_file is NOT supported');
+    });
+  });
+
   describe('buildOutputFormatGuidance (Issue #962)', () => {
     it('should include output format guidance in regular messages', () => {
       const result = messageBuilder.buildEnhancedContent({

@@ -195,6 +195,9 @@ export {
   type PrimaryNodeOptions,
 } from './primary-node.js';
 
+// Agent pool (Issue #1040)
+export { PrimaryAgentPool } from './primary-agent-pool.js';
+
 // Auth module (Issue #1041 - migrated to @disclaude/core)
 export type {
   OAuthProviderConfig,

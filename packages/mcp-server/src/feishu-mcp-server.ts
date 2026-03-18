@@ -6,7 +6,9 @@
  * messaging integration tools to the Agent SDK via stdio.
  *
  * Tools provided:
- * - send_message: Send a message to a chat
+ * - send_text: Send a plain text message to a chat
+ * - send_card: Send a display-only card to a chat
+ * - send_interactive: Send an interactive card with buttons/actions
  * - send_file: Send a file to a chat
  *
  * Environment Variables Required:
@@ -14,12 +16,12 @@
  * - FEISHU_APP_SECRET: Platform app secret
  * - WORKSPACE_DIR: Workspace directory (optional, defaults to cwd)
  *
- * Note: This is a thin wrapper around feishu-context-mcp.ts.
- * The actual implementation is in feishu-context-mcp.ts.
+ * Note: This is a thin wrapper around channel-mcp.ts.
+ * The actual implementation is in channel-mcp.ts.
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_message, send_file } from './feishu-context-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -40,30 +42,74 @@ async function handleMessage(message: unknown) {
           result: {
             tools: [
               {
-                name: 'send_message',
-                description: 'Send a message to a chat. Requires explicit format: "text" or "card".',
+                name: 'send_text',
+                description: 'Send a plain text message to a chat.',
                 inputSchema: {
                   type: 'object',
                   properties: {
-                    content: {
+                    text: {
                       type: 'string',
-                      description: 'The content to send. String for text messages.',
-                    },
-                    format: {
-                      type: 'string',
-                      enum: ['text', 'card'],
-                      description: 'Format specifier: "text" for plain text, "card" for interactive cards.',
+                      description: 'The text message content.',
                     },
                     chatId: {
                       type: 'string',
-                      description: 'Chat ID to send the message to',
+                      description: 'Target chat ID',
                     },
                     parentMessageId: {
                       type: 'string',
                       description: 'Optional parent message ID for thread replies.',
                     },
                   },
-                  required: ['content', 'format', 'chatId'],
+                  required: ['text', 'chatId'],
+                },
+              },
+              {
+                name: 'send_card',
+                description: 'Send a display-only card to a chat. No button interactions.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    card: {
+                      type: 'object',
+                      description: 'The card content object.',
+                    },
+                    chatId: {
+                      type: 'string',
+                      description: 'Target chat ID',
+                    },
+                    parentMessageId: {
+                      type: 'string',
+                      description: 'Optional parent message ID for thread replies.',
+                    },
+                  },
+                  required: ['card', 'chatId'],
+                },
+              },
+              {
+                name: 'send_interactive',
+                description: 'Send an interactive card with buttons/actions to a chat.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    card: {
+                      type: 'object',
+                      description: 'The card content object.',
+                    },
+                    actionPrompts: {
+                      type: 'object',
+                      additionalProperties: { type: 'string' },
+                      description: 'Maps button values to user messages.',
+                    },
+                    chatId: {
+                      type: 'string',
+                      description: 'Target chat ID',
+                    },
+                    parentMessageId: {
+                      type: 'string',
+                      description: 'Optional parent message ID for thread replies.',
+                    },
+                  },
+                  required: ['card', 'actionPrompts', 'chatId'],
                 },
               },
               {
@@ -93,9 +139,45 @@ async function handleMessage(message: unknown) {
         const callParams = params as Record<string, unknown>;
         const { name, arguments: toolArgs } = callParams;
 
-        if (name === 'send_message') {
-          const args = toolArgs as { content: string; format: 'text' | 'card'; chatId: string; parentMessageId?: string };
-          const result = await send_message(args);
+        if (name === 'send_text') {
+          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string };
+          const result = await send_text(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'send_card') {
+          const args = toolArgs as { card: Record<string, unknown>; chatId: string; parentMessageId?: string };
+          const result = await send_card(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'send_interactive') {
+          const args = toolArgs as { card: Record<string, unknown>; actionPrompts: Record<string, string>; chatId: string; parentMessageId?: string };
+          const result = await send_interactive_message(args);
 
           return {
             jsonrpc: '2.0',

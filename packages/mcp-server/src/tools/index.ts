@@ -16,14 +16,20 @@ export type {
   AskUserResult,
 } from './types.js';
 
-// Send Message
+// Shared utilities
+export { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+export { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 export {
-  send_message,
   setMessageSentCallback,
   getMessageSentCallback,
-  getWorkspaceDir,
-  getFeishuCredentials,
-} from './send-message.js';
+  invokeMessageSentCallback,
+} from './callback-manager.js';
+
+// Send Text (focused tool)
+export { send_text } from './send-message.js';
+
+// Send Card (focused tool)
+export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
@@ -31,6 +37,7 @@ export { send_file } from './send-file.js';
 // Interactive Message
 export {
   send_interactive_message,
+  send_interactive,
   registerActionPrompts,
   getActionPrompts,
   unregisterActionPrompts,
@@ -46,28 +53,3 @@ export {
 
 // Ask User
 export { ask_user } from './ask-user.js';
-
-// Study Guide Generator (NotebookLM M4)
-export {
-  generate_summary,
-  generate_qa_pairs,
-  generate_flashcards,
-  generate_quiz,
-  create_study_guide,
-} from './study-guide-generator.js';
-
-export type {
-  SummaryOptions,
-  SummaryResult,
-  QAPair,
-  QAGeneratorOptions,
-  QAGeneratorResult,
-  Flashcard,
-  FlashcardGeneratorOptions,
-  FlashcardGeneratorResult,
-  QuizQuestion,
-  QuizGeneratorOptions,
-  QuizGeneratorResult,
-  StudyGuideOptions,
-  StudyGuideResult,
-} from './study-guide-generator.js';

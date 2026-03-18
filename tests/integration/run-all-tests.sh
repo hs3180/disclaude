@@ -62,6 +62,12 @@ show_test_plan() {
     echo "  3. Use Case 2 - Task Execution (4 tests)"
     echo "     - Health check, calculation, file listing, text analysis"
     echo ""
+    echo "  4. MCP Tools Tests (4 tests)"
+    echo "     - Health check, send_text, send_file, tool result format"
+    echo ""
+    echo "  5. Multimodal Tests (4 tests)"
+    echo "     - Single image, multi-image, mixed message, screenshot"
+    echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
@@ -149,6 +155,16 @@ main() {
 
     # Run Use Case 2 Tests
     if ! run_test_script "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
+        failed=$((failed + 1))
+    fi
+
+    # Run MCP Tools Tests
+    if ! run_test_script "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
+        failed=$((failed + 1))
+    fi
+
+    # Run Multimodal Tests
+    if ! run_test_script "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
         failed=$((failed + 1))
     fi
 

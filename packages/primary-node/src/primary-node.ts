@@ -32,7 +32,15 @@
  */
 
 import { EventEmitter } from 'events';
-import { createLogger, type IChannel } from '@disclaude/core';
+import {
+  createLogger,
+  type IChannel,
+  UnixSocketIpcServer,
+  createInteractiveMessageHandler,
+  type FeishuHandlersContainer,
+  type FeishuApiHandlers,
+  type InteractiveMessageHandlers,
+} from '@disclaude/core';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -117,6 +125,10 @@ export class PrimaryNode extends EventEmitter {
 
   // Registered channels
   protected channels: Map<string, IChannel> = new Map();
+
+  // IPC Server for MCP Server connections (Issue #1042)
+  protected ipcServer: UnixSocketIpcServer | null = null;
+  protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -221,6 +233,79 @@ export class PrimaryNode extends EventEmitter {
     return removed;
   }
 
+  // ============================================================================
+  // IPC Server (Issue #1042)
+  // ============================================================================
+
+  /**
+   * Start the IPC server for MCP Server connections.
+   *
+   * The IPC server accepts connections from MCP Server child processes
+   * and allows them to call Feishu API handlers directly (no WebSocket bridging needed
+   * since Primary Node has direct access to the channels).
+   */
+  protected async startIpcServer(): Promise<void> {
+    if (this.ipcServer) {
+      logger.warn('IPC server already running');
+      return;
+    }
+
+    // Create stub interactive message handlers (Primary Node doesn't need interaction prompts)
+    const stubHandlers: InteractiveMessageHandlers = {
+      getActionPrompts: () => undefined,
+      registerActionPrompts: () => {},
+      unregisterActionPrompts: () => false,
+      generateInteractionPrompt: () => undefined,
+      cleanupExpiredContexts: () => 0,
+    };
+
+    // Create the request handler with Feishu handlers container
+    const requestHandler = createInteractiveMessageHandler(
+      stubHandlers,
+      this.feishuHandlersContainer
+    );
+
+    this.ipcServer = new UnixSocketIpcServer(requestHandler, {
+      socketPath: '/tmp/disclaude-worker.ipc',
+    });
+
+    await this.ipcServer.start();
+
+    // Set environment variable for child processes (MCP Server)
+    const socketPath = this.ipcServer.getSocketPath();
+    process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
+
+    logger.info({ socketPath }, 'IPC server started for MCP Server connections');
+  }
+
+  /**
+   * Stop the IPC server.
+   */
+  protected async stopIpcServer(): Promise<void> {
+    if (!this.ipcServer) {
+      return;
+    }
+
+    await this.ipcServer.stop();
+    this.ipcServer = null;
+
+    // Clear environment variable
+    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+
+    logger.info('IPC server stopped');
+  }
+
+  /**
+   * Register Feishu API handlers for IPC calls.
+   *
+   * This method should be called after FeishuChannel starts to enable
+   * MCP Server tools to send messages via IPC.
+   */
+  registerFeishuHandlers(handlers: FeishuApiHandlers): void {
+    this.feishuHandlersContainer.handlers = handlers;
+    logger.info('Feishu API handlers registered for IPC');
+  }
+
   /**
    * Get all registered channels.
    */
@@ -238,7 +323,6 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Start the Primary Node.
    */
-  // eslint-disable-next-line require-await
   async start(): Promise<void> {
     if (this.running) {
       logger.warn('PrimaryNode already running');
@@ -246,6 +330,10 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Starting PrimaryNode');
+
+    // Start IPC server for MCP Server connections (Issue #1042)
+    await this.startIpcServer();
+
     this.running = true;
     this.emit('started');
     logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
@@ -254,7 +342,6 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Stop the Primary Node.
    */
-  // eslint-disable-next-line require-await
   async stop(): Promise<void> {
     if (!this.running) {
       logger.warn('PrimaryNode not running');
@@ -262,6 +349,10 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Stopping PrimaryNode');
+
+    // Stop IPC server (Issue #1042)
+    await this.stopIpcServer();
+
     this.running = false;
     this.emit('stopped');
     logger.info({ nodeId: this.localNodeId }, 'PrimaryNode stopped');

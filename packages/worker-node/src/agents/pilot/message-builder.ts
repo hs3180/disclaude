@@ -9,8 +9,7 @@
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
  */
 
-import { Config } from '@disclaude/core';
-import type { ChannelCapabilities } from '@disclaude/primary-node';
+import { Config, type ChannelCapabilities } from '@disclaude/core';
 import type { MessageData } from './types.js';
 
 /**
@@ -174,26 +173,38 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
         if (toolName === 'send_file') {
           return capabilities?.supportsFile !== false;
         }
-        return true; // send_message is always available
+        // For backward compatibility with old configs, assume messaging tools are available
+        return true;
       }
       return supportedTools.includes(toolName);
     };
 
-    // send_message tool
-    if (hasTool('send_message')) {
-      parts.push(`When using send_message, use:
-- Chat ID: \`${chatId}\`
-- parentMessageId: \`${messageId}\` (for thread replies)`);
+    // Build messaging tools section
+    const messagingTools: string[] = [];
+    if (hasTool('send_text')) {
+      messagingTools.push('- `mcp__channel-mcp__send_text` - Send plain text messages');
+    }
+    if (hasTool('send_card')) {
+      messagingTools.push('- `mcp__channel-mcp__send_card` - Send display-only cards (no interactions)');
+    }
+    if (hasTool('send_interactive')) {
+      messagingTools.push('- `mcp__channel-mcp__send_interactive` - Send interactive cards with buttons/actions');
+    }
 
-      // Include card support note if supported
-      parts.push(`
-- For rich content, use format: "card" with a valid Feishu card structure`);
+    if (messagingTools.length > 0) {
+      parts.push(`To send messages to this chat, use the appropriate tool:
+${messagingTools.join('\n')}
+
+- Chat ID: \`${chatId}\`
+- parentMessageId: \`${messageId}\` (for thread replies)
+
+**IMPORTANT**: Always use \`mcp__channel-mcp__send_*\` tools for sending messages. Do NOT use any other MCP server's tools for messaging.`);
     }
 
     // send_file tool
     if (hasTool('send_file')) {
       parts.push(`
-- send_file is available for sending files`);
+- **File sending**: Use \`mcp__channel-mcp__send_file\` for sending files to Feishu`);
     } else if (supportedTools !== undefined) {
       parts.push(`
 - Note: send_file is NOT supported on this channel. Files will not be sent.`);
@@ -315,19 +326,30 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 
 ### Card Template for Next Steps
 
+**IMPORTANT**: You MUST include \`actionPrompts\` to make buttons clickable. Without \`actionPrompts\`, buttons are display-only.
+
 \`\`\`json
 {
-  "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "接下来您可以...", "tag": "plain_text"}, "template": "blue"},
-  "elements": [
-    {"tag": "markdown", "content": "✅ 任务已完成"},
-    {"tag": "hr"},
-    {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "选项1", "tag": "plain_text"}, "value": "action1", "type": "primary"},
-      {"tag": "button", "text": {"content": "选项2", "tag": "plain_text"}, "value": "action2"},
-      {"tag": "button", "text": {"content": "选项3", "tag": "plain_text"}, "value": "action3"}
-    ]}
-  ]
+  "content": {
+    "config": {"wide_screen_mode": true},
+    "header": {"title": {"content": "接下来您可以...", "tag": "plain_text"}, "template": "blue"},
+    "elements": [
+      {"tag": "markdown", "content": "✅ 任务已完成"},
+      {"tag": "hr"},
+      {"tag": "action", "actions": [
+        {"tag": "button", "text": {"content": "选项1", "tag": "plain_text"}, "value": "action1", "type": "primary"},
+        {"tag": "button", "text": {"content": "选项2", "tag": "plain_text"}, "value": "action2"},
+        {"tag": "button", "text": {"content": "选项3", "tag": "plain_text"}, "value": "action3"}
+      ]}
+    ]
+  },
+  "format": "card",
+  "chatId": "<chat_id>",
+  "actionPrompts": {
+    "action1": "[用户操作] 用户选择了选项1",
+    "action2": "[用户操作] 用户选择了选项2",
+    "action3": "[用户操作] 用户选择了选项3"
+  }
 }
 \`\`\`
 
@@ -336,6 +358,8 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 - Suggest 2-3 relevant next steps based on the conversation context
 - Make suggestions specific and actionable
 - Use primary button style for the most recommended option
+- **CRITICAL**: Always include \`actionPrompts\` that maps each button's \`value\` to a user message
+- The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
 - Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
     }
 

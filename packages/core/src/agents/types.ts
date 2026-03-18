@@ -526,7 +526,7 @@ export interface AgentConfig {
  *   getLoggingConfig: () => Config.getLoggingConfig(),
  *   getGlobalEnv: () => Config.getGlobalEnv(),
  *   isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
- *   createMcpServer: (chatId) => createFeishuSdkMcpServer(chatId),
+ *   createMcpServer: (chatId) => createChannelMcpServer(chatId),
  *   findSkill: (name) => findSkill(name),
  * });
  * ```
