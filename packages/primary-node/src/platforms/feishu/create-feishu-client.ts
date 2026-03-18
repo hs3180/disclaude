@@ -122,9 +122,26 @@ async function requestWithRetry<T>(
  * Wrap an axios instance to match lark SDK's HttpInstance interface.
  * Includes retry logic for transient errors.
  */
+/**
+ * Process axios response, handling $return_headers option used by lark SDK.
+ *
+ * The lark SDK's default HTTP instance checks `resp.config['$return_headers']`
+ * via a response interceptor to return `{ data, headers }` instead of just `data`.
+ * Our custom wrapper needs to replicate this behavior, particularly for
+ * `im.messageResource.get()` which downloads files via streams.
+ */
+function processResponse<T>(res: { data: T; headers: Record<string, unknown> }, opts: Record<string, unknown>): T | { data: T; headers: Record<string, unknown> } {
+  if (opts.$return_headers) {
+    return { data: res.data, headers: res.headers };
+  }
+  return res.data;
+}
+
 function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstance {
   return {
     request: async (opts) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawOpts = opts as any;
       return await requestWithRetry(
         () => axiosInstance.request({
           url: opts.url,
@@ -134,7 +151,7 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
           data: opts.data,
           responseType: opts.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
           timeout: opts.timeout,
-        }).then(res => res.data),
+        }).then(res => processResponse(res, rawOpts)),
         `request ${opts.method} ${opts.url}`
       );
     },

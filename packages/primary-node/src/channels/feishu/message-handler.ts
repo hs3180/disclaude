@@ -7,8 +7,11 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
+  Config,
   DEDUPLICATION,
   REACTIONS,
   CHAT_HISTORY,
@@ -317,29 +320,80 @@ export class MessageHandler {
       }
     }
 
-    // Handle file/image messages (simplified)
+    // Handle file/image messages - download to workspace and include path in prompt
     if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
-      // For now, just acknowledge the file and emit a message
+
+      // Parse content to extract file_key and file_name
+      let fileKey: string | undefined;
+      let fileName: string | undefined;
+      try {
+        const parsed = JSON.parse(content);
+        if (message_type === 'image') {
+          fileKey = parsed.image_key;
+          fileName = `image_${fileKey}`;
+        } else {
+          fileKey = parsed.file_key;
+          fileName = parsed.file_name || `file_${fileKey}`;
+        }
+      } catch (parseError) {
+        logger.error({ err: parseError, content, messageType: message_type }, 'Failed to parse file message content');
+      }
+
+      if (!fileKey) {
+        logger.warn({ messageType: message_type, messageId: message_id }, 'No file_key found in message');
+        return;
+      }
+
+      // Download file to workspace/downloads directory
+      let localPath: string | undefined;
+      if (this.client) {
+        try {
+          const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+          await fs.mkdir(downloadDir, { recursive: true });
+          localPath = path.join(downloadDir, String(fileName || fileKey));
+
+          logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
+
+          const response = await this.client.im.messageResource.get({
+            path: { message_id, file_key: fileKey },
+            params: { type: message_type },
+          });
+          await response.writeFile(localPath);
+
+          logger.info({ fileKey, localPath }, 'File downloaded successfully');
+        } catch (downloadError) {
+          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+        }
+      }
+
+      // Log the incoming message
       await messageLogger.logIncomingMessage(
         message_id,
         this.extractOpenId(sender) || 'unknown',
         chat_id,
-        `[${message_type} received]`,
+        `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`,
         message_type,
         create_time
       );
 
       await this.addTypingReaction(message_id);
 
+      // Build content with file path for the agent prompt
+      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : '媒体文件';
+      const filePrompt = localPath
+        ? `用户上传了一个${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : ''}`
+        : `用户上传了一个${typeLabel}，但下载失败。`;
+
       await this.callbacks.emitMessage({
         messageId: `${message_id}-file`,
         chatId: chat_id,
         userId: this.extractOpenId(sender),
-        content: `用户上传了一个${message_type === 'image' ? '图片' : '文件'}。`,
+        content: filePrompt,
         messageType: 'file',
         timestamp: create_time,
         threadId,
+        attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
       });
       return;
     }
