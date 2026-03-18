@@ -21,7 +21,9 @@ import {
   Config,
   type FeishuApiHandlers,
   type DisclaudeConfigWithChannels,
+  createInboundAttachment,
 } from '@disclaude/core';
+import type { FileRef } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
@@ -290,8 +292,8 @@ async function main(): Promise<void> {
 
     // Set up message handler for Feishu
     feishuChannel.onMessage(async (message: IncomingMessage) => {
-      const { chatId, content, messageId, userId, metadata } = message;
-      logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from Feishu channel');
+      const { chatId, content, messageId, userId, metadata, attachments } = message;
+      logger.info({ chatId, messageId, contentLength: content.length, hasAttachments: !!attachments }, 'Processing message from Feishu channel');
 
       const callbacks = createFeishuCallbacks();
       const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
@@ -300,9 +302,19 @@ async function main(): Promise<void> {
       const senderOpenId = userId;
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
 
+      // Convert MessageAttachment[] to FileRef[] for agent processing
+      const fileRefs: FileRef[] | undefined = attachments?.map((att) =>
+        createInboundAttachment(att.fileName, chatId, message.messageType as 'image' | 'file' | 'media', {
+          localPath: att.filePath,
+          mimeType: att.mimeType,
+          size: att.size,
+          messageId: message.messageId,
+        })
+      );
+
       try {
         // Use processMessage for streaming conversations
-        agent.processMessage(chatId, content, messageId, senderOpenId, undefined, chatHistoryContext);
+        agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
       } catch (error) {
         logger.error({ err: error, chatId, messageId }, 'Failed to process message');
         const errorMsg = error instanceof Error ? error.message : String(error);
