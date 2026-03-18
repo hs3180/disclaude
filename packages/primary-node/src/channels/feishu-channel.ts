@@ -8,6 +8,8 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
@@ -249,9 +251,93 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'file': {
-        // For file sending, we need to upload first then send
-        // This is a simplified implementation
-        logger.warn({ chatId: message.chatId }, 'File sending not fully implemented');
+        if (!message.filePath) {
+          logger.error({ chatId: message.chatId }, 'File path missing in file message');
+          throw new Error('File path is required for file messages');
+        }
+
+        const filePath = message.filePath;
+        const fileName = path.basename(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const fileStats = fs.statSync(filePath);
+        const fileSize = fileStats.size;
+
+        logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
+
+        // Determine message type based on file extension
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+        const isImage = imageExtensions.includes(ext);
+
+        if (isImage) {
+          // Upload image using im.image.create
+          if (fileSize > 10 * 1024 * 1024) {
+            throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+          }
+          const uploadResp = await this.client.im.image.create({
+            data: {
+              image_type: 'message',
+              image: fs.createReadStream(filePath),
+            },
+          });
+          const imageKey = uploadResp?.image_key;
+          if (!imageKey) {
+            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
+            throw new Error(`Failed to upload image: ${fileName}`);
+          }
+          logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
+
+          // Send image message
+          const response = await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'image',
+              content: JSON.stringify({ image_key: imageKey }),
+            },
+          });
+          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'Image message sent');
+        } else {
+          // Upload file using im.file.create
+          if (fileSize > 30 * 1024 * 1024) {
+            throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
+          }
+
+          // Map file extension to Feishu file_type
+          const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+            '.opus': 'opus',
+            '.mp4': 'mp4',
+            '.pdf': 'pdf',
+            '.doc': 'doc', '.docx': 'doc',
+            '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
+            '.ppt': 'ppt', '.pptx': 'ppt',
+          };
+          const fileType = extToType[ext] || 'stream';
+
+          const uploadResp = await this.client.im.file.create({
+            data: {
+              file_type: fileType,
+              file_name: fileName,
+              file: fs.createReadStream(filePath),
+            },
+          });
+          const fileKey = uploadResp?.file_key;
+          if (!fileKey) {
+            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
+            throw new Error(`Failed to upload file: ${fileName}`);
+          }
+          logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
+
+          // Send file message
+          const response = await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'file',
+              content: JSON.stringify({ file_key: fileKey }),
+            },
+          });
+          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'File message sent');
+        }
         break;
       }
 
