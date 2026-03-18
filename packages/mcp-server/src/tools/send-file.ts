@@ -6,22 +6,12 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { existsSync } from 'fs';
-import { createLogger, getIpcClient, getIpcSocketPath } from '@disclaude/core';
-import { getFeishuCredentials, getWorkspaceDir } from './send-message.js';
+import { createLogger, getIpcClient } from '@disclaude/core';
+import { isIpcAvailable } from './ipc-utils.js';
+import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
-
-/**
- * Check if IPC is available for Feishu API calls.
- * Issue #1035: Prefer IPC when available for unified client management.
- * Issue #1042: Use Worker Node IPC socket path if available.
- */
-function isIpcAvailable(): boolean {
-  const socketPath = getIpcSocketPath();
-  return existsSync(socketPath);
-}
 
 /**
  * Upload file via IPC to PrimaryNode's LarkClientService.

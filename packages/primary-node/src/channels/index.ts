@@ -43,3 +43,6 @@ export { BaseChannel } from '@disclaude/core';
 
 // REST Channel (Issue #1040)
 export { RestChannel, type RestChannelConfig, type IFileStorageService } from './rest-channel.js';
+
+// Feishu Channel (Issue #1040 - migrated from src/channels)
+export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';

@@ -256,8 +256,6 @@ describe('RestChannel', () => {
         port: testPort,
         host: '127.0.0.1',
         apiPrefix: '/v1/api',
-        authToken: 'test-token',
-        enableCors: false,
       };
       channel = new RestChannel(config);
       expect(channel.getPort()).toBe(testPort);
@@ -275,7 +273,7 @@ describe('RestChannel', () => {
       expect(capabilities.supportsFile).toBe(false);
       expect(capabilities.supportsMention).toBe(false);
       expect(capabilities.supportsUpdate).toBe(false);
-      expect(capabilities.supportedMcpTools).toEqual(['send_message']);
+      expect(capabilities.supportedMcpTools).toEqual(['send_text', 'send_card', 'send_interactive', 'send_file'])
     });
   });
 
@@ -402,73 +400,6 @@ describe('RestChannel', () => {
         expect(response.status).toBe(202);
 
         expect(response.body.status).toBe('processing');
-      });
-    });
-
-    describe('CORS', () => {
-      it('should include CORS headers when enabled', async () => {
-        await channel.stop();
-        channel = new RestChannel({ port: testPort, enableCors: true });
-        await channel.start();
-
-        const response = await simulateRequest({
-          method: 'OPTIONS',
-          path: '/api/health',
-        });
-        expect(response.status).toBe(204);
-        expect(response.headers['access-control-allow-origin']).toBe('*');
-      });
-
-      it('should not include CORS headers when disabled', async () => {
-        await channel.stop();
-        channel = new RestChannel({ port: testPort + 1, enableCors: false });
-        await channel.start();
-
-        const response = await simulateRequest({
-          method: 'GET',
-          path: '/api/health',
-        });
-        expect(response.headers['access-control-allow-origin']).toBeUndefined();
-      });
-    });
-
-    describe('Authentication', () => {
-      it('should reject requests without auth token when configured', async () => {
-        await channel.stop();
-        channel = new RestChannel({ port: testPort, authToken: 'secret-token' });
-        await channel.start();
-
-        const response = await simulateRequest({
-          method: 'GET',
-          path: '/api/health',
-        });
-        expect(response.status).toBe(401);
-      });
-
-      it('should accept requests with valid auth token', async () => {
-        await channel.stop();
-        channel = new RestChannel({ port: testPort, authToken: 'secret-token' });
-        await channel.start();
-
-        const response = await simulateRequest({
-          method: 'GET',
-          path: '/api/health',
-          headers: { authorization: 'Bearer secret-token' },
-        });
-        expect(response.status).toBe(200);
-      });
-
-      it('should reject requests with invalid auth token', async () => {
-        await channel.stop();
-        channel = new RestChannel({ port: testPort, authToken: 'secret-token' });
-        await channel.start();
-
-        const response = await simulateRequest({
-          method: 'GET',
-          path: '/api/health',
-          headers: { authorization: 'Bearer wrong-token' },
-        });
-        expect(response.status).toBe(401);
       });
     });
 

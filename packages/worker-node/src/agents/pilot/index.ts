@@ -33,9 +33,7 @@
  */
 
 import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
+import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -537,33 +535,21 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const supportedMcpTools = capabilities?.supportedMcpTools;
 
     // Determine if we should include Context MCP server
-    const contextTools = ['send_message', 'send_file'];
+    const contextTools = ['send_text', 'send_card', 'send_interactive', 'send_file'];
     const shouldIncludeContextMcp = supportedMcpTools === undefined ||
       contextTools.some(tool => supportedMcpTools.includes(tool));
 
     // Add MCP servers
     const mcpServers: Record<string, unknown> = {};
 
-    // Issue #1042: Use stdio mode for MCP Server instead of inline
-    // Only add Context MCP server if channel supports any context tools
+    // Use inline transport for channel MCP server
+    // Only add channel MCP server if channel supports any channel tools
     if (shouldIncludeContextMcp) {
-      // Resolve the path to the MCP Server CLI
-      const mcpServerCliPath = require.resolve('@disclaude/mcp-server/dist/cli.js');
+      mcpServers['channel-mcp'] = createChannelMcpServer();
 
-      // Get Worker Node IPC socket path (set by WorkerNode.startIpcServer())
-      const workerIpcSocket = process.env.DISCLAUDE_WORKER_IPC_SOCKET || '/tmp/disclaude-worker.ipc';
-
-      mcpServers['context-mcp'] = {
-        type: 'stdio',
-        command: process.execPath,
-        args: [mcpServerCliPath, 'start'],
-        env: {
-          ...process.env,
-          DISCLAUDE_WORKER_IPC_SOCKET: workerIpcSocket,
-        },
-      };
-
-      this.logger.debug({ workerIpcSocket }, 'Configured MCP Server with Worker Node IPC socket');
+      this.logger.info({
+        ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
+      }, 'Configured channel MCP server (inline transport)');
     }
 
     // Merge configured external MCP servers from config file
