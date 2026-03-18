@@ -30,6 +30,7 @@ export type {
   WorkerNodeDependencies,
   AgentPoolInterface,
   PilotCallbacks,
+  ChatAgent,
   ChatAgentFactory,
   ScheduleAgentFactory,
   MessageCallbacks,
@@ -100,6 +101,12 @@ export {
 } from './task/index.js';
 
 export type { AgentMessage } from '@disclaude/core';
+
+// Agents module (Issue #1041 - AgentFactory and Pilot)
+export { AgentFactory, type AgentCreateOptions } from './agents/factory.js';
+export { Pilot } from './agents/pilot/index.js';
+// Note: PilotCallbacks is already exported from ./types.js above
+// PilotConfig and MessageData types are internal to Pilot implementation
 
 // Conversation module (Issue #1041 - now re-exported from core)
 export {

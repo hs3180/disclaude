@@ -25,7 +25,6 @@
   "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "../core" },
-    { "path": "../primary-node" },
     { "path": "../mcp-server" }
   ]
 }

@@ -115,10 +115,16 @@ export class Config {
 
   /**
    * Get the raw configuration object.
+   * Returns preloaded config if set via CLI --config, otherwise returns default loaded config.
    *
    * @returns Complete configuration from file
    */
   static getRawConfig(): DisclaudeConfig {
+    // Check for preloaded config first (set via CLI --config)
+    const preloaded = getPreloadedConfig();
+    if (preloaded && validateConfig(preloaded)) {
+      return getConfigFromFile(preloaded);
+    }
     return fileConfigOnly;
   }
 

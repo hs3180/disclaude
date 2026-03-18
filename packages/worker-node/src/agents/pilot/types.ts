@@ -4,8 +4,7 @@
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
  */
 
-import type { ChannelCapabilities } from '@disclaude/primary-node';
-import type { FileRef, BaseAgentConfig } from '@disclaude/core';
+import type { ChannelCapabilities, FileRef, BaseAgentConfig } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.

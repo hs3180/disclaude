@@ -180,7 +180,8 @@ start_server() {
     fi
 
     # Start server in background (using new primary-node CLI)
-    node packages/primary-node/dist/cli.js start --rest-port "${REST_PORT}" --host "${HOST}" ${config_arg} > "${SERVER_LOG}" 2>&1 &
+    # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
+    node packages/primary-node/dist/cli.js start ${config_arg} > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"
