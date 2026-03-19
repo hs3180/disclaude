@@ -25,27 +25,6 @@ const fileConfig = getPreloadedConfig() || loadConfigFile();
 const fileConfigOnly = validateConfig(fileConfig) ? getConfigFromFile(fileConfig) : {};
 const configLoaded = fileConfig._fromFile;
 
-// ============================================================================
-// Runtime Environment Variables Storage
-// ============================================================================
-
-/**
- * Runtime environment variable entry with optional TTL.
- */
-interface RuntimeEnvEntry {
-  value: string;
-  expiresAt?: number; // Unix timestamp in milliseconds
-}
-
-/**
- * In-memory storage for runtime environment variables.
- * These are set dynamically via set_shared_env tool and shared across
- * all Agent sessions and Tool uses within the same Node process.
- *
- * Issue #1361: Support runtime dynamic shared environment variables
- */
-const runtimeEnvStore: Map<string, RuntimeEnvEntry> = new Map();
-
 /**
  * Application configuration class with static properties.
  *
@@ -356,109 +335,6 @@ export class Config {
    */
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
-  }
-
-  // ============================================================================
-  // Runtime Environment Variables API (Issue #1361)
-  // ============================================================================
-
-  /**
-   * Set a runtime environment variable.
-   * This variable will be available to all subsequent Agent sessions
-   * and Tool uses within the same Node process.
-   *
-   * @param key - Environment variable name
-   * @param value - Environment variable value
-   * @param ttlSeconds - Optional time-to-live in seconds
-   */
-  static setRuntimeEnv(key: string, value: string, ttlSeconds?: number): void {
-    const entry: RuntimeEnvEntry = {
-      value,
-      expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined,
-    };
-    runtimeEnvStore.set(key, entry);
-    logger.debug({ key, ttl: ttlSeconds }, 'Runtime env variable set');
-  }
-
-  /**
-   * Get a specific runtime environment variable.
-   * Returns undefined if not set or expired.
-   *
-   * @param key - Environment variable name
-   * @returns Variable value or undefined
-   */
-  static getRuntimeEnvValue(key: string): string | undefined {
-    const entry = runtimeEnvStore.get(key);
-    if (!entry) {
-      return undefined;
-    }
-
-    // Check expiration
-    if (entry.expiresAt && Date.now() > entry.expiresAt) {
-      runtimeEnvStore.delete(key);
-      logger.debug({ key }, 'Runtime env variable expired');
-      return undefined;
-    }
-
-    return entry.value;
-  }
-
-  /**
-   * Get all non-expired runtime environment variables.
-   * Automatically cleans up expired entries.
-   *
-   * @returns Record of runtime environment variables
-   */
-  static getRuntimeEnv(): Record<string, string> {
-    const result: Record<string, string> = {};
-    const now = Date.now();
-    const expiredKeys: string[] = [];
-
-    for (const [key, entry] of runtimeEnvStore) {
-      if (entry.expiresAt && now > entry.expiresAt) {
-        expiredKeys.push(key);
-        continue;
-      }
-      result[key] = entry.value;
-    }
-
-    // Clean up expired entries
-    for (const key of expiredKeys) {
-      runtimeEnvStore.delete(key);
-      logger.debug({ key }, 'Runtime env variable cleaned up (expired)');
-    }
-
-    return result;
-  }
-
-  /**
-   * Delete a runtime environment variable.
-   *
-   * @param key - Environment variable name
-   * @returns true if the variable existed and was deleted
-   */
-  static deleteRuntimeEnv(key: string): boolean {
-    const deleted = runtimeEnvStore.delete(key);
-    if (deleted) {
-      logger.debug({ key }, 'Runtime env variable deleted');
-    }
-    return deleted;
-  }
-
-  /**
-   * Get merged environment variables (static config + runtime).
-   * Runtime variables take precedence over static config.
-   *
-   * This is the primary method for getting environment variables
-   * to pass to Agent processes.
-   *
-   * @returns Merged environment variables object
-   */
-  static getMergedEnv(): Record<string, string> {
-    return {
-      ...this.getGlobalEnv(),
-      ...this.getRuntimeEnv(),
-    };
   }
 
   /**
