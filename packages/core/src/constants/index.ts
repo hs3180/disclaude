@@ -86,6 +86,58 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
+ * WebSocket health monitoring constants (Issue #1351)
+ *
+ * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.
+ * When NAT/firewall silently drops a connection, the SDK's pingLoop sends pings but
+ * doesn't check for Pong responses, leaving readyState as OPEN while all messages are lost.
+ */
+export const WS_HEALTH = {
+  /**
+   * Maximum duration without receiving any server message before considering
+   * the connection dead. Should be > SDK's pingInterval (typically 30s).
+   * If no message (data, pong, or control) arrives within this window, the
+   * connection is force-closed and reconnection is triggered.
+   */
+  DEAD_CONNECTION_TIMEOUT_MS: 3 * 60 * 1000, // 3 minutes
+
+  /**
+   * Interval between health checks. Each tick compares now against
+   * lastMessageReceived to detect zombie connections.
+   */
+  HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
+
+  /**
+   * Exponential backoff configuration for reconnection attempts.
+   * Uses: delay = min(baseDelay × 2^attempt + jitter, maxDelay)
+   * Jitter range: [0, jitterMs) to spread out concurrent reconnects.
+   */
+  RECONNECT: {
+    /** Base delay before first reconnect attempt (ms) */
+    BASE_DELAY_MS: 1000,
+    /** Maximum delay cap between attempts (ms) */
+    MAX_DELAY_MS: 60 * 1000,
+    /** Exponential multiplier per attempt */
+    BACKOFF_MULTIPLIER: 2,
+    /** Random jitter range (ms) to prevent thundering herd */
+    JITTER_MS: 500,
+    /** Maximum number of reconnect attempts (-1 = infinite) */
+    MAX_ATTEMPTS: -1,
+  },
+
+  /**
+   * Offline message queue configuration.
+   * Messages sent during reconnection are queued and flushed after reconnect.
+   */
+  OFFLINE_QUEUE: {
+    /** Maximum number of messages to buffer while offline */
+    MAX_SIZE: 100,
+    /** Maximum age of queued messages before discarding (ms) */
+    MAX_MESSAGE_AGE_MS: 10 * 60 * 1000, // 10 minutes
+  },
+} as const;
+
+/**
  * Error codes that should trigger a retry
  */
 export const RETRYABLE_ERROR_CODES = [
