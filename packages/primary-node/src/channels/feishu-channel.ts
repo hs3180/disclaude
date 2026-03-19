@@ -11,6 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
+import { HealthAwareWSClient } from './ws-health-client.js';
 import {
   Config,
   createLogger,
@@ -78,7 +79,7 @@ export interface FeishuChannelConfig {
 export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appId: string;
   private appSecret: string;
-  private wsClient?: lark.WSClient;
+  private wsClient?: HealthAwareWSClient;
   private client?: lark.Client;
 
   // Modular components
@@ -188,7 +189,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
     };
 
-    this.wsClient = new lark.WSClient({
+    this.wsClient = new HealthAwareWSClient({
       appId: this.appId,
       appSecret: this.appSecret,
       logger: sdkLogger,
