@@ -3,6 +3,7 @@
  *
  * Issue #694: Extracted from feishu-channel.ts
  * Migrated to @disclaude/primary-node (Issue #1040)
+ * Issue #1351: Added WsConnectionManager for health detection & auto-reconnect.
  */
 
 // Re-export types from @disclaude/core
@@ -29,3 +30,12 @@ export { MessageHandler, type MessageCallbacks } from './message-handler.js';
 
 // Message Logger
 export { MessageLogger, messageLogger } from './message-logger.js';
+
+// WebSocket Connection Manager (Issue #1351)
+export {
+  WsConnectionManager,
+  calculateReconnectDelay,
+  type WsConnectionState,
+  type WsConnectionManagerEvents,
+  type WsConnectionManagerConfig,
+} from './ws-connection-manager.js';
