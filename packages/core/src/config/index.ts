@@ -47,10 +47,17 @@ export class Config {
 
   // Workspace configuration
   // Resolve to absolute path to ensure getWorkspaceDir() always returns absolute path
+  // When a config file is found, relative paths are resolved against the config file's
+  // directory (not process.cwd()), following the convention of tsconfig.json, .eslintrc, etc.
+  // Falls back to process.cwd() only when no config file is found.
+  // @see https://github.com/hs3180/disclaude/issues/1358
+  private static readonly CONFIG_DIR = fileConfig._source
+    ? path.dirname(fileConfig._source)
+    : process.cwd();
   private static readonly RAW_WORKSPACE_DIR = fileConfigOnly.workspace?.dir || process.cwd();
   static readonly WORKSPACE_DIR = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
     ? Config.RAW_WORKSPACE_DIR
-    : path.resolve(process.cwd(), Config.RAW_WORKSPACE_DIR);
+    : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
 
   // Feishu/Lark configuration (from config file)
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
