@@ -35,6 +35,7 @@ export { MessageLogger, messageLogger } from './message-logger.js';
 export {
   WsConnectionManager,
   calculateReconnectDelay,
+  isPongFrame,
   type WsConnectionState,
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,

@@ -160,8 +160,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize message handler
     this.feishuMessageHandler.initialize(this.client);
 
-    // Create event dispatcher — each handler records message receipt
-    // for WsConnectionManager health monitoring (Issue #1351)
+    // Create event dispatcher — each handler records application-level message receipt
+    // as a supplementary liveness signal for WsConnectionManager.
+    // The primary liveness signal is transport-level Pong detection via WebSocket
+    // monkey-patching (Issue #1351).
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
         this.recordWsActivity();
@@ -221,6 +223,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Listen for connection state events
     this.wsConnectionManager.on('stateChange', (state) => {
       logger.info({ wsState: state }, 'WebSocket connection state changed');
+    });
+
+    this.wsConnectionManager.on('pong', (rttMs) => {
+      logger.debug(
+        { rttMs, hasInterception: this.wsConnectionManager?.getMetrics().hasWsInterception },
+        'WebSocket Pong received (transport-level liveness signal)',
+      );
     });
 
     this.wsConnectionManager.on('deadConnection', (elapsedMs) => {
@@ -491,11 +500,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // ─── WebSocket health monitoring (Issue #1351) ────────────────────────
 
   /**
-   * Record that a WebSocket event was received from the server.
+   * Record that an application-level event was received from the server.
    *
-   * Called from every event handler in the EventDispatcher to feed
-   * the WsConnectionManager's liveness detection. Without these signals,
-   * the manager cannot distinguish a healthy connection from a zombie one.
+   * Called from every event handler in the EventDispatcher to provide a
+   * **supplementary** liveness signal to WsConnectionManager. The primary
+   * liveness signal is transport-level Pong detection via WebSocket
+   * monkey-patching (see WsConnectionManager.onWsMessage).
+   *
+   * This fallback ensures health monitoring still works even if WebSocket
+   * interception fails (e.g., in environments where WebSocket cannot be
+   * monkey-patched).
    */
   private recordWsActivity(): void {
     this.wsConnectionManager?.recordMessageReceived();

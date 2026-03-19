@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   WsConnectionManager,
   calculateReconnectDelay,
+  isPongFrame,
 } from './ws-connection-manager.js';
 
 // ─── Mocked WSClient factory ────────────────────────────────────────────
@@ -76,6 +77,29 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
     register: vi.fn().mockReturnThis(),
   })),
 }));
+
+// ─── Helper to simulate WebSocket interception (for Pong tests) ─────────
+// In production, PatchedWebSocket constructor sets interceptedWs when the SDK
+// creates a WebSocket. In tests, the mock WSClient never does this, so we
+// manually wire up an EventTarget with the manager's onWsMessage handler.
+
+const PONG_BUFFER = Buffer.from([
+  0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x00,
+  0x2A, 0x0C, 0x0A, 0x04, 0x74, 0x79, 0x70, 0x65,
+  0x12, 0x04, 0x70, 0x6F, 0x6E, 0x67,
+]);
+
+function setupInterceptedWs(manager: WsConnectionManager): EventTarget {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mgr = manager as any;
+  const fakeWs = new EventTarget();
+  const onMessageBound = (evt: Event) => {
+    mgr.onWsMessage(evt as MessageEvent);
+  };
+  fakeWs.addEventListener('message', onMessageBound);
+  mgr.interceptedWs = { instance: fakeWs, onMessageBound };
+  return fakeWs;
+}
 
 // ─── Helper to create a manager with mocked WSClient ────────────────────
 
@@ -140,6 +164,65 @@ describe('calculateReconnectDelay', () => {
     // Should not all be the same (randomness)
     const unique = new Set(results);
     expect(unique.size).toBeGreaterThan(1);
+  });
+});
+
+describe('isPongFrame', () => {
+  it('should detect Pong in a buffer containing the protobuf "pong" marker', () => {
+    // Construct a minimal binary buffer that contains the Pong marker
+    // In protobuf: length-prefixed string "pong" = \x04 + "pong"
+    // We also need the method=0 (control frame) field for context,
+    // but isPongFrame only looks for the "pong" marker
+    const buffer = Buffer.from([
+      0x08, 0x00,                         // SeqID = 0 (varint)
+      0x10, 0x00,                         // LogID = 0 (varint)
+      0x18, 0x01,                         // service = 1 (varint)
+      0x20, 0x00,                         // method = 0 (control frame)
+      0x2A, 0x0C,                         // headers entry length = 12
+      0x0A, 0x04, 0x74, 0x79, 0x70, 0x65, // field 1: key = "type" (len=4)
+      0x12, 0x04, 0x70, 0x6F, 0x6E, 0x67, // field 2: value = "pong" (len=4)
+    ]);
+    expect(isPongFrame(buffer)).toBe(true);
+  });
+
+  it('should not detect non-Pong frames', () => {
+    // Construct a frame with "ping" instead of "pong"
+    const buffer = Buffer.from([
+      0x08, 0x00,
+      0x10, 0x00,
+      0x18, 0x01,
+      0x20, 0x00,
+      0x2A, 0x0C,
+      0x0A, 0x04, 0x74, 0x79, 0x70, 0x65,
+      0x12, 0x04, 0x70, 0x69, 0x6E, 0x67,
+    ]);
+    expect(isPongFrame(buffer)).toBe(false);
+  });
+
+  it('should handle ArrayBuffer input', () => {
+    const buffer = Buffer.from([
+      0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x00,
+      0x2A, 0x0C, 0x0A, 0x04, 0x74, 0x79, 0x70, 0x65,
+      0x12, 0x04, 0x70, 0x6F, 0x6E, 0x67,
+    ]);
+    expect(isPongFrame(buffer.buffer)).toBe(true);
+  });
+
+  it('should handle Uint8Array input', () => {
+    const buffer = Buffer.from([
+      0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x00,
+      0x2A, 0x0C, 0x0A, 0x04, 0x74, 0x79, 0x70, 0x65,
+      0x12, 0x04, 0x70, 0x6F, 0x6E, 0x67,
+    ]);
+    expect(isPongFrame(new Uint8Array(buffer))).toBe(true);
+  });
+
+  it('should return false for empty buffer', () => {
+    expect(isPongFrame(Buffer.alloc(0))).toBe(false);
+  });
+
+  it('should return false for string data (non-binary)', () => {
+    expect(isPongFrame('hello' as unknown as Buffer)).toBe(false);
   });
 });
 
@@ -300,6 +383,99 @@ describe('WsConnectionManager', () => {
       // Advance past timeout — should be unhealthy (triggers dead connection)
       await vi.advanceTimersByTimeAsync(200);
       expect(manager.isHealthy()).toBe(false);
+    });
+  });
+
+  describe('Pong detection', () => {
+    it('should restore global WebSocket after start', async () => {
+      manager = createTestManager();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const originalWs = (globalThis as any).WebSocket;
+
+      await manager.start(mockEventDispatcher as never);
+
+      // WebSocket should be restored after start completes
+      expect((globalThis as any).WebSocket).toBe(originalWs);
+    });
+
+    it('should emit pong event when intercepted WebSocket receives Pong', async () => {
+      manager = createTestManager();
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+
+      await manager.start(mockEventDispatcher as never);
+      const fakeWs = setupInterceptedWs(manager);
+
+      // Simulate the intercepted WebSocket receiving a Pong frame
+      const evt = new MessageEvent('message', { data: PONG_BUFFER });
+      fakeWs.dispatchEvent(evt);
+
+      expect(pongEvents.length).toBe(1);
+      expect(pongEvents[0]).toBeGreaterThanOrEqual(-1); // -1 if no ping tracked
+    });
+
+    it('should not emit pong for non-Pong messages', async () => {
+      manager = createTestManager();
+      const pongEvents: number[] = [];
+      manager.on('pong', () => pongEvents.push(1));
+
+      await manager.start(mockEventDispatcher as never);
+      const fakeWs = setupInterceptedWs(manager);
+
+      // Emit a non-Pong message
+      const evt = new MessageEvent('message', { data: 'not a pong frame' });
+      fakeWs.dispatchEvent(evt);
+
+      expect(pongEvents.length).toBe(0);
+    });
+
+    it('should include pongCount in metrics', async () => {
+      manager = createTestManager();
+      await manager.start(mockEventDispatcher as never);
+      const fakeWs = setupInterceptedWs(manager);
+
+      // Simulate multiple Pongs
+      const evt = new MessageEvent('message', { data: PONG_BUFFER });
+      fakeWs.dispatchEvent(evt);
+      fakeWs.dispatchEvent(evt);
+      fakeWs.dispatchEvent(evt);
+
+      const metrics = manager.getMetrics();
+      expect(metrics.pongCount).toBeGreaterThanOrEqual(3);
+    });
+
+    it('should prefer Pong timing over application-level timing in health check', async () => {
+      const deadTimeoutMs = 5000;
+      const healthCheckMs = 1000;
+      manager = createTestManager({
+        deadTimeoutMs,
+        healthCheckMs,
+        maxAttempts: 0,
+      });
+
+      const deadEvents: number[] = [];
+      manager.on('deadConnection', () => deadEvents.push(1));
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Simulate receiving a Pong (via intercepted WebSocket)
+      const fakeWs = setupInterceptedWs(manager);
+      const pongEvt = new MessageEvent('message', { data: PONG_BUFFER });
+      fakeWs.dispatchEvent(pongEvt);
+
+      // Advance 3 seconds (not yet dead — Pong received 3s ago, < 5s timeout)
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(deadEvents.length).toBe(0);
+
+      // Call recordMessageReceived — updates application-level timer but NOT Pong timer
+      manager.recordMessageReceived();
+
+      // Advance 3 more seconds (6s since Pong, but only 3s since last message)
+      // Pong-preferred health check uses lastPongAt: 6s > 5s → dead connection detected
+      // If it used application-level: 3s < 5s → would NOT be dead
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(deadEvents.length).toBeGreaterThanOrEqual(1);
     });
   });
 
