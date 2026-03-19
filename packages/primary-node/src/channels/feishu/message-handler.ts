@@ -187,14 +187,14 @@ export class MessageHandler {
   /**
    * Forward a filtered message (simplified - just logs for now).
    */
-  private async forwardFilteredMessage(
+  private forwardFilteredMessage(
     reason: string,
     messageId: string,
     chatId: string,
     _content: string,
     userId?: string,
     metadata?: Record<string, unknown>
-  ): Promise<void> {
+  ): void {
     logger.debug({ reason, messageId, chatId, userId, metadata }, 'Message filtered');
   }
 
@@ -392,14 +392,14 @@ export class MessageHandler {
     // Deduplication
     if (messageLogger.isMessageProcessed(message_id)) {
       logger.debug({ messageId: message_id }, 'Skipped duplicate message');
-      await this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
+      this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
       return;
     }
 
     // Ignore bot messages
     if (sender?.sender_type === 'app') {
       logger.debug('Skipped bot message');
-      await this.forwardFilteredMessage('bot', message_id, chat_id, content);
+      this.forwardFilteredMessage('bot', message_id, chat_id, content);
       return;
     }
 
@@ -408,7 +408,7 @@ export class MessageHandler {
       const messageAge = Date.now() - create_time;
       if (messageAge > this.MAX_MESSAGE_AGE) {
         logger.debug({ messageId: message_id }, 'Skipped old message');
-        await this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
+        this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
         return;
       }
     }
@@ -494,7 +494,7 @@ export class MessageHandler {
     // Handle text and post messages
     if (message_type !== 'text' && message_type !== 'post') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
-      await this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+      this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
       return;
     }
 
@@ -523,7 +523,7 @@ export class MessageHandler {
 
     if (!text) {
       logger.debug('Skipped empty text');
-      await this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
+      this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
       return;
     }
 
@@ -546,7 +546,7 @@ export class MessageHandler {
     const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-      await this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;
     }
 

@@ -13,8 +13,7 @@
  */
 
 import WebSocket from 'ws';
-import { createLogger } from '@disclaude/core';
-import type { IpcRequest, IpcResponse } from '@disclaude/core';
+import { createLogger, type IpcRequest, type IpcResponse } from '@disclaude/core';
 
 const logger = createLogger('IpcToWsBridge');
 
@@ -143,6 +142,7 @@ export function createIpcToWsBridge(
   };
 
   // Return request handler
+  // eslint-disable-next-line require-await
   return async (request: IpcRequest): Promise<IpcResponse> => {
     // Ensure message handler is attached
     ensureMessageHandler();

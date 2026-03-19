@@ -14,6 +14,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
   createLogger,
+  BaseChannel,
   type FeishuEventData,
   type FeishuCardActionEventData,
   type FeishuChatMemberAddedEventData,
@@ -23,7 +24,6 @@ import {
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
 } from '@disclaude/core';
-import { BaseChannel } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
 import {
   PassiveModeManager,
@@ -256,11 +256,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           throw new Error('File path is required for file messages');
         }
 
+        // eslint-disable-next-line prefer-destructuring
         const filePath = message.filePath;
         const fileName = path.basename(filePath);
         const ext = path.extname(filePath).toLowerCase();
-        const fileStats = fs.statSync(filePath);
-        const fileSize = fileStats.size;
+        const { size: fileSize } = fs.statSync(filePath);
 
         logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
 

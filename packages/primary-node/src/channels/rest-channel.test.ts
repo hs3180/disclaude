@@ -273,7 +273,7 @@ describe('RestChannel', () => {
       expect(capabilities.supportsFile).toBe(false);
       expect(capabilities.supportsMention).toBe(false);
       expect(capabilities.supportsUpdate).toBe(false);
-      expect(capabilities.supportedMcpTools).toEqual(['send_text', 'send_card', 'send_interactive', 'send_file'])
+      expect(capabilities.supportedMcpTools).toEqual(['send_text', 'send_card', 'send_interactive', 'send_file']);
     });
   });
 

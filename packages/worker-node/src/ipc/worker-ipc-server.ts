@@ -16,8 +16,7 @@
 import * as fs from 'fs/promises';
 import * as net from 'net';
 import { existsSync } from 'fs';
-import { createLogger } from '@disclaude/core';
-import type { IpcRequest, IpcResponse } from '@disclaude/core';
+import { createLogger, type IpcRequest, type IpcResponse } from '@disclaude/core';
 
 const logger = createLogger('WorkerIpcServer');
 
@@ -120,6 +119,7 @@ export class WorkerIpcServer {
   /**
    * Stop the IPC server.
    */
+  // eslint-disable-next-line require-await
   async stop(): Promise<void> {
     if (!this.server) {
       return;
@@ -148,7 +148,7 @@ export class WorkerIpcServer {
         try {
           await fs.unlink(this.socketPath);
           logger.debug({ socketPath: this.socketPath }, 'Removed socket file');
-        } catch (error) {
+        } catch (_error) {
           // Socket file may not exist, ignore
         }
 
