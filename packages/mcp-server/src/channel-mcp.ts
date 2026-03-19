@@ -198,7 +198,7 @@ For interactive cards with button click handlers, use send_interactive instead.
 
       // Validate chatId
       if (!chatId || typeof chatId !== 'string') {
-        return toolSuccess(`⚠️ Invalid chatId: must be a non-empty string`);
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
       }
 
       try {
@@ -294,7 +294,7 @@ Templates can include these placeholders:
       // Validate actionPrompts non-empty
       const promptKeys = Object.keys(actionPrompts);
       if (promptKeys.length === 0) {
-        return toolSuccess(`⚠️ Invalid actionPrompts: must have at least one action`);
+        return toolSuccess('⚠️ Invalid actionPrompts: must have at least one action');
       }
 
       // Validate actionPrompts value types
@@ -306,7 +306,7 @@ Templates can include these placeholders:
 
       // Validate chatId
       if (!chatId || typeof chatId !== 'string') {
-        return toolSuccess(`⚠️ Invalid chatId: must be a non-empty string`);
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
       }
 
       try {

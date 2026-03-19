@@ -15,15 +15,15 @@ import {
   loadConfigFile,
   setLoadedConfig,
   createLogger,
+  Config,
   type IncomingMessage,
   type ControlCommand,
   type ControlResponse,
-  Config,
   type FeishuApiHandlers,
   type DisclaudeConfigWithChannels,
+  type FileRef,
   createInboundAttachment,
 } from '@disclaude/core';
-import type { FileRef } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
@@ -193,6 +193,7 @@ async function main(): Promise<void> {
           threadId: parentMessageId,
         });
       },
+      // eslint-disable-next-line require-await
       sendFile: async (chatId: string, filePath: string) => {
         logger.warn({ chatId, filePath }, 'File sending not implemented for REST channel');
       },
@@ -237,6 +238,7 @@ async function main(): Promise<void> {
     });
 
     // Set up control handler for commands like reset
+    // eslint-disable-next-line require-await
     restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
       logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
 
@@ -266,7 +268,8 @@ async function main(): Promise<void> {
     // Create PilotCallbacks for Feishu channel
     const createFeishuCallbacks = (): PilotCallbacks => ({
       sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
-        await feishuChannel!.sendMessage({
+        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
+        await feishuChannel.sendMessage({
           chatId,
           type: 'text',
           text,
@@ -274,7 +277,8 @@ async function main(): Promise<void> {
         });
       },
       sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
-        await feishuChannel!.sendMessage({
+        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
+        await feishuChannel.sendMessage({
           chatId,
           type: 'card',
           card,
@@ -282,9 +286,11 @@ async function main(): Promise<void> {
           threadId: parentMessageId,
         });
       },
+      // eslint-disable-next-line require-await
       sendFile: async (chatId: string, filePath: string) => {
         logger.warn({ chatId, filePath }, 'File sending not fully implemented');
       },
+      // eslint-disable-next-line require-await
       onDone: async (chatId: string, _parentMessageId?: string) => {
         logger.info({ chatId }, 'Task completed');
       },
@@ -318,7 +324,8 @@ async function main(): Promise<void> {
       } catch (error) {
         logger.error({ err: error, chatId, messageId }, 'Failed to process message');
         const errorMsg = error instanceof Error ? error.message : String(error);
-        await feishuChannel!.sendMessage({
+        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
+        await feishuChannel.sendMessage({
           chatId,
           type: 'text',
           text: `❌ Error: ${errorMsg}`,
@@ -327,6 +334,7 @@ async function main(): Promise<void> {
     });
 
     // Set up control handler for Feishu commands
+    // eslint-disable-next-line require-await
     feishuChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
       logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command from Feishu');
 
@@ -429,6 +437,7 @@ async function main(): Promise<void> {
             fileSize: 0,
           };
         },
+        // eslint-disable-next-line require-await
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
         },

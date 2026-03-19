@@ -307,8 +307,9 @@ Example:
           },
         };
       } else if (toolName === 'send_card') {
+        // eslint-disable-next-line prefer-destructuring
         const card = toolArgs.card;
-        const chatId = toolArgs.chatId as string | undefined;
+        const chatId = (toolArgs.chatId as string | undefined);
 
         // Pre-validation: card must be an object
         if (!card || typeof card !== 'object' || Array.isArray(card)) {
@@ -359,8 +360,7 @@ Example:
           },
         };
       } else if (toolName === 'send_interactive') {
-        const card = toolArgs.card;
-        const actionPrompts = toolArgs.actionPrompts;
+        const { card, actionPrompts } = toolArgs;
         const chatId = toolArgs.chatId as string | undefined;
 
         // Pre-validation: card must be an object
