@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "npm run build -ws --if-present",
+    "build:packages": "npm run build -ws --if-present",
     "build:core": "npm run build --workspace=@disclaude/core",
     "build:primary": "npm run build --workspace=@disclaude/primary-node",
     "build:worker": "npm run build --workspace=@disclaude/worker-node",
