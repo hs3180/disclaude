@@ -6,6 +6,7 @@
  *
  * Issue #694: Refactored to use modular components.
  * Migrated to @disclaude/primary-node (Issue #1040)
+ * Issue #1351: WsConnectionManager for health detection & auto-reconnect.
  */
 
 import * as fs from 'node:fs';
@@ -13,6 +14,7 @@ import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
+  WS_HEALTH,
   createLogger,
   BaseChannel,
   type FeishuEventData,
@@ -32,6 +34,7 @@ import {
   MessageHandler as FeishuMessageHandler,
   messageLogger,
   type MessageCallbacks,
+  WsConnectionManager,
 } from './feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
@@ -69,7 +72,9 @@ export interface FeishuChannelConfig {
  * Feishu Channel - Handles Feishu/Lark messaging via WebSocket.
  *
  * Features:
- * - WebSocket-based event receiving
+ * - WebSocket-based event receiving with health monitoring (Issue #1351)
+ * - Auto-reconnect with exponential backoff on dead connections
+ * - Offline message queue for messages sent during reconnection
  * - Message deduplication
  * - File/image handling
  * - Interactive card support
@@ -78,8 +83,10 @@ export interface FeishuChannelConfig {
 export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appId: string;
   private appSecret: string;
-  private wsClient?: lark.WSClient;
   private client?: lark.Client;
+
+  /** WebSocket connection manager for health detection & auto-reconnect (Issue #1351) */
+  private wsConnectionManager?: WsConnectionManager;
 
   // Modular components
   private passiveModeManager: PassiveModeManager;
@@ -87,6 +94,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private welcomeHandler: WelcomeHandler;
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
+
+  /**
+   * Offline message queue (Issue #1351).
+   *
+   * When the WebSocket is reconnecting, outgoing messages are buffered here
+   * and automatically flushed after the connection is restored. Messages
+   * older than WS_HEALTH.OFFLINE_QUEUE.MAX_MESSAGE_AGE_MS are discarded.
+   */
+  private offlineQueue: Array<{ message: OutgoingMessage; queuedAt: number }> = [];
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
@@ -144,9 +160,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize message handler
     this.feishuMessageHandler.initialize(this.client);
 
-    // Create event dispatcher
+    // Create event dispatcher — each handler records application-level message receipt
+    // as a supplementary liveness signal for WsConnectionManager.
+    // The primary liveness signal is transport-level Pong detection via WebSocket
+    // monkey-patching (Issue #1351).
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
+        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
@@ -154,6 +174,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'card.action.trigger': async (data: unknown) => {
+        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
@@ -161,9 +182,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': () => {
+        this.recordWsActivity();
         // No action needed for read receipts
       },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
+        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
         } catch (error) {
@@ -171,6 +194,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.chat.member.added_v1': async (data: unknown) => {
+        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
         } catch (error) {
@@ -179,7 +203,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
     });
 
-    // Create WebSocket client
+    // Create SDK logger
     const sdkLogger = {
       error: (...msg: unknown[]) => logger.error({ context: 'LarkSDK' }, String(msg)),
       warn: (...msg: unknown[]) => logger.warn({ context: 'LarkSDK' }, String(msg)),
@@ -188,35 +212,82 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       trace: (...msg: unknown[]) => logger.trace({ context: 'LarkSDK' }, String(msg)),
     };
 
-    this.wsClient = new lark.WSClient({
+    // Create WebSocket connection manager (Issue #1351)
+    this.wsConnectionManager = new WsConnectionManager({
       appId: this.appId,
       appSecret: this.appSecret,
-      logger: sdkLogger,
-      loggerLevel: lark.LoggerLevel.info,
+      sdkLogger,
+      sdkLogLevel: lark.LoggerLevel.info,
     });
 
-    await this.wsClient.start({ eventDispatcher });
+    // Listen for connection state events
+    this.wsConnectionManager.on('stateChange', (state) => {
+      logger.info({ wsState: state }, 'WebSocket connection state changed');
+    });
+
+    this.wsConnectionManager.on('pong', (rttMs) => {
+      logger.debug(
+        { rttMs, hasInterception: this.wsConnectionManager?.getMetrics().hasWsInterception },
+        'WebSocket Pong received (transport-level liveness signal)',
+      );
+    });
+
+    this.wsConnectionManager.on('deadConnection', (elapsedMs) => {
+      logger.warn(
+        { elapsedMs },
+        'Dead WebSocket connection detected, initiating reconnect',
+      );
+    });
+
+    this.wsConnectionManager.on('reconnected', (attempt) => {
+      logger.info({ attempt }, 'WebSocket reconnected successfully');
+      // Flush offline message queue after reconnect
+      this.flushOfflineQueue();
+    });
+
+    this.wsConnectionManager.on('reconnectFailed', (totalAttempts) => {
+      logger.error(
+        { totalAttempts },
+        'WebSocket reconnection failed after all attempts',
+      );
+    });
+
+    // Start the connection manager (creates WSClient + starts health monitoring)
+    await this.wsConnectionManager.start(eventDispatcher);
 
     logger.info('FeishuChannel started');
   }
 
-  protected doStop(): Promise<void> {
-    this.wsClient = undefined;
+  protected async doStop(): Promise<void> {
+    // Stop WebSocket connection manager (closes WSClient + health monitoring)
+    if (this.wsConnectionManager) {
+      await this.wsConnectionManager.stop();
+      this.wsConnectionManager = undefined;
+    }
+
     this.feishuMessageHandler.clearClient();
 
     // Dispose interaction manager
     this.interactionManager.dispose();
 
+    // Clear offline queue
+    this.offlineQueue = [];
+
     // Clean up old attachments to prevent memory leaks
     attachmentManager.cleanupOldAttachments();
 
     logger.info('FeishuChannel stopped');
-    return Promise.resolve();
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
+    }
+
+    // If WebSocket is reconnecting, queue message for later (Issue #1351)
+    if (this.wsConnectionManager && this.wsConnectionManager.state !== 'connected') {
+      this.queueOfflineMessage(message);
+      return;
     }
 
     switch (message.type) {
@@ -351,7 +422,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected checkHealth(): boolean {
-    return this.wsClient !== undefined;
+    // Use WsConnectionManager's health check (Issue #1351)
+    if (this.wsConnectionManager) {
+      return this.wsConnectionManager.isHealthy();
+    }
+    return false;
   }
 
   /**
@@ -420,5 +495,107 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  // ─── WebSocket health monitoring (Issue #1351) ────────────────────────
+
+  /**
+   * Record that an application-level event was received from the server.
+   *
+   * Called from every event handler in the EventDispatcher to provide a
+   * **supplementary** liveness signal to WsConnectionManager. The primary
+   * liveness signal is transport-level Pong detection via WebSocket
+   * monkey-patching (see WsConnectionManager.onWsMessage).
+   *
+   * This fallback ensures health monitoring still works even if WebSocket
+   * interception fails (e.g., in environments where WebSocket cannot be
+   * monkey-patched).
+   */
+  private recordWsActivity(): void {
+    this.wsConnectionManager?.recordMessageReceived();
+  }
+
+  /**
+   * Get WebSocket connection metrics for observability.
+   */
+  getWsMetrics(): ReturnType<WsConnectionManager['getMetrics']> | undefined {
+    return this.wsConnectionManager?.getMetrics();
+  }
+
+  /**
+   * Queue a message for later delivery when the WebSocket is reconnecting.
+   *
+   * Messages older than `MAX_MESSAGE_AGE_MS` are discarded during flush.
+   * Queue size is bounded by `MAX_SIZE` — oldest messages are dropped when full.
+   */
+  private queueOfflineMessage(message: OutgoingMessage): void {
+    const maxSize = WS_HEALTH.OFFLINE_QUEUE.MAX_SIZE;
+
+    // Drop oldest if queue is full
+    if (this.offlineQueue.length >= maxSize) {
+      const dropped = this.offlineQueue.shift();
+      logger.warn(
+        { chatId: dropped?.message.chatId, type: dropped?.message.type },
+        'Offline queue full, dropping oldest message',
+      );
+    }
+
+    this.offlineQueue.push({ message, queuedAt: Date.now() });
+
+    logger.info(
+      { chatId: message.chatId, type: message.type, queueSize: this.offlineQueue.length },
+      'Message queued (WebSocket reconnecting)',
+    );
+  }
+
+  /**
+   * Flush the offline message queue after a successful reconnection.
+   *
+   * Filters out expired messages (older than `MAX_MESSAGE_AGE_MS`) and
+   * sends the remaining ones via `doSendMessage()`. Errors on individual
+   * messages are logged but do not prevent other messages from being sent.
+   */
+  private async flushOfflineQueue(): Promise<void> {
+    if (this.offlineQueue.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const maxAge = WS_HEALTH.OFFLINE_QUEUE.MAX_MESSAGE_AGE_MS;
+    const queue = this.offlineQueue;
+    this.offlineQueue = [];
+
+    // Filter out expired messages
+    const valid = queue.filter((entry) => {
+      const age = now - entry.queuedAt;
+      if (age > maxAge) {
+        logger.debug(
+          { chatId: entry.message.chatId, type: entry.message.type, ageMs: age, maxAgeMs: maxAge },
+          'Discarding expired offline message',
+        );
+        return false;
+      }
+      return true;
+    });
+
+    if (valid.length === 0) {
+      return;
+    }
+
+    logger.info({ count: valid.length }, 'Flushing offline message queue');
+
+    // Send each message; don't let individual failures block others
+    for (const entry of valid) {
+      try {
+        await this.doSendMessage(entry.message);
+      } catch (error) {
+        logger.error(
+          { err: error, chatId: entry.message.chatId, type: entry.message.type },
+          'Failed to send queued message',
+        );
+      }
+    }
+
+    logger.info({ flushed: valid.length, dropped: queue.length - valid.length }, 'Offline queue flushed');
   }
 }
