@@ -161,15 +161,16 @@ export abstract class BaseAgent implements Disposable {
 
     // Set environment
     const loggingConfig = Config.getLoggingConfig();
-    // Build global env with agent teams support
-    const globalEnv = { ...Config.getGlobalEnv() };
+    // Build merged env (static config + runtime) with agent teams support
+    // Issue #1361: Use getMergedEnv() to include runtime-set shared env vars
+    const mergedEnv = { ...Config.getMergedEnv() };
     if (Config.isAgentTeamsEnabled()) {
-      globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+      mergedEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
     options.env = buildSdkEnv(
       this.apiKey,
       this.apiBaseUrl,
-      globalEnv,
+      mergedEnv,
       loggingConfig.sdkDebug
     );
 

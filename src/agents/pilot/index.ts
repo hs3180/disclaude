@@ -36,6 +36,7 @@ import type { StreamingUserMessage, QueryHandle } from '../../sdk/index.js';
 import { Config } from '../../config/index.js';
 import { SESSION_RESTORE } from '../../config/constants.js';
 import { createFeishuSdkMcpServer } from '../../mcp/feishu-context-mcp.js';
+import { createSharedEnvMcpServer } from '../../mcp/shared-env-mcp.js';
 import { messageLogger } from '../../feishu/message-logger.js';
 import { BaseAgent } from '../base-agent.js';
 import type { ChatAgent, UserInput } from '../types.js';
@@ -542,6 +543,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     if (shouldIncludeContextMcp) {
       mcpServers['context-mcp'] = createFeishuSdkMcpServer();
     }
+
+    // Issue #1361: Always add Shared Env MCP server for runtime env variables
+    mcpServers['shared-env'] = createSharedEnvMcpServer();
 
     // Merge configured external MCP servers from config file
     const configuredMcpServers = Config.getMcpServersConfig();
