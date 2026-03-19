@@ -457,6 +457,7 @@ export class Config {
   static getMergedEnv(): Record<string, string> {
     return {
       ...this.getGlobalEnv(),
+      ...loadRuntimeEnvFile(),
       ...this.getRuntimeEnv(),
     };
   }
