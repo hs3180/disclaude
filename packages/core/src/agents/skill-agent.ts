@@ -35,6 +35,7 @@ import * as path from 'path';
 import type { AgentMessage } from '../types/index.js';
 import { BaseAgent, type BaseAgentConfig } from './base-agent.js';
 import { hasRuntimeContext, getRuntimeContext, type SkillAgent as SkillAgentInterface, type UserInput } from './types.js';
+import { Config } from '../config/index.js';
 
 /**
  * Options for SkillAgent execution.
@@ -70,7 +71,7 @@ function getWorkspaceDir(): string {
   if (hasRuntimeContext()) {
     return getRuntimeContext().getWorkspaceDir();
   }
-  return process.env.WORKSPACE_DIR || process.cwd();
+  return Config.getWorkspaceDir();
 }
 
 /**

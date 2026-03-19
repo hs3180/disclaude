@@ -25,6 +25,7 @@ import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
+import { Config } from '../config/index.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -198,8 +199,7 @@ export abstract class BaseAgent implements Disposable {
     if (hasRuntimeContext()) {
       return getRuntimeContext().getWorkspaceDir();
     }
-    // Fallback to environment variable or current directory
-    return process.env.WORKSPACE_DIR || process.cwd();
+    return Config.getWorkspaceDir();
   }
 
   /**

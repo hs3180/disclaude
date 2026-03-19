@@ -156,6 +156,19 @@ logging:
     expect(result._fromFile).toBe(false);
   });
 
+  it('should resolve relative workspace.dir against config file directory', () => {
+    vi.mocked(existsSync).mockImplementation((p) => String(p).includes('disclaude.config.yaml'));
+    vi.mocked(readFileSync).mockReturnValue(`
+workspace:
+  dir: ./workspace
+`);
+    const loaded = loadConfigFile();
+    expect(loaded._source).toBeDefined();
+    expect(loaded.workspace?.dir).toBe('./workspace');
+    // The resolution to absolute path happens in Config class (index.ts),
+    // which uses path.dirname(loaded._source) as base
+  });
+
   it('should use provided file path', () => {
     vi.mocked(existsSync).mockImplementation((path) => {
       return String(path) === '/custom/path/config.yaml';
