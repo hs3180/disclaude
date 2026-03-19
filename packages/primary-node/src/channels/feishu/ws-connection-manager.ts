@@ -444,6 +444,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * Only the first WebSocket instance created during the patch is captured.
    */
   private patchWebSocket(): void {
+    if (!globalThis.WebSocket) {
+      logger.debug('globalThis.WebSocket not available, skipping WebSocket interception (graceful degradation)');
+      return;
+    }
     this.originalWebSocket = globalThis.WebSocket;
     const self = this;
 
