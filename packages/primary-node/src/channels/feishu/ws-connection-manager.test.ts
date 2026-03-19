@@ -70,6 +70,9 @@ vi.mock('@disclaude/core', () => ({
   }),
 }));
 
+// Required to prevent the module-level `import * as lark from '@larksuiteoapi/node-sdk'` in the
+// source file from executing. The actual SDK is not used — tests inject mocks via larkSDK property.
+// eslint-disable-next-line no-restricted-syntax
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   WSClient: vi.fn(),
   LoggerLevel: { info: 'info' },

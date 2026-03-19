@@ -380,7 +380,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   /**
    * Stop the connection manager and clean up all resources.
    */
-  async stop(): Promise<void> {
+  stop(): void {
     logger.info('WsConnectionManager stopping');
 
     this.stopHealthCheck();
