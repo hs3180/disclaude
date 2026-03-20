@@ -79,9 +79,10 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
 }));
 
 // ─── Helper to simulate WebSocket interception (for Pong tests) ─────────
-// In production, PatchedWebSocket constructor sets interceptedWs when the SDK
-// creates a WebSocket. In tests, the mock WSClient never does this, so we
-// manually wire up an EventTarget with the manager's onWsMessage handler.
+// In production, interceptWsFromClient() accesses wsClient.wsConfig.getWSInstance()
+// and calls ws.on('message', handler). In tests, the mock WSClient doesn't have
+// a real ws instance, so we manually wire up a minimal EventEmitter-like object
+// with the manager's onWsMessage handler.
 
 const PONG_BUFFER = Buffer.from([
   0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x00,
@@ -89,14 +90,31 @@ const PONG_BUFFER = Buffer.from([
   0x12, 0x04, 0x70, 0x6F, 0x6E, 0x67,
 ]);
 
-function setupInterceptedWs(manager: WsConnectionManager): EventTarget {
+/**
+ * Minimal mock of a `ws` WebSocket instance for testing Pong interception.
+ * Uses Node.js EventEmitter for .on()/.off() compatibility.
+ */
+import { EventEmitter } from 'events';
+
+class MockWsInstance extends EventEmitter {
+  readyState = 1; // OPEN
+  send() {}
+  close() {}
+  terminate() {}
+  removeAllListeners(event?: string | symbol): this {
+    super.removeAllListeners(event);
+    return this;
+  }
+}
+
+function setupInterceptedWs(manager: WsConnectionManager): MockWsInstance {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mgr = manager as any;
-  const fakeWs = new EventTarget();
-  const onMessageBound = (evt: Event) => {
-    mgr.onWsMessage(evt as MessageEvent);
+  const fakeWs = new MockWsInstance();
+  const onMessageBound = (data: Buffer) => {
+    mgr.onWsMessage(data);
   };
-  fakeWs.addEventListener('message', onMessageBound);
+  fakeWs.on('message', onMessageBound);
   mgr.interceptedWs = { instance: fakeWs, onMessageBound };
   return fakeWs;
 }
@@ -387,18 +405,6 @@ describe('WsConnectionManager', () => {
   });
 
   describe('Pong detection', () => {
-    it('should restore global WebSocket after start', async () => {
-      manager = createTestManager();
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const originalWs = (globalThis as any).WebSocket;
-
-      await manager.start(mockEventDispatcher as never);
-
-      // WebSocket should be restored after start completes
-      expect((globalThis as any).WebSocket).toBe(originalWs);
-    });
-
     it('should emit pong event when intercepted WebSocket receives Pong', async () => {
       manager = createTestManager();
       const pongEvents: number[] = [];
@@ -407,9 +413,9 @@ describe('WsConnectionManager', () => {
       await manager.start(mockEventDispatcher as never);
       const fakeWs = setupInterceptedWs(manager);
 
-      // Simulate the intercepted WebSocket receiving a Pong frame
-      const evt = new MessageEvent('message', { data: PONG_BUFFER });
-      fakeWs.dispatchEvent(evt);
+      // Simulate the `ws` WebSocket emitting a Pong frame
+      // The `ws` package passes raw Buffer as the first argument (not a MessageEvent)
+      fakeWs.emit('message', PONG_BUFFER);
 
       expect(pongEvents.length).toBe(1);
       expect(pongEvents[0]).toBeGreaterThanOrEqual(-1); // -1 if no ping tracked
@@ -423,9 +429,8 @@ describe('WsConnectionManager', () => {
       await manager.start(mockEventDispatcher as never);
       const fakeWs = setupInterceptedWs(manager);
 
-      // Emit a non-Pong message
-      const evt = new MessageEvent('message', { data: 'not a pong frame' });
-      fakeWs.dispatchEvent(evt);
+      // Emit a non-Pong message (raw buffer, not a Pong frame)
+      fakeWs.emit('message', Buffer.from('not a pong frame'));
 
       expect(pongEvents.length).toBe(0);
     });
@@ -435,11 +440,10 @@ describe('WsConnectionManager', () => {
       await manager.start(mockEventDispatcher as never);
       const fakeWs = setupInterceptedWs(manager);
 
-      // Simulate multiple Pongs
-      const evt = new MessageEvent('message', { data: PONG_BUFFER });
-      fakeWs.dispatchEvent(evt);
-      fakeWs.dispatchEvent(evt);
-      fakeWs.dispatchEvent(evt);
+      // Simulate multiple Pongs via `ws` .emit('message', buffer)
+      fakeWs.emit('message', PONG_BUFFER);
+      fakeWs.emit('message', PONG_BUFFER);
+      fakeWs.emit('message', PONG_BUFFER);
 
       const metrics = manager.getMetrics();
       expect(metrics.pongCount).toBeGreaterThanOrEqual(3);
@@ -459,10 +463,9 @@ describe('WsConnectionManager', () => {
 
       await manager.start(mockEventDispatcher as never);
 
-      // Simulate receiving a Pong (via intercepted WebSocket)
+      // Simulate receiving a Pong (via `ws` .emit)
       const fakeWs = setupInterceptedWs(manager);
-      const pongEvt = new MessageEvent('message', { data: PONG_BUFFER });
-      fakeWs.dispatchEvent(pongEvt);
+      fakeWs.emit('message', PONG_BUFFER);
 
       // Advance 3 seconds (not yet dead — Pong received 3s ago, < 5s timeout)
       await vi.advanceTimersByTimeAsync(3000);

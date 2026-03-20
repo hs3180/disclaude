@@ -6,31 +6,31 @@
  * readyState as OPEN with no messages flowing.
  *
  * This module wraps the Feishu SDK's WSClient lifecycle with:
- * - **Pong detection**: Monkey-patches the global WebSocket constructor during
- *   WSClient creation to intercept the underlying WebSocket instance. Every
- *   `message` event (including SDK application-level Pong control frames)
- *   resets the liveness timer.
+ * - **Pong detection**: Accesses the SDK's internal `wsConfig` to obtain the raw
+ *   `ws` WebSocket instance after `WSClient.start()` completes, then attaches a
+ *   `message` listener for transport-level Pong frame detection.
  * - **Auto-reconnect**: Exponential backoff with jitter when dead connections are detected
  * - **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped)
  * - **Observability**: Emits events and logs for connection lifecycle monitoring,
  *   including Pong round-trip time and Pong-specific metrics
  *
- * ### Why monkey-patch WebSocket?
+ * ### How Pong detection works
  *
- * The Feishu SDK's WSClient creates an internal WebSocket instance and registers
- * its own `message` handler. This handler processes both data frames (user messages)
- * and control frames (Pong responses to SDK's pingLoop). Because the SDK's internals
- * are private, we cannot directly add our listener.
+ * The Feishu SDK's WSClient uses `require('ws')` (the npm `ws` package) internally,
+ * NOT `globalThis.WebSocket`. This means monkey-patching `globalThis.WebSocket` has
+ * no effect — the SDK creates its own WebSocket instance from the `ws` module.
  *
- * By temporarily replacing `globalThis.WebSocket` during `WSClient.start()`,
- * we capture the underlying instance and add our own `message` listener. This
- * runs BEFORE the SDK's handler, so every server message (including Pong) is
- * detected. The original WebSocket constructor is restored immediately after.
+ * After `WSClient.start()` completes, the SDK stores the WebSocket instance in
+ * its internal `wsConfig.wsInstance` field (accessible at runtime despite being
+ * declared `private` in TypeScript). We read this instance via
+ * `wsClient.wsConfig.getWSInstance()` and attach our own `message` listener.
  *
- * This approach is:
- * - Non-invasive: doesn't modify SDK internals
- * - Reliable: works at the transport level, not application level
- * - Self-healing: if monkey-patching fails, falls back to `recordMessageReceived()`
+ * Every `message` event on the raw `ws` WebSocket — including SDK application-level
+ * Pong control frames — triggers our liveness timer reset. This is the primary
+ * signal for dead connection detection, even when no user messages arrive.
+ *
+ * If internal WebSocket access fails (e.g., SDK internal changes), the manager
+ * falls back to `recordMessageReceived()` calls from the FeishuChannel event handler.
  *
  * Offline message queue is managed at the FeishuChannel level.
  *
@@ -215,21 +215,21 @@ export function isPongFrame(data: Buffer | ArrayBuffer | Uint8Array): boolean {
  *
  * Wraps the Feishu SDK's WSClient to add zombie connection detection and
  * exponential-backoff reconnection, with **transport-level Pong detection**
- * via WebSocket monkey-patching.
+ * via SDK internal WebSocket access.
  *
  * ### How it works
  *
- * 1. **Start**: Monkey-patches `globalThis.WebSocket`, creates a WSClient
- *    (which internally creates a WebSocket that our patch intercepts),
- *    then restores the original WebSocket. The intercepted instance has
- *    our `message` listener that tracks ALL server messages including Pong.
+ * 1. **Start**: Creates a WSClient and calls `start()`. After the SDK's
+ *    internal WebSocket connection is established, accesses the SDK's private
+ *    `wsConfig` to obtain the raw `ws` WebSocket instance and attaches our
+ *    `message` listener for Pong frame detection.
  *
  * 2. **Pong detection**: The SDK's `pingLoop` sends application-level Ping
- *    frames every ~30s. The server responds with Pong control frames.
- *    Our listener on the raw WebSocket detects these Pong frames and
- *    records `lastPongAt` + round-trip time. This is the primary liveness
- *    signal — even if no user messages arrive, Pong responses confirm
- *    the connection is alive.
+ *    frames every ~120s (configurable by server). The server responds with
+ *    Pong control frames. Our listener on the raw WebSocket detects these
+ *    Pong frames and records `lastPongAt` + round-trip time. This is the
+ *    primary liveness signal — even if no user messages arrive, Pong responses
+ *    confirm the connection is alive.
  *
  * 3. **Health check**: Every `healthCheckIntervalMs`, checks `lastPongAt`.
  *    If no Pong received within `deadConnectionTimeoutMs`, the connection
@@ -242,12 +242,18 @@ export function isPongFrame(data: Buffer | ArrayBuffer | Uint8Array): boolean {
  * 5. **Reconnect flow**: On each failure, delay doubles (capped at `maxDelayMs`)
  *    with random jitter. If `maxAttempts` is reached, transitions to 'stopped'.
  *
+ * ### Why not monkey-patch globalThis.WebSocket?
+ *
+ * The Feishu SDK uses `require('ws')` (the npm `ws` package) internally,
+ * resolved as a local CommonJS variable, NOT `globalThis.WebSocket`.
+ * Therefore, monkey-patching `globalThis.WebSocket` has no effect — the SDK
+ * creates WebSocket instances directly from the `ws` module import.
+ *
  * ### Graceful degradation
  *
- * If WebSocket monkey-patching fails (e.g., in environments where WebSocket
- * cannot be replaced), the manager falls back to relying on `recordMessageReceived()`
- * calls from FeishuChannel event handlers. This is less reliable for idle bots
- * but still functional.
+ * If internal WebSocket access fails (e.g., SDK internal API changes),
+ * the manager falls back to relying on `recordMessageReceived()` calls from
+ * FeishuChannel event handlers. This is less reliable for idle bots but still functional.
  */
 export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents> {
   private readonly config: WsConnectionManagerConfig;
@@ -265,7 +271,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private lastPongAt: number = 0;
   private pongCount: number = 0;
   private lastPingSentAt: number = 0;
-  private interceptedWs?: { instance: WebSocket; onMessageBound: (evt: MessageEvent) => void };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private interceptedWs?: { instance: any; onMessageBound: (...args: unknown[]) => void };
 
   // Health monitoring — application level (fallback)
   private lastMessageReceivedAt: number = 0;
@@ -280,10 +287,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private readonly reconnectBaseDelayMs: number;
   private readonly reconnectMaxDelayMs: number;
   private readonly reconnectMaxAttempts: number;
-
-  // WebSocket constructor backup for monkey-patching
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private originalWebSocket?: any;
 
   constructor(config: WsConnectionManagerConfig) {
     super();
@@ -359,8 +362,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   /**
    * Start the WebSocket connection with health monitoring.
    *
-   * Monkey-patches `globalThis.WebSocket` during WSClient creation to
-   * intercept the underlying WebSocket for Pong detection.
+   * After WSClient.start() completes, accesses the SDK's internal wsConfig
+   * to obtain the raw `ws` WebSocket instance for Pong detection.
    *
    * @param eventDispatcher - Feishu SDK EventDispatcher for handling events
    */
@@ -399,7 +402,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * Record that a message was received from the server (application level).
    *
    * This is a **supplementary** liveness signal used as fallback when
-   * transport-level Pong detection is unavailable (e.g., monkey-patching failed).
+   * transport-level Pong detection is unavailable (e.g., SDK internal
+   * WebSocket access failed).
    *
    * The primary liveness signal comes from intercepted WebSocket `message`
    * events which include Pong control frames.
@@ -437,69 +441,72 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   // ─── WebSocket interception (Pong detection) ──────────────────────────
 
   /**
-   * Monkey-patch globalThis.WebSocket to capture the instance created by
-   * the Feishu SDK's WSClient, then attach our Pong detection listener.
+   * Access the SDK's internal WebSocket instance and attach our Pong listener.
    *
-   * The patch is applied before WSClient.start() and removed after.
-   * Only the first WebSocket instance created during the patch is captured.
+   * The Feishu SDK's WSClient uses `require('ws')` internally (NOT globalThis.WebSocket),
+   * so monkey-patching globalThis.WebSocket has no effect. Instead, after WSClient.start()
+   * completes, we access the SDK's private `wsConfig` to get the raw `ws` WebSocket
+   * instance via `wsClient.wsConfig.getWSInstance()`.
+   *
+   * This is safe because:
+   * - The SDK stores the instance in `wsConfig.wsInstance` after connect()
+   * - The `ws` package's `.on('message', ...)` is addititive (doesn't replace SDK's handler)
+   * - TypeScript `private` is only a compile-time check; at runtime the field is accessible
+   *
+   * @param wsClient - The WSClient instance (typed as `any` to access private fields)
+   * @returns `true` if interception succeeded
    */
-  private patchWebSocket(): void {
-    this.originalWebSocket = globalThis.WebSocket;
-    const self = this;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const PatchedWebSocket = class extends this.originalWebSocket {
-      constructor(...args: any[]) {
-        super(...args);
-
-        // Only intercept the first WebSocket created (the SDK's main connection)
-        if (!self.interceptedWs) {
-          const onMessageBound = (evt: MessageEvent) => {
-            self.onWsMessage(evt);
-          };
-
-          self.interceptedWs = { instance: this as unknown as WebSocket, onMessageBound };
-          this.addEventListener('message', onMessageBound);
-
-          logger.debug('Intercepted WebSocket instance for Pong detection');
-        }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private interceptWsFromClient(wsClient: any): boolean {
+    try {
+      // Access SDK's internal wsConfig to get the raw `ws` WebSocket instance
+      // SDK code: this.wsConfig.setWSInstance(wsInstance) in connect()
+      const wsInstance = wsClient.wsConfig?.getWSInstance?.();
+      if (!wsInstance) {
+        logger.debug('SDK wsConfig.getWSInstance() returned null — connection may not be ready');
+        return false;
       }
-    };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).WebSocket = PatchedWebSocket;
-  }
-
-  /**
-   * Restore the original WebSocket constructor after WSClient.start() completes.
-   */
-  private unpatchWebSocket(): void {
-    if (this.originalWebSocket) {
+      // The `ws` package's .on() is additive — it doesn't replace the SDK's own handler
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).WebSocket = this.originalWebSocket;
-      this.originalWebSocket = undefined;
+      const onMessageBound = (data: any) => {
+        this.onWsMessage(data);
+      };
+
+      wsInstance.on('message', onMessageBound);
+      this.interceptedWs = { instance: wsInstance, onMessageBound };
+
+      logger.debug('Successfully intercepted SDK WebSocket via wsConfig for Pong detection');
+      return true;
+    } catch (error) {
+      logger.warn({ err: error }, 'Failed to intercept SDK WebSocket — falling back to application-level detection');
+      return false;
     }
   }
 
   /**
    * Handler for intercepted WebSocket message events.
    *
-   * Called for EVERY message on the raw WebSocket, including:
+   * Called for EVERY message on the raw `ws` WebSocket, including:
    * - SDK application-level Pong responses (control frames)
    * - User messages (data frames)
    * - Any other server-initiated messages
    *
+   * The `ws` library passes raw data as the first argument (Buffer/ArrayBuffer),
+   * unlike the browser WebSocket which wraps it in a MessageEvent.
+   *
    * Detects Pong frames by scanning the binary data for the protobuf-encoded
    * "pong" marker and records timing for health monitoring.
    */
-  private onWsMessage(evt: MessageEvent): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private onWsMessage(data: any): void {
     const now = Date.now();
 
     // Update application-level liveness (covers all message types)
     this.lastMessageReceivedAt = now;
 
     // Detect Pong control frames specifically
-    if (evt.data && isPongFrame(evt.data)) {
+    if (data && isPongFrame(data)) {
       this.pongCount++;
       this.lastPongAt = now;
 
@@ -527,7 +534,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private detachWsListener(): void {
     if (this.interceptedWs) {
       try {
-        this.interceptedWs.instance.removeEventListener('message', this.interceptedWs.onMessageBound);
+        // The `ws` package uses .off() or .removeListener() (not removeEventListener)
+        this.interceptedWs.instance.off('message', this.interceptedWs.onMessageBound);
         logger.debug('Detached WebSocket Pong listener');
       } catch (error) {
         logger.debug({ err: error }, 'Error detaching WebSocket listener');
@@ -541,8 +549,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   /**
    * Create a fresh WSClient and connect.
    *
-   * During connection, monkey-patches WebSocket to intercept the underlying
-   * instance for Pong detection. The patch is removed after start() completes.
+   * After WSClient.start() completes, accesses the SDK's internal wsConfig
+   * to obtain the raw `ws` WebSocket instance for Pong detection.
    *
    * @returns `true` if connection succeeded
    */
@@ -556,9 +564,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     this.detachWsListener();
 
     try {
-      // Patch WebSocket BEFORE creating WSClient to intercept the instance
-      this.patchWebSocket();
-
       this.wsClient = new this.larkSDK.WSClient({
         appId: this.config.appId,
         appSecret: this.config.appSecret,
@@ -572,13 +577,13 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
       const startResult = await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
 
-      // Restore original WebSocket AFTER SDK has created its instance
-      this.unpatchWebSocket();
-
       // SDK may resolve to false (instead of throwing) when connection fails
       if (startResult === false) {
         throw new Error('WSClient.start() returned false');
       }
+
+      // Access SDK's internal WebSocket instance for Pong detection
+      this.interceptWsFromClient(this.wsClient);
 
       // Start grace period
       this.lastMessageReceivedAt = Date.now();
@@ -589,8 +594,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       logger.info(`WebSocket connection established ${interceptionStatus}`);
       return true;
     } catch (error) {
-      // Ensure WebSocket is restored even on error
-      this.unpatchWebSocket();
       logger.error({ err: error, attempt: this.reconnectAttempt }, 'Failed to establish WebSocket connection');
       this.closeClient();
       return false;

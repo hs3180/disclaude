@@ -89,21 +89,33 @@ export const SESSION_RESTORE = {
  * WebSocket health monitoring constants (Issue #1351)
  *
  * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.
+ * The Feishu SDK's WSClient uses an application-layer Ping/Pong protocol over the `ws`
+ * npm package (NOT standard WebSocket ping/pong frames). This manager attaches its
+ * own listener to the SDK's internal WebSocket instance to detect Pong responses
+ * as a transport-level liveness signal.
+ *
  * When NAT/firewall silently drops a connection, the SDK's pingLoop sends pings but
- * doesn't check for Pong responses, leaving readyState as OPEN while all messages are lost.
+ * may not receive Pong responses. The health check detects this absence and triggers
+ * a reconnect before the SDK's own close event fires.
  */
 export const WS_HEALTH = {
   /**
    * Maximum duration without receiving any server message before considering
-   * the connection dead. Should be > SDK's pingInterval (typically 30s).
-   * If no message (data, pong, or control) arrives within this window, the
-   * connection is force-closed and reconnection is triggered.
+   * the connection dead. Should be > SDK's pingInterval (default 120s,
+   * configurable by server via Pong response). If no message (data, pong,
+   * or control) arrives within this window, the connection is force-closed
+   * and reconnection is triggered.
+   *
+   * Set to 5 minutes to allow for 2-3 missed Pong cycles (pingInterval=120s)
+   * before triggering reconnect, avoiding false positives during temporary
+   * network glitches.
    */
-  DEAD_CONNECTION_TIMEOUT_MS: 3 * 60 * 1000, // 3 minutes
+  DEAD_CONNECTION_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
 
   /**
    * Interval between health checks. Each tick compares now against
-   * lastMessageReceived to detect zombie connections.
+   * lastPongAt (primary) or lastMessageReceived (fallback) to detect
+   * zombie connections.
    */
   HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
 
