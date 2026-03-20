@@ -27,6 +27,7 @@ import type {
 export * from './types.js';
 export * from './loader.js';
 export * from './tool-configuration.js';
+export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 
 const logger = createLogger('Config');
 
