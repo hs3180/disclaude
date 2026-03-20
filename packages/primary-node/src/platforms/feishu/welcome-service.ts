@@ -117,17 +117,20 @@ export class WelcomeService {
   /**
    * Handle first private chat with a user.
    * Sends welcome message with help if this is the first time.
+   *
+   * @returns 'sent' if welcome was just sent, 'already_sent' if already sent before,
+   *          'failed' if an error occurred, 'skipped' if not a private chat.
    */
-  async handleFirstPrivateChat(chatId: string): Promise<boolean> {
+  async handleFirstPrivateChat(chatId: string): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
     if (!this.isPrivateChat(chatId)) {
       logger.debug({ chatId }, 'handleFirstPrivateChat called with non-private chat ID');
-      return false;
+      return 'skipped';
     }
 
     // Check if this is the first time
     if (this.firstTimePrivateChats.has(chatId)) {
       logger.debug({ chatId }, 'Already sent welcome to this private chat');
-      return false;
+      return 'already_sent';
     }
 
     // Mark as sent
@@ -138,10 +141,12 @@ export class WelcomeService {
     try {
       await this.sendMessage(chatId, this.generateWelcomeMessage());
       logger.info({ chatId }, 'Welcome message sent to private chat');
-      return true;
+      return 'sent';
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to send welcome message to private chat');
-      return false;
+      // Issue #1357: Remove from tracked set so it can be retried on next interaction
+      this.firstTimePrivateChats.delete(chatId);
+      return 'failed';
     }
   }
 
@@ -149,7 +154,7 @@ export class WelcomeService {
    * Handle P2P chat entered event.
    * This is called when a user starts a private chat with the bot.
    */
-  handleP2PChatEntered(chatId: string): Promise<boolean> {
+  handleP2PChatEntered(chatId: string): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
     return this.handleFirstPrivateChat(chatId);
   }
 

@@ -126,7 +126,7 @@ describe('WelcomeService', () => {
     it('should send welcome message on first private chat', async () => {
       const result = await service.handleFirstPrivateChat('ou_user123');
 
-      expect(result).toBe(true);
+      expect(result).toBe('sent');
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
       expect(sendMessageMock).toHaveBeenCalledWith('ou_user123', '👋 Welcome!');
     });
@@ -135,15 +135,15 @@ describe('WelcomeService', () => {
       const result1 = await service.handleFirstPrivateChat('ou_user123');
       const result2 = await service.handleFirstPrivateChat('ou_user123');
 
-      expect(result1).toBe(true);
-      expect(result2).toBe(false);
+      expect(result1).toBe('sent');
+      expect(result2).toBe('already_sent');
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
     });
 
     it('should not send message to non-private chat', async () => {
       const result = await service.handleFirstPrivateChat('oc_group123');
 
-      expect(result).toBe(false);
+      expect(result).toBe('skipped');
       expect(sendMessageMock).not.toHaveBeenCalled();
     });
 
@@ -151,18 +151,33 @@ describe('WelcomeService', () => {
       const result1 = await service.handleFirstPrivateChat('ou_user1');
       const result2 = await service.handleFirstPrivateChat('ou_user2');
 
-      expect(result1).toBe(true);
-      expect(result2).toBe(true);
+      expect(result1).toBe('sent');
+      expect(result2).toBe('sent');
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
     });
 
-    it('should handle send message error', async () => {
+    it('should handle send message error and return failed', async () => {
       sendMessageMock.mockRejectedValueOnce(new Error('Send failed'));
 
       const result = await service.handleFirstPrivateChat('ou_user123');
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should allow retry after failed send', async () => {
+      // Issue #1357: After failure, chatId should be removed from tracked set
+      sendMessageMock.mockRejectedValueOnce(new Error('Send failed'));
+
+      const result1 = await service.handleFirstPrivateChat('ou_user123');
+      expect(result1).toBe('failed');
+
+      // Next call should retry since it was removed from the set
+      sendMessageMock.mockResolvedValueOnce(undefined);
+      const result2 = await service.handleFirstPrivateChat('ou_user123');
+      expect(result2).toBe('sent');
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -170,7 +185,7 @@ describe('WelcomeService', () => {
     it('should delegate to handleFirstPrivateChat', async () => {
       const result = await service.handleP2PChatEntered('ou_user123');
 
-      expect(result).toBe(true);
+      expect(result).toBe('sent');
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
     });
   });

@@ -198,6 +198,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
       );
       // Mark as loaded even on error to prevent retry loops
       this.historyLoaded = true;
+      // Issue #1357: Notify user that history restoration failed
+      this.callbacks.sendMessage(
+        this.boundChatId,
+        '⚠️ 加载历史记录失败，将以全新会话开始。如果需要历史上下文，请发送 /reset 重置会话。',
+      ).catch(() => {});
     }
   }
 
@@ -239,6 +244,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
       );
       // Mark as loaded even on error to prevent retry loops
       this.firstMessageHistoryLoaded = true;
+      // Issue #1357: Notify user about history load failure
+      this.callbacks.sendMessage(
+        this.boundChatId,
+        '⚠️ 加载聊天记录失败，第一条消息可能缺少上下文。',
+      ).catch(() => {});
     }
   }
 
@@ -502,6 +512,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.channel.push(userMessage);
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
+      // Issue #1357: Notify user — message would otherwise be silently lost
+      this.callbacks.sendMessage(chatId, '❌ 会话通道异常，请发送 /reset 重置会话后重试。').catch((notifyErr) => {
+        this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
+      });
     }
   }
 
@@ -589,7 +603,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     this.isSessionActive = true;
 
     // Process SDK messages in background
-    this.processIterator(iterator).catch((err) => {
+    this.processIterator(iterator).catch(async (err) => {
       this.logger.error({
         err,
         chatId,
@@ -597,6 +611,19 @@ export class Pilot extends BaseAgent implements ChatAgent {
         errorStack: err instanceof Error ? err.stack : undefined,
       }, 'Agent loop error');
       this.isSessionActive = false;
+
+      // Issue #1357: Notify user about the critical failure.
+      // This is the outer catch — if processIterator itself throws (not an inner
+      // iteration error, which is already handled inside processIterator), the user
+      // currently sees complete silence. Send a fallback notification.
+      try {
+        await this.callbacks.sendMessage(
+          chatId,
+          '❌ 处理消息时发生严重错误，会话已中断。请发送 /reset 重置会话后重试。',
+        );
+      } catch (notifyErr) {
+        this.logger.error({ err: notifyErr, chatId }, 'Failed to send agent loop error notification');
+      }
     });
   }
 
@@ -772,6 +799,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
       this.loadPersistedHistory().catch((err) => {
         this.logger.error({ err, chatId: this.boundChatId }, 'Failed to reload history after reset');
+        // Issue #1357: Notify user that context preservation failed
+        this.callbacks.sendMessage(
+          this.boundChatId,
+          '⚠️ 重置后加载历史记录失败，当前会话无历史上下文。',
+        ).catch(() => {});
       });
     }
   }
