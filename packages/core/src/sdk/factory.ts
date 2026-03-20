@@ -8,6 +8,13 @@
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
+import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
+import { createLogger } from '../utils/logger.js';
+
+/**
+ * 模块级标志位，保证 skills setup 幂等（只执行一次）
+ */
+let skillsSetupDone = false;
 
 /**
  * 已注册的 Provider 类型
@@ -42,6 +49,17 @@ const providerCache = new Map<ProviderType, IAgentSDKProvider>();
  */
 export function getProvider(type?: ProviderType): IAgentSDKProvider {
   const providerType = type ?? defaultProviderType;
+
+  // Copy built-in skills to workspace .claude/skills/ for SDK discovery
+  // Fire-and-forget: failure only logs warning, doesn't block agent creation
+  if (!skillsSetupDone) {
+    skillsSetupDone = true;
+    setupSkillsInWorkspace().then((result) => {
+      if (!result.success) {
+        createLogger('SkillsSetup').warn({ error: result.error }, 'Failed to setup skills');
+      }
+    }).catch(() => {});
+  }
 
   // 检查缓存
   const cached = providerCache.get(providerType);
