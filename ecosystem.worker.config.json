@@ -1,7 +1,7 @@
 {
   "apps": [{
     "name": "disclaude-worker",
-    "script": "dist/cli-entry.js",
+    "script": "packages/worker-node/dist/cli.js",
     "args": "start --mode worker",
     "instances": 1,
     "autorestart": true,
