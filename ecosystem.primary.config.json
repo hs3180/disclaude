@@ -1,7 +1,7 @@
 {
   "apps": [{
     "name": "disclaude-primary",
-    "script": "dist/cli-entry.js",
+    "script": "packages/primary-node/dist/cli.js",
     "args": "start --mode primary",
     "instances": 1,
     "autorestart": true,
