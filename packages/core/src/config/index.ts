@@ -7,6 +7,7 @@
  * All configuration is read from the config file.
  */
 import path from 'path';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -109,13 +110,26 @@ export class Config {
     // Bundled files are directly in dist/, modules are in dist/config/
     const isBundled = path.basename(moduleDir) === 'dist';
 
+    let skillsDir: string;
     if (isBundled) {
       // dist/cli-entry.js -> dist/ -> ../skills
-      return path.join(moduleDir, '..', 'skills');
+      skillsDir = path.resolve(moduleDir, '..', 'skills');
     } else {
       // dist/config/index.js -> dist/ -> ../../skills
-      return path.join(moduleDir, '..', '..', 'skills');
+      skillsDir = path.resolve(moduleDir, '..', '..', 'skills');
     }
+
+    // In monorepo layout, the resolved path may point inside a package
+    // (e.g. /app/packages/core/skills) where no skills exist.
+    // Fall back to <cwd>/skills (i.e. /app/skills) in that case.
+    if (!existsSync(skillsDir)) {
+      const cwdSkills = path.resolve(process.cwd(), 'skills');
+      if (existsSync(cwdSkills)) {
+        return cwdSkills;
+      }
+    }
+
+    return skillsDir;
   }
 
   /**
