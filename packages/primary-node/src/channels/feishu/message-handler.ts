@@ -771,6 +771,14 @@ export class MessageHandler {
       });
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
+      // Issue #1357: Notify user that their card action was not processed
+      this.callbacks.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: '❌ 处理卡片操作时发生错误，请重试。',
+      }).catch((notifyErr) => {
+        logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action error notification');
+      });
     }
 
     // Try to handle via InteractionManager

@@ -40,6 +40,46 @@ import {
 const logger = createLogger('FeishuChannel');
 
 /**
+ * Extract chat ID from various Feishu event data formats.
+ *
+ * Handles different event types with different data structures:
+ * - im.message.receive_v1: data.event.message.chat_id
+ * - card.action.trigger: data.context.open_chat_id
+ * - bot_p2p_chat_entered_v1: data.event.user.open_id
+ * - chat.member.added_v1: data.event.chat_id
+ *
+ * Issue #1357: Used in event dispatcher catch blocks to notify users of errors.
+ */
+function extractChatIdFromEvent(data: unknown): string | undefined {
+  const raw = data as Record<string, unknown>;
+  if (!raw) return undefined;
+
+  // Try message event format: data.event.message.chat_id
+  const event = raw.event as Record<string, unknown> | undefined;
+  if (event?.message) {
+    const message = event.message as Record<string, unknown>;
+    if (typeof message.chat_id === 'string') return message.chat_id;
+  }
+
+  // Try card action format: data.context.open_chat_id
+  if (raw.context) {
+    const context = raw.context as Record<string, unknown>;
+    if (typeof context.open_chat_id === 'string') return context.open_chat_id;
+  }
+
+  // Try member added event format: data.event.chat_id
+  if (event && typeof event.chat_id === 'string') return event.chat_id;
+
+  // Try P2P chat entered format: data.event.user.open_id
+  if (event?.user) {
+    const user = event.user as Record<string, unknown>;
+    if (typeof user.open_id === 'string') return user.open_id;
+  }
+
+  return undefined;
+}
+
+/**
  * Feishu channel configuration.
  */
 export interface FeishuChannelConfig {
@@ -171,6 +211,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle message receive');
+          await this.notifyUserDirectly(
+            extractChatIdFromEvent(data) ?? '',
+            '⚠️ 处理消息时遇到内部错误，请稍后重试。',
+          );
         }
       },
       'card.action.trigger': async (data: unknown) => {
@@ -179,6 +223,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle card action');
+          await this.notifyUserDirectly(
+            extractChatIdFromEvent(data) ?? '',
+            '⚠️ 处理卡片操作时遇到错误，请稍后重试。',
+          );
         }
       },
       'im.message.message_read_v1': () => {
@@ -191,6 +239,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle P2P chat entered');
+          await this.notifyUserDirectly(
+            extractChatIdFromEvent(data) ?? '',
+            '⚠️ 欢迎消息发送失败，但这不影响正常使用。',
+          );
         }
       },
       'im.chat.member.added_v1': async (data: unknown) => {
@@ -199,6 +251,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle chat member added');
+          await this.notifyUserDirectly(
+            extractChatIdFromEvent(data) ?? '',
+            '⚠️ 欢迎消息发送失败，但这不影响正常使用。',
+          );
         }
       },
     });
@@ -513,6 +569,36 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   private recordWsActivity(): void {
     this.wsConnectionManager?.recordMessageReceived();
+  }
+
+  /**
+   * Send a text message directly via Feishu API client, bypassing all routing/queue logic.
+   *
+   * Used as a last-resort fallback for error notifications when the normal message
+   * flow has failed. This is intentionally simple — no offline queue, no routing,
+   * no formatting — to maximize the chance of delivery.
+   *
+   * The notification itself is wrapped in try/catch to ensure it never throws.
+   *
+   * Issue #1357: Error notification for critical event handler failures.
+   */
+  private async notifyUserDirectly(chatId: string, text: string): Promise<void> {
+    if (!this.client || !chatId) {
+      return;
+    }
+    try {
+      await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+        },
+      });
+    } catch (notifyErr) {
+      // Never throw from error notification — just log the secondary failure
+      logger.error({ err: notifyErr, chatId }, 'Failed to send error notification to user');
+    }
   }
 
   /**
