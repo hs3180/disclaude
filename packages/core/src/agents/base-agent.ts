@@ -26,6 +26,7 @@ import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js'
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
+import { loadRuntimeEnv } from '../config/runtime-env.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -170,10 +171,12 @@ export abstract class BaseAgent implements Disposable {
       options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
     }
 
-    // Set environment
+    // Set environment: config env + runtime env file (Issue #1361)
     const loggingConfig = this.getLoggingConfig();
-    // Build global env with agent teams support
-    const globalEnv = { ...this.getGlobalEnv() };
+    const globalEnv = {
+      ...this.getGlobalEnv(),
+      ...loadRuntimeEnv(this.getWorkspaceDir()),
+    };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
