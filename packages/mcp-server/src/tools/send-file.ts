@@ -64,7 +64,8 @@ export async function send_file(params: {
 
     // Issue #1035: Try IPC first if available
     // Issue #1042: Removed file-transfer fallback, require IPC
-    const useIpc = isIpcAvailable();
+    // Issue #1355: async connection probe
+    const useIpc = await isIpcAvailable();
 
     if (!useIpc) {
       return {
