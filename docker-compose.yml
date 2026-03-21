@@ -71,7 +71,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -124,7 +124,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -181,7 +181,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli-entry.js"]
+      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3

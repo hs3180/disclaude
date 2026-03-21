@@ -21,9 +21,8 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities } from '@disclaude/core';
+import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
-import { BaseChannel } from './base-channel.js';
 
 const logger = createLogger('RestChannel');
 
@@ -44,26 +43,16 @@ export interface IFileStorageService {
 export interface RestChannelConfig extends ChannelConfig {
   /** Server port (default: 3000) */
   port?: number;
-  /** Server host (default: 0.0.0.0) */
+  /** Server host (default: '127.0.0.1') */
   host?: string;
-  /** API prefix (default: /api) */
-  apiPrefix?: string;
-  /** Authentication token (optional) */
-  authToken?: string;
-  /** Enable CORS (default: true) */
-  enableCors?: boolean;
-  /** File storage directory (default: ./data/rest-files) */
+  /** File storage directory (default: './workspace/files') */
   fileStorageDir?: string;
   /** Maximum file size in bytes (default: 100MB) */
   maxFileSize?: number;
   /** File storage service provider (for dependency injection) */
   fileStorageServiceProvider?: () => Promise<{ FileStorageService: new (config: { storageDir: string; maxFileSize: number }) => IFileStorageService }>;
-  /** Session TTL in milliseconds (default: 3600000 = 1 hour). Set to 0 to disable TTL-based cleanup. */
-  sessionTtl?: number;
-  /** Maximum number of sessions to keep (default: 10000). Set to 0 to disable limit. */
-  maxSessions?: number;
-  /** Cleanup interval in milliseconds (default: 60000 = 1 minute). Set to 0 to disable periodic cleanup. */
-  cleanupInterval?: number;
+  /** API prefix for routes (default: '/api') */
+  apiPrefix?: string;
 }
 
 /**
@@ -111,7 +100,6 @@ interface FileUploadRequest {
   /** Associated chat ID (optional) */
   chatId?: string;
 }
-
 /**
  * File upload response structure.
  */
@@ -123,7 +111,6 @@ interface FileUploadResponse {
   /** Error message (if failed) */
   error?: string;
 }
-
 /**
  * File info response structure.
  */
@@ -135,7 +122,6 @@ interface FileInfoResponse {
   /** Error message (if failed) */
   error?: string;
 }
-
 /**
  * File download response structure.
  */
@@ -149,7 +135,6 @@ interface FileDownloadResponse {
   /** Error message (if failed) */
   error?: string;
 }
-
 /**
  * Pending response for sync mode.
  */
@@ -159,12 +144,10 @@ interface PendingResponse {
   response: string[];
   timeout: NodeJS.Timeout;
 }
-
 /**
  * Session status for async mode.
  */
 type SessionStatus = 'pending' | 'processing' | 'completed' | 'error';
-
 /**
  * Stored message in session.
  */
@@ -174,7 +157,6 @@ interface SessionMessage {
   content: string;
   timestamp: number;
 }
-
 /**
  * Session state for async mode.
  */
@@ -186,7 +168,6 @@ interface SessionState {
   createdAt: number;
   updatedAt: number;
 }
-
 /**
  * REST Channel - Provides RESTful API for agent interaction.
  *
@@ -198,21 +179,18 @@ interface SessionState {
  * - POST /api/files/upload - Upload a file
  * - GET /api/files/:fileId - Get file metadata
  * - GET /api/files/:fileId/download - Download a file
- * - Optional authentication via Authorization header
- * - CORS support
  */
 export class RestChannel extends BaseChannel<RestChannelConfig> {
   private port: number;
   private host: string;
-  private apiPrefix: string;
-  private authToken?: string;
-  private enableCors: boolean;
   private fileStorageDir: string;
   private maxFileSize: number;
   private fileStorageServiceProvider?: RestChannelConfig['fileStorageServiceProvider'];
-  private sessionTtl: number;
-  private maxSessions: number;
-  private cleanupIntervalMs: number;
+
+  // Hardcoded session management defaults
+  private static readonly SESSION_TTL = 3600000; // 1 hour
+  private static readonly MAX_SESSIONS = 10000;
+  private static readonly CLEANUP_INTERVAL_MS = 60000; // 1 minute
 
   private server?: http.Server;
   private fileStorage?: IFileStorageService;
@@ -231,19 +209,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
   constructor(config: RestChannelConfig = {}) {
     super(config, 'rest', 'REST');
-    this.port = config.port || 3000;
-    this.host = config.host || '0.0.0.0';
-    this.apiPrefix = config.apiPrefix || '/api';
-    this.authToken = config.authToken;
-    this.enableCors = config.enableCors ?? true;
-    this.fileStorageDir = config.fileStorageDir || './data/rest-files';
+    this.port = config.port ?? 3000;
+    this.host = config.host ?? '127.0.0.1';
+    this.fileStorageDir = config.fileStorageDir ?? './workspace/files';
     this.maxFileSize = config.maxFileSize ?? 100 * 1024 * 1024; // 100MB
     this.fileStorageServiceProvider = config.fileStorageServiceProvider;
-    this.sessionTtl = config.sessionTtl ?? 3600000; // 1 hour default
-    this.maxSessions = config.maxSessions ?? 10000;
-    this.cleanupIntervalMs = config.cleanupInterval ?? 60000; // 1 minute default
 
-    logger.info({ id: this.id, port: this.port, sessionTtl: this.sessionTtl, maxSessions: this.maxSessions }, 'RestChannel created');
+    logger.info({ id: this.id, port: this.port, host: this.host }, 'RestChannel created');
   }
 
   protected async doStart(): Promise<void> {
@@ -258,23 +230,24 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       logger.info({ storageDir: this.fileStorageDir }, 'File storage initialized');
     }
 
-    this.server = http.createServer((req, res) => {
+    const server = http.createServer((req, res) => {
       this.handleRequest(req, res).catch((error) => {
         logger.error({ err: error }, 'Failed to handle request');
         this.sendError(res, 500, 'Internal server error');
       });
     });
+    this.server = server;
 
     // Start session cleanup timer
     this.startSessionCleanup();
 
     return new Promise((resolve, reject) => {
-      this.server!.listen(this.port, this.host, () => {
+      server.listen(this.port, this.host, () => {
         logger.info({ port: this.port, host: this.host }, 'RestChannel started');
         resolve();
       });
 
-      this.server!.on('error', (error) => {
+      server.on('error', (error) => {
         logger.error({ err: error }, 'Failed to start RestChannel');
         reject(error);
       });
@@ -425,7 +398,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_message'],
+      supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
     };
   }
 
@@ -440,49 +413,26 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
    * Handle incoming HTTP request.
    */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    // Set CORS headers if enabled
-    if (this.enableCors) {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    }
-
-    // Handle preflight requests
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    // Check authentication
-    if (this.authToken) {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || authHeader !== `Bearer ${this.authToken}`) {
-        this.sendError(res, 401, 'Unauthorized');
-        return;
-      }
-    }
-
     const url = req.url?.split('?')[0] || '/';
 
     // Route requests
-    if (url === `${this.apiPrefix}/health` && req.method === 'GET') {
+    if (url === '/api/health' && req.method === 'GET') {
       this.handleHealth(req, res);
       return;
     }
 
-    if (url === `${this.apiPrefix}/chat` && req.method === 'POST') {
+    if (url === '/api/chat' && req.method === 'POST') {
       await this.handleChat(req, res, false);
       return;
     }
 
-    if (url === `${this.apiPrefix}/chat/sync` && req.method === 'POST') {
+    if (url === '/api/chat/sync' && req.method === 'POST') {
       await this.handleChat(req, res, true);
       return;
     }
 
     // Async mode: POST /api/chat/{chatId}
-    const asyncChatMatch = url.match(new RegExp(`^${this.apiPrefix}/chat/([^/]+)$`));
+    const asyncChatMatch = url.match(/^\/api\/chat\/([^/]+)$/);
     if (asyncChatMatch && req.method === 'POST') {
       const [, chatId] = asyncChatMatch;
       await this.handleAsyncChat(req, res, chatId);
@@ -490,19 +440,19 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     }
 
     // Control endpoints
-    if (url === `${this.apiPrefix}/control` && req.method === 'POST') {
+    if (url === '/api/control' && req.method === 'POST') {
       await this.handleControl(req, res);
       return;
     }
 
     // File upload endpoint
-    if (url === `${this.apiPrefix}/files/upload` && req.method === 'POST') {
+    if (url === '/api/files/upload' && req.method === 'POST') {
       await this.handleFileUpload(req, res);
       return;
     }
 
     // File info and download endpoints
-    const fileMatch = url.match(new RegExp(`^${this.apiPrefix}/files/([^/]+)(/download)?$`));
+    const fileMatch = url.match(/^\/api\/files\/([^/]+)(\/download)?$/);
     if (fileMatch && req.method === 'GET') {
       const [, fileId, downloadSuffix] = fileMatch;
       if (downloadSuffix === '/download') {
@@ -535,7 +485,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private async handleChat(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    syncMode: boolean
+  syncMode: boolean
   ): Promise<void> {
     // Read request body
     const body = await this.readBody(req);
@@ -964,7 +914,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private async handleFileDownload(
     _req: http.IncomingMessage,
     res: http.ServerResponse,
-    fileId: string
+    fileId: string,
   ): Promise<void> {
     if (!this.fileStorage) {
       this.sendError(res, 500, 'File storage not initialized');
@@ -1006,20 +956,15 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
    * @see Issue #1263 - Session state memory leak fix
    */
   private startSessionCleanup(): void {
-    if (this.cleanupIntervalMs <= 0) {
-      logger.info('Session cleanup disabled (cleanupInterval is 0)');
-      return;
-    }
-
     this.cleanupTimer = setInterval(() => {
       this.cleanupSessions();
-    }, this.cleanupIntervalMs);
+    }, RestChannel.CLEANUP_INTERVAL_MS);
 
     // Prevent the timer from keeping the process alive
     this.cleanupTimer.unref();
 
     logger.info(
-      { cleanupInterval: this.cleanupIntervalMs, sessionTtl: this.sessionTtl, maxSessions: this.maxSessions },
+      { cleanupInterval: RestChannel.CLEANUP_INTERVAL_MS, sessionTtl: RestChannel.SESSION_TTL, maxSessions: RestChannel.MAX_SESSIONS },
       'Session cleanup timer started'
     );
   }
@@ -1047,22 +992,20 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     let evictedCount = 0;
 
     // Remove expired sessions (TTL-based cleanup)
-    if (this.sessionTtl > 0) {
-      for (const [chatId, session] of this.sessionStates) {
-        if (now - session.updatedAt > this.sessionTtl) {
-          this.sessionStates.delete(chatId);
-          expiredCount++;
-        }
+    for (const [chatId, session] of this.sessionStates) {
+      if (now - session.updatedAt > RestChannel.SESSION_TTL) {
+        this.sessionStates.delete(chatId);
+        expiredCount++;
       }
     }
 
     // Enforce max sessions limit (LRU eviction)
-    if (this.maxSessions > 0 && this.sessionStates.size > this.maxSessions) {
+    if (this.sessionStates.size > RestChannel.MAX_SESSIONS) {
       // Sort sessions by updatedAt (oldest first)
       const sortedSessions = Array.from(this.sessionStates.entries())
         .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
 
-      const toEvict = sortedSessions.slice(0, this.sessionStates.size - this.maxSessions);
+      const toEvict = sortedSessions.slice(0, this.sessionStates.size - RestChannel.MAX_SESSIONS);
       for (const [chatId] of toEvict) {
         this.sessionStates.delete(chatId);
         evictedCount++;

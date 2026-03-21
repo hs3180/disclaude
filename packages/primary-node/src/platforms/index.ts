@@ -9,3 +9,6 @@
 
 // Feishu platform
 export * from './feishu/index.js';
+
+// Ruliu platform
+export * from './ruliu/index.js';

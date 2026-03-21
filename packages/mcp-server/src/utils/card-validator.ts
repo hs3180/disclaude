@@ -23,39 +23,54 @@ export function isValidFeishuCard(content: Record<string, unknown>): boolean {
 
 /**
  * Get detailed validation error for an invalid card.
+ *
+ * Issue #1355: Improved error messages to help AI agents understand and fix
+ * parameter format issues (e.g., passing string instead of object).
  */
 export function getCardValidationError(content: unknown): string {
   if (content === null) {
-    return 'content is null';
+    return 'card is null - must be an object with config/header/elements';
   }
   if (typeof content !== 'object') {
-    return `content is ${typeof content}, expected object`;
+    return `card is ${typeof content} - must be an object with config/header/elements`;
   }
   if (Array.isArray(content)) {
-    return 'content is array, expected object with config/header/elements';
+    return 'card is an array - must be an object with config/header/elements, not an array';
   }
 
   const obj = content as Record<string, unknown>;
   const missing: string[] = [];
+  const wrongTypes: string[] = [];
 
-  if (!('config' in obj)) { missing.push('config'); }
-  if (!('header' in obj)) { missing.push('header'); }
-  if (!('elements' in obj)) { missing.push('elements'); }
+  if (!('config' in obj)) {
+    missing.push('config');
+  } else if (typeof obj.config !== 'object' || obj.config === null) {
+    wrongTypes.push('config must be an object');
+  }
+
+  if (!('header' in obj)) {
+    missing.push('header');
+  } else if (typeof obj.header !== 'object' || obj.header === null) {
+    wrongTypes.push('header must be an object with title');
+  }
+
+  if (!('elements' in obj)) {
+    missing.push('elements');
+  } else if (!Array.isArray(obj.elements)) {
+    wrongTypes.push('elements must be an array');
+  }
 
   if (missing.length > 0) {
     return `missing required fields: ${missing.join(', ')}`;
   }
 
-  if (typeof obj.header !== 'object' || obj.header === null) {
-    return 'header must be an object';
+  if (wrongTypes.length > 0) {
+    return wrongTypes.join('; ');
   }
-  if (!('title' in (obj.header as Record<string, unknown>))) {
+
+  if (typeof obj.header === 'object' && obj.header !== null && !('title' in obj.header)) {
     return 'header.title is missing';
   }
 
-  if (!Array.isArray(obj.elements)) {
-    return 'elements must be an array';
-  }
-
-  return 'unknown validation error';
+  return 'invalid card structure - ensure card has config (object), header (object with title), and elements (array)';
 }

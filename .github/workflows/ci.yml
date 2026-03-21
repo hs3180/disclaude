@@ -88,9 +88,6 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
-      - name: Build main project
-        run: npx tsup
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

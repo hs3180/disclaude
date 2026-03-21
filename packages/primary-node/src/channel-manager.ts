@@ -11,12 +11,12 @@
  * @module @disclaude/primary-node
  */
 
-import { createLogger } from '@disclaude/core';
-import type {
-  IChannel,
-  OutgoingMessage,
-  MessageHandler,
-  ControlHandler,
+import {
+  createLogger,
+  type IChannel,
+  type OutgoingMessage,
+  type MessageHandler,
+  type ControlHandler,
 } from '@disclaude/core';
 
 const logger = createLogger('ChannelManager');

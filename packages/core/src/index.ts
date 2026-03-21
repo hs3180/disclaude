@@ -8,9 +8,10 @@
  * - Constants (deduplication, dialogue, api config)
  * - Utility functions (logger, error-handler, retry)
  * - IPC Protocol (shared between Primary Node and MCP Server)
+ * - Agent SDK abstraction layer
  */
 
-// Types
+// Types (extended types for application-level use)
 export * from './types/index.js';
 
 // Constants
@@ -22,5 +23,289 @@ export * from './utils/index.js';
 // IPC Protocol (shared between Primary Node and MCP Server)
 export * from './ipc/index.js';
 
-// Version
-export const CORE_VERSION = '0.0.1';
+// Config (exports McpServerConfig for config)
+export * from './config/index.js';
+
+// Agent SDK abstraction layer (Issue #1040)
+// Export SDK functions and classes
+export {
+  // Provider
+  ClaudeSDKProvider,
+  // Factory functions
+  getProvider,
+  registerProvider,
+  registerProviderClass,
+  setDefaultProvider,
+  getDefaultProviderType,
+  getAvailableProviders,
+  clearProviderCache,
+  isProviderAvailable,
+  type ProviderType,
+} from './sdk/index.js';
+
+// Export SDK types with Sdk prefix to avoid conflicts with extended types
+export type {
+  // Content types
+  ContentBlock as SdkContentBlock,
+  TextContentBlock as SdkTextContentBlock,
+  ImageContentBlock as SdkImageContentBlock,
+  // Message types
+  UserInput as SdkUserInput,
+  StreamingUserMessage as SdkStreamingUserMessage,
+  StreamingMessageContent as SdkStreamingMessageContent,
+  AgentMessage as SdkAgentMessage,
+  AgentMessageType as SdkAgentMessageType,
+  MessageRole as SdkMessageRole,
+  AgentMessageMetadata as SdkAgentMessageMetadata,
+  // Tool types
+  ToolUseBlock as SdkToolUseBlock,
+  ToolResultBlock as SdkToolResultBlock,
+  InlineToolDefinition as SdkInlineToolDefinition,
+  // MCP types
+  StdioMcpServerConfig,
+  InlineMcpServerConfig,
+  McpServerConfig as SdkMcpServerConfig,
+  // Query types
+  AgentQueryOptions,
+  PermissionMode,
+  QueryHandle,
+  StreamQueryResult,
+  // Stats types
+  QueryUsageStats,
+  ProviderInfo,
+  // Interfaces
+  IAgentSDKProvider,
+  ProviderFactory,
+  ProviderConstructor,
+} from './sdk/index.js';
+
+// Agent Infrastructure (Issue #1040)
+// Types and interfaces
+export {
+  // Core agent types
+  type Disposable,
+  type UserInput as AgentUserInput,
+  type ChatAgent,
+  type SkillAgent,
+  type Subagent,
+  type AgentProvider,
+  type BaseAgentConfig,
+  type ChatAgentConfig,
+  type SkillAgentConfig,
+  type SubagentConfig,
+  type AgentConfig,
+  type AgentFactoryInterface,
+  // Type guards
+  isChatAgent,
+  isSkillAgent,
+  isSubagent,
+  isDisposable,
+  // Runtime context
+  type AgentRuntimeContext,
+  setRuntimeContext,
+  getRuntimeContext,
+  hasRuntimeContext,
+  clearRuntimeContext,
+} from './agents/types.js';
+
+// Message channel
+export { MessageChannel } from './agents/message-channel.js';
+
+// Session management
+export {
+  type PilotSession,
+  type SessionManagerConfig,
+  SessionManager,
+} from './agents/session-manager.js';
+
+// Conversation context
+export {
+  type MessageContext,
+  type ConversationContextConfig,
+  ConversationContext,
+} from './agents/conversation-context.js';
+
+// Restart manager
+export {
+  type RestartManagerConfig,
+  type RestartDecision,
+  RestartManager,
+} from './agents/restart-manager.js';
+
+// Agent pool
+export {
+  type ChatAgentFactory,
+  type AgentPoolConfig,
+  AgentPool,
+} from './agents/agent-pool.js';
+
+// Base Agent
+export {
+  type SdkOptionsExtra,
+  type IteratorYieldResult,
+  type QueryStreamResult,
+  BaseAgent,
+} from './agents/base-agent.js';
+
+// Skill Agent
+export { type SkillAgentExecuteOptions } from './agents/skill-agent.js';
+export { SkillAgent as SkillAgentBase } from './agents/skill-agent.js';
+
+// Skills module (Issue #430)
+export {
+  type DiscoveredSkill,
+  type SkillSearchPath,
+  getDefaultSearchPaths,
+  findSkill,
+  listSkills,
+  skillExists,
+  readSkillContent,
+} from './skills/index.js';
+
+// Conversation module (Issue #1041)
+export {
+  MessageQueue,
+  ConversationSessionManager,
+  ConversationOrchestrator,
+  type ConversationOrchestratorConfig,
+  type ConversationSessionManagerConfig,
+  type QueuedMessage,
+  type SessionState,
+  type SessionCallbacks,
+  type CreateSessionOptions,
+  type ProcessMessageResult,
+  type SessionStats,
+  type ConversationMessageContext,
+} from './conversation/index.js';
+
+// Scheduling module (Issue #1041)
+export {
+  CooldownManager,
+  type CooldownManagerOptions,
+  // Issue #1041: Full schedule module migrated from worker-node
+  ScheduleFileScanner,
+  ScheduleFileWatcher,
+  ScheduleManager,
+  Scheduler,
+  type ScheduledTask,
+  type ScheduleFileTask,
+  type ScheduleFileScannerOptions,
+  type ScheduleFileWatcherOptions,
+  type ScheduleManagerOptions,
+  type SchedulerCallbacks,
+  type TaskExecutor,
+  type SchedulerOptions,
+  type OnFileAdded,
+  type OnFileChanged,
+  type OnFileRemoved,
+} from './scheduling/index.js';
+
+// Task module (Issue #1041 - migrated from worker-node)
+export type {
+  TaskDefinitionDetails,
+} from './task/index.js';
+
+export {
+  DialogueMessageTracker,
+  TaskTracker,
+  TaskFileManager,
+  TaskFileWatcher,
+  ReflectionController,
+  TerminationConditions,
+  DEFAULT_REFLECTION_CONFIG,
+  type TaskFileManagerConfig,
+  type TaskFileWatcherOptions,
+  type OnTaskCreated,
+  type ReflectionConfig,
+  type ReflectionMetrics,
+  type ReflectionEvent,
+  type ReflectionEvaluationResult,
+  type ReflectionContext,
+} from './task/index.js';
+
+// Queue module (Issue #1041)
+export {
+  TaskQueue,
+  type Task,
+  type BaseTaskOptions,
+  type TaskStatus,
+  type TaskPriority,
+  type TaskDependency,
+  type TaskResult,
+} from './queue/index.js';
+
+// Auth module (Issue #1041)
+export type {
+  OAuthProviderConfig,
+  OAuthToken,
+  PKCECodes,
+  OAuthState,
+  AuthUrlResult,
+  CallbackResult,
+  TokenCheckResult,
+  ApiRequestConfig,
+  ApiResponse,
+  AuthConfig,
+} from './auth/index.js';
+
+// Auth implementations (Issue #1041 - migrated from primary-node)
+export {
+  encrypt,
+  decrypt,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+  isEncrypted,
+  getEncryptionKey,
+  TokenStore,
+  getTokenStore,
+  OAuthManager,
+  getOAuthManager,
+} from './auth/index.js';
+
+// Messaging module (Issue #515 Phase 2 - migrated from primary-node)
+export type {
+  TextContent,
+  MarkdownContent,
+  CardContent,
+  FileContent,
+  DoneContent,
+  CardSection,
+  CardAction,
+  CardSectionType,
+  CardActionType,
+  MessageContent,
+  UniversalMessage,
+  UniversalMessageMetadata,
+  SendResult,
+} from './messaging/index.js';
+
+export {
+  isTextContent,
+  isMarkdownContent,
+  isCardContent,
+  isFileContent,
+  isDoneContent,
+  createTextMessage,
+  createMarkdownMessage,
+  createCardMessage,
+  createDoneMessage,
+} from './messaging/index.js';
+
+// Channels module (Issue #1041 - migrated from primary-node)
+export { BaseChannel } from './channels/index.js';
+
+// File module (Issue #1041 - migrated from worker-node)
+export { AttachmentManager, attachmentManager } from './file/index.js';
+
+// Control module - unified control command handling
+export {
+  createControlHandler,
+  commandRegistry,
+  getHandler,
+  type ControlHandlerContext,
+  type CommandHandler,
+  type CommandDefinition,
+  type ExecNodeInfo,
+  type DebugGroup,
+} from './control/index.js';

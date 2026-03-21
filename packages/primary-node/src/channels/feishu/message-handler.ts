@@ -1,0 +1,805 @@
+/**
+ * Message Handler.
+ *
+ * Handles incoming message events and card actions for Feishu channel.
+ * Issue #694: Extracted from feishu-channel.ts
+ *
+ * Migrated to @disclaude/primary-node (Issue #1040)
+ */
+
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import type * as lark from '@larksuiteoapi/node-sdk';
+import {
+  Config,
+  DEDUPLICATION,
+  REACTIONS,
+  CHAT_HISTORY,
+  createLogger,
+  stripLeadingMentions,
+  type FeishuEventData,
+  type FeishuMessageEvent,
+  type FeishuCardActionEvent,
+  type FeishuCardActionEventData,
+  type IncomingMessage,
+  type MessageAttachment,
+  type ControlCommand,
+  type ControlResponse,
+} from '@disclaude/core';
+import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { messageLogger } from './message-logger.js';
+import type { PassiveModeManager } from './passive-mode.js';
+import type { MentionDetector } from './mention-detector.js';
+
+const logger = createLogger('MessageHandler');
+
+/**
+ * Callback interface for emitting messages and control events.
+ */
+export interface MessageCallbacks {
+  emitMessage: (message: IncomingMessage) => Promise<void>;
+  emitControl: (control: ControlCommand) => Promise<ControlResponse>;
+  sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
+  /**
+   * Route card action to Worker Node if applicable.
+   */
+  routeCardAction?: (message: {
+    chatId: string;
+    cardMessageId: string;
+    actionType: string;
+    actionValue: string;
+    actionText?: string;
+    userId?: string;
+    action?: {
+      type: string;
+      value: string;
+      text?: string;
+      trigger?: string;
+    };
+  }) => Promise<boolean>;
+}
+
+/**
+ * Result of resolving a quoted/replied message.
+ *
+ * @property text - Formatted quoted message text for display in the prompt
+ * @property attachment - Downloaded file attachment (only for image/file/media messages)
+ */
+interface QuotedMessageResult {
+  text: string;
+  attachment?: MessageAttachment;
+}
+
+/**
+ * Message Handler.
+ *
+ * Handles incoming Feishu messages and card actions.
+ */
+export class MessageHandler {
+  private client?: lark.Client;
+  private interactionManager: InteractionManager;
+  private passiveModeManager: PassiveModeManager;
+  private mentionDetector: MentionDetector;
+  private callbacks: MessageCallbacks;
+  private isRunning: () => boolean;
+  private controlHandler: boolean;
+  private getHasControlHandler: () => boolean;
+
+  private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
+
+  /**
+   * Create a MessageHandler.
+   */
+  constructor(options: {
+    passiveModeManager: PassiveModeManager;
+    mentionDetector: MentionDetector;
+    interactionManager: InteractionManager;
+    callbacks: MessageCallbacks;
+    isRunning: () => boolean;
+    hasControlHandler: () => boolean;
+  }) {
+    this.passiveModeManager = options.passiveModeManager;
+    this.mentionDetector = options.mentionDetector;
+    this.interactionManager = options.interactionManager;
+    this.callbacks = options.callbacks;
+    this.isRunning = options.isRunning;
+    this.getHasControlHandler = options.hasControlHandler;
+    this.controlHandler = false;
+  }
+
+  /**
+   * Initialize the handler with client.
+   */
+  initialize(client: lark.Client): void {
+    this.client = client;
+    this.controlHandler = this.getHasControlHandler();
+    logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
+  }
+
+  /**
+   * Set whether control handler is available.
+   */
+  setControlHandler(hasHandler: boolean): void {
+    this.controlHandler = hasHandler;
+  }
+
+  /**
+   * Get the client (for external use).
+   */
+  getClient(): lark.Client | undefined {
+    return this.client;
+  }
+
+  /**
+   * Clear the client (on stop).
+   */
+  clearClient(): void {
+    this.client = undefined;
+  }
+
+  /**
+   * Extract open_id from sender object.
+   */
+  private extractOpenId(sender?: { sender_type?: string; sender_id?: unknown }): string | undefined {
+    if (!sender?.sender_id) {
+      return undefined;
+    }
+    if (typeof sender.sender_id === 'object' && sender.sender_id !== null) {
+      const senderId = sender.sender_id as { open_id?: string };
+      return senderId.open_id;
+    }
+    if (typeof sender.sender_id === 'string') {
+      return sender.sender_id;
+    }
+    return undefined;
+  }
+
+  /**
+   * Add typing reaction to indicate processing started.
+   */
+  private async addTypingReaction(messageId: string): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+    try {
+      await this.client.im.messageReaction.create({
+        path: {
+          message_id: messageId,
+        },
+        data: {
+          reaction_type: {
+            emoji_type: REACTIONS.TYPING,
+          },
+        },
+      });
+    } catch (error) {
+      logger.debug({ err: error, messageId }, 'Failed to add typing reaction');
+    }
+  }
+
+  /**
+   * Check if the chat is a group chat.
+   */
+  private isGroupChat(chatType?: string): boolean {
+    return chatType === 'group' || chatType === 'topic';
+  }
+
+  /**
+   * Forward a filtered message (simplified - just logs for now).
+   */
+  private forwardFilteredMessage(
+    reason: string,
+    messageId: string,
+    chatId: string,
+    _content: string,
+    userId?: string,
+    metadata?: Record<string, unknown>
+  ): void {
+    logger.debug({ reason, messageId, chatId, userId, metadata }, 'Message filtered');
+  }
+
+  /**
+   * Get formatted chat history context for passive mode.
+   */
+  private async getChatHistoryContext(chatId: string): Promise<string | undefined> {
+    try {
+      const rawHistory = await messageLogger.getChatHistory(chatId);
+
+      if (!rawHistory || rawHistory.length === 0) {
+        return undefined;
+      }
+
+      // Truncate if too long
+      let history = rawHistory;
+      if (history.length > CHAT_HISTORY.MAX_CONTEXT_LENGTH) {
+        const truncatePoint = history.lastIndexOf('## [', history.length - CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+        if (truncatePoint > 0) {
+          history = `...(earlier messages truncated)...\n\n${history.slice(truncatePoint)}`;
+        } else {
+          history = history.slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+          history = `...(earlier messages truncated)...\n\n${history.slice(history.indexOf('## ['))}`;
+        }
+      }
+
+      return history;
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to get chat history context');
+      return undefined;
+    }
+  }
+
+  /**
+   * Get quoted/replied message content.
+   *
+   * Supports text, post, image, file, and media message types.
+   * For image/file/media, downloads the file and returns both a text prompt
+   * and a structured MessageAttachment so the agent can access the file.
+   */
+  private async getQuotedMessageContext(parentId: string): Promise<QuotedMessageResult | undefined> {
+    if (!this.client) {
+      return undefined;
+    }
+
+    try {
+      const response = await this.client.im.message.get({
+        path: {
+          message_id: parentId,
+        },
+        params: {
+          user_id_type: 'open_id',
+        },
+      });
+
+      const message = response.data as { message?: { message_type?: string; content?: string; message_id?: string } };
+      if (!message?.message) {
+        return undefined;
+      }
+
+      const msgType = message.message.message_type;
+      const msgContent = message.message.content || '{}';
+      const msgId = message.message.message_id || parentId;
+
+      let quotedText = '';
+      try {
+        if (msgType === 'text') {
+          const parsed = JSON.parse(msgContent);
+          quotedText = parsed.text || msgContent || '';
+        } else if (msgType === 'post') {
+          const parsed = JSON.parse(msgContent);
+          if (parsed.content && Array.isArray(parsed.content)) {
+            for (const row of parsed.content) {
+              if (Array.isArray(row)) {
+                for (const segment of row) {
+                  if (segment?.tag === 'text' && segment.text) {
+                    quotedText += segment.text;
+                  }
+                }
+              }
+            }
+          }
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
+          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
+        }
+      } catch {
+        quotedText = msgContent || '';
+      }
+
+      if (!quotedText.trim()) {
+        return undefined;
+      }
+
+      return { text: `> **引用的消息**:\n> ${quotedText.split('\n').join('\n> ')}` };
+    } catch (error) {
+      logger.debug({ err: error, parentId }, 'Failed to get quoted message context');
+      return undefined;
+    }
+  }
+
+  /**
+   * Handle quoted/replied file/image/media message.
+   *
+   * Downloads the file to workspace and returns both a descriptive prompt
+   * and a structured MessageAttachment so the agent can access the file.
+   */
+  private async handleQuotedFileMessage(
+    messageType: string,
+    content: string,
+    messageId: string,
+  ): Promise<QuotedMessageResult | undefined> {
+    let fileKey: string | undefined;
+    let fileName: string | undefined;
+
+    try {
+      const parsed = JSON.parse(content);
+      if (messageType === 'image') {
+        fileKey = parsed.image_key;
+        fileName = `image_${fileKey}`;
+      } else {
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `file_${fileKey}`;
+      }
+    } catch {
+      logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
+      return undefined;
+    }
+
+    if (!fileKey) {
+      logger.warn({ messageType, messageId }, 'No file_key found in quoted message');
+      return undefined;
+    }
+
+    // Download file to workspace/downloads directory
+    let localPath: string | undefined;
+    if (this.client) {
+      try {
+        const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+        await fs.mkdir(downloadDir, { recursive: true });
+        localPath = path.join(downloadDir, String(fileName || fileKey));
+
+        logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+
+        const response = await this.client.im.messageResource.get({
+          path: { message_id: messageId, file_key: fileKey },
+          params: { type: messageType },
+        });
+        await response.writeFile(localPath);
+
+        logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+      } catch (downloadError) {
+        logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
+      }
+    }
+
+    const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : '媒体文件';
+    if (!localPath) {
+      return {
+        text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败，无法查看内容）`,
+      };
+    }
+
+    return {
+      text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}`,
+      attachment: {
+        fileName: fileName || fileKey,
+        filePath: localPath,
+      },
+    };
+  }
+
+  /**
+   * Handle incoming message event from WebSocket.
+   */
+  async handleMessageReceive(data: FeishuEventData): Promise<void> {
+    if (!this.isRunning()) {
+      return;
+    }
+
+    const event = (data.event || data) as FeishuMessageEvent;
+    const { message, sender } = event;
+
+    if (!message) {
+      return;
+    }
+
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    const threadId = message_id;
+
+    if (!message_id || !chat_id || !content || !message_type) {
+      logger.warn('Missing required message fields');
+      return;
+    }
+
+    // Deduplication
+    if (messageLogger.isMessageProcessed(message_id)) {
+      logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+      this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
+      return;
+    }
+
+    // Ignore bot messages
+    if (sender?.sender_type === 'app') {
+      logger.debug('Skipped bot message');
+      this.forwardFilteredMessage('bot', message_id, chat_id, content);
+      return;
+    }
+
+    // Check message age
+    if (create_time) {
+      const messageAge = Date.now() - create_time;
+      if (messageAge > this.MAX_MESSAGE_AGE) {
+        logger.debug({ messageId: message_id }, 'Skipped old message');
+        this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
+        return;
+      }
+    }
+
+    // Handle file/image messages - download to workspace and include path in prompt
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+      logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
+
+      // Parse content to extract file_key and file_name
+      let fileKey: string | undefined;
+      let fileName: string | undefined;
+      try {
+        const parsed = JSON.parse(content);
+        if (message_type === 'image') {
+          fileKey = parsed.image_key;
+          fileName = `image_${fileKey}`;
+        } else {
+          fileKey = parsed.file_key;
+          fileName = parsed.file_name || `file_${fileKey}`;
+        }
+      } catch (parseError) {
+        logger.error({ err: parseError, content, messageType: message_type }, 'Failed to parse file message content');
+      }
+
+      if (!fileKey) {
+        logger.warn({ messageType: message_type, messageId: message_id }, 'No file_key found in message');
+        return;
+      }
+
+      // Download file to workspace/downloads directory
+      let localPath: string | undefined;
+      if (this.client) {
+        try {
+          const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+          await fs.mkdir(downloadDir, { recursive: true });
+          localPath = path.join(downloadDir, String(fileName || fileKey));
+
+          logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
+
+          const response = await this.client.im.messageResource.get({
+            path: { message_id, file_key: fileKey },
+            params: { type: message_type },
+          });
+          await response.writeFile(localPath);
+
+          logger.info({ fileKey, localPath }, 'File downloaded successfully');
+        } catch (downloadError) {
+          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+        }
+      }
+
+      // Log the incoming message
+      await messageLogger.logIncomingMessage(
+        message_id,
+        this.extractOpenId(sender) || 'unknown',
+        chat_id,
+        `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`,
+        message_type,
+        create_time
+      );
+
+      await this.addTypingReaction(message_id);
+
+      // Build content with file path for the agent prompt
+      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : '媒体文件';
+      const filePrompt = localPath
+        ? `用户上传了一个${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : ''}`
+        : `用户上传了一个${typeLabel}，但下载失败。`;
+
+      await this.callbacks.emitMessage({
+        messageId: `${message_id}-file`,
+        chatId: chat_id,
+        userId: this.extractOpenId(sender),
+        content: filePrompt,
+        messageType: 'file',
+        timestamp: create_time,
+        threadId,
+        attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
+      });
+      return;
+    }
+
+    // Handle text and post messages
+    if (message_type !== 'text' && message_type !== 'post') {
+      logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
+      this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+      return;
+    }
+
+    // Parse content
+    let text = '';
+    try {
+      const parsed = JSON.parse(content);
+      if (message_type === 'text') {
+        text = parsed.text?.trim() || '';
+      } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
+        for (const row of parsed.content) {
+          if (Array.isArray(row)) {
+            for (const segment of row) {
+              if (segment?.tag === 'text' && segment.text) {
+                text += segment.text;
+              }
+            }
+          }
+        }
+        text = text.trim();
+      }
+    } catch {
+      logger.error('Failed to parse content');
+      return;
+    }
+
+    if (!text) {
+      logger.debug('Skipped empty text');
+      this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
+      return;
+    }
+
+    // Log message
+    await messageLogger.logIncomingMessage(
+      message_id,
+      this.extractOpenId(sender) || 'unknown',
+      chat_id,
+      text,
+      message_type,
+      create_time
+    );
+
+    // Check for control commands
+    const botMentioned = this.mentionDetector.isBotMentioned(mentions);
+    const textWithoutMentions = stripLeadingMentions(text, mentions);
+
+    // Group chat passive mode
+    const isPassiveCommand = textWithoutMentions.startsWith('/passive');
+    const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
+    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
+      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
+      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      return;
+    }
+
+    // Add typing reaction
+    await this.addTypingReaction(message_id);
+
+    // Handle commands
+    if (textWithoutMentions.startsWith('/')) {
+      const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
+      const cmd = command.toLowerCase();
+
+      if (this.controlHandler) {
+        const response = await this.callbacks.emitControl({
+          type: cmd as 'reset' | 'status' | 'passive',
+          chatId: chat_id,
+          data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
+        });
+
+        if (response.success) {
+          if (response.message) {
+            await this.callbacks.sendMessage({
+              chatId: chat_id,
+              type: 'text',
+              text: response.message,
+            });
+          }
+          return;
+        }
+      }
+
+      // Default command handling
+      if (cmd === 'reset') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
+        });
+        return;
+      }
+
+      if (cmd === 'status') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '📊 **状态**\n\nChannel: Feishu\nStatus: running',
+        });
+        return;
+      }
+
+      if (cmd === 'passive') {
+        if (args[0] === 'off') {
+          this.passiveModeManager.setPassiveModeDisabled(chat_id, true);
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '✅ 已禁用被动模式，机器人将回复所有消息。',
+          });
+        } else if (args[0] === 'on') {
+          this.passiveModeManager.setPassiveModeDisabled(chat_id, false);
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '✅ 已启用被动模式，机器人仅在被 @ 时回复。',
+          });
+        } else {
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '用法: /passive on|off',
+          });
+        }
+        return;
+      }
+    }
+
+    // Get quoted/replied message context if this is a reply
+    let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
+    if (parent_id) {
+      quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+    }
+
+    // Get chat history context for passive mode
+    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    let chatHistoryContext: string | undefined;
+
+    if (isPassiveModeTrigger) {
+      chatHistoryContext = await this.getChatHistoryContext(chat_id);
+    }
+
+    // Build metadata
+    const metadata: Record<string, unknown> = {};
+    if (quotedMessageResult?.text) {
+      metadata.quotedMessage = quotedMessageResult.text;
+    }
+    if (chatHistoryContext) {
+      metadata.chatHistoryContext = chatHistoryContext;
+    }
+
+    // Build attachments from quoted message if available
+    const quotedAttachments = quotedMessageResult?.attachment
+      ? [quotedMessageResult.attachment]
+      : undefined;
+
+    // Emit as incoming message
+    await this.callbacks.emitMessage({
+      messageId: message_id,
+      chatId: chat_id,
+      userId: this.extractOpenId(sender),
+      content: text,
+      messageType: message_type,
+      timestamp: create_time,
+      threadId,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      attachments: quotedAttachments,
+    });
+  }
+
+  /**
+   * Handle card action event from WebSocket.
+   */
+  async handleCardAction(data: FeishuCardActionEventData): Promise<void> {
+    if (!this.isRunning()) {
+      return;
+    }
+
+    // Parse actual Feishu event structure
+    const rawData = data as Record<string, unknown>;
+    const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
+    const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
+    const actionData = rawData.action as { value?: string; tag?: string; type?: string; text?: string } | undefined;
+
+    const message_id = context?.open_message_id;
+    const chat_id = context?.open_chat_id;
+    const action = actionData ? {
+      type: actionData.tag ?? actionData.type ?? '',
+      value: actionData.value ?? '',
+      trigger: 'button' as const,
+      text: actionData.text,
+    } : undefined;
+    const user = operator ? {
+      sender_id: {
+        open_id: operator.open_id ?? '',
+        user_id: operator.user_id,
+        union_id: operator.union_id,
+      },
+    } : undefined;
+
+    if (!action || !message_id || !chat_id) {
+      logger.warn({
+        hasAction: !!action,
+        hasMessageId: !!message_id,
+        hasChatId: !!chat_id,
+        eventData: JSON.stringify(data),
+      }, 'Missing required card action fields');
+      return;
+    }
+
+    logger.info(
+      {
+        messageId: message_id,
+        chatId: chat_id,
+        actionType: action.type,
+        actionValue: action.value,
+        userId: user?.sender_id?.open_id,
+      },
+      'Card action received'
+    );
+
+    // Send user-visible confirmation message
+    const buttonText = action.text || action.value;
+    if (buttonText) {
+      try {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: `✅ 您选择了「${buttonText}」`,
+          threadId: message_id,
+        });
+      } catch (error) {
+        logger.warn({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to send user confirmation');
+      }
+    }
+
+    // Try to route card action to Worker Node first
+    if (this.callbacks.routeCardAction) {
+      const routed = await this.callbacks.routeCardAction({
+        chatId: chat_id,
+        cardMessageId: message_id,
+        actionType: action.type,
+        actionValue: action.value,
+        actionText: action.text,
+        userId: user?.sender_id?.open_id,
+        action: {
+          type: action.type,
+          value: action.value,
+          text: action.text,
+          trigger: action.trigger,
+        },
+      });
+
+      if (routed) {
+        logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action routed to Worker Node');
+        return;
+      }
+    }
+
+    // Emit card action as a message to the agent
+    try {
+      const messageContent = `用户点击了按钮「${buttonText}」`;
+
+      await this.callbacks.emitMessage({
+        messageId: `${message_id}-${action.value}`,
+        chatId: chat_id,
+        userId: user?.sender_id?.open_id,
+        content: messageContent,
+        messageType: 'card',
+        timestamp: Date.now(),
+        metadata: {
+          cardAction: action,
+          cardMessageId: message_id,
+        },
+      });
+    } catch (error) {
+      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
+      // Issue #1357: Notify user that their card action was not processed
+      this.callbacks.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: '❌ 处理卡片操作时发生错误，请重试。',
+      }).catch((notifyErr) => {
+        logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action error notification');
+      });
+    }
+
+    // Try to handle via InteractionManager
+    try {
+      const compatEvent: FeishuCardActionEvent = {
+        action,
+        message_id,
+        chat_id,
+        user: user ?? { sender_id: { open_id: '' } },
+        tenant_key: (rawData.tenant_key as string) || '',
+      };
+
+      await this.interactionManager.handleAction(compatEvent);
+    } catch (error) {
+      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+
+      await this.callbacks.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
+      });
+    }
+  }
+}

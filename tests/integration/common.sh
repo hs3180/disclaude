@@ -179,8 +179,9 @@ start_server() {
         log_info "Using config file: ${CONFIG_PATH}"
     fi
 
-    # Start server in background
-    node dist/cli-entry.js start --mode primary --rest-port "${REST_PORT}" --host "${HOST}" ${config_arg} > "${SERVER_LOG}" 2>&1 &
+    # Start server in background (using new primary-node CLI)
+    # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
+    node packages/primary-node/dist/cli.js start ${config_arg} > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"
@@ -405,9 +406,9 @@ make_sync_request() {
     local body
 
     if [ -n "$chatId" ]; then
-        body="{\"message\": \"$message\", \"chatId\": \"$chatId\"}"
+        body=$(jq -n --arg msg "$message" --arg cid "$chatId" '{message: $msg, chatId: $cid}')
     else
-        body="{\"message\": \"$message\"}"
+        body=$(jq -n --arg msg "$message" '{message: $msg}')
     fi
 
     make_request "POST" "/api/chat/sync" "$body"
@@ -543,6 +544,285 @@ extract_json_field() {
 extract_json_bool() {
     local field="$1"
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
+}
+
+# =============================================================================
+# Assertion Functions
+# =============================================================================
+
+# Assert JSON field equals expected value
+# Usage: assert_json_field_equals "field" "value" "test_name"
+assert_json_field_equals() {
+    local field="$1"
+    local expected="$2"
+    local test_name="${3:-field check}"
+    local actual
+    actual=$(extract_json_field "$field")
+
+    if [ "$actual" = "$expected" ]; then
+        log_pass "$test_name: $field is '$expected'"
+        return 0
+    else
+        log_fail "$test_name: expected $field='$expected', got '$actual'"
+        return 1
+    fi
+}
+
+# Assert JSON field matches pattern (case-insensitive)
+# Usage: assert_json_field_contains "field" "pattern" "test_name"
+assert_json_field_contains() {
+    local field="$1"
+    local pattern="$2"
+    local test_name="${3:-field contains}"
+    local actual
+    actual=$(extract_json_field "$field")
+
+    if echo "$actual" | grep -iqE "$pattern"; then
+        log_pass "$test_name: $field matches /$pattern/"
+        return 0
+    else
+        log_fail "$test_name: $field does not match /$pattern/ (got: '$actual')"
+        return 1
+    fi
+}
+
+# Assert JSON boolean field is true
+# Usage: assert_json_bool "field" "test_name"
+assert_json_bool() {
+    local field="$1"
+    local test_name="${2:-bool check}"
+    local actual
+    actual=$(extract_json_bool "$field")
+
+    if [ "$actual" = "true" ]; then
+        log_pass "$test_name: $field is true"
+        return 0
+    else
+        log_fail "$test_name: expected $field=true, got '$actual'"
+        return 1
+    fi
+}
+
+# Assert response body is not empty
+# Usage: assert_response_not_empty "test_name"
+assert_response_not_empty() {
+    local test_name="${1:-response check}"
+
+    if [ -n "$RESPONSE_BODY" ] && [ "$RESPONSE_BODY" != "" ]; then
+        log_pass "$test_name: response body is not empty"
+        return 0
+    else
+        log_fail "$test_name: response body is empty"
+        return 1
+    fi
+}
+
+# Assert response body matches pattern (case-insensitive)
+# Usage: assert_body_matches "pattern" "test_name"
+assert_body_matches() {
+    local pattern="$1"
+    local test_name="${2:-body matches}"
+
+    if echo "$RESPONSE_BODY" | grep -iqE "$pattern"; then
+        log_pass "$test_name: body matches /$pattern/"
+        return 0
+    else
+        log_fail "$test_name: body does not match /$pattern/"
+        return 1
+    fi
+}
+
+# Combined assertion: send sync chat and validate HTTP 200 + success + non-empty response
+# Sets RESPONSE_TEXT to the extracted response field value
+# Usage: assert_sync_chat_ok "message" ["chatId"]
+# Returns: 0 on success, 1 on failure
+assert_sync_chat_ok() {
+    local message="$1"
+    local chat_id="${2:-}"
+    local result
+
+    result=$(make_sync_request "$message" "$chat_id")
+    parse_response "$result"
+
+    RESPONSE_TEXT=$(extract_json_field "response")
+
+    if [ "$RESPONSE_STATUS" != "200" ]; then
+        log_fail "Chat request failed with HTTP $RESPONSE_STATUS"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    if [ "$(extract_json_bool "success")" != "true" ]; then
+        log_fail "Chat request returned success=false"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    if [ -z "$RESPONSE_TEXT" ]; then
+        log_fail "Chat request returned empty response text"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    log_pass "Chat request successful (HTTP 200, non-empty response)"
+    log_info "Response: $RESPONSE_TEXT"
+    return 0
+}
+
+# =============================================================================
+# Test Registration and Execution
+# =============================================================================
+
+# Arrays for test registration
+declare -a _TEST_NAMES=()
+declare -a _TEST_FUNCS=()
+declare -a _TEST_TAGS=()
+declare -a _TEST_DESCS=()
+declare -a _TEST_TIMINGS=()
+
+# Register a test case
+# Usage: declare_test "name" "function" "tag" "description"
+declare_test() {
+    local name="$1"
+    local func="$2"
+    local tag="${3:-default}"
+    local desc="${4:-}"
+    _TEST_NAMES+=("$name")
+    _TEST_FUNCS+=("$func")
+    _TEST_TAGS+=("$tag")
+    _TEST_DESCS+=("$desc")
+}
+
+# Run registered tests, optionally filtered by --tag or --name
+# Usage: run_tests [--tag TAG] [--name NAME]
+run_tests() {
+    local filter_tag=""
+    local filter_name=""
+    local i
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --tag)   filter_tag="$2"; shift 2 ;;
+            --name)  filter_name="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    for i in "${!_TEST_FUNCS[@]}"; do
+        local name="${_TEST_NAMES[$i]}"
+        local func="${_TEST_FUNCS[$i]}"
+        local tag="${_TEST_TAGS[$i]}"
+        local desc="${_TEST_DESCS[$i]}"
+
+        # Apply filters
+        if [ -n "$filter_tag" ] && [ "$tag" != "$filter_tag" ]; then
+            continue
+        fi
+        if [ -n "$filter_name" ] && [[ "$name" != *"$filter_name"* ]]; then
+            continue
+        fi
+
+        echo ""
+        log_info "Running: $name"
+        if [ -n "$desc" ]; then
+            log_debug "  $desc"
+        fi
+
+        local start_time
+        start_time=$(date +%s%N 2>/dev/null || date +%s)
+
+        # Run test function
+        if "$func"; then
+            : # log_pass/log_fail already called inside
+        else
+            : # failure already recorded
+        fi
+
+        local end_time
+        end_time=$(date +%s%N 2>/dev/null || date +%s)
+        if [ "$start_time" != "$end_time" ]; then
+            local elapsed=$(( (end_time - start_time) / 1000000 ))
+            _TEST_TIMINGS+=("${name}: ${elapsed}ms")
+        fi
+
+        echo ""
+    done
+}
+
+# Print registered tests (dry-run listing)
+print_registered_tests() {
+    local i
+    echo "Registered tests:"
+    for i in "${!_TEST_NAMES[@]}"; do
+        local name="${_TEST_NAMES[$i]}"
+        local tag="${_TEST_TAGS[$i]}"
+        local desc="${_TEST_DESCS[$i]}"
+        printf "  [%s] %-40s %s\n" "$tag" "$name" "$desc"
+    done
+    echo ""
+    echo "Total: ${#_TEST_NAMES[@]} test(s)"
+}
+
+# Print test timings from last run
+print_test_timings() {
+    if [ ${#_TEST_TIMINGS[@]} -eq 0 ]; then
+        return
+    fi
+    echo ""
+    echo "Test timings:"
+    for timing in "${_TEST_TIMINGS[@]}"; do
+        echo "  $timing"
+    done
+}
+
+# =============================================================================
+# Standard Main Entry Point
+# =============================================================================
+
+# Standard test suite entry point - replaces boilerplate in each test file
+# Usage: main_test_suite "Suite Name" [setup_function]
+main_test_suite() {
+    local suite_name="$1"
+    local setup_func="${2:-}"
+
+    echo ""
+    echo "=========================================="
+    echo "  $suite_name"
+    echo "=========================================="
+    echo ""
+
+    # Dry run mode
+    if [ "$DRY_RUN" = true ]; then
+        print_registered_tests
+        echo ""
+        echo "Configuration:"
+        echo "  - REST Port: $REST_PORT"
+        echo "  - Timeout: ${TIMEOUT}s"
+        echo "  - Project Root: ${PROJECT_ROOT:-.}"
+        exit 0
+    fi
+
+    # Run setup if provided (e.g., create_test_images)
+    if [ -n "$setup_func" ]; then
+        "$setup_func"
+    fi
+
+    # Start server
+    log_info "Checking server..."
+    if ! is_server_running; then
+        start_server || exit 1
+    else
+        log_info "Server already running on port ${REST_PORT}"
+    fi
+    echo ""
+
+    # Run registered tests
+    log_info "Running tests..."
+    run_tests
+
+    # Print timings and summary
+    print_test_timings
+    print_summary
 }
 
 # =============================================================================

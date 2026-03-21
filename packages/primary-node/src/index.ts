@@ -67,7 +67,7 @@ export {
 } from '@disclaude/core';
 
 // Channel base class
-export { BaseChannel } from './channels/base-channel.js';
+export { BaseChannel } from '@disclaude/core';
 
 // IPC module
 export {
@@ -135,7 +135,101 @@ export {
   // Feishu client factory
   createFeishuClient,
   type CreateFeishuClientOptions,
+  // Interaction manager
+  InteractionManager,
+  type InteractionManagerConfig,
+  // Card builders
+  buildTextContent,
+  buildPostContent,
+  buildSimplePostContent,
+  buildButton,
+  buildMenu,
+  buildDiv,
+  buildMarkdown,
+  buildDivider,
+  buildActionGroup,
+  buildNote,
+  buildColumnSet,
+  buildCard,
+  buildConfirmCard,
+  buildSelectionCard,
+  extractCardTextContent,
+  type PostElement,
+  type PostTextElement,
+  type PostAtElement,
+  type PostLinkElement,
+  type PostImageElement,
+  type PostContent,
+  type ButtonStyle,
+  type ButtonConfig,
+  type MenuOptionConfig,
+  type MenuConfig,
+  type DividerConfig,
+  type MarkdownConfig,
+  type ColumnConfig,
+  type CardElement,
+  type ActionElement,
+  type ButtonAction,
+  type MenuAction,
+  type CardHeaderConfig,
+  type CardConfig,
 } from './platforms/index.js';
+
+// Routers (Issue #1040)
+export {
+  CardActionRouter,
+  type CardActionRouterConfig,
+} from './routers/card-action-router.js';
+
+// Services (Issue #1040)
+export {
+  DebugGroupService,
+  getDebugGroupService,
+  resetDebugGroupService,
+  type DebugGroupInfo,
+} from './services/index.js';
+
+// PrimaryNode main class (Issue #1040)
+export {
+  PrimaryNode,
+  type PrimaryNodeOptions,
+} from './primary-node.js';
+
+// Agent pool (Issue #1040)
+export { PrimaryAgentPool } from './primary-agent-pool.js';
+
+// Auth module (Issue #1041 - migrated to @disclaude/core)
+export type {
+  OAuthProviderConfig,
+  OAuthToken,
+  PKCECodes,
+  OAuthState,
+  AuthUrlResult,
+  CallbackResult,
+  TokenCheckResult,
+  ApiRequestConfig,
+  ApiResponse,
+  AuthConfig,
+} from '@disclaude/core';
+
+export {
+  encrypt,
+  decrypt,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+  TokenStore,
+  getTokenStore,
+  OAuthManager,
+  getOAuthManager,
+} from '@disclaude/core';
+
+export {
+  createAuthCard,
+} from './auth/auth-mcp.js';
 
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
+
+// Messaging module (Issue #513, Issue #515)
+export * from './messaging/index.js';

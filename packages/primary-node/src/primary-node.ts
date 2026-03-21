@@ -38,6 +38,7 @@ import {
   type IChannel,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
+  generateSocketPath,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type InteractiveMessageHandlers,
@@ -280,7 +281,7 @@ export class PrimaryNode extends EventEmitter {
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
-      socketPath: '/tmp/disclaude-worker.ipc',
+      socketPath: generateSocketPath(),
     });
 
     await this.ipcServer.start();

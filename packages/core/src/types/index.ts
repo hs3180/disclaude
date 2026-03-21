@@ -2,6 +2,42 @@
  * Core type definitions for disclaude.
  */
 
+// Message level types (Issue #1040, Issue #1041)
+export {
+  MessageLevel,
+  DEFAULT_USER_LEVELS,
+  ALL_LEVELS,
+  // Routing types
+  type RoutedMessage,
+  type RoutedMessageMetadata,
+  type MessageRouteConfig,
+  type IMessageRouter,
+  type IMessageSender as IMessageRoutingSender,
+  mapAgentMessageTypeToLevel,
+} from './messaging.js';
+
+// Agent types (Issue #1040) - Extended types for application-level use
+export type {
+  ContentBlock,
+  ExtendedAgentMessageMetadata,
+  AgentMessage,
+  AgentOptions,
+  AgentInput,
+  ExtendedAgentMessageType,
+} from './agent.js';
+
+// Backward-compatible type aliases
+export type {
+  ExtendedAgentMessageMetadata as AgentMessageMetadata,
+  ExtendedAgentMessageType as AgentMessageType,
+} from './agent.js';
+
+// Re-export SDK types for backward compatibility
+export type {
+  StreamingUserMessage,
+  UserInput,
+} from '../sdk/types.js';
+
 // File transfer types
 export type {
   FileRef,
@@ -80,3 +116,13 @@ export { getNodeCapabilities } from './primary-node.js';
 export type { WorkerNodeConfig } from './worker-node.js';
 
 export { getWorkerNodeCapabilities } from './worker-node.js';
+
+// Adapter types (Issue #1040)
+export type {
+  FileAttachment,
+  FileHandlerResult,
+  IMessageSender,
+  IFileHandler,
+  IAttachmentManager,
+  IPlatformAdapter,
+} from './adapter.js';
