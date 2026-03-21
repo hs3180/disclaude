@@ -178,7 +178,7 @@ export {
   type ConversationMessageContext,
 } from './conversation/index.js';
 
-// Scheduling module (Issue #1041)
+// Scheduling module (Issue #1041, Issue #1382)
 export {
   CooldownManager,
   type CooldownManagerOptions,
@@ -198,6 +198,11 @@ export {
   type OnFileAdded,
   type OnFileChanged,
   type OnFileRemoved,
+  // Issue #1382: Unified schedule executor
+  createScheduleExecutor,
+  type ScheduleAgent,
+  type ScheduleAgentFactory,
+  type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)

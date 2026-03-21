@@ -49,7 +49,13 @@ import {
   CooldownManager,
   Config,
   type ScheduledTask,
+  // Issue #1382: Unified schedule executor
+  createScheduleExecutor,
+  type SchedulerCallbacks,
+  type ScheduleAgent,
 } from '@disclaude/core';
+import { AgentFactory } from '@disclaude/worker-node';
+import type { PilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -387,6 +393,7 @@ export class PrimaryNode extends EventEmitter {
    * Initialize the scheduler for scheduled task execution.
    *
    * Issue #1377: Scheduler integration for Primary Node
+   * Issue #1382: Use unified createScheduleExecutor for task execution
    */
   protected async initScheduler(): Promise<void> {
     const workspaceDir = Config.getWorkspaceDir();
@@ -399,26 +406,47 @@ export class PrimaryNode extends EventEmitter {
     // Initialize ScheduleManager
     this.scheduleManager = new ScheduleManager({ schedulesDir });
 
+    // Issue #1382: Create callbacks for scheduler
+    const schedulerCallbacks: SchedulerCallbacks = {
+      sendMessage: async (chatId: string, message: string): Promise<void> => {
+        // Find channel and send message
+        const channel = this.channels.values().next().value;
+        if (channel && 'sendMessage' in channel) {
+          await (channel as unknown as { sendMessage: (chatId: string, text: string) => Promise<void> }).sendMessage(chatId, message);
+        } else {
+          logger.warn({ chatId }, 'No channel available for scheduler message');
+        }
+      },
+    };
+
+    // Issue #1382: Use unified createScheduleExecutor
+    // This enables Primary Node to execute scheduled tasks locally
+    const executor = createScheduleExecutor({
+      agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
+        // Convert SchedulerCallbacks to PilotCallbacks
+        const pilotCallbacks: PilotCallbacks = {
+          sendMessage: callbacks.sendMessage,
+          sendCard: async (_chatId: string, _card: Record<string, unknown>, _description?: string) => {
+            // Card sending not typically needed for scheduled tasks
+          },
+          sendFile: async (_chatId: string, _filePath: string) => {
+            // File sending not typically needed for scheduled tasks
+          },
+          onDone: async (_chatId: string) => {
+            // Completion handled by scheduler
+          },
+        };
+        return AgentFactory.createScheduleAgent(chatId, pilotCallbacks) as ScheduleAgent;
+      },
+      callbacks: schedulerCallbacks,
+    });
+
     // Initialize Scheduler
     this.scheduler = new Scheduler({
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
-      callbacks: {
-        sendMessage: async (chatId: string, message: string): Promise<void> => {
-          // Find channel and send message
-          const channel = this.channels.values().next().value;
-          if (channel && 'sendMessage' in channel) {
-            await (channel as unknown as { sendMessage: (chatId: string, text: string) => Promise<void> }).sendMessage(chatId, message);
-          } else {
-            logger.warn({ chatId }, 'No channel available for scheduler message');
-          }
-        },
-      },
-      executor: async (_chatId: string, _prompt: string, _userId?: string): Promise<void> => {
-        // Primary Node doesn't have local execution by default
-        // Override in subclass with actual execution logic
-        logger.warn('Scheduler executor not implemented in base PrimaryNode. Override initScheduler to provide executor.');
-      },
+      callbacks: schedulerCallbacks,
+      executor,
     });
 
     // Initialize file watcher for hot reload
