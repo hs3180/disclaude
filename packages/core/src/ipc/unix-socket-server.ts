@@ -231,6 +231,8 @@ export function createInteractiveMessageHandler(
 
 /**
  * Unix Socket IPC Server.
+ *
+ * Issue #1355: Added socket health check and process exit cleanup.
  */
 export class UnixSocketIpcServer {
   private server: Server | null = null;
@@ -238,6 +240,10 @@ export class UnixSocketIpcServer {
   private handler: IpcRequestHandler;
   private activeConnections: Set<Socket> = new Set();
   private isShuttingDown = false;
+  /** Issue #1355: Health check interval for socket file monitoring */
+  private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** Issue #1355: Bound cleanup handlers for removal on stop() */
+  private boundCleanupHandler: (() => void) | null = null;
 
   constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig>) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
@@ -288,6 +294,10 @@ export class UnixSocketIpcServer {
 
       this.server.listen(this.socketPath, () => {
         logger.info({ path: this.socketPath }, 'IPC server started');
+        // Issue #1355: Start socket health check
+        this.startHealthCheck();
+        // Issue #1355: Register process exit cleanup
+        this.registerProcessExitCleanup();
         resolve();
       });
     });
@@ -303,6 +313,11 @@ export class UnixSocketIpcServer {
     }
 
     this.isShuttingDown = true;
+
+    // Issue #1355: Stop health check
+    this.stopHealthCheck();
+    // Issue #1355: Remove process exit cleanup
+    this.unregisterProcessExitCleanup();
 
     // Close all active connections
     for (const socket of this.activeConnections) {
@@ -350,6 +365,99 @@ export class UnixSocketIpcServer {
    */
   getSocketPath(): string {
     return this.socketPath;
+  }
+
+  // ===========================================================================
+  // Issue #1355: Socket health check and process exit cleanup
+  // ===========================================================================
+
+  /**
+   * Start periodic health check to detect socket file loss.
+   *
+   * If the socket file disappears (e.g., cleaned by OS `/tmp` cleanup),
+   * the server is automatically stopped and restarted to recreate it.
+   */
+  private startHealthCheck(): void {
+    // Check every 30 seconds
+    this.healthCheckTimer = setInterval(() => {
+      if (this.isShuttingDown || !this.server?.listening) {
+        return;
+      }
+
+      if (!existsSync(this.socketPath)) {
+        logger.warn(
+          { path: this.socketPath },
+          'Socket file lost, rebuilding IPC server...'
+        );
+        // Stop and restart — the caller is responsible for re-creating
+        // the environment variable. Since Primary Node / Worker Node
+        // set DISCLAUDE_WORKER_IPC_SOCKET after startIpcServer(),
+        // we simply stop; the parent will detect via isRunning().
+        void this.rebuildServer();
+      }
+    }, 30_000);
+
+    // Allow the process to exit even if the timer is active
+    if (this.healthCheckTimer && 'unref' in this.healthCheckTimer) {
+      this.healthCheckTimer.unref();
+    }
+  }
+
+  /**
+   * Stop the health check timer.
+   */
+  private stopHealthCheck(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+  }
+
+  /**
+   * Rebuild the IPC server after socket file loss.
+   *
+   * Stops the current server and starts a new one at the same socket path.
+   */
+  private async rebuildServer(): Promise<void> {
+    try {
+      await this.stop();
+      await this.start();
+      logger.info(
+        { path: this.socketPath },
+        'IPC server rebuilt after socket file loss'
+      );
+    } catch (error) {
+      logger.error(
+        { err: error, path: this.socketPath },
+        'Failed to rebuild IPC server'
+      );
+    }
+  }
+
+  /**
+   * Register process exit cleanup to ensure socket file removal.
+   *
+   * Issue #1355: Ensures socket files are cleaned up on SIGTERM/SIGINT
+   * to prevent stale files after PM2 restarts or process crashes.
+   */
+  private registerProcessExitCleanup(): void {
+    this.boundCleanupHandler = () => {
+      void this.stop();
+    };
+
+    process.on('SIGTERM', this.boundCleanupHandler);
+    process.on('SIGINT', this.boundCleanupHandler);
+  }
+
+  /**
+   * Unregister process exit cleanup handlers.
+   */
+  private unregisterProcessExitCleanup(): void {
+    if (this.boundCleanupHandler) {
+      process.off('SIGTERM', this.boundCleanupHandler);
+      process.off('SIGINT', this.boundCleanupHandler);
+      this.boundCleanupHandler = null;
+    }
   }
 
   /**

@@ -241,8 +241,8 @@ export async function send_interactive_message(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Check IPC availability - IPC is required for sending messages
-    if (!isIpcAvailable()) {
+    // Check IPC availability - IPC is required for sending messages (Issue #1355: async connection probe)
+    if (!(await isIpcAvailable())) {
       const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
       logger.error({ chatId }, errorMsg);
       return {

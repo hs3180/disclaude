@@ -7,6 +7,7 @@
  */
 
 import { existsSync } from 'fs';
+import { createConnection } from 'net';
 import { getIpcSocketPath, createLogger } from '@disclaude/core';
 
 const logger = createLogger('IpcUtils');
@@ -15,12 +16,62 @@ const logger = createLogger('IpcUtils');
  * Check if IPC is available for Feishu API calls.
  * Issue #1035: Prefer IPC when available for unified client management.
  * Issue #1042: Use Worker Node IPC socket path if available.
+ * Issue #1355: Use actual connection probing instead of file-existence check.
+ *   The socket file may disappear while the process still holds the fd,
+ *   or the file may exist but the server is not listening.
+ *
+ * This function performs a file-existence check first (fast path),
+ * then attempts an actual connection to verify the server is alive.
+ *
+ * @returns Promise resolving to true if IPC server is reachable
  */
-export function isIpcAvailable(): boolean {
+export async function isIpcAvailable(): Promise<boolean> {
   const socketPath = getIpcSocketPath();
-  const available = existsSync(socketPath);
-  logger.debug({ socketPath, available }, 'IPC availability check');
-  return available;
+
+  // Fast path: socket file must exist
+  if (!existsSync(socketPath)) {
+    logger.debug({ socketPath, reason: 'socket_not_found' }, 'IPC availability check: not available');
+    return false;
+  }
+
+  // Issue #1355: Attempt actual connection to verify server is alive.
+  // This detects cases where:
+  // - Socket file exists but server is not listening (stale file)
+  // - Socket file was cleaned up by OS while process holds the fd
+  try {
+    const available = await new Promise<boolean>((resolve) => {
+      const client = createConnection(socketPath);
+
+      const timeoutId = setTimeout(() => {
+        // Connection timeout — server likely not listening
+        try { client.destroy(); } catch { /* ignore */ }
+        resolve(false);
+      }, 1000);
+
+      client.on('connect', () => {
+        clearTimeout(timeoutId);
+        try { client.destroy(); } catch { /* ignore */ }
+        resolve(true);
+      });
+
+      client.on('error', () => {
+        clearTimeout(timeoutId);
+        try { client.destroy(); } catch { /* ignore */ }
+        resolve(false);
+      });
+    });
+
+    if (available) {
+      logger.debug({ socketPath }, 'IPC availability check: available (connection probe succeeded)');
+    } else {
+      logger.debug({ socketPath, reason: 'probe_failed' }, 'IPC availability check: not available (connection probe failed)');
+    }
+
+    return available;
+  } catch (error) {
+    logger.debug({ socketPath, reason: 'exception', err: error }, 'IPC availability check: not available (probe exception)');
+    return false;
+  }
 }
 
 /**

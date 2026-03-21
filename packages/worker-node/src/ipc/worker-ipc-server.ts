@@ -16,7 +16,7 @@
 import * as fs from 'fs/promises';
 import * as net from 'net';
 import { existsSync } from 'fs';
-import { createLogger, type IpcRequest, type IpcResponse } from '@disclaude/core';
+import { createLogger, generateSocketPath, type IpcRequest, type IpcResponse } from '@disclaude/core';
 
 const logger = createLogger('WorkerIpcServer');
 
@@ -45,14 +45,6 @@ export interface WorkerIpcServerConfig {
 }
 
 /**
- * Default configuration for WorkerIpcServer.
- */
-const DEFAULT_WORKER_IPC_CONFIG: Required<WorkerIpcServerConfig> = {
-  socketPath: '/tmp/disclaude-worker.ipc',
-  timeout: 30000,
-};
-
-/**
  * Worker Node IPC Server.
  *
  * Accepts IPC connections from MCP Server processes and bridges
@@ -65,7 +57,7 @@ export class WorkerIpcServer {
   private requestHandler: IpcRequestHandler | null = null;
 
   constructor(config: WorkerIpcServerConfig = {}) {
-    this.socketPath = config.socketPath ?? DEFAULT_WORKER_IPC_CONFIG.socketPath;
+    this.socketPath = config.socketPath ?? generateSocketPath();
   }
 
   /**
