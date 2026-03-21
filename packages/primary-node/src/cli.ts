@@ -17,12 +17,12 @@ import {
   createLogger,
   Config,
   type IncomingMessage,
-  type ControlCommand,
-  type ControlResponse,
   type FeishuApiHandlers,
   type DisclaudeConfigWithChannels,
   type FileRef,
   createInboundAttachment,
+  createControlHandler,
+  type ControlHandlerContext,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
@@ -172,6 +172,23 @@ async function main(): Promise<void> {
   // Create AgentPool for Primary Node
   const agentPool = new PrimaryAgentPool();
 
+  // Create unified control handler context
+  const controlHandlerContext: ControlHandlerContext = {
+    agentPool: {
+      reset: (chatId: string) => agentPool.reset(chatId),
+    },
+    node: {
+      nodeId: primaryNode.getNodeId(),
+      getExecNodes: () => primaryNode.getExecNodeRegistry().getNodes(),
+      getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
+      clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
+    },
+    logger,
+  };
+
+  // Create unified control handler for all channels
+  const controlHandler = createControlHandler(controlHandlerContext);
+
   // Set up REST channel handlers (if configured)
   if (restChannel) {
     // Create PilotCallbacks for REST channel
@@ -237,18 +254,8 @@ async function main(): Promise<void> {
       }
     });
 
-    // Set up control handler for commands like reset
-    // eslint-disable-next-line require-await
-    restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
-      logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
-
-      if (command.type === 'reset') {
-        agentPool.reset(command.chatId);
-        return { success: true, message: 'Session reset' };
-      }
-
-      return { success: false, error: `Unknown command: ${command.type}` };
-    });
+    // Set up control handler for REST commands
+    restChannel.onControl(controlHandler);
 
     primaryNode.registerChannel(restChannel);
   }
@@ -334,21 +341,7 @@ async function main(): Promise<void> {
     });
 
     // Set up control handler for Feishu commands
-    // eslint-disable-next-line require-await
-    feishuChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
-      logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command from Feishu');
-
-      if (command.type === 'reset') {
-        agentPool.reset(command.chatId);
-        return { success: true, message: 'Session reset' };
-      }
-
-      if (command.type === 'status') {
-        return { success: true, message: 'Feishu Channel: running' };
-      }
-
-      return { success: false, error: `Unknown command: ${command.type}` };
-    });
+    feishuChannel.onControl(controlHandler);
 
     primaryNode.registerChannel(feishuChannel);
   }
