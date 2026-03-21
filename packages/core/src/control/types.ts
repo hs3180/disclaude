@@ -14,14 +14,16 @@ export interface ExecNodeInfo {
   nodeId: string;
   name: string;
   status: 'connected' | 'disconnected';
-  isLocal: boolean;
+  activeChats: number;
+  connectedAt?: Date;
+  isLocal?: boolean;
 }
 
 /**
  * Debug 组信息
  */
 export interface DebugGroup {
-  name: string;
+  name?: string;
   setAt: number;
 }
 

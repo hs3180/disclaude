@@ -1,5 +1,5 @@
-import type { ControlCommand, ControlResponse } from '../../types/channel.js';
-import type { ControlHandlerContext, CommandHandler } from '../types.js';
+import type { ControlResponse } from '../../types/channel.js';
+import type { CommandHandler } from '../types.js';
 
 /** 开发中提示 */
 const WIP_MESSAGE = '⏳ 此命令尚在开发中，敬请期待。';
