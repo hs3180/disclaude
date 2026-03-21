@@ -237,7 +237,7 @@ async function main(): Promise<void> {
       }
     });
 
-    // Set up control handler for commands like reset
+    // Set up control handler for REST commands
     // eslint-disable-next-line require-await
     restChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
       logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command');
@@ -338,15 +338,104 @@ async function main(): Promise<void> {
     feishuChannel.onControl(async (command: ControlCommand): Promise<ControlResponse> => {
       logger.debug({ type: command.type, chatId: command.chatId }, 'Received control command from Feishu');
 
+      if (command.type === 'help') {
+        return {
+          success: true,
+          message: [
+            '📖 **命令列表**\n',
+            '| 命令 | 说明 | 用法 |',
+            '|------|------|------|',
+            '| `/help` | 显示帮助信息 | `/help` |',
+            '| `/reset` | 重置当前会话 | `/reset` |',
+            '| `/status` | 查看服务状态 | `/status` |',
+            '| `/restart` | 重启 Agent 实例 | `/restart` |',
+            '| `/passive` | 切换被动模式 | `/passive on\\|off` |',
+            '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
+          ].join('\n'),
+        };
+      }
+
       if (command.type === 'reset') {
         agentPool.reset(command.chatId);
-        return { success: true, message: 'Session reset' };
+        return { success: true, message: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。' };
+      }
+
+      if (command.type === 'restart') {
+        agentPool.reset(command.chatId);
+        return { success: true, message: '🔄 **Agent 实例已重启**\n\n已清除会话状态并重建 Agent。' };
       }
 
       if (command.type === 'status') {
-        return { success: true, message: 'Feishu Channel: running' };
+        const nodes = primaryNode.getExecNodeRegistry().getNodes();
+        const nodeCount = nodes.length;
+        const localNodeId = primaryNode.getNodeId();
+        const nodeLines = nodes.length > 0
+          ? nodes.map((n) => `  - ${n.isLocal ? '🏠' : '☁️'} ${n.name} (${n.nodeId})`).join('\n')
+          : '  (无远程节点)';
+
+        return {
+          success: true,
+          message: [
+            '📊 **服务状态**\n',
+            `**节点 ID**: ${localNodeId}`,
+            `**连接节点数**: ${nodeCount}`,
+            `**执行节点**:\n${nodeLines}`,
+            '**Feishu Channel**: running',
+          ].join('\n'),
+        };
       }
 
+      if (command.type === 'list-nodes') {
+        const nodes = primaryNode.getExecNodeRegistry().getNodes();
+        if (nodes.length === 0) {
+          return { success: true, message: '📋 **执行节点列表**\n\n(无已连接的远程节点，仅本地执行)' };
+        }
+
+        const lines = nodes.map((n) => {
+          const icon = n.isLocal ? '🏠' : '☁️';
+          return `${icon} **${n.name}** (${n.nodeId})`;
+        }).join('\n');
+
+        return {
+          success: true,
+          message: `📋 **执行节点列表**\n\n${lines}\n\n共 ${nodes.length} 个节点`,
+        };
+      }
+
+      // Group management commands
+      if (command.type === 'list-group') {
+        return {
+          success: true,
+          message: '⏳ 此命令尚在开发中，敬请期待。',
+        };
+      }
+
+      if (command.type === 'create-group') {
+        return {
+          success: true,
+          message: '⏳ 此命令尚在开发中，敬请期待。',
+        };
+      }
+
+      // Debug commands
+      if (command.type === 'show-debug') {
+        const debugGroup = primaryNode.getDebugGroupService().getDebugGroup();
+        if (debugGroup) {
+          return {
+            success: true,
+            message: `🔍 **Debug 组信息**\n\n**名称**: ${debugGroup.name}\n**设置时间**: ${new Date(debugGroup.setAt).toLocaleString('zh-CN')}`,
+          };
+        }
+        return { success: true, message: '🔍 当前没有设置 Debug 组。' };
+      }
+
+      if (command.type === 'clear-debug') {
+        primaryNode.getDebugGroupService().clearDebugGroup();
+        return { success: true, message: '✅ Debug 组已清除。' };
+      }
+
+      // Return success:false for truly unknown commands so the
+      // message-handler fallback can still try to handle them
       return { success: false, error: `Unknown command: ${command.type}` };
     });
 
