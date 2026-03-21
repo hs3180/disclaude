@@ -77,8 +77,8 @@ export async function send_card(params: {
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
-    // Check IPC availability
-    if (!isIpcAvailable()) {
+    // Check IPC availability (Issue #1355: async connection probe)
+    if (!(await isIpcAvailable())) {
       const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
       logger.error({ chatId }, errorMsg);
       return {
