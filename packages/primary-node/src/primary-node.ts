@@ -407,12 +407,18 @@ export class PrimaryNode extends EventEmitter {
     this.scheduleManager = new ScheduleManager({ schedulesDir });
 
     // Issue #1382: Create callbacks for scheduler
+    // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
     const schedulerCallbacks: SchedulerCallbacks = {
       sendMessage: async (chatId: string, message: string): Promise<void> => {
         // Find channel and send message
         const channel = this.channels.values().next().value;
         if (channel && 'sendMessage' in channel) {
-          await (channel as unknown as { sendMessage: (chatId: string, text: string) => Promise<void> }).sendMessage(chatId, message);
+          // Construct proper OutgoingMessage object (Issue #1384)
+          await channel.sendMessage({
+            type: 'text',
+            chatId,
+            text: message,
+          });
         } else {
           logger.warn({ chatId }, 'No channel available for scheduler message');
         }
