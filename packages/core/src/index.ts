@@ -297,3 +297,15 @@ export { BaseChannel } from './channels/index.js';
 
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
+
+// Control module - unified control command handling
+export {
+  createControlHandler,
+  commandRegistry,
+  getHandler,
+  type ControlHandlerContext,
+  type CommandHandler,
+  type CommandDefinition,
+  type ExecNodeInfo,
+  type DebugGroup,
+} from './control/index.js';
