@@ -232,7 +232,7 @@ async function main(): Promise<void> {
       logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from REST channel');
 
       const callbacks = createRestCallbacks(chatId);
-      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
+      const agent = await agentPool.getOrCreateChatAgent(chatId, callbacks);
 
       // Extract context
       const senderOpenId = userId;
@@ -310,7 +310,7 @@ async function main(): Promise<void> {
       logger.info({ chatId, messageId, contentLength: content.length, hasAttachments: !!attachments }, 'Processing message from Feishu channel');
 
       const callbacks = createFeishuCallbacks();
-      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
+      const agent = await agentPool.getOrCreateChatAgent(chatId, callbacks);
 
       // Extract context
       const senderOpenId = userId;

@@ -409,6 +409,13 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * System prompt append content.
+   *
+   * Issue #1315: When set, this content is appended to the agent's
+   * system prompt. Typically used for SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -657,21 +664,24 @@ export interface AgentFactoryInterface {
   /**
    * Create a ChatAgent instance.
    * Long-lived, should be stored in AgentPool.
+   * Issue #1315: Async to support SOUL.md loading.
    */
-  createChatAgent(name: string, ...args: unknown[]): ChatAgent;
+  createChatAgent(name: string, ...args: unknown[]): Promise<ChatAgent>;
 
   /**
    * Create a ScheduleAgent instance.
    * Short-lived, caller must dispose after execution.
    * Maximum lifetime: 24 hours.
+   * Issue #1315: Async to support SOUL.md loading.
    */
-  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): Promise<ChatAgent>;
 
   /**
    * Create a TaskAgent instance.
    * Short-lived, caller must dispose after task completion.
+   * Issue #1315: Async to support SOUL.md loading.
    */
-  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): Promise<ChatAgent>;
 
   /**
    * Create a SkillAgent instance.

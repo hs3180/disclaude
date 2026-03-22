@@ -63,21 +63,21 @@ interface FeedbackContext {
  */
 class WorkerAgentPool implements AgentPoolInterface {
   private readonly agents = new Map<string, ChatAgent>();
-  private readonly createChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+  private readonly createChatAgent: (chatId: string, callbacks: PilotCallbacks) => Promise<ChatAgent>;
   private readonly log = logger;
 
-  constructor(createChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent) {
+  constructor(createChatAgent: (chatId: string, callbacks: PilotCallbacks) => Promise<ChatAgent>) {
     this.createChatAgent = createChatAgent;
   }
 
-  getOrCreateChatAgent(chatId: string, callbacks?: PilotCallbacks): ChatAgent {
+  async getOrCreateChatAgent(chatId: string, callbacks?: PilotCallbacks): Promise<ChatAgent> {
     let agent = this.agents.get(chatId);
     if (!agent) {
       if (!callbacks) {
         throw new Error(`No callbacks provided for new ChatAgent for chatId: ${chatId}`);
       }
       this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
-      agent = this.createChatAgent(chatId, callbacks);
+      agent = await this.createChatAgent(chatId, callbacks);
       this.agents.set(chatId, agent);
     }
     return agent;
@@ -361,7 +361,7 @@ export class WorkerNode {
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
         const callbacks = createCallbacks(chatId);
-        const agent = this.deps.createScheduleAgent(chatId, callbacks);
+        const agent = await this.deps.createScheduleAgent(chatId, callbacks);
 
         try {
           await agent.executeOnce(chatId, prompt, undefined, userId);
@@ -578,7 +578,7 @@ export class WorkerNode {
               },
             };
 
-            const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
+            const agent = await this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
             agent?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
           } catch (error) {
             const err = error as Error;
@@ -675,7 +675,7 @@ export class WorkerNode {
               },
             };
 
-            const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
+            const agent = await this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
             if (agent) {
               agent.processMessage(
                 chatId,

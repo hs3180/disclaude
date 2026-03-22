@@ -151,6 +151,18 @@ export {
 export { type SkillAgentExecuteOptions } from './agents/skill-agent.js';
 export { SkillAgent as SkillAgentBase } from './agents/skill-agent.js';
 
+// SoulLoader - Agent personality/behavior definition system (Issue #1315)
+export {
+  type DiscoveredSoul,
+  type SoulLoaderOptions,
+  type SoulSearchPath as SoulSearchPathConfig,
+  type SoulLoadResult,
+  getDefaultSoulSearchPaths,
+  discoverSoulFiles,
+  loadSoul,
+  loadSoulContent,
+} from './agents/soul-loader.js';
+
 // Skills module (Issue #430)
 export {
   type DiscoveredSkill,

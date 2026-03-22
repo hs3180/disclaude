@@ -61,6 +61,15 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #1315: System prompt append (SOUL.md personality injection)
+  if (options.systemPromptAppend) {
+    sdkOptions.system_prompt = {
+      type: 'preset',
+      preset: 'claude_code',
+      append: options.systemPromptAppend,
+    };
+  }
+
   return sdkOptions;
 }
 

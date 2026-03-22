@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider } from '@disclaude/core';
+import { Config, findSkill, loadSoulContent, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -90,8 +90,37 @@ export interface AgentCreateOptions {
  *
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
+ *
+ * Issue #1315: SOUL.md content is loaded and injected into agent system prompts.
  */
 export class AgentFactory {
+  /**
+   * Cached SOUL.md content.
+   * Loaded once and reused for all agent instances.
+   */
+  private static soulContentCache: string | undefined; // undefined = not loaded
+
+  /**
+   * Load and cache SOUL.md content.
+   *
+   * Issue #1315: Loads SOUL.md files from configured search paths,
+   * merges them by priority, and caches the result.
+   *
+   * @returns Merged SOUL.md content, or empty string if none found
+   */
+  private static async getSoulContent(): Promise<string> {
+    if (this.soulContentCache === undefined) {
+      try {
+        const content = await loadSoulContent();
+        this.soulContentCache = content ?? '';
+      } catch (error) {
+        // If loading fails, use empty string (graceful degradation)
+        this.soulContentCache = '';
+      }
+    }
+    return this.soulContentCache;
+  }
+
   /**
    * Get base agent configuration from Config with optional overrides.
    *
@@ -110,6 +139,26 @@ export class AgentFactory {
     };
   }
 
+  /**
+   * Get base agent configuration with SOUL.md content loaded asynchronously.
+   *
+   * Issue #1315: This method loads SOUL.md content and includes it
+   * in the configuration as systemPromptAppend.
+   *
+   * @param options - Optional configuration overrides
+   * @returns BaseAgentConfig with merged configuration and SOUL.md content
+   */
+  private static async getBaseConfigWithSoul(options: AgentCreateOptions = {}): Promise<BaseAgentConfig> {
+    const config = this.getBaseConfig(options);
+    const soulContent = await this.getSoulContent();
+
+    if (soulContent) {
+      config.systemPromptAppend = soulContent;
+    }
+
+    return config;
+  }
+
   // ============================================================================
   // AgentFactoryInterface Implementation
   // ============================================================================
@@ -119,6 +168,7 @@ export class AgentFactory {
    *
    * Issue #644: Pilot now requires chatId binding at creation time.
    * Issue #711: ChatAgents are long-lived and should be stored in AgentPool.
+   * Issue #1315: Loads SOUL.md content for system prompt injection.
    *
    * @param name - Agent name ('pilot')
    * @param args - Additional arguments:
@@ -130,14 +180,14 @@ export class AgentFactory {
    * @example
    * ```typescript
    * // Issue #644: New pattern with chatId binding
-   * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', {
+   * const pilot = await AgentFactory.createChatAgent('pilot', 'chat-123', {
    *   sendMessage: async (chatId, text) => { ... },
    *   sendCard: async (chatId, card) => { ... },
    *   sendFile: async (chatId, filePath) => { ... },
    * });
    * ```
    */
-  static createChatAgent(name: string, ...args: unknown[]): ChatAgent {
+  static async createChatAgent(name: string, ...args: unknown[]): Promise<ChatAgent> {
     if (name === 'pilot') {
       // Issue #644: Support both new (chatId, callbacks, options) and legacy (callbacks, options) patterns
       let chatId: string;
@@ -159,7 +209,8 @@ export class AgentFactory {
         options = opt || {};
       }
 
-      const baseConfig = this.getBaseConfig(options);
+      // Issue #1315: Load SOUL.md content for system prompt injection
+      const baseConfig = await this.getBaseConfigWithSoul(options);
       const config: PilotConfig = {
         ...baseConfig,
         chatId,
@@ -197,12 +248,12 @@ export class AgentFactory {
    * }
    * ```
    */
-  static createScheduleAgent(
+  static async createScheduleAgent(
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+  ): Promise<ChatAgent> {
+    const baseConfig = await this.getBaseConfigWithSoul(options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
@@ -218,6 +269,7 @@ export class AgentFactory {
    * Issue #711: TaskAgents are short-lived and should NOT be stored in AgentPool.
    * - Maximum lifetime: Until task completion
    * - Caller is responsible for disposing after execution
+   * Issue #1315: Loads SOUL.md content for system prompt injection.
    *
    * @param chatId - Chat ID for message delivery
    * @param callbacks - Callbacks for sending messages
@@ -226,7 +278,7 @@ export class AgentFactory {
    *
    * @example
    * ```typescript
-   * const agent = AgentFactory.createTaskAgent('chat-123', callbacks);
+   * const agent = await AgentFactory.createTaskAgent('chat-123', callbacks);
    * try {
    *   await agent.executeOnce(chatId, prompt);
    * } finally {
@@ -234,12 +286,12 @@ export class AgentFactory {
    * }
    * ```
    */
-  static createTaskAgent(
+  static async createTaskAgent(
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+  ): Promise<ChatAgent> {
+    const baseConfig = await this.getBaseConfigWithSoul(options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,

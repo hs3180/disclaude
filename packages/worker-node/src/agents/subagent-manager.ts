@@ -368,7 +368,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createScheduleAgent(
+    const agent = await AgentFactory.createScheduleAgent(
       options.chatId,
       options.callbacks
     );
@@ -422,7 +422,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createTaskAgent(
+    const agent = await AgentFactory.createTaskAgent(
       options.chatId,
       options.callbacks
     );

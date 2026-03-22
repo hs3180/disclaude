@@ -74,12 +74,14 @@ export interface ChatAgent {
  * AgentPoolInterface - Interface for managing ChatAgent instances.
  *
  * Used by WorkerNode to get/create agents per chatId.
+ * Issue #1315: getOrCreateChatAgent is now async.
  */
 export interface AgentPoolInterface {
   /**
    * Get or create a ChatAgent instance for the given chatId.
+   * Issue #1315: Async to support SOUL.md loading during agent creation.
    */
-  getOrCreateChatAgent(chatId: string): ChatAgent;
+  getOrCreateChatAgent(chatId: string, callbacks?: PilotCallbacks): Promise<ChatAgent>;
 
   /**
    * Reset the ChatAgent for a chatId.
@@ -120,13 +122,15 @@ export interface PilotCallbacks {
 
 /**
  * ChatAgentFactory - Factory function to create ChatAgent instances.
+ * Issue #1315: Async to support SOUL.md loading.
  */
-export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => Promise<ChatAgent>;
 
 /**
  * ScheduleAgentFactory - Factory function to create ScheduleAgent instances.
+ * Issue #1315: Async to support SOUL.md loading.
  */
-export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => Promise<ChatAgent>;
 
 // ============================================================================
 // TaskFlowOrchestrator Interface

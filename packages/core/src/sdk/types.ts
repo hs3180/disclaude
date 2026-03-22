@@ -192,6 +192,14 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt append content.
+   *
+   * Issue #1315: When set, this content is appended to the agent's
+   * system prompt (e.g., SOUL.md personality definition).
+   * The SDK injects it via system_prompt.append mechanism.
+   */
+  systemPromptAppend?: string;
 }
 
 // ============================================================================

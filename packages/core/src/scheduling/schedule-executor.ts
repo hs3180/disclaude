@@ -45,7 +45,7 @@ export interface ScheduleAgent {
 export type ScheduleAgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks
-) => ScheduleAgent;
+) => ScheduleAgent | Promise<ScheduleAgent>;
 
 /**
  * Options for creating a schedule executor.
@@ -75,8 +75,8 @@ export interface ScheduleExecutorOptions {
  * ```typescript
  * // In Primary Node or Worker Node:
  * const executor = createScheduleExecutor({
- *   agentFactory: (chatId, callbacks) => {
- *     return AgentFactory.createScheduleAgent(chatId, callbacks);
+ *   agentFactory: async (chatId, callbacks) => {
+ *     return await AgentFactory.createScheduleAgent(chatId, callbacks);
  *   },
  *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
  * });
@@ -93,7 +93,7 @@ export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskEx
 
   return async (chatId: string, prompt: string, userId?: string): Promise<void> => {
     // Create a short-lived agent for this execution
-    const agent = agentFactory(chatId, callbacks);
+    const agent = await agentFactory(chatId, callbacks);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId);

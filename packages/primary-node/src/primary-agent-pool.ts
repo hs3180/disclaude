@@ -5,6 +5,7 @@
  * from @disclaude/worker-node to create Pilot instances.
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
+ * @see Issue #1315 - SOUL.md personality injection (async agent creation)
  */
 
 import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
@@ -21,14 +22,16 @@ export class PrimaryAgentPool {
   /**
    * Get or create a ChatAgent instance for the given chatId.
    *
+   * Issue #1315: Now async to support SOUL.md loading during agent creation.
+   *
    * @param chatId - Chat ID to get/create agent for
    * @param callbacks - Callbacks for sending messages (required for new agents)
    * @returns ChatAgent instance
    */
-  getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
+  async getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): Promise<ChatAgent> {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks);
+      agent = await AgentFactory.createChatAgent('pilot', chatId, callbacks);
       this.agents.set(chatId, agent);
     }
     return agent;

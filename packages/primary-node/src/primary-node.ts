@@ -427,7 +427,7 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1382: Use unified createScheduleExecutor
     // This enables Primary Node to execute scheduled tasks locally
     const executor = createScheduleExecutor({
-      agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
+      agentFactory: async (chatId: string, callbacks: SchedulerCallbacks): Promise<ScheduleAgent> => {
         // Convert SchedulerCallbacks to PilotCallbacks
         const pilotCallbacks: PilotCallbacks = {
           sendMessage: callbacks.sendMessage,
@@ -441,7 +441,7 @@ export class PrimaryNode extends EventEmitter {
             // Completion handled by scheduler
           },
         };
-        return AgentFactory.createScheduleAgent(chatId, pilotCallbacks) as ScheduleAgent;
+        return (await AgentFactory.createScheduleAgent(chatId, pilotCallbacks)) as unknown as ScheduleAgent;
       },
       callbacks: schedulerCallbacks,
     });
