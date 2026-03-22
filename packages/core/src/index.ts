@@ -314,3 +314,24 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Temporary Session Management (Issues #393, #631, #946, #1317)
+export {
+  SessionManager as TemporarySessionManager,
+  parseDuration,
+  isSessionExpired,
+  type SessionType,
+  type SessionPurpose,
+  type ChannelType,
+  type SessionChannelConfig,
+  type SessionOption,
+  type SessionConfig,
+  type SessionStatus,
+  type SessionResponse,
+  type SessionState as TemporarySessionState,
+  type TemporarySession,
+  type SessionManagerOptions as TemporarySessionManagerOptions,
+  type CreateTemporarySessionOptions,
+  type SessionSummary,
+  type SessionFilterOptions,
+} from './session/index.js';
