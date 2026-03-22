@@ -15,10 +15,17 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1353: Session isolation between scheduled task executions.
+ * - Each execution uses an independent session (no context accumulation)
+ * - SDK level: queryOnce() uses empty session_id
+ * - Agent level: New agent instance per execution
+ * - Resources are properly disposed after execution
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Session isolation between executions (Issue #1353)
  *
  * @module @disclaude/core/scheduling
  */

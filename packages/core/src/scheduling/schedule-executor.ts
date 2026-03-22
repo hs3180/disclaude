@@ -2,6 +2,7 @@
  * Schedule Executor Factory - Creates TaskExecutor for scheduled task execution.
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
+ * Issue #1353: Session isolation - each execution uses independent session.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
@@ -13,15 +14,24 @@
  *
  * Scheduler uses TaskExecutor to execute tasks:
  *   executor(chatId, prompt, userId)
- *     -> agentFactory(chatId, callbacks)
- *       -> agent.executeOnce(chatId, prompt, undefined, userId)
- *         -> agent.dispose()
+ *     -> agentFactory(chatId, callbacks)   // Creates NEW agent instance
+ *       -> agent.executeOnce(chatId, prompt, undefined, userId)  // Independent session
+ *         -> agent.dispose()               // Cleanup after execution
  * ```
+ *
+ * Session Isolation (Issue #1353):
+ * - Each task execution creates a new agent instance
+ * - executeOnce() uses queryOnce() with empty session_id
+ * - No context accumulation between executions
+ * - Resources are cleaned up via dispose()
  *
  * @module @disclaude/core/scheduling
  */
 
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('ScheduleExecutor');
 
 /**
  * Interface for an agent that can execute scheduled tasks.
@@ -92,13 +102,39 @@ export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskEx
   const { agentFactory, callbacks } = options;
 
   return async (chatId: string, prompt: string, userId?: string): Promise<void> => {
-    // Create a short-lived agent for this execution
+    // Issue #1353: Create a fresh agent instance for session isolation
+    const executionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    logger.info(
+      { chatId, userId, executionId, promptLength: prompt.length },
+      'Creating new agent for scheduled task execution (session isolation)'
+    );
+
     const agent = agentFactory(chatId, callbacks);
 
     try {
+      logger.debug(
+        { chatId, executionId },
+        'Starting executeOnce with independent session'
+      );
+
       await agent.executeOnce(chatId, prompt, undefined, userId);
+
+      logger.info(
+        { chatId, executionId },
+        'Scheduled task execution completed successfully'
+      );
+    } catch (error) {
+      logger.error(
+        { err: error, chatId, executionId },
+        'Scheduled task execution failed'
+      );
+      throw error;
     } finally {
-      // Always dispose the agent after execution
+      // Issue #1353: Always dispose the agent after execution to ensure cleanup
+      logger.debug(
+        { chatId, executionId },
+        'Disposing agent after execution (session cleanup)'
+      );
       agent.dispose();
     }
   };
