@@ -301,7 +301,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
       const capabilities = this.callbacks.getCapabilities?.(chatId);
 
       // Build the user message using MessageBuilder (Issue #697)
-      const enhancedContent = this.messageBuilder.buildEnhancedContent({
+      // Issue #1315: Use async version to load SOUL.md personality
+      const enhancedContent = await this.messageBuilder.buildEnhancedContentAsync({
         text: userInput.content,
         messageId,
         senderOpenId,
@@ -386,7 +387,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
     // Build enhanced content using MessageBuilder (Issue #697)
-    const enhancedContent = this.messageBuilder.buildEnhancedContent({
+    // Issue #1315: Use async version to load SOUL.md personality
+    const enhancedContent = await this.messageBuilder.buildEnhancedContentAsync({
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
@@ -492,31 +494,49 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
-    const enhancedContent = this.messageBuilder.buildEnhancedContent({
+    // Issue #1315: Use async version to load SOUL.md personality (fire-and-forget for now)
+    this.messageBuilder.buildEnhancedContentAsync({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
-    }, chatId, capabilities);
+    }, chatId, capabilities).then((enhancedContent) => {
+      const userMessage: StreamingUserMessage = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: enhancedContent,
+        },
+        parent_tool_use_id: null,
+        session_id: '',
+      };
 
-    const userMessage: StreamingUserMessage = {
-      type: 'user',
-      message: {
-        role: 'user',
-        content: enhancedContent,
-      },
-      parent_tool_use_id: null,
-      session_id: '',
-    };
+      // Push message to channel
+      if (this.channel) {
+        this.channel.push(userMessage);
+      } else {
+        this.logger.error({ chatId, messageId }, 'No channel found after session creation');
+        // Issue #1357: Notify user — message would otherwise be silently lost
+        this.callbacks.sendMessage(chatId, '❌ 会话通道异常，请发送 /reset 重置会话后重试。').catch((notifyErr) => {
+          this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
+        });
+      }
+    }).catch((err) => {
+      this.logger.error({ err, chatId, messageId }, 'Failed to build enhanced content');
+      // Fallback: use synchronous version without SOUL
+      const fallbackContent = this.messageBuilder.buildEnhancedContent({
+        text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
+        persistedHistoryContext: this.persistedHistoryContext,
+      }, chatId, capabilities);
 
-    // Push message to channel
-    if (this.channel) {
-      this.channel.push(userMessage);
-    } else {
-      this.logger.error({ chatId, messageId }, 'No channel found after session creation');
-      // Issue #1357: Notify user — message would otherwise be silently lost
-      this.callbacks.sendMessage(chatId, '❌ 会话通道异常，请发送 /reset 重置会话后重试。').catch((notifyErr) => {
-        this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
-      });
-    }
+      if (this.channel) {
+        const userMessage: StreamingUserMessage = {
+          type: 'user',
+          message: { role: 'user', content: fallbackContent },
+          parent_tool_use_id: null,
+          session_id: '',
+        };
+        this.channel.push(userMessage);
+      }
+    });
   }
 
   /**

@@ -7,9 +7,11 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1315: Added SOUL.md personality injection.
  */
 
 import { Config, type ChannelCapabilities } from '@disclaude/core';
+import { loadMergedSoul, formatSoulForPrompt, type SoulContent } from '@disclaude/core';
 import type { MessageData } from './types.js';
 
 /**
@@ -24,8 +26,79 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - SOUL.md personality injection (Issue #1315)
  */
 export class MessageBuilder {
+  /** Cached SOUL content */
+  private cachedSoul: SoulContent | null | undefined = undefined;
+
+  /**
+   * Load SOUL content for the pilot agent.
+   *
+   * Uses caching to avoid repeated file system access.
+   *
+   * @returns SOUL content or null if not found
+   */
+  private async loadSoul(): Promise<SoulContent | null> {
+    if (this.cachedSoul !== undefined) {
+      return this.cachedSoul;
+    }
+
+    try {
+      const soul = await loadMergedSoul({ skillName: 'pilot' });
+      this.cachedSoul = soul ?? null;
+      return this.cachedSoul;
+    } catch {
+      this.cachedSoul = null;
+      return null;
+    }
+  }
+
+  /**
+   * Build enhanced content with Feishu context (async version with SOUL support).
+   *
+   * This is the recommended method to use - it loads SOUL.md personality
+   * definitions and injects them into the prompt.
+   *
+   * @param msg - Message data
+   * @param chatId - Chat ID for context
+   * @param capabilities - Channel capabilities for tool filtering
+   * @returns Promise resolving to enhanced content string
+   */
+  async buildEnhancedContentAsync(
+    msg: MessageData,
+    chatId: string,
+    capabilities?: ChannelCapabilities
+  ): Promise<string> {
+    // Load SOUL content
+    const soul = await this.loadSoul();
+    const soulSection = soul ? formatSoulForPrompt(soul) : '';
+
+    // Build base content
+    const baseContent = this.buildEnhancedContent(msg, chatId, capabilities);
+
+    // Inject SOUL section after the header but before user message
+    if (soulSection) {
+      // Find the position to insert SOUL (after header info, before user message)
+      const userMessageMarker = '--- User Message ---';
+      const markerIndex = baseContent.indexOf(userMessageMarker);
+
+      if (markerIndex !== -1) {
+        // Insert SOUL section before the user message marker
+        return (
+          baseContent.slice(0, markerIndex) +
+          soulSection +
+          '\n\n' +
+          baseContent.slice(markerIndex)
+        );
+      }
+
+      // Fallback: append SOUL section at the end
+      return baseContent + soulSection;
+    }
+
+    return baseContent;
+  }
   /**
    * Build enhanced content with Feishu context.
    *
