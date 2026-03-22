@@ -16,38 +16,12 @@
  * @module @disclaude/worker-node/schedule
  */
 
-import { createLogger } from '@disclaude/core';
-import { ScheduleFileScanner } from './schedule-watcher.js';
+import { createLogger, ScheduleFileScanner, type ScheduledTask } from '@disclaude/core';
 
 const logger = createLogger('ScheduleManager');
 
-/**
- * Scheduled task definition.
- */
-export interface ScheduledTask {
-  /** Unique task ID */
-  id: string;
-  /** Human-readable task name */
-  name: string;
-  /** Cron expression (e.g., "0 9 * * *" for daily at 9am) */
-  cron: string;
-  /** Prompt to execute when task triggers */
-  prompt: string;
-  /** Chat ID where task was created (scope) */
-  chatId: string;
-  /** User ID who created the task */
-  createdBy?: string;
-  /** Whether task is enabled */
-  enabled: boolean;
-  /** Whether to block concurrent executions (skip if previous still running) */
-  blocking?: boolean;
-  /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */
-  cooldownPeriod?: number;
-  /** Creation timestamp */
-  createdAt: string;
-  /** Last execution timestamp (read from file, for display purposes only) */
-  lastExecutedAt?: string;
-}
+// Re-export ScheduledTask for backward compatibility (Issue #1395)
+export type { ScheduledTask } from '@disclaude/core';
 
 /**
  * ScheduleManager options.
