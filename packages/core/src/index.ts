@@ -314,3 +314,18 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Temporary Session module (Issue #1391)
+export {
+  TemporarySessionManager,
+  type TemporarySessionManagerOptions,
+  type SessionStatus,
+  type SessionEndReason,
+  type SessionCreateGroup,
+  type SessionOption,
+  type SessionResponse,
+  type SessionExpiry,
+  type TemporarySession,
+  type CreateTemporarySessionOptions,
+  type SessionSummary,
+} from './session/index.js';
