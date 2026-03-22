@@ -19,6 +19,9 @@ import {
   Config,
   createLogger,
   BaseAgent,
+  buildSdkEnv,
+  checkCdpEndpointHealth,
+  parseCdpEndpoint,
   type BaseAgentConfig,
   type SdkInlineToolDefinition,
   type SdkMcpServerConfig,
@@ -31,29 +34,6 @@ import {
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
-
-// TODO(Issue #1041): These utilities need to be migrated or injected
-// For now, provide stubs with correct types
-
-interface CdpHealthResult {
-  healthy: boolean;
-  error?: string;
-  suggestion?: string;
-}
-
-const buildSdkEnv = (
-  _apiKey?: string,
-  _apiBaseUrl?: string,
-  _globalEnv?: Record<string, string>,
-  _debug?: boolean
-): Record<string, string> => ({});
-// eslint-disable-next-line require-await
-const checkCdpEndpointHealth = async (_url: string): Promise<CdpHealthResult> => ({ healthy: true });
-const parseCdpEndpoint = (args: string[] | undefined): string | undefined => {
-  if (!args) {return undefined;}
-  const arg = args.find(a => a.startsWith('--cdp-endpoint='));
-  return arg ? arg.split('=')[1] : undefined;
-};
 
 const logger = createLogger('SiteMiner');
 
