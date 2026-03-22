@@ -298,7 +298,17 @@ export {
 } from './messaging/index.js';
 
 // Channels module (Issue #1041 - migrated from primary-node)
+// Dynamic channel registration (Issue #1422)
 export { BaseChannel } from './channels/index.js';
+export {
+  ChannelRegistry,
+  ChannelLoader,
+  type ChannelPlugin,
+  type DynamicChannelConfig,
+  type ExtendedChannelsConfig,
+  type ResolvedChannel,
+  type ChannelLoadResult,
+} from './channels/index.js';
 
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';

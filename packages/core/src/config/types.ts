@@ -349,11 +349,33 @@ export interface ConfigChannelConfig {
 }
 
 /**
+ * Dynamic channel configuration (Issue #1422).
+ * Supports loading channel plugins from local modules or npm packages.
+ */
+export interface DynamicChannelConfig extends ConfigChannelConfig {
+  /**
+   * Module path for dynamic loading.
+   * - Absolute/relative path: resolved from config file directory
+   * - Package name: loaded from node_modules (e.g., "@disclaude/wechat-channel")
+   */
+  module?: string;
+
+  /**
+   * Channel-specific configuration passed to the factory function.
+   */
+  config?: Record<string, unknown>;
+}
+
+/**
  * Channels configuration section (abstract).
  * Main project extends this with specific channel types.
+ *
+ * Supports both built-in and dynamic channels:
+ * - Built-in: { enabled: true }
+ * - Dynamic:  { enabled: true, module: "@scope/package", config: {...} }
  */
 export interface ChannelsConfig {
-  [channelName: string]: ConfigChannelConfig | undefined;
+  [channelName: string]: ConfigChannelConfig | DynamicChannelConfig | undefined;
 }
 
 /**
