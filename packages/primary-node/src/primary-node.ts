@@ -55,7 +55,6 @@ import {
   type ScheduleAgent,
 } from '@disclaude/core';
 import { AgentFactory } from '@disclaude/worker-node';
-import type { PilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -426,23 +425,10 @@ export class PrimaryNode extends EventEmitter {
     };
 
     // Issue #1382: Use unified createScheduleExecutor
-    // This enables Primary Node to execute scheduled tasks locally
+    // Issue #1412: Simplified - no longer need to convert SchedulerCallbacks to PilotCallbacks
     const executor = createScheduleExecutor({
       agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
-        // Convert SchedulerCallbacks to PilotCallbacks
-        const pilotCallbacks: PilotCallbacks = {
-          sendMessage: callbacks.sendMessage,
-          sendCard: async (_chatId: string, _card: Record<string, unknown>, _description?: string) => {
-            // Card sending not typically needed for scheduled tasks
-          },
-          sendFile: async (_chatId: string, _filePath: string) => {
-            // File sending not typically needed for scheduled tasks
-          },
-          onDone: async (_chatId: string) => {
-            // Completion handled by scheduler
-          },
-        };
-        return AgentFactory.createScheduleAgent(chatId, pilotCallbacks) as ScheduleAgent;
+        return AgentFactory.createScheduleAgent(chatId, callbacks) as ScheduleAgent;
       },
       callbacks: schedulerCallbacks,
     });
