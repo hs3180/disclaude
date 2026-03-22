@@ -77,6 +77,8 @@ export type {
   IAgentSDKProvider,
   ProviderFactory,
   ProviderConstructor,
+  // System prompt (Issue #1315)
+  SystemPromptConfig,
 } from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040)
@@ -161,6 +163,21 @@ export {
   skillExists,
   readSkillContent,
 } from './skills/index.js';
+
+// SOUL module (Issue #1315: Agent personality/behavior definition system)
+export {
+  type DiscoveredSoul,
+  type SoulLevel,
+  type FindSoulOptions,
+  type SoulContent,
+  type SoulLifecycle,
+  getSoulSearchPaths,
+  findSoul,
+  loadSoul,
+  mergeSouls,
+  loadMergedSoul,
+  formatSoulForSystemPrompt,
+} from './soul/index.js';
 
 // Conversation module (Issue #1041)
 export {

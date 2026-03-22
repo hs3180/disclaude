@@ -5,6 +5,7 @@
  * - SDK configuration building via abstraction layer
  * - GLM logging
  * - Error handling
+ * - SOUL.md personality injection (Issue #1315)
  *
  * Uses Template Method pattern - subclasses implement specific logic.
  *
@@ -19,6 +20,7 @@ import {
   type StreamingUserMessage,
   type QueryHandle,
   type AgentMessage as SdkAgentMessage,
+  type SystemPromptConfig,
 } from '../sdk/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
@@ -27,6 +29,12 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import {
+  loadMergedSoul,
+  formatSoulForSystemPrompt,
+  type SoulContent,
+  type FindSoulOptions,
+} from '../soul/index.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -43,6 +51,17 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * System prompt configuration (Issue #1315).
+   * If provided, will be used directly. If not provided and soul loading is enabled,
+   * will attempt to load SOUL.md and use it as systemPrompt.append.
+   */
+  systemPrompt?: SystemPromptConfig;
+  /**
+   * Options for SOUL.md discovery (Issue #1315).
+   * Set to false to disable SOUL.md loading.
+   */
+  soulOptions?: FindSoulOptions | false;
 }
 
 /**
@@ -80,6 +99,8 @@ export interface QueryStreamResult {
  *
  * Implements Disposable interface for resource cleanup (Issue #328).
  *
+ * Issue #1315: Supports SOUL.md personality injection via systemPrompt option.
+ *
  * @example
  * ```typescript
  * class MyAgent extends BaseAgent {
@@ -105,6 +126,18 @@ export abstract class BaseAgent implements Disposable {
   protected readonly logger: Logger;
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
+
+  /**
+   * Cached SOUL content (Issue #1315).
+   * undefined = not loaded yet, null = no SOUL.md found, SoulContent = loaded
+   */
+  private cachedSoul: SoulContent | null | undefined = undefined;
+
+  /**
+   * Promise for loading SOUL content (Issue #1315).
+   * Used to prevent concurrent loading.
+   */
+  private soulLoadingPromise: Promise<SoulContent | null> | null = null;
 
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
@@ -147,6 +180,8 @@ export abstract class BaseAgent implements Disposable {
    * This method provides a unified way to build SDK options
    * with common configuration (cwd, permissionMode, env, model)
    * while allowing subclasses to add specific options.
+   *
+   * Issue #1315: Supports SOUL.md personality injection via systemPrompt option.
    *
    * @param extra - Extra configuration to merge
    * @returns AgentQueryOptions object
@@ -192,7 +227,89 @@ export abstract class BaseAgent implements Disposable {
       options.model = this.model;
     }
 
+    // Handle systemPrompt (Issue #1315: SOUL.md personality injection)
+    if (extra.systemPrompt) {
+      // Use explicitly provided systemPrompt
+      options.systemPrompt = extra.systemPrompt;
+    } else if (extra.soulOptions !== false) {
+      // Try to load SOUL.md if not disabled
+      const soul = this.getCachedSoul();
+      if (soul) {
+        const soulContent = formatSoulForSystemPrompt(soul);
+        options.systemPrompt = {
+          type: 'preset',
+          preset: 'claude_code',
+          append: soulContent,
+        };
+        this.logger.debug({ soulSource: soul.source }, 'Injected SOUL.md into systemPrompt');
+      }
+    }
+
     return options;
+  }
+
+  /**
+   * Get cached SOUL content, loading it if necessary.
+   *
+   * This is a synchronous getter that returns cached content.
+   * Use loadSoulAsync() for initial loading.
+   *
+   * Issue #1315: SOUL.md personality definition caching.
+   *
+   * @returns Cached soul content or null if not found/not loaded
+   */
+  protected getCachedSoul(): SoulContent | null {
+    if (this.cachedSoul === undefined) {
+      return null;
+    }
+    return this.cachedSoul ?? null;
+  }
+
+  /**
+   * Load SOUL.md content asynchronously.
+   *
+   * This method loads SOUL.md from disk and caches it for future use.
+   * Should be called during agent initialization.
+   *
+   * Issue #1315: SOUL.md personality definition loading.
+   *
+   * @param options - Options for SOUL discovery
+   * @returns Loaded soul content or null if not found
+   */
+  protected async loadSoulAsync(options: FindSoulOptions = {}): Promise<SoulContent | null> {
+    // Return cached content if available
+    if (this.cachedSoul !== undefined) {
+      return this.cachedSoul ?? null;
+    }
+
+    // Prevent concurrent loading
+    if (this.soulLoadingPromise) {
+      return this.soulLoadingPromise;
+    }
+
+    this.soulLoadingPromise = (async () => {
+      try {
+        const soul = await loadMergedSoul(options);
+        this.cachedSoul = soul ?? null;
+
+        if (soul) {
+          this.logger.debug(
+            { soulSource: soul.source, soulName: soul.name },
+            'SOUL.md loaded and cached'
+          );
+        }
+
+        return this.cachedSoul ?? null;
+      } catch (error) {
+        this.logger.error({ err: error }, 'Failed to load SOUL.md');
+        this.cachedSoul = null;
+        return null;
+      } finally {
+        this.soulLoadingPromise = null;
+      }
+    })();
+
+    return this.soulLoadingPromise;
   }
 
   /**

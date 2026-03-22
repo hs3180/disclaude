@@ -4,7 +4,7 @@
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
  */
 
-import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
+import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, SystemPromptConfig, UserInput } from '../../types.js';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -59,6 +59,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     if (options.env.ANTHROPIC_BASE_URL) {
       sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
     }
+  }
+
+  // System prompt configuration (Issue #1315: SOUL.md personality injection)
+  if (options.systemPrompt) {
+    sdkOptions.systemPrompt = adaptSystemPrompt(options.systemPrompt);
   }
 
   return sdkOptions;
@@ -170,4 +175,25 @@ export function adaptInput(input: string | UserInput[]): unknown {
     parent_tool_use_id: null,
     session_id: '',
   }));
+}
+
+/**
+ * 适配 system prompt 配置为 Claude SDK 格式
+ *
+ * Issue #1315: Support for SOUL.md personality injection via systemPrompt.append
+ *
+ * @param config - 统一的 system prompt 配置
+ * @returns Claude SDK 格式的 system prompt
+ */
+export function adaptSystemPrompt(config: SystemPromptConfig): string | { type: 'preset'; preset: 'claude_code'; append?: string } {
+  if (typeof config === 'string') {
+    return config;
+  }
+
+  // Preset configuration with optional append
+  return {
+    type: config.type,
+    preset: config.preset,
+    append: config.append,
+  };
 }

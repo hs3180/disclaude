@@ -174,6 +174,23 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
 
+/**
+ * System prompt configuration.
+ *
+ * - `string` - Use a custom system prompt
+ * - `{ type: 'preset'; preset: 'claude_code'; append?: string }` - Use Claude Code's default prompt with optional append
+ *
+ * Issue #1315: Used for SOUL.md personality injection via `append` field.
+ */
+export type SystemPromptConfig =
+  | string
+  | {
+      type: 'preset';
+      preset: 'claude_code';
+      /** Content to append to the preset system prompt */
+      append?: string;
+    };
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -192,6 +209,14 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt configuration.
+   *
+   * Issue #1315: Used for SOUL.md personality injection.
+   * When using `{ type: 'preset', preset: 'claude_code', append: '...' }`,
+   * the append content will be added to Claude Code's default system prompt.
+   */
+  systemPrompt?: SystemPromptConfig;
 }
 
 // ============================================================================
