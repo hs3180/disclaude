@@ -314,3 +314,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Context compression module (Issue #1311)
+export {
+  ContextCompressor,
+  type ContextCompressionConfig,
+  type CompressionResult,
+  type CompressionStats,
+  type MessageBoundary,
+} from './compression/index.js';

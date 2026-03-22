@@ -270,6 +270,22 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Context compression configuration (Issue #1311).
+ * Controls AI-based context compression that replaces hard truncation
+ * with intelligent summarization of older chat history.
+ */
+export interface ContextCompressionConfig {
+  /** Enable/disable AI-based context compression (default: false) */
+  enabled?: boolean;
+  /** Character threshold for triggering compression (default: 3000) */
+  threshold?: number;
+  /** Number of recent messages to keep intact (default: 4) */
+  keepRecentMessages?: number;
+  /** Maximum tokens for AI summary (default: 500) */
+  summaryMaxTokens?: number;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +321,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Context compression configuration (Issue #1311) */
+  contextCompression?: ContextCompressionConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
+import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, ContextCompressor, getProvider, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 // Type alias for backward compatibility within this module
@@ -73,6 +73,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Context compression (Issue #1311)
+  private readonly contextCompressor: ContextCompressor;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -100,6 +103,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
+
+    // Initialize context compressor (Issue #1311)
+    this.contextCompressor = new ContextCompressor(
+      Config.getContextCompressionConfig(),
+      this.logger
+    );
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -174,15 +183,56 @@ export class Pilot extends BaseAgent implements ChatAgent {
       const history = await this.callbacks.getChatHistory(this.boundChatId);
 
       if (history && history.trim()) {
-        // Truncate if too long
-        this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
-          ? history.slice(-sessionConfig.maxContextLength)
-          : history;
+        // Issue #1311: Use AI-based compression if enabled, otherwise truncate
+        if (this.contextCompressor.isEnabled()) {
+          const result = await this.contextCompressor.compress(
+            history,
+            async (prompt: string) => {
+              // Use the current AI provider for summarization
+              const provider = getProvider();
+              const agentConfig = Config.getAgentConfig();
+              const sdkOptions = {
+                cwd: Config.getWorkspaceDir(),
+                settingSources: ['context-compression'],
+                model: agentConfig.model || undefined,
+              };
 
-        this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
-          'Persisted chat history loaded successfully'
-        );
+              let summary = '';
+              for await (const message of provider.queryOnce(prompt, sdkOptions)) {
+                if (message.type === 'result') {
+                  break;
+                }
+                if (message.content) {
+                  summary += message.content;
+                }
+              }
+
+              return summary.trim();
+            }
+          );
+
+          this.persistedHistoryContext = result.content;
+          this.logger.info(
+            {
+              chatId: this.boundChatId,
+              historyLength: this.persistedHistoryContext.length,
+              compressed: result.compressed,
+              originalLength: result.originalLength,
+              charsSaved: result.originalLength - result.compressedLength,
+            },
+            'Persisted chat history loaded with context compression'
+          );
+        } else {
+          // Original behavior: hard truncation
+          this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
+            ? history.slice(-sessionConfig.maxContextLength)
+            : history;
+
+          this.logger.info(
+            { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
+            'Persisted chat history loaded successfully'
+          );
+        }
       } else {
         this.logger.debug(
           { chatId: this.boundChatId },

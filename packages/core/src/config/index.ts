@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  ContextCompressionConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -400,5 +401,16 @@ export class Config {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
     };
+  }
+
+  /**
+   * Get context compression configuration.
+   * Controls AI-based context compression for chat history.
+   * @see Issue #1311
+   *
+   * @returns Context compression configuration with defaults
+   */
+  static getContextCompressionConfig(): ContextCompressionConfig {
+    return fileConfigOnly.contextCompression || {};
   }
 }

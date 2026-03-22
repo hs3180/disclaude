@@ -150,6 +150,26 @@ export const WS_HEALTH = {
 } as const;
 
 /**
+ * Context compression configuration (Issue #1311).
+ *
+ * Controls AI-based context compression that replaces hard truncation
+ * with intelligent summarization of older chat history.
+ */
+export const CONTEXT_COMPRESSION = {
+  /** Enable AI-based context compression by default */
+  DEFAULT_ENABLED: false,
+
+  /** Character threshold for triggering compression */
+  DEFAULT_THRESHOLD: 3000,
+
+  /** Number of recent messages to keep intact (not summarized) */
+  DEFAULT_KEEP_RECENT_MESSAGES: 4,
+
+  /** Maximum tokens for the AI-generated summary */
+  DEFAULT_SUMMARY_MAX_TOKENS: 500,
+} as const;
+
+/**
  * Error codes that should trigger a retry
  */
 export const RETRYABLE_ERROR_CODES = [
