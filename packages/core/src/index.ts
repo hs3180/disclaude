@@ -139,6 +139,16 @@ export {
   AgentPool,
 } from './agents/agent-pool.js';
 
+// PilotCallbacks (Issue #1396)
+export {
+  type PilotCallbacks,
+  type FeedbackContext,
+  type FileClientInterface,
+  type WebSocketLike,
+  type CreatePilotCallbacksOptions,
+  createPilotCallbacks,
+} from './agents/pilot-callbacks.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,

@@ -25,7 +25,14 @@
 
 import * as path from 'path';
 import WebSocket from 'ws';
-import { createLogger, type WorkerNodeConfig, type NodeCapabilities } from '@disclaude/core';
+import {
+  createLogger,
+  type WorkerNodeConfig,
+  type NodeCapabilities,
+  createPilotCallbacks,
+  type PilotCallbacks,
+  type FeedbackContext,
+} from '@disclaude/core';
 import {
   ScheduleManager,
   Scheduler,
@@ -37,7 +44,6 @@ import type {
   WorkerNodeDependencies,
   ChatAgent,
   AgentPoolInterface,
-  PilotCallbacks,
   MessageCallbacks,
   PromptMessage,
   CommandMessage,
@@ -48,14 +54,6 @@ import type {
 } from './types.js';
 
 const logger = createLogger('WorkerNode');
-
-/**
- * Feedback context for execution.
- */
-interface FeedbackContext {
-  sendFeedback: (feedback: FeedbackMessage) => void;
-  threadId?: string;
-}
 
 /**
  * Simple AgentPool implementation for WorkerNode.
@@ -233,107 +231,15 @@ export class WorkerNode {
       return this.deps.createChatAgent(_chatId, callbacks);
     });
 
-    // Create a shared callbacks object that will be used for all agents
-    const createCallbacks = (_chatId: string): PilotCallbacks => ({
-      sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId_);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'text', chatId: chatId_, text, threadId: threadMessageId || ctx.threadId });
-        } else {
-          // Issue #935: Fallback to direct WebSocket send when no active feedback channel
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'text', chatId: chatId_, text, threadId: threadMessageId }));
-            this.deps.logger.debug({ chatId: chatId_ }, 'Message sent via WebSocket fallback');
-          } else {
-            this.deps.logger.warn({ chatId: chatId_ }, 'No active feedback channel and WebSocket not connected for sendMessage');
-          }
-        }
-        return Promise.resolve();
-      },
-      sendCard: (chatId_: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId_);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId || ctx.threadId });
-        } else {
-          // Issue #935: Fallback to direct WebSocket send when no active feedback channel
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId }));
-            this.deps.logger.debug({ chatId: chatId_ }, 'Card sent via WebSocket fallback');
-          } else {
-            this.deps.logger.warn({ chatId: chatId_ }, 'No active feedback channel and WebSocket not connected for sendCard');
-          }
-        }
-        return Promise.resolve();
-      },
-      sendFile: async (chatId_: string, filePath: string) => {
-        const ctx = this.activeFeedbackChannels.get(chatId_);
-
-        try {
-          // Upload file to Primary Node
-          const fileRef = await this.fileClient.uploadFile(filePath, chatId_);
-
-          if (ctx) {
-            // Send fileRef to Primary Node via active feedback channel
-            ctx.sendFeedback({
-              type: 'file',
-              chatId: chatId_,
-              fileRef,
-              fileName: fileRef.fileName,
-              fileSize: fileRef.size,
-              mimeType: fileRef.mimeType,
-              threadId: ctx.threadId,
-            });
-          } else {
-            // Issue #935: Fallback to direct WebSocket send when no active feedback channel
-            if (this.ws?.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({
-                type: 'file',
-                chatId: chatId_,
-                fileRef,
-                fileName: fileRef.fileName,
-                fileSize: fileRef.size,
-                mimeType: fileRef.mimeType,
-              }));
-              this.deps.logger.debug({ chatId: chatId_ }, 'File sent via WebSocket fallback');
-            } else {
-              this.deps.logger.warn({ chatId: chatId_ }, 'No active feedback channel and WebSocket not connected for sendFile');
-            }
-          }
-        } catch (error) {
-          this.deps.logger.error({ err: error, chatId: chatId_, filePath }, 'Failed to upload file');
-          if (ctx) {
-            ctx.sendFeedback({
-              type: 'error',
-              chatId: chatId_,
-              error: `Failed to send file: ${(error as Error).message}`,
-              threadId: ctx.threadId,
-            });
-          } else if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-              type: 'error',
-              chatId: chatId_,
-              error: `Failed to send file: ${(error as Error).message}`,
-            }));
-          }
-        }
-      },
-      onDone: (chatId_: string, threadMessageId?: string): Promise<void> => {
-        const ctx = this.activeFeedbackChannels.get(chatId_);
-        if (ctx) {
-          ctx.sendFeedback({ type: 'done', chatId: chatId_, threadId: threadMessageId || ctx.threadId });
-          this.deps.logger.info({ chatId: chatId_ }, 'Task completed, sent done signal');
-        } else {
-          // Issue #935: Fallback to direct WebSocket send when no active feedback channel
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'done', chatId: chatId_, threadId: threadMessageId }));
-            this.deps.logger.debug({ chatId: chatId_ }, 'Done signal sent via WebSocket fallback');
-          } else {
-            this.deps.logger.warn({ chatId: chatId_ }, 'No active feedback channel and WebSocket not connected for onDone');
-          }
-        }
-        return Promise.resolve();
-      },
-    });
+    // Issue #1396: Create callbacks using factory function
+    const createCallbacks = (_chatId: string): PilotCallbacks => {
+      return createPilotCallbacks({
+        logger: this.deps.logger,
+        feedbackChannels: this.activeFeedbackChannels,
+        ws: this.ws,
+        fileClient: this.fileClient,
+      });
+    };
 
     // Initialize Schedule Manager and Scheduler
     const workspaceDir = this.deps.getWorkspaceDir();
@@ -511,72 +417,13 @@ export class WorkerNode {
 
           try {
             // Issue #644: Get ChatAgent for this chatId from AgentPool
-            // Create callbacks for this specific chatId
-            const callbacks: PilotCallbacks = {
-              sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'text', chatId: chatId_, text, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'text', chatId: chatId_, text, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-              sendCard: (chatId_: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-              sendFile: async (chatId_: string, filePath: string) => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                try {
-                  const fileRef = await this.fileClient.uploadFile(filePath, chatId_);
-                  if (ctx) {
-                    ctx.sendFeedback({
-                      type: 'file',
-                      chatId: chatId_,
-                      fileRef,
-                      fileName: fileRef.fileName,
-                      fileSize: fileRef.size,
-                      mimeType: fileRef.mimeType,
-                      threadId: ctx.threadId,
-                    });
-                  } else if (this.ws?.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
-                      type: 'file',
-                      chatId: chatId_,
-                      fileRef,
-                      fileName: fileRef.fileName,
-                      fileSize: fileRef.size,
-                      mimeType: fileRef.mimeType,
-                    }));
-                  }
-                } catch (error) {
-                  this.deps.logger.error({ err: error, chatId: chatId_, filePath }, 'Failed to upload file');
-                  if (ctx) {
-                    ctx.sendFeedback({
-                      type: 'error',
-                      chatId: chatId_,
-                      error: `Failed to send file: ${(error as Error).message}`,
-                      threadId: ctx.threadId,
-                    });
-                  }
-                }
-              },
-              onDone: (chatId_: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'done', chatId: chatId_, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'done', chatId: chatId_, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-            };
+            // Issue #1396: Create callbacks using factory function
+            const callbacks = createPilotCallbacks({
+              logger: this.deps.logger,
+              feedbackChannels: this.activeFeedbackChannels,
+              ws: this.ws,
+              fileClient: this.fileClient,
+            });
 
             const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
             agent?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
@@ -615,65 +462,13 @@ export class WorkerNode {
               return `User clicked '${buttonText}' button`;
             })();
 
-            // Get the agent and process the card action as a message
-            // Create callbacks for this specific chatId
-            const callbacks: PilotCallbacks = {
-              sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'text', chatId: chatId_, text, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'text', chatId: chatId_, text, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-              sendCard: (chatId_: string, card: Record<string, unknown>, description?: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'card', chatId: chatId_, card, text: description, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-              sendFile: async (chatId_: string, filePath: string) => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                try {
-                  const fileRef = await this.fileClient.uploadFile(filePath, chatId_);
-                  if (ctx) {
-                    ctx.sendFeedback({
-                      type: 'file',
-                      chatId: chatId_,
-                      fileRef,
-                      fileName: fileRef.fileName,
-                      fileSize: fileRef.size,
-                      mimeType: fileRef.mimeType,
-                      threadId: ctx.threadId,
-                    });
-                  } else if (this.ws?.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
-                      type: 'file',
-                      chatId: chatId_,
-                      fileRef,
-                      fileName: fileRef.fileName,
-                      fileSize: fileRef.size,
-                      mimeType: fileRef.mimeType,
-                    }));
-                  }
-                } catch (error) {
-                  this.deps.logger.error({ err: error, chatId: chatId_, filePath }, 'Failed to upload file');
-                }
-              },
-              onDone: (chatId_: string, threadMessageId?: string): Promise<void> => {
-                const ctx = this.activeFeedbackChannels.get(chatId_);
-                if (ctx) {
-                  ctx.sendFeedback({ type: 'done', chatId: chatId_, threadId: threadMessageId || ctx.threadId });
-                } else if (this.ws?.readyState === WebSocket.OPEN) {
-                  this.ws.send(JSON.stringify({ type: 'done', chatId: chatId_, threadId: threadMessageId }));
-                }
-                return Promise.resolve();
-              },
-            };
+            // Issue #1396: Create callbacks using factory function
+            const callbacks = createPilotCallbacks({
+              logger: this.deps.logger,
+              feedbackChannels: this.activeFeedbackChannels,
+              ws: this.ws,
+              fileClient: this.fileClient,
+            });
 
             const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
             if (agent) {

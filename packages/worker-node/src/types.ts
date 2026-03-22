@@ -9,7 +9,10 @@
  */
 
 import type { Logger } from 'pino';
-import type { FileRef } from '@disclaude/core';
+import type { FileRef, PilotCallbacks } from '@disclaude/core';
+
+// Re-export PilotCallbacks from core for backward compatibility
+export type { PilotCallbacks } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgent Interface
@@ -101,22 +104,6 @@ export interface AgentPoolInterface {
 // ============================================================================
 // Agent Factory Functions
 // ============================================================================
-
-/**
- * PilotCallbacks - Callbacks for ChatAgent to send messages.
- *
- * Used when creating ChatAgent instances.
- */
-export interface PilotCallbacks {
-  /** Send a text message */
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-  /** Send an interactive card */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
-  /** Send a file */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
-  /** Called when query completes */
-  onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
-}
 
 /**
  * ChatAgentFactory - Factory function to create ChatAgent instances.
