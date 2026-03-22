@@ -4,11 +4,16 @@
  * This tool provides a simplified interface for agents to ask users questions
  * with predefined options. It builds on top of send_interactive_message.
  *
+ * Issue #946: Enhanced with createGroup support for "御书房" review experience.
+ * When createGroup is true, a new independent group chat is created and the
+ * question is sent there instead of the original chat.
+ *
  * @module mcp-server/tools/ask-user
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, getIpcClient } from '@disclaude/core';
 import { send_interactive_message } from './interactive-message.js';
+import { isIpcAvailable } from './ipc-utils.js';
 import type { AskUserResult, AskUserOptions } from './types.js';
 
 const logger = createLogger('AskUser');
@@ -76,11 +81,43 @@ function buildActionPrompts(
 }
 
 /**
+ * Create a group chat via IPC.
+ *
+ * @returns The created group's chatId and name, or null on failure.
+ */
+async function createGroupViaIpc(options?: {
+  groupName?: string;
+  members?: string[];
+}): Promise<{ chatId: string; chatName: string } | null> {
+  const ipcClient = getIpcClient();
+  const result = await ipcClient.feishuCreateGroup(options);
+
+  if (result.success && result.chatId) {
+    return {
+      chatId: result.chatId,
+      chatName: result.chatName || result.chatId,
+    };
+  }
+
+  logger.error({
+    error: result.error,
+    errorType: result.errorType,
+  }, 'Failed to create group via IPC');
+
+  return null;
+}
+
+/**
  * Ask the user a question with predefined options.
  *
  * This tool provides a Human-in-the-Loop capability for agents.
  * When the user selects an option, the agent receives a message
  * with the selection and can continue execution accordingly.
+ *
+ * Issue #946: When `createGroup` is true, a new independent group chat is
+ * automatically created and the question is sent there. This enables the
+ * "御书房" (Imperial Study) review experience where review discussions
+ * happen in dedicated, isolated group chats.
  *
  * @example
  * ```typescript
@@ -99,18 +136,17 @@ function buildActionPrompts(
  *
  * @example
  * ```typescript
- * // PR Review workflow (MVP use case from Issue #532)
+ * // Issue #946: PR Review in independent group chat (御书房 experience)
  * await ask_user({
- *   question: `发现新的 PR:\n\n**PR #123**: Fix authentication bug\n\n作者: @developer\n\n请选择处理方式:`,
+ *   question: '**代码变更审核**\n\n已完成认证模块重构...',
  *   options: [
- *     { text: '✓ 合并', value: 'merge', style: 'primary', action: '合并此 PR' },
- *     { text: '✗ 关闭', value: 'close', style: 'danger', action: '关闭此 PR' },
- *     { text: '⏳ 等待', value: 'wait', action: '标记为等待中，稍后再处理' },
- *     { text: '📝 请求修改', value: 'request_changes', action: '请求作者修改' },
+ *     { text: '✅ 批准', value: 'approve', style: 'primary', action: '合并代码' },
+ *     { text: '❌ 拒绝', value: 'reject', style: 'danger', action: '回滚更改' },
+ *     { text: '✏️ 需要修改', value: 'revise', action: '根据反馈修改' },
  *   ],
- *   context: 'PR #123 from scheduled scan',
- *   title: '🔔 PR 审核请求',
  *   chatId: 'oc_xxx',
+ *   createGroup: true,
+ *   groupName: '代码审核 - PR #123',
  * });
  * ```
  */
@@ -127,14 +163,42 @@ export async function ask_user(params: {
   chatId: string;
   /** Optional parent message ID for thread reply */
   parentMessageId?: string;
+  /**
+   * Whether to create a new independent group chat for this question.
+   * Issue #946: Enable "御书房" review experience.
+   * When true, a new group chat is created and the question is sent there.
+   */
+  createGroup?: boolean;
+  /**
+   * Name for the new group chat (only used when createGroup is true).
+   * If not provided, a default name will be auto-generated.
+   */
+  groupName?: string;
+  /**
+   * Member open_ids to add to the new group chat (only used when createGroup is true).
+   */
+  members?: string[];
 }): Promise<AskUserResult> {
-  const { question, options, context, title, chatId, parentMessageId } = params;
+  const {
+    question,
+    options,
+    context,
+    title,
+    chatId,
+    parentMessageId,
+    createGroup: shouldCreateGroup,
+    groupName,
+    members,
+  } = params;
 
   logger.info({
     chatId,
     questionLength: question?.length ?? 0,
     optionCount: options?.length ?? 0,
     hasContext: !!context,
+    createGroup: shouldCreateGroup,
+    groupName,
+    memberCount: members?.length ?? 0,
   }, 'ask_user called');
 
   try {
@@ -179,35 +243,81 @@ export async function ask_user(params: {
       }
     }
 
+    // Issue #946: Create group if requested
+    let targetChatId = chatId;
+    let createdGroupName: string | undefined;
+
+    if (shouldCreateGroup) {
+      // Check IPC availability
+      if (!(await isIpcAvailable())) {
+        return {
+          success: false,
+          error: 'IPC service unavailable',
+          message: '❌ 无法创建群聊：IPC 服务不可用。请检查 Primary Node 是否正在运行。',
+        };
+      }
+
+      logger.info({
+        groupName,
+        memberCount: members?.length ?? 0,
+        sourceChatId: chatId,
+      }, 'Creating group chat for ask_user');
+
+      const groupInfo = await createGroupViaIpc({ groupName, members });
+      if (!groupInfo) {
+        return {
+          success: false,
+          error: 'Failed to create group',
+          message: '❌ 创建群聊失败，请稍后重试',
+        };
+      }
+
+      targetChatId = groupInfo.chatId;
+      createdGroupName = groupInfo.chatName;
+
+      logger.info({
+        newChatId: groupInfo.chatId,
+        chatName: groupInfo.chatName,
+      }, 'Group chat created for ask_user');
+    }
+
     // Build card and action prompts
     const card = buildQuestionCard(question, options, title);
     const actionPrompts = buildActionPrompts(options, context);
 
     logger.debug({
-      chatId,
+      chatId: targetChatId,
       cardStructure: JSON.stringify(card).slice(0, 200),
       promptKeys: Object.keys(actionPrompts),
     }, 'Built card and prompts');
 
-    // Send the interactive message
+    // Send the interactive message to the target chat
+    // Note: parentMessageId is not used when creating a new group
     const result = await send_interactive_message({
       card,
       actionPrompts,
-      chatId,
-      parentMessageId,
+      chatId: targetChatId,
+      ...(shouldCreateGroup ? {} : { parentMessageId }),
     });
 
     if (result.success) {
       logger.info({
-        chatId,
+        chatId: targetChatId,
         messageId: result.messageId,
         optionCount: options.length,
+        createdGroup: !!createdGroupName,
       }, 'Question sent successfully');
+
+      const groupInfo = createdGroupName
+        ? ` (群聊: ${createdGroupName})`
+        : '';
 
       return {
         success: true,
-        message: `✅ 问题已发送，等待用户选择 (${options.length} 个选项)`,
+        message: `✅ 问题已发送${groupInfo}，等待用户选择 (${options.length} 个选项)`,
         messageId: result.messageId,
+        chatId: targetChatId,
+        groupName: createdGroupName,
       };
     } else {
       return {

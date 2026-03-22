@@ -29,6 +29,7 @@ import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
+import { getGroupService } from './platforms/feishu/group-service.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -434,6 +435,22 @@ async function main(): Promise<void> {
         // eslint-disable-next-line require-await
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
+        },
+        // Issue #946: Enable ask_user to auto-create independent group chats
+        createGroup: async (options: {
+          groupName?: string;
+          members?: string[];
+        }) => {
+          const groupService = getGroupService();
+          const client = feishuChannel.getLarkClient();
+          const groupInfo = await groupService.createGroup(client, {
+            topic: options.groupName,
+            members: options.members,
+          });
+          return {
+            chatId: groupInfo.chatId,
+            chatName: groupInfo.name,
+          };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

@@ -563,6 +563,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Get the underlying Lark client instance.
+   * Issue #946: Used by createGroup IPC handler to access Feishu API.
+   *
+   * @throws Error if the channel has not been started (client not initialized)
+   */
+  getLarkClient(): lark.Client {
+    if (!this.client) {
+      throw new Error('Lark client not initialized. Channel must be started first.');
+    }
+    return this.client;
+  }
+
   // ─── WebSocket health monitoring (Issue #1351) ────────────────────────
 
   /**

@@ -87,5 +87,9 @@ export interface AskUserResult {
   success: boolean;
   message: string;
   messageId?: string;
+  /** The chat ID where the message was sent (useful when createGroup is used) */
+  chatId?: string;
+  /** The group name if a new group was created */
+  groupName?: string;
   error?: string;
 }

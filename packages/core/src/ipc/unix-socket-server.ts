@@ -64,6 +64,14 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  /**
+   * Create a new group chat.
+   * Issue #946: Enable ask_user to auto-create independent group chats.
+   */
+  createGroup?: (options: {
+    groupName?: string;
+    members?: string[];
+  }) => Promise<{ chatId: string; chatName: string }>;
 }
 
 /**
@@ -208,6 +216,42 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu group operations (Issue #946)
+        case 'feishuCreateGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          if (!feishuHandlers.createGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createGroup handler not registered',
+            };
+          }
+          const { groupName, members } =
+            request.payload as IpcRequestPayloads['feishuCreateGroup'];
+          try {
+            const groupInfo = await feishuHandlers.createGroup({ groupName, members });
+            return {
+              id: request.id,
+              success: true,
+              payload: {
+                success: true,
+                chatId: groupInfo.chatId,
+                chatName: groupInfo.chatName,
+              },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
