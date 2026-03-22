@@ -39,3 +39,15 @@ export {
   type ReflectPhaseExecutor,
   type TerminationCondition,
 } from './reflection.js';
+
+// ETA Tracker (Issue #1234)
+export { EtaTracker } from './eta-tracker.js';
+export type {
+  EtaTaskRecord,
+  EtaRule,
+  EtaTaskBaseline,
+  EtaPrediction,
+  EtaTrackerOptions,
+  EtaStats,
+  EtaTaskType,
+} from './eta-types.js';
