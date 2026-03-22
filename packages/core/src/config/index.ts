@@ -83,6 +83,9 @@ export class Config {
           // Skills configuration - loaded from package installation directory
           static readonly SKILLS_DIR = Config.getBuiltinSkillsDir();
 
+          // Agents configuration - loaded from package installation directory
+          static readonly AGENTS_DIR = Config.getBuiltinAgentsDir();
+
   /**
    * Get the built-in skills directory from package installation.
    * Skills are bundled with the package and loaded from the install location.
@@ -133,6 +136,40 @@ export class Config {
   }
 
   /**
+   * Get the built-in agents directory from package installation.
+   * Agent definitions are bundled with the package and loaded from the install location.
+   *
+   * Follows the same resolution logic as getBuiltinSkillsDir().
+   *
+   * @returns Absolute path to the agents directory
+   */
+  private static getBuiltinAgentsDir(): string {
+    if (typeof import.meta.url === 'undefined') {
+      return '/app/agents';
+    }
+
+    const moduleUrl = fileURLToPath(import.meta.url);
+    const moduleDir = path.dirname(moduleUrl);
+    const isBundled = path.basename(moduleDir) === 'dist';
+
+    let agentsDir: string;
+    if (isBundled) {
+      agentsDir = path.resolve(moduleDir, '..', 'agents');
+    } else {
+      agentsDir = path.resolve(moduleDir, '..', '..', 'agents');
+    }
+
+    if (!existsSync(agentsDir)) {
+      const cwdAgents = path.resolve(process.cwd(), 'agents');
+      if (existsSync(cwdAgents)) {
+        return cwdAgents;
+      }
+    }
+
+    return agentsDir;
+  }
+
+  /**
    * Get the raw configuration object.
    * Returns preloaded config if set via CLI --config, otherwise returns default loaded config.
    *
@@ -175,6 +212,15 @@ export class Config {
    */
   static getSkillsDir(): string {
     return this.SKILLS_DIR;
+  }
+
+  /**
+   * Get the agents directory.
+   *
+   * @returns Absolute path to the agents directory
+   */
+  static getAgentsDir(): string {
+    return this.AGENTS_DIR;
   }
 
   /**
