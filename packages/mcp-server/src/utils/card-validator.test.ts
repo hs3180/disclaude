@@ -1,5 +1,5 @@
 /**
- * Tests for Feishu card validation utilities (src/mcp/utils/card-validator.ts)
+ * Tests for Feishu card validation utilities (packages/mcp-server/src/utils/card-validator.ts)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -146,27 +146,27 @@ describe('isValidFeishuCard', () => {
 describe('getCardValidationError', () => {
   describe('null and non-object inputs', () => {
     it('should return error for null', () => {
-      expect(getCardValidationError(null)).toBe('content is null');
+      expect(getCardValidationError(null)).toBe('card is null - must be an object with config/header/elements');
     });
 
     it('should return error for undefined', () => {
-      expect(getCardValidationError(undefined)).toBe('content is undefined, expected object');
+      expect(getCardValidationError(undefined)).toBe('card is undefined - must be an object with config/header/elements');
     });
 
     it('should return error for string', () => {
-      expect(getCardValidationError('string')).toBe('content is string, expected object');
+      expect(getCardValidationError('string')).toBe('card is string - must be an object with config/header/elements');
     });
 
     it('should return error for number', () => {
-      expect(getCardValidationError(42)).toBe('content is number, expected object');
+      expect(getCardValidationError(42)).toBe('card is number - must be an object with config/header/elements');
     });
 
     it('should return error for boolean', () => {
-      expect(getCardValidationError(true)).toBe('content is boolean, expected object');
+      expect(getCardValidationError(true)).toBe('card is boolean - must be an object with config/header/elements');
     });
 
     it('should return error for array', () => {
-      expect(getCardValidationError([1, 2, 3])).toBe('content is array, expected object with config/header/elements');
+      expect(getCardValidationError([1, 2, 3])).toBe('card is an array - must be an object with config/header/elements, not an array');
     });
   });
 
@@ -221,7 +221,7 @@ describe('getCardValidationError', () => {
         elements: [],
       };
 
-      expect(getCardValidationError(card)).toBe('header must be an object');
+      expect(getCardValidationError(card)).toBe('header must be an object with title');
     });
 
     it('should report header is null', () => {
@@ -231,7 +231,7 @@ describe('getCardValidationError', () => {
         elements: [],
       };
 
-      expect(getCardValidationError(card)).toBe('header must be an object');
+      expect(getCardValidationError(card)).toBe('header must be an object with title');
     });
 
     it('should report missing header.title', () => {
@@ -267,19 +267,38 @@ describe('getCardValidationError', () => {
     });
   });
 
+  describe('config validation', () => {
+    it('should report config is not an object', () => {
+      const card = {
+        config: 'not-an-object',
+        header: { title: 'Title' },
+        elements: [],
+      };
+
+      expect(getCardValidationError(card)).toBe('config must be an object');
+    });
+
+    it('should report config is null', () => {
+      const card = {
+        config: null,
+        header: { title: 'Title' },
+        elements: [],
+      };
+
+      expect(getCardValidationError(card)).toBe('config must be an object');
+    });
+  });
+
   describe('valid cards', () => {
-    it('should return unknown error for valid card (edge case)', () => {
-      // The function returns 'unknown validation error' when all checks pass
-      // This happens because the validation logic in isValidFeishuCard
-      // and getCardValidationError are slightly different
+    it('should return generic error message for valid card (edge case)', () => {
+      // When the card is actually valid, getCardValidationError returns a generic message
       const card = {
         config: {},
         header: { title: 'Title' },
         elements: [],
       };
 
-      // When the card is actually valid, getCardValidationError returns 'unknown validation error'
-      expect(getCardValidationError(card)).toBe('unknown validation error');
+      expect(getCardValidationError(card)).toBe('invalid card structure - ensure card has config (object), header (object with title), and elements (array)');
     });
   });
 });
