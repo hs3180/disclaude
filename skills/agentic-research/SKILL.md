@@ -171,7 +171,12 @@ Sources:
 "
 ```
 
-## Related
+## Related Skills
 
+- **`agentic-research-interactive`**: For complex research tasks that benefit from outline negotiation and phased execution. Use this skill when the research topic is complex enough that the user should review and approve the research direction before execution.
+
+## Related Issues
+
+- Issue #1339: Agentic Research interactive workflow feature request
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
