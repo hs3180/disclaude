@@ -5,10 +5,15 @@
  * the SDK's pingLoop only sends Pings without checking Pong responses, leaving
  * readyState as OPEN with no messages flowing.
  *
+ * Addresses Issue #1437: Adds a custom ping loop with shorter interval (5s vs
+ * SDK's 120s) to reduce dead connection detection from ~5 minutes to ~15 seconds.
+ *
  * This module wraps the Feishu SDK's WSClient lifecycle with:
  * - **Pong detection**: Accesses the SDK's internal `wsConfig` to obtain the raw
  *   `ws` WebSocket instance after `WSClient.start()` completes, then attaches a
  *   `message` listener for transport-level Pong frame detection.
+ * - **Custom ping loop**: Sends application-layer ping frames at 5s intervals via
+ *   the SDK's `sendMessage()` method, independent of the SDK's own pingLoop.
  * - **Auto-reconnect**: Exponential backoff with jitter when dead connections are detected
  * - **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped)
  * - **Observability**: Emits events and logs for connection lifecycle monitoring,
@@ -29,6 +34,21 @@
  * Pong control frames — triggers our liveness timer reset. This is the primary
  * signal for dead connection detection, even when no user messages arrive.
  *
+ * ### How the custom ping loop works (Issue #1437)
+ *
+ * The SDK's built-in pingLoop runs at 120s intervals, which is too slow for
+ * timely dead connection detection. This manager adds an independent ping loop
+ * that sends the same application-layer ping frame format at 5s intervals:
+ *
+ * ```
+ * { headers: [{ key: "type", value: "ping" }], service: serviceId, method: 0, SeqID: 0, LogID: 0 }
+ * ```
+ *
+ * The SDK's `sendMessage()` method is used to encode and send the frame via
+ * protobuf. Both the SDK's pingLoop and our custom loop run concurrently —
+ * the server responds to each ping with a Pong, and our Pong detection
+ * captures all of them.
+ *
  * If internal WebSocket access fails (e.g., SDK internal changes), the manager
  * falls back to `recordMessageReceived()` calls from the FeishuChannel event handler.
  *
@@ -45,6 +65,7 @@
  *
  * @module channels/feishu/ws-connection-manager
  * @see https://github.com/hs3180/disclaude/issues/1351
+ * @see https://github.com/hs3180/disclaude/issues/1437
  */
 
 import { EventEmitter } from 'events';
@@ -71,6 +92,8 @@ export interface WsConnectionManagerEvents {
   heartbeat: [lastReceived: number];
   /** Pong control frame received from server */
   pong: [rttMs: number];
+  /** Custom ping sent (Issue #1437) */
+  ping: [intervalMs: number];
   /** Dead connection detected, initiating reconnect */
   deadConnection: [elapsedMs: number];
   /** Reconnect attempt succeeded */
@@ -113,6 +136,8 @@ export interface WsConnectionManagerConfig {
   reconnectMaxDelayMs?: number;
   /** Override reconnect max attempts (-1 = infinite) */
   reconnectMaxAttempts?: number;
+  /** Override custom ping interval (ms). Set to 0 to disable custom ping loop. */
+  customPingIntervalMs?: number;
 }
 
 /**
@@ -253,6 +278,10 @@ export function isPongFrame(data: Buffer | ArrayBuffer | Uint8Array): boolean {
  * If internal WebSocket access fails (e.g., SDK internal API changes),
  * the manager falls back to relying on `recordMessageReceived()` calls from
  * FeishuChannel event handlers. This is less reliable for idle bots but still functional.
+ *
+ * If the custom ping loop cannot be started (e.g., `sendMessage()` unavailable),
+ * health monitoring still works using the SDK's own 120s pingLoop Pong responses.
+ * The dead connection detection will just be slower in that case.
  */
 export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents> {
   private readonly config: WsConnectionManagerConfig;
@@ -272,6 +301,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private lastPingSentAt: number = 0;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private interceptedWs?: { instance: any; onMessageBound: (...args: unknown[]) => void };
+
+  // Custom ping loop (Issue #1437)
+  private customPingTimer?: ReturnType<typeof setInterval>;
+  private customPingCount: number = 0;
+  private customPingIntervalMs: number;
 
   // Health monitoring — application level (fallback)
   private lastMessageReceivedAt: number = 0;
@@ -305,11 +339,14 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       ?? WS_HEALTH.RECONNECT.MAX_DELAY_MS;
     this.reconnectMaxAttempts = config.reconnectMaxAttempts
       ?? WS_HEALTH.RECONNECT.MAX_ATTEMPTS;
+    this.customPingIntervalMs = config.customPingIntervalMs
+      ?? WS_HEALTH.CUSTOM_PING_INTERVAL_MS;
 
     logger.info(
       {
         deadConnectionTimeoutMs: this.deadConnectionTimeoutMs,
         healthCheckIntervalMs: this.healthCheckIntervalMs,
+        customPingIntervalMs: this.customPingIntervalMs,
         reconnectBaseDelayMs: this.reconnectBaseDelayMs,
         reconnectMaxDelayMs: this.reconnectMaxDelayMs,
         reconnectMaxAttempts: this.reconnectMaxAttempts,
@@ -337,6 +374,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     timeSinceLastPongMs: number;
     timeSinceLastMessageMs: number;
     pongCount: number;
+    customPingCount: number;
+    customPingIntervalMs: number;
     reconnectAttempt: number;
     isConnected: boolean;
     hasWsInterception: boolean;
@@ -352,6 +391,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         ? Date.now() - this.lastMessageReceivedAt
         : 0,
       pongCount: this.pongCount,
+      customPingCount: this.customPingCount,
+      customPingIntervalMs: this.customPingIntervalMs,
       reconnectAttempt: this.reconnectAttempt,
       isConnected: this._state === 'connected',
       hasWsInterception: !!this.interceptedWs,
@@ -387,6 +428,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     logger.info('WsConnectionManager stopping');
 
     this.stopHealthCheck();
+    this.stopCustomPingLoop();
     this.clearReconnectTimer();
     this.closeClient();
     this.detachWsListener();
@@ -544,6 +586,114 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     }
   }
 
+  // ─── Custom ping loop (Issue #1437) ────────────────────────────────────
+
+  /**
+   * Start the custom ping loop that sends application-layer ping frames
+   * at a configurable interval (default 5s).
+   *
+   * Uses the SDK's `sendMessage()` method to encode and send the ping frame
+   * via protobuf. This is the same mechanism as the SDK's internal `pingLoop()`,
+   * but with a much shorter interval for faster dead connection detection.
+   *
+   * The SDK's own pingLoop (120s default) continues running concurrently.
+   * Both loops send pings independently; the server responds to each with
+   * a Pong, and our Pong detection captures all of them.
+   *
+   * Graceful degradation:
+   * - If `wsClient.sendMessage` is not available (SDK internal change), the
+   *   loop is silently skipped. Health monitoring falls back to Pong detection
+   *   from the SDK's pingLoop only.
+   * - If `customPingIntervalMs` is 0, the custom ping loop is disabled.
+   */
+  private startCustomPingLoop(): void {
+    this.stopCustomPingLoop();
+
+    if (!this.customPingIntervalMs || this.customPingIntervalMs <= 0) {
+      logger.debug('Custom ping loop disabled (interval is 0 or negative)');
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = this.wsClient as any;
+    if (!client || typeof client.sendMessage !== 'function') {
+      logger.debug('SDK sendMessage() not available — custom ping loop skipped');
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wsConfig = client.wsConfig as any;
+    if (!wsConfig || typeof wsConfig.getWS !== 'function') {
+      logger.debug('SDK wsConfig.getWS() not available — custom ping loop skipped');
+      return;
+    }
+
+    // Get serviceId from SDK's wsConfig (same source as SDK's pingLoop)
+    const wsParams = wsConfig.getWS();
+    const serviceId = wsParams?.serviceId;
+    if (serviceId === undefined) {
+      logger.debug('serviceId not available in wsConfig — custom ping loop skipped');
+      return;
+    }
+
+    this.customPingTimer = setInterval(() => {
+      try {
+        // Construct the same ping frame as the SDK's pingLoop
+        const frame = {
+          headers: [{ key: 'type', value: 'ping' }],
+          service: Number(serviceId),
+          method: 0, // FrameType.control
+          SeqID: 0,
+          LogID: 0,
+        };
+
+        // Record timing before sending for RTT estimation
+        this.lastPingSentAt = Date.now();
+
+        // Use the SDK's sendMessage to encode (protobuf) and send
+        client.sendMessage(frame);
+
+        this.customPingCount++;
+
+        if (this.customPingCount <= 3 || this.customPingCount % 60 === 0) {
+          // Log first 3 pings and then every 5 minutes (60 × 5s)
+          logger.debug(
+            { customPingCount: this.customPingCount, intervalMs: this.customPingIntervalMs },
+            'Custom ping sent',
+          );
+        }
+
+        this.emit('ping', this.customPingIntervalMs);
+      } catch (error) {
+        logger.warn({ err: error }, 'Failed to send custom ping — stopping custom ping loop');
+        this.stopCustomPingLoop();
+      }
+    }, this.customPingIntervalMs);
+
+    if (this.customPingTimer.unref) {
+      this.customPingTimer.unref();
+    }
+
+    logger.info(
+      { intervalMs: this.customPingIntervalMs, serviceId },
+      'Custom ping loop started',
+    );
+  }
+
+  /**
+   * Stop the custom ping loop.
+   */
+  private stopCustomPingLoop(): void {
+    if (this.customPingTimer) {
+      clearInterval(this.customPingTimer);
+      this.customPingTimer = undefined;
+      logger.debug(
+        { totalPings: this.customPingCount },
+        'Custom ping loop stopped',
+      );
+    }
+  }
+
   // ─── Connection lifecycle ────────────────────────────────────────────────
 
   /**
@@ -561,6 +711,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     this.lastPongAt = 0;
     this.pongCount = 0;
     this.lastPingSentAt = 0;
+    this.customPingCount = 0;
+    this.stopCustomPingLoop();
     this.detachWsListener();
 
     try {
@@ -584,6 +736,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
       // Access SDK's internal WebSocket instance for Pong detection
       this.interceptWsFromClient(this.wsClient);
+
+      // Start custom ping loop for faster dead connection detection (Issue #1437)
+      this.startCustomPingLoop();
 
       // Start grace period
       this.lastMessageReceivedAt = Date.now();

@@ -86,7 +86,7 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
- * WebSocket health monitoring constants (Issue #1351)
+ * WebSocket health monitoring constants (Issue #1351, #1437)
  *
  * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.
  * The Feishu SDK's WSClient uses an application-layer Ping/Pong protocol over the `ws`
@@ -97,27 +97,48 @@ export const SESSION_RESTORE = {
  * When NAT/firewall silently drops a connection, the SDK's pingLoop sends pings but
  * may not receive Pong responses. The health check detects this absence and triggers
  * a reconnect before the SDK's own close event fires.
+ *
+ * Issue #1437: Adds a custom ping loop with shorter interval (5s vs SDK's 120s)
+ * to significantly reduce dead connection detection time from ~5 minutes to ~15 seconds.
  */
 export const WS_HEALTH = {
   /**
    * Maximum duration without receiving any server message before considering
-   * the connection dead. Should be > SDK's pingInterval (default 120s,
-   * configurable by server via Pong response). If no message (data, pong,
-   * or control) arrives within this window, the connection is force-closed
-   * and reconnection is triggered.
+   * the connection dead. If no message (data, pong, or control) arrives within
+   * this window, the connection is force-closed and reconnection is triggered.
    *
-   * Set to 5 minutes to allow for 2-3 missed Pong cycles (pingInterval=120s)
-   * before triggering reconnect, avoiding false positives during temporary
-   * network glitches.
+   * Set to 3 × CUSTOM_PING_INTERVAL_MS (= 15s). With a custom ping every 5s,
+   * 3 consecutive missed pongs is sufficient to detect a dead connection while
+   * tolerating transient network glitches. This is a significant improvement
+   * over the previous 5-minute timeout (Issue #1437).
    */
-  DEAD_CONNECTION_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
+  DEAD_CONNECTION_TIMEOUT_MS: 15 * 1000, // 15 seconds
 
   /**
    * Interval between health checks. Each tick compares now against
    * lastPongAt (primary) or lastMessageReceived (fallback) to detect
    * zombie connections.
+   *
+   * Reduced to 5s to match the custom ping interval — health checks
+   * should run at least as frequently as pings to quickly detect
+   * missed pong responses.
    */
-  HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
+  HEALTH_CHECK_INTERVAL_MS: 5 * 1000, // 5 seconds
+
+  /**
+   * Custom ping loop interval (Issue #1437).
+   *
+   * Sends application-layer ping frames at 5s intervals via the SDK's
+   * sendMessage() method, independent of the SDK's own pingLoop (120s).
+   * The SDK's pingLoop continues to run concurrently — both pings are
+   * harmless as the server responds to each with a Pong.
+   *
+   * Benefits:
+   * - Reduces dead connection detection from ~5 minutes to ~15 seconds
+   * - More frequent bidirectional traffic prevents NAT table entry expiry
+   * - Server pong responses carry updated PingInterval/ReconnectConfig
+   */
+  CUSTOM_PING_INTERVAL_MS: 5 * 1000, // 5 seconds
 
   /**
    * Exponential backoff configuration for reconnection attempts.

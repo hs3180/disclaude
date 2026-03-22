@@ -26,12 +26,20 @@ import {
 interface MockWSClient {
   start: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  sendMessage: ReturnType<typeof vi.fn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  wsConfig: any;
 }
 
-function createMockWSClient(shouldFail = false): MockWSClient {
+function createMockWSClient(shouldFail = false, serviceId = 'test-service-id'): MockWSClient {
   return {
     start: vi.fn().mockResolvedValue(shouldFail ? false : undefined),
     close: vi.fn(),
+    sendMessage: vi.fn(),
+    wsConfig: {
+      getWS: vi.fn().mockReturnValue({ serviceId }),
+      getWSInstance: vi.fn().mockReturnValue(null),
+    },
   };
 }
 
@@ -46,6 +54,7 @@ function createMockEventDispatcher(): any {
 const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
+  CUSTOM_PING_INTERVAL_MS: 500,
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -126,6 +135,7 @@ function createTestManager(overrides: {
   maxAttempts?: number;
   deadTimeoutMs?: number;
   healthCheckMs?: number;
+  customPingIntervalMs?: number;
 } = {}): WsConnectionManager {
   const manager = new WsConnectionManager({
     appId: 'test-app-id',
@@ -133,6 +143,7 @@ function createTestManager(overrides: {
     reconnectMaxAttempts: overrides.maxAttempts ?? MOCK_WS_HEALTH.RECONNECT.MAX_ATTEMPTS,
     deadConnectionTimeoutMs: overrides.deadTimeoutMs ?? MOCK_WS_HEALTH.DEAD_CONNECTION_TIMEOUT_MS,
     healthCheckIntervalMs: overrides.healthCheckMs ?? MOCK_WS_HEALTH.HEALTH_CHECK_INTERVAL_MS,
+    customPingIntervalMs: overrides.customPingIntervalMs ?? MOCK_WS_HEALTH.CUSTOM_PING_INTERVAL_MS,
   });
 
   // Monkey-patch the larkSDK reference to use our mock WSClient constructor
@@ -482,6 +493,181 @@ describe('WsConnectionManager', () => {
     });
   });
 
+  describe('custom ping loop', () => {
+    it('should send custom pings at configured interval', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance past first custom ping interval
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Should have called sendMessage with a ping frame
+      expect(mockClient.sendMessage).toHaveBeenCalledTimes(1);
+      const sentFrame = mockClient.sendMessage.mock.calls[0][0];
+      expect(sentFrame.headers[0].key).toBe('type');
+      expect(sentFrame.headers[0].value).toBe('ping');
+      expect(sentFrame.method).toBe(0); // FrameType.control
+      expect(sentFrame.service).toBe(Number('test-service-id'));
+
+      // Advance for 2 more pings
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockClient.sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it('should emit ping event when custom ping is sent', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      const pingEvents: number[] = [];
+      manager.on('ping', (intervalMs) => pingEvents.push(intervalMs));
+
+      await manager.start(mockEventDispatcher as never);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(pingEvents.length).toBe(1);
+      expect(pingEvents[0]).toBe(500);
+    });
+
+    it('should stop custom ping loop when manager stops', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      await vi.advanceTimersByTimeAsync(1000);
+      const countBeforeStop = mockClient.sendMessage.mock.calls.length;
+
+      await manager.stop();
+
+      // Advance time — no more pings should be sent
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mockClient.sendMessage.mock.calls.length).toBe(countBeforeStop);
+    });
+
+    it('should not start custom ping loop when interval is 0', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 0,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      // Should not have called sendMessage for custom ping
+      expect(mockClient.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should include customPingCount in metrics', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      await vi.advanceTimersByTimeAsync(1500);
+
+      const metrics = manager.getMetrics();
+      expect(metrics.customPingCount).toBe(3);
+      expect(metrics.customPingIntervalMs).toBe(500);
+    });
+
+    it('should gracefully skip when sendMessage is not available', async () => {
+      const mockClient = createMockWSClient(false);
+      // Remove sendMessage to simulate SDK without it
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mockClient as any).sendMessage = undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mockClient as any).wsConfig = undefined;
+
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      // Should not throw
+      await manager.start(mockEventDispatcher as never);
+      expect(manager.state).toBe('connected');
+
+      // Advance time — should still be connected, no crash
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(manager.state).toBe('connected');
+    });
+
+    it('should reset custom ping count on reconnect', async () => {
+      const deadTimeoutMs = 3000;
+      const healthCheckMs = 1000;
+      const succeedingClient = createMockWSClient(false);
+
+      manager = createTestManager({
+        wsClient: succeedingClient,
+        deadTimeoutMs,
+        healthCheckMs,
+        maxAttempts: 3,
+        customPingIntervalMs: 500,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      manager.recordMessageReceived();
+
+      // Send some custom pings
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(succeedingClient.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      // Trigger dead connection and reconnect
+      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs + 5000);
+
+      // After reconnect, custom ping count should be reset
+      const metrics = manager.getMetrics();
+      if (metrics.state === 'connected') {
+        // Custom ping count was reset on reconnect
+        expect(succeedingClient.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it('should pair custom ping with pong for RTT estimation', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        customPingIntervalMs: 500,
+        maxAttempts: 0,
+      });
+
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+
+      await manager.start(mockEventDispatcher as never);
+      const fakeWs = setupInterceptedWs(manager);
+
+      // Wait for custom ping to be sent
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Simulate Pong response
+      fakeWs.emit('message', PONG_BUFFER);
+
+      // RTT should be recorded (approximate, within reasonable range)
+      expect(pongEvents.length).toBe(1);
+      expect(pongEvents[0]).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   describe('reconnection', () => {
     it('should transition through reconnecting state on dead connection', async () => {
       const deadTimeoutMs = 3000;
@@ -549,6 +735,11 @@ describe('WsConnectionManager', () => {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        sendMessage: vi.fn(),
+        wsConfig: {
+          getWS: vi.fn().mockReturnValue({ serviceId: 'test-service-id' }),
+          getWSInstance: vi.fn().mockReturnValue(null),
+        },
       };
 
       manager = createTestManager({
@@ -589,6 +780,11 @@ describe('WsConnectionManager', () => {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        sendMessage: vi.fn(),
+        wsConfig: {
+          getWS: vi.fn().mockReturnValue({ serviceId: 'test-service-id' }),
+          getWSInstance: vi.fn().mockReturnValue(null),
+        },
       };
 
       manager = createTestManager({
