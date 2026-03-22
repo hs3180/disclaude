@@ -114,6 +114,8 @@ export interface WsConnectionManagerConfig {
   reconnectMaxDelayMs?: number;
   /** Override reconnect max attempts (-1 = infinite) */
   reconnectMaxAttempts?: number;
+  /** Override protocol-level ping interval (ms) */
+  pingIntervalMs?: number;
 }
 
 /**
@@ -271,8 +273,18 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private lastPongAt: number = 0;
   private pongCount: number = 0;
   private lastPingSentAt: number = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private interceptedWs?: { instance: any; onMessageBound: (...args: unknown[]) => void };
+  private interceptedWs?: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    instance: any;
+    onMessageBound: (...args: unknown[]) => void;
+    onProtocolPongBound?: (...args: unknown[]) => void;
+  };
+
+  // Protocol-level ping loop (RFC 6455 §5.5.2)
+  private pingTimer?: ReturnType<typeof setInterval>;
+  private readonly pingIntervalMs: number;
+  private lastProtocolPongAt: number = 0;
+  private protocolPongCount: number = 0;
 
   // Health monitoring — application level (fallback)
   private lastMessageReceivedAt: number = 0;
@@ -306,11 +318,14 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       ?? WS_HEALTH.RECONNECT.MAX_DELAY_MS;
     this.reconnectMaxAttempts = config.reconnectMaxAttempts
       ?? WS_HEALTH.RECONNECT.MAX_ATTEMPTS;
+    this.pingIntervalMs = config.pingIntervalMs
+      ?? WS_HEALTH.PING_INTERVAL_MS;
 
     logger.info(
       {
         deadConnectionTimeoutMs: this.deadConnectionTimeoutMs,
         healthCheckIntervalMs: this.healthCheckIntervalMs,
+        pingIntervalMs: this.pingIntervalMs,
         reconnectBaseDelayMs: this.reconnectBaseDelayMs,
         reconnectMaxDelayMs: this.reconnectMaxDelayMs,
         reconnectMaxAttempts: this.reconnectMaxAttempts,
@@ -338,6 +353,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     timeSinceLastPongMs: number;
     timeSinceLastMessageMs: number;
     pongCount: number;
+    protocolPongCount: number;
+    pingIntervalMs: number;
     reconnectAttempt: number;
     isConnected: boolean;
     hasWsInterception: boolean;
@@ -353,6 +370,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         ? Date.now() - this.lastMessageReceivedAt
         : 0,
       pongCount: this.pongCount,
+      protocolPongCount: this.protocolPongCount,
+      pingIntervalMs: this.pingIntervalMs,
       reconnectAttempt: this.reconnectAttempt,
       isConnected: this._state === 'connected',
       hasWsInterception: !!this.interceptedWs,
@@ -386,6 +405,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   async stop(): Promise<void> {
     logger.info('WsConnectionManager stopping');
 
+    this.stopPingLoop();
     this.stopHealthCheck();
     this.clearReconnectTimer();
     this.closeClient();
@@ -441,47 +461,62 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   // ─── WebSocket interception (Pong detection) ──────────────────────────
 
   /**
-   * Access the SDK's internal WebSocket instance and attach our Pong listener.
+   * Poll for the SDK's internal WebSocket instance and attach our Pong listener.
    *
-   * The Feishu SDK's WSClient uses `require('ws')` internally (NOT globalThis.WebSocket),
-   * so monkey-patching globalThis.WebSocket has no effect. Instead, after WSClient.start()
-   * completes, we access the SDK's private `wsConfig` to get the raw `ws` WebSocket
-   * instance via `wsClient.wsConfig.getWSInstance()`.
+   * The Feishu SDK's `start()` method does NOT await the actual WebSocket connection.
+   * It calls `reConnect(true)` without `yield`, so `start()` resolves immediately
+   * while the real connection (pullConnectConfig → connect → communicate) happens
+   * asynchronously. This means `wsConfig.getWSInstance()` returns `null` right
+   * after `start()` resolves.
    *
-   * This is safe because:
-   * - The SDK stores the instance in `wsConfig.wsInstance` after connect()
-   * - The `ws` package's `.on('message', ...)` is addititive (doesn't replace SDK's handler)
-   * - TypeScript `private` is only a compile-time check; at runtime the field is accessible
+   * We poll `getWSInstance()` every 100ms for up to 30s until the SDK's internal
+   * `connect()` sets the instance via `wsConfig.setWSInstance(wsInstance)`.
+   *
+   * Once obtained, the `ws` package's `.on('message', ...)` is additive — it doesn't
+   * replace the SDK's own handler, so both coexist safely.
    *
    * @param wsClient - The WSClient instance (typed as `any` to access private fields)
    * @returns `true` if interception succeeded
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private interceptWsFromClient(wsClient: any): boolean {
-    try {
-      // Access SDK's internal wsConfig to get the raw `ws` WebSocket instance
-      // SDK code: this.wsConfig.setWSInstance(wsInstance) in connect()
-      const wsInstance = wsClient.wsConfig?.getWSInstance?.();
-      if (!wsInstance) {
-        logger.debug('SDK wsConfig.getWSInstance() returned null — connection may not be ready');
-        return false;
+  private async interceptWsFromClient(wsClient: any): Promise<boolean> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tryIntercept = (): boolean => {
+      try {
+        const wsInstance = wsClient.wsConfig?.getWSInstance?.();
+        if (!wsInstance) {
+          return false;
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const onMessageBound = (data: any) => {
+          this.onWsMessage(data);
+        };
+
+        wsInstance.on('message', onMessageBound);
+        this.interceptedWs = { instance: wsInstance, onMessageBound };
+
+        logger.debug('Successfully intercepted SDK WebSocket via wsConfig for Pong detection');
+        return true;
+      } catch (error) {
+        logger.warn({ err: error }, 'Failed to intercept SDK WebSocket — falling back to application-level detection');
+        return true; // Don't retry on errors (e.g., SDK API changed)
       }
+    };
 
-      // The `ws` package's .on() is additive — it doesn't replace the SDK's own handler
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const onMessageBound = (data: any) => {
-        this.onWsMessage(data);
-      };
+    // SDK start() doesn't await the connection — poll until WS instance is ready
+    const pollIntervalMs = 100;
+    const maxWaitMs = 30_000;
 
-      wsInstance.on('message', onMessageBound);
-      this.interceptedWs = { instance: wsInstance, onMessageBound };
-
-      logger.debug('Successfully intercepted SDK WebSocket via wsConfig for Pong detection');
-      return true;
-    } catch (error) {
-      logger.warn({ err: error }, 'Failed to intercept SDK WebSocket — falling back to application-level detection');
-      return false;
+    for (let waited = 0; waited < maxWaitMs; waited += pollIntervalMs) {
+      if (tryIntercept()) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
     }
+
+    logger.warn('SDK WebSocket instance not available after 30s — falling back to application-level detection');
+    return false;
   }
 
   /**
@@ -536,12 +571,110 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       try {
         // The `ws` package uses .off() or .removeListener() (not removeEventListener)
         this.interceptedWs.instance.off('message', this.interceptedWs.onMessageBound);
-        logger.debug('Detached WebSocket Pong listener');
+        // Detach protocol-level pong listener if present
+        if (this.interceptedWs.onProtocolPongBound) {
+          this.interceptedWs.instance.off('pong', this.interceptedWs.onProtocolPongBound);
+        }
+        logger.debug('Detached WebSocket listeners');
       } catch (error) {
         logger.debug({ err: error }, 'Error detaching WebSocket listener');
       }
       this.interceptedWs = undefined;
     }
+  }
+
+  // ─── Protocol-level ping loop (RFC 6455 §5.5.2) ──────────────────────
+
+  /**
+   * Start sending WebSocket protocol-level pings at the configured interval.
+   *
+   * Uses `ws.ping()` (RFC 6455 §5.5.2) which sends a Ping control frame.
+   * The peer MUST respond with a Pong control frame. This is handled at the
+   * WebSocket protocol layer — no protobuf encoding needed.
+   *
+   * The Feishu SDK does NOT listen for protocol-level pong events (verified),
+   * so there is zero conflict with the SDK's own application-level pingLoop.
+   */
+  private startPingLoop(): void {
+    this.stopPingLoop();
+
+    if (!this.interceptedWs) {
+      logger.debug('No intercepted WebSocket — skipping protocol-level ping loop');
+      return;
+    }
+
+    const wsInstance = this.interceptedWs.instance;
+
+    // Attach protocol-level pong listener
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onProtocolPongBound = (_data: any) => {
+      this.lastProtocolPongAt = Date.now();
+      this.protocolPongCount++;
+      logger.trace(
+        { protocolPongCount: this.protocolPongCount },
+        'Protocol-level Pong received',
+      );
+      this.emit('heartbeat', this.lastProtocolPongAt);
+    };
+
+    wsInstance.on('pong', onProtocolPongBound);
+    this.interceptedWs.onProtocolPongBound = onProtocolPongBound;
+
+    // Start periodic ping
+    this.pingTimer = setInterval(() => {
+      this.sendProtocolPing();
+    }, this.pingIntervalMs);
+
+    if (this.pingTimer.unref) {
+      this.pingTimer.unref();
+    }
+
+    logger.debug(
+      { intervalMs: this.pingIntervalMs },
+      'Protocol-level ping loop started',
+    );
+  }
+
+  /**
+   * Send a single WebSocket protocol-level Ping frame.
+   *
+   * Only sends if the WebSocket is in OPEN state (readyState === 1).
+   * Uses `ws.ping()` which automatically handles framing per RFC 6455.
+   */
+  private sendProtocolPing(): void {
+    if (!this.interceptedWs) {
+      return;
+    }
+
+    const wsInstance = this.interceptedWs.instance;
+
+    // WebSocket.OPEN = 1
+    if (wsInstance.readyState !== 1) {
+      logger.debug(
+        { readyState: wsInstance.readyState },
+        'Skipping protocol ping — WebSocket not open',
+      );
+      return;
+    }
+
+    try {
+      // ws.ping(data?, mask?, callback?) — sends a Ping control frame
+      wsInstance.ping(Buffer.from('disclaude-health'));
+    } catch (error) {
+      logger.debug({ err: error }, 'Failed to send protocol-level ping');
+    }
+  }
+
+  /**
+   * Stop the protocol-level ping loop and detach the pong listener.
+   */
+  private stopPingLoop(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = undefined;
+    }
+
+    // Pong listener is cleaned up in detachWsListener()
   }
 
   // ─── Connection lifecycle ────────────────────────────────────────────────
@@ -561,6 +694,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     this.lastPongAt = 0;
     this.pongCount = 0;
     this.lastPingSentAt = 0;
+    this.lastProtocolPongAt = 0;
+    this.protocolPongCount = 0;
     this.detachWsListener();
 
     try {
@@ -583,7 +718,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       }
 
       // Access SDK's internal WebSocket instance for Pong detection
-      this.interceptWsFromClient(this.wsClient);
+      await this.interceptWsFromClient(this.wsClient);
+
+      // Start our own protocol-level ping loop (RFC 6455 §5.5.2)
+      this.startPingLoop();
 
       // Start grace period
       this.lastMessageReceivedAt = Date.now();
@@ -658,8 +796,12 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     let lastActivityAt: number;
     let signalType: string;
 
-    if (this.lastPongAt > 0) {
-      // Primary: Pong-based (transport level)
+    if (this.lastProtocolPongAt > 0) {
+      // Highest priority: protocol-level pong (our own ping loop)
+      lastActivityAt = this.lastProtocolPongAt;
+      signalType = 'protocol-pong';
+    } else if (this.lastPongAt > 0) {
+      // Secondary: SDK application-level Pong
       lastActivityAt = this.lastPongAt;
       signalType = 'pong';
     } else if (this.lastMessageReceivedAt > 0) {
@@ -704,6 +846,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
     this.isReconnecting = true;
     this.transitionTo('reconnecting');
+
+    // Stop protocol-level pings on the dead connection
+    this.stopPingLoop();
 
     // Terminate the dead connection
     this.closeClient();

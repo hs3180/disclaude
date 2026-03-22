@@ -26,12 +26,21 @@ import {
 interface MockWSClient {
   start: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  wsConfig?: {
+    getWSInstance: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockWSClient(shouldFail = false): MockWSClient {
   return {
     start: vi.fn().mockResolvedValue(shouldFail ? false : undefined),
     close: vi.fn(),
+    // Make getWSInstance throw so interceptWsFromClient's tryIntercept()
+    // catches it and returns true immediately (skipping the poll loop
+    // that uses real setTimeout which hangs with fake timers).
+    wsConfig: {
+      getWSInstance: vi.fn().mockImplementation(() => { throw new Error('mock: no ws instance'); }),
+    },
   };
 }
 
@@ -46,6 +55,7 @@ function createMockEventDispatcher(): any {
 const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
+  PING_INTERVAL_MS: 500,
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -101,6 +111,10 @@ class MockWsInstance extends EventEmitter {
   send() {}
   close() {}
   terminate() {}
+  ping(_data?: unknown, _mask?: boolean, _cb?: () => void): void {}
+  emitPong(data?: Buffer): void {
+    this.emit('pong', data);
+  }
   removeAllListeners(event?: string | symbol): this {
     super.removeAllListeners(event);
     return this;
@@ -126,6 +140,7 @@ function createTestManager(overrides: {
   maxAttempts?: number;
   deadTimeoutMs?: number;
   healthCheckMs?: number;
+  pingIntervalMs?: number;
 } = {}): WsConnectionManager {
   const manager = new WsConnectionManager({
     appId: 'test-app-id',
@@ -133,6 +148,7 @@ function createTestManager(overrides: {
     reconnectMaxAttempts: overrides.maxAttempts ?? MOCK_WS_HEALTH.RECONNECT.MAX_ATTEMPTS,
     deadConnectionTimeoutMs: overrides.deadTimeoutMs ?? MOCK_WS_HEALTH.DEAD_CONNECTION_TIMEOUT_MS,
     healthCheckIntervalMs: overrides.healthCheckMs ?? MOCK_WS_HEALTH.HEALTH_CHECK_INTERVAL_MS,
+    pingIntervalMs: overrides.pingIntervalMs ?? MOCK_WS_HEALTH.PING_INTERVAL_MS,
   });
 
   // Monkey-patch the larkSDK reference to use our mock WSClient constructor
@@ -482,6 +498,108 @@ describe('WsConnectionManager', () => {
     });
   });
 
+  describe('protocol-level ping loop', () => {
+    /**
+     * Helper: start manager, set up intercepted WS, then manually start the
+     * ping loop (since connectFresh's interceptWsFromClient can't find a WS
+     * on the mock WSClient).
+     */
+    async function startWithPingLoop(overrides: Parameters<typeof createTestManager>[0] = {}) {
+      manager = createTestManager(overrides);
+      await manager.start(mockEventDispatcher as never);
+      const fakeWs = setupInterceptedWs(manager);
+      // Manually start the ping loop (normally done in connectFresh after interception)
+      (manager as unknown as { startPingLoop: () => void }).startPingLoop();
+      return fakeWs;
+    }
+
+    it('should start ping loop and send pings at configured interval', async () => {
+      const fakeWs = await startWithPingLoop();
+      const pingSpy = vi.spyOn(fakeWs, 'ping');
+
+      // Advance past 3 ping intervals
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.PING_INTERVAL_MS * 3 + 10);
+
+      expect(pingSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it('should update lastProtocolPongAt on protocol pong', async () => {
+      const deadTimeoutMs = 5000;
+      const healthCheckMs = 500;
+      const fakeWs = await startWithPingLoop({
+        deadTimeoutMs,
+        healthCheckMs,
+        pingIntervalMs: 200,
+      });
+
+      const deadEvents: number[] = [];
+      manager.on('deadConnection', () => deadEvents.push(1));
+
+      // Advance to just before timeout — would be dead without protocol pong
+      await vi.advanceTimersByTimeAsync(deadTimeoutMs - 100);
+      expect(deadEvents.length).toBe(0);
+
+      // Emit a protocol-level pong (not an application-level pong message)
+      fakeWs.emitPong();
+
+      // Advance past the old timeout — should still be alive because protocol pong was recent
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(deadEvents.length).toBe(0);
+    });
+
+    it('should emit heartbeat event on protocol pong', async () => {
+      const fakeWs = await startWithPingLoop();
+
+      const heartbeatTimestamps: number[] = [];
+      manager.on('heartbeat', (ts) => heartbeatTimestamps.push(ts));
+
+      const before = Date.now();
+      fakeWs.emitPong();
+
+      // At least the pong we just emitted should trigger heartbeat
+      expect(heartbeatTimestamps.length).toBeGreaterThanOrEqual(1);
+      expect(heartbeatTimestamps[heartbeatTimestamps.length - 1]).toBeGreaterThanOrEqual(before);
+    });
+
+    it('should stop ping loop on stop()', async () => {
+      const fakeWs = await startWithPingLoop();
+      const pingSpy = vi.spyOn(fakeWs, 'ping');
+
+      await manager.stop();
+
+      // Advance past multiple intervals — no more pings should be sent
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.PING_INTERVAL_MS * 5);
+      expect(pingSpy).not.toHaveBeenCalled();
+    });
+
+    it('should skip ping when WebSocket not open', async () => {
+      const fakeWs = await startWithPingLoop();
+      const pingSpy = vi.spyOn(fakeWs, 'ping');
+
+      // Simulate WebSocket in CLOSED state
+      fakeWs.readyState = 3; // CLOSED
+
+      // Advance past one interval
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.PING_INTERVAL_MS + 10);
+
+      // sendProtocolPing checks readyState and should not call ws.ping()
+      expect(pingSpy).not.toHaveBeenCalled();
+    });
+
+    it('should count protocol pongs in metrics', async () => {
+      const fakeWs = await startWithPingLoop();
+
+      // Emit protocol-level pongs
+      fakeWs.emitPong();
+      fakeWs.emitPong();
+      fakeWs.emitPong();
+
+      const metrics = manager.getMetrics();
+      expect(metrics.protocolPongCount).toBe(3);
+      expect(metrics.pingIntervalMs).toBe(MOCK_WS_HEALTH.PING_INTERVAL_MS);
+    });
+  });
+
   describe('reconnection', () => {
     it('should transition through reconnecting state on dead connection', async () => {
       const deadTimeoutMs = 3000;
@@ -549,6 +667,9 @@ describe('WsConnectionManager', () => {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        wsConfig: {
+          getWSInstance: vi.fn().mockImplementation(() => { throw new Error('mock: no ws instance'); }),
+        },
       };
 
       manager = createTestManager({
@@ -589,6 +710,9 @@ describe('WsConnectionManager', () => {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        wsConfig: {
+          getWSInstance: vi.fn().mockImplementation(() => { throw new Error('mock: no ws instance'); }),
+        },
       };
 
       manager = createTestManager({

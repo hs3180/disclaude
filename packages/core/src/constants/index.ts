@@ -100,24 +100,31 @@ export const SESSION_RESTORE = {
  */
 export const WS_HEALTH = {
   /**
-   * Maximum duration without receiving any server message before considering
-   * the connection dead. Should be > SDK's pingInterval (default 120s,
-   * configurable by server via Pong response). If no message (data, pong,
-   * or control) arrives within this window, the connection is force-closed
-   * and reconnection is triggered.
+   * Interval for sending WebSocket protocol-level ping frames.
    *
-   * Set to 5 minutes to allow for 2-3 missed Pong cycles (pingInterval=120s)
-   * before triggering reconnect, avoiding false positives during temporary
-   * network glitches.
+   * Uses `ws.ping()` (RFC 6455 §5.5.2) — no protobuf encoding needed.
+   * The SDK does NOT listen for protocol-level pong events, so there is
+   * zero conflict with the SDK's own 120s application-level pingLoop.
+   *
+   * Set to 5 seconds for rapid dead connection detection while keeping
+   * network overhead minimal (one ~2-byte control frame per interval).
    */
-  DEAD_CONNECTION_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
+  PING_INTERVAL_MS: 5 * 1000, // 5 seconds
 
   /**
-   * Interval between health checks. Each tick compares now against
-   * lastPongAt (primary) or lastMessageReceived (fallback) to detect
-   * zombie connections.
+   * Maximum duration without receiving any server message before considering
+   * the connection dead.
+   *
+   * With protocol-level pings at 5s intervals, 15s = 3 missed pongs provides
+   * a reliable dead connection signal while tolerating brief network hiccups.
    */
-  HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
+  DEAD_CONNECTION_TIMEOUT_MS: 15 * 1000, // 15 seconds (3 × PING_INTERVAL_MS)
+
+  /**
+   * Interval between health checks. Matches the ping interval so that
+   * dead connections are detected as soon as the timeout is exceeded.
+   */
+  HEALTH_CHECK_INTERVAL_MS: 5 * 1000, // 5 seconds (match PING_INTERVAL_MS)
 
   /**
    * Exponential backoff configuration for reconnection attempts.
