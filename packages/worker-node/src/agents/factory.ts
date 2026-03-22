@@ -45,9 +45,46 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
+
+// ============================================================================
+// Issue #1412: Helper function for converting SchedulerCallbacks to PilotCallbacks
+// ============================================================================
+
+/**
+ * Convert SchedulerCallbacks to PilotCallbacks with no-op implementations.
+ *
+ * Scheduled tasks typically only need sendMessage capability. This helper
+ * provides no-op implementations for sendCard, sendFile, and onDone to
+ * satisfy the PilotCallbacks interface.
+ *
+ * Issue #1412: Removes duplicate empty implementations from Primary Node.
+ *
+ * @param callbacks - SchedulerCallbacks with sendMessage method
+ * @returns PilotCallbacks with functional sendMessage and no-op other methods
+ *
+ * @example
+ * ```typescript
+ * const schedulerCallbacks: SchedulerCallbacks = {
+ *   sendMessage: async (chatId, msg) => { ... }
+ * };
+ * const pilotCallbacks = toPilotCallbacks(schedulerCallbacks);
+ * const agent = AgentFactory.createScheduleAgent(chatId, pilotCallbacks);
+ * ```
+ */
+export function toPilotCallbacks(callbacks: SchedulerCallbacks): PilotCallbacks {
+  return {
+    sendMessage: callbacks.sendMessage,
+    // No-op: Card sending not typically needed for scheduled tasks
+    sendCard: async () => {},
+    // No-op: File sending not typically needed for scheduled tasks
+    sendFile: async () => {},
+    // No-op: Completion handled by scheduler
+    onDone: async () => {},
+  };
+}
 
 // Lazy-loaded SkillAgent class reference
 let _SkillAgentClass: typeof import('@disclaude/core').SkillAgentBase | null = null;
