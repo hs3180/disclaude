@@ -456,7 +456,27 @@ export class MessageHandler {
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
         } catch (downloadError) {
-          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+          // Issue #1331: Enhanced error logging for file download failures
+          const errorDetails: Record<string, unknown> = {
+            fileKey,
+            fileName,
+            messageId: message_id,
+            messageType: message_type,
+            error: downloadError instanceof Error ? downloadError.message : String(downloadError),
+            stack: downloadError instanceof Error ? downloadError.stack : undefined,
+          };
+
+          // Try to extract more details from the error response
+          if (downloadError instanceof Error && 'response' in downloadError) {
+            const response = (downloadError as Error & { response?: { status?: number; statusText?: string; data?: unknown } }).response;
+            if (response) {
+              errorDetails.httpStatus = response.status;
+              errorDetails.httpStatusText = response.statusText;
+              errorDetails.responseData = response.data;
+            }
+          }
+
+          logger.error(errorDetails, '❌ 处理文件失败: Download failed (fileKey: %s)', fileKey);
         }
       }
 

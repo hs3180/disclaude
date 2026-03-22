@@ -74,21 +74,29 @@ ${msg.persistedHistoryContext}
       : '';
 
     if (isSkillCommand) {
-      // For skill commands: command first, then minimal context for skill to use
-      const contextInfo = msg.senderOpenId
-        ? `
+      // Issue #1331: For skill commands, add clear instruction that this is a NEW user request
+      // that should be processed immediately, interrupting any previous task context.
+      // This ensures commands like /feedback are properly recognized even when the agent
+      // was in the middle of processing another task.
+      const commandHint = `
 
 ---
+**⚠️ NEW USER REQUEST - Process this command immediately**
+
+The user has sent a new command. This is NOT part of any previous task context. Please process this command request now.`;
+
+      const contextInfo = msg.senderOpenId
+        ? `
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}${this.buildAttachmentsInfo(msg.attachments)}`
         : `
-
----
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}${this.buildAttachmentsInfo(msg.attachments)}`;
 
-      return `${msg.text}${contextInfo}`;
+      return `${commandHint}
+
+**User Command:** ${msg.text}${contextInfo}`;
     }
 
     // Build capability-aware tools section (Issue #582)
