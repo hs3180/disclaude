@@ -28,3 +28,9 @@ export type {
   SessionStats,
   ConversationMessageContext,
 } from './types.js';
+
+export {
+  SessionTimeoutManager,
+  type SessionTimeoutCallbacks,
+  type SessionTimeoutManagerConfig,
+} from './session-timeout-manager.js';

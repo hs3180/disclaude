@@ -385,20 +385,34 @@ export class Config {
   }
 
   /**
-   * Get session restoration configuration.
-   * Controls how chat history is loaded when agent starts or resets.
-   * @see Issue #1213
+   * Get session restoration configuration with timeout settings.
+   * Controls how chat history is loaded when agent starts or resets,
+   * and includes automatic session timeout management (Issue #1313).
    *
-   * @returns Session restoration configuration with defaults
+   * @returns Session restoration configuration with timeout settings
    */
   static getSessionRestoreConfig(): {
     historyDays: number;
     maxContextLength: number;
+    sessionTimeout: {
+      enabled: boolean;
+      idleMinutes: number;
+      maxSessions: number;
+      checkIntervalMinutes: number;
+    };
   } {
     const config = fileConfigOnly.sessionRestore || {};
+    const timeoutConfig = config.sessionTimeout || {};
+
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
+      sessionTimeout: {
+        enabled: timeoutConfig.enabled ?? false,
+        idleMinutes: timeoutConfig.idleMinutes ?? 30,
+        maxSessions: timeoutConfig.maxSessions ?? 100,
+        checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+      },
     };
   }
 }
