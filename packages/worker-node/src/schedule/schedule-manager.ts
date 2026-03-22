@@ -16,8 +16,7 @@
  * @module @disclaude/worker-node/schedule
  */
 
-import { createLogger } from '@disclaude/core';
-import { ScheduleFileScanner } from './schedule-watcher.js';
+import { createLogger, ScheduleFileScanner } from '@disclaude/core';
 
 const logger = createLogger('ScheduleManager');
 

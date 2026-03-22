@@ -25,6 +25,7 @@
 
 export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from './schedule-manager.js';
 export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+// ScheduleFileScanner, ScheduleFileWatcher re-exported from core (Issue #1395)
 export {
   ScheduleFileScanner,
   ScheduleFileWatcher,
@@ -34,6 +35,6 @@ export {
   type OnFileChanged,
   type OnFileRemoved,
   type ScheduleFileWatcherOptions,
-} from './schedule-watcher.js';
-// CooldownManager re-exported from core (Issue #1041)
-export { CooldownManager, type CooldownManagerOptions } from '@disclaude/core';
+  CooldownManager,
+  type CooldownManagerOptions,
+} from '@disclaude/core';
