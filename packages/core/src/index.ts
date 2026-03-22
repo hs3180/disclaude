@@ -228,6 +228,21 @@ export {
   type ReflectionContext,
 } from './task/index.js';
 
+// Task Context (Issue #857: Independent Reporter Agent)
+export {
+  TaskContext,
+  formatDuration,
+  getTaskStatus,
+  updateTaskStatus,
+  createTaskContext,
+  type TaskPhase,
+  type TaskContextData,
+  type TaskMilestone,
+  type TaskContextToolsOptions,
+  type GetTaskStatusInput,
+  type UpdateTaskStatusInput,
+} from './task/index.js';
+
 // Queue module (Issue #1041)
 export {
   TaskQueue,

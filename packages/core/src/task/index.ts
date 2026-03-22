@@ -39,3 +39,22 @@ export {
   type ReflectPhaseExecutor,
   type TerminationCondition,
 } from './reflection.js';
+
+// Task Context (Issue #857: Independent Reporter Agent)
+export {
+  TaskContext,
+  formatDuration,
+  type TaskPhase,
+  type TaskContextData,
+  type TaskMilestone,
+} from './task-context.js';
+
+// Task Context Tools (Issue #857: MCP tool implementations)
+export {
+  getTaskStatus,
+  updateTaskStatus,
+  createTaskContext,
+  type TaskContextToolsOptions,
+  type GetTaskStatusInput,
+  type UpdateTaskStatusInput,
+} from './task-context-tools.js';
