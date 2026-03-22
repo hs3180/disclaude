@@ -3,3 +3,4 @@
  */
 
 export { ClaudeSDKProvider } from './claude/index.js';
+export { OpenAIProvider } from './openai/index.js';
