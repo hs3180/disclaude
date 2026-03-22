@@ -25,7 +25,7 @@ import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
-import { Config } from '../config/index.js';
+import { Config, SharedMemory } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 
 // Re-export BaseAgentConfig for backward compatibility
@@ -171,11 +171,19 @@ export abstract class BaseAgent implements Disposable {
       options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
     }
 
-    // Set environment: config env + runtime env file (Issue #1361)
+    // Set environment: config env + runtime env file (Issue #1361) + shared memory (Issue #1371)
     const loggingConfig = this.getLoggingConfig();
+    const workspaceDir = this.getWorkspaceDir();
+
+    // Load from shared memory first (new approach)
+    const sharedMemory = new SharedMemory(workspaceDir);
+    const sharedMemoryEnv = sharedMemory.toEnv();
+
+    // Merge: config env < shared memory < runtime-env (runtime-env takes precedence for backward compat)
     const globalEnv = {
       ...this.getGlobalEnv(),
-      ...loadRuntimeEnv(this.getWorkspaceDir()),
+      ...sharedMemoryEnv,
+      ...loadRuntimeEnv(workspaceDir),
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';

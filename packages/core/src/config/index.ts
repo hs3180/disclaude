@@ -29,6 +29,15 @@ export * from './types.js';
 export * from './loader.js';
 export * from './tool-configuration.js';
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
+export { SharedMemory } from './shared-memory.js';
+export type {
+  SetOptions,
+  SharedMemoryEntry,
+  SharedMemoryNamespace,
+  SharedMemoryStorage,
+  WatchCallback,
+  Unwatch,
+} from './shared-memory-types.js';
 
 const logger = createLogger('Config');
 
