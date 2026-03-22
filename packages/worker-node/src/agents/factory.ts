@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, ModelRouter, type AgentType } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -126,23 +126,50 @@ export interface AgentCreateOptions {
  * - createSubagent(name, ...args): Subagent
  *
  * Each method fetches default configuration from Config.getAgentConfig()
- * and allows optional overrides.
+ * and allows optional overrides. Model routing (Issue #1338) is applied
+ * to select optimal models per agent type when configured.
  */
 export class AgentFactory {
+  /** Singleton ModelRouter instance (Issue #1338) */
+  private static modelRouter: ModelRouter | null = null;
+
+  /**
+   * Get or create the ModelRouter instance.
+   * Lazily initialized from configuration.
+   */
+  private static getModelRouter(): ModelRouter {
+    if (!this.modelRouter) {
+      const routerConfig = Config.getModelRouterConfig();
+      this.modelRouter = new ModelRouter(routerConfig);
+    }
+    return this.modelRouter;
+  }
+
   /**
    * Get base agent configuration from Config with optional overrides.
+   * Applies ModelRouter (Issue #1338) for agent-type-specific model selection.
    *
+   * Resolution priority:
+   * 1. Explicit override in options (e.g., AgentCreateOptions.model)
+   * 2. Agent-type specific model from modelRouter config
+   * 3. Global model from Config.getAgentConfig()
+   *
+   * @param agentType - The type of agent being created
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
-  private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
+  private static getBaseConfig(agentType: AgentType, options: AgentCreateOptions = {}): BaseAgentConfig {
     const defaultConfig = Config.getAgentConfig();
+
+    // Apply ModelRouter if enabled (Issue #1338)
+    const router = this.getModelRouter();
+    const resolved = router.resolve(agentType, defaultConfig);
 
     return {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
-      provider: options.provider ?? defaultConfig.provider,
-      apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      model: options.model ?? resolved.model,
+      provider: options.provider ?? resolved.provider,
+      apiBaseUrl: options.apiBaseUrl ?? resolved.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }
@@ -196,7 +223,7 @@ export class AgentFactory {
         options = opt || {};
       }
 
-      const baseConfig = this.getBaseConfig(options);
+      const baseConfig = this.getBaseConfig('chatAgent', options);
       const config: PilotConfig = {
         ...baseConfig,
         chatId,
@@ -239,7 +266,7 @@ export class AgentFactory {
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig('scheduleAgent', options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
@@ -276,7 +303,7 @@ export class AgentFactory {
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig('taskAgent', options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
@@ -316,7 +343,7 @@ export class AgentFactory {
    */
   static async createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgentInterface> {
     const options = (args[0] as AgentCreateOptions) || {};
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig('skillAgent', options);
 
     // Use dynamic skill discovery (Issue #430)
     const skillPath = await findSkill(name);
@@ -354,8 +381,16 @@ export class AgentFactory {
         throw new Error('SiteMiner requires Playwright MCP to be configured');
       }
 
-      // Create and return the SiteMiner instance
-      const siteMinerFactory = createSiteMiner(config);
+      // Apply ModelRouter for subagent type (Issue #1338)
+      const baseConfig = this.getBaseConfig('subagent', {
+        model: config?.model,
+        provider: config?.provider,
+        apiBaseUrl: config?.apiBaseUrl,
+        permissionMode: config?.permissionMode,
+      });
+
+      // Create and return the SiteMiner instance with routed config
+      const siteMinerFactory = createSiteMiner(baseConfig);
       return siteMinerFactory as unknown as Subagent;
     }
     throw new Error(`Unknown Subagent: ${name}`);

@@ -29,6 +29,13 @@ export * from './types.js';
 export * from './loader.js';
 export * from './tool-configuration.js';
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
+export {
+  ModelRouter,
+  type AgentType,
+  type AgentModelConfig,
+  type ModelRouterConfig as ModelRouterConfigType,
+  type ModelResolution,
+} from './model-router.js';
 
 const logger = createLogger('Config');
 
@@ -372,6 +379,24 @@ export class Config {
    */
   static getDebugConfig(): DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
+  }
+
+  /**
+   * Get model router configuration.
+   * Enables per-agent-type model selection for optimal performance.
+   * @see Issue #1338
+   *
+   * @returns Model router configuration or empty config
+   */
+  static getModelRouterConfig(): {
+    enabled: boolean;
+    agents?: Record<string, { model: string; provider?: 'anthropic' | 'glm'; apiBaseUrl?: string }>;
+  } {
+    const config = fileConfigOnly.modelRouter;
+    return {
+      enabled: config?.enabled ?? false,
+      agents: config?.agents,
+    };
   }
 
   /**

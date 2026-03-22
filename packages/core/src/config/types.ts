@@ -259,6 +259,24 @@ export interface MessagingConfig {
 }
 
 /**
+ * Model router configuration (Issue #1338).
+ * Enables per-agent-type model selection for optimal performance.
+ */
+export interface ModelRouterConfig {
+  /** Enable/disable model routing (default: false) */
+  enabled?: boolean;
+  /** Per-agent-type model overrides */
+  agents?: Record<string, {
+    /** Model identifier */
+    model: string;
+    /** API provider */
+    provider?: 'anthropic' | 'glm';
+    /** Optional API base URL override */
+    apiBaseUrl?: string;
+  }>;
+}
+
+/**
  * Session restoration configuration (Issue #1213).
  * Controls how chat history is loaded when agent starts or resets.
  */
@@ -305,6 +323,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Model router configuration (Issue #1338) */
+  modelRouter?: ModelRouterConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
