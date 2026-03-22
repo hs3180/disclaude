@@ -12,6 +12,8 @@ export interface FeishuMessageEvent {
     create_time?: number;
     /** Parent message ID (for replies/quotes) */
     parent_id?: string;
+    /** Root message ID (for forwarded messages) */
+    root_id?: string;
     mentions?: Array<{
       key: string;
       id: {

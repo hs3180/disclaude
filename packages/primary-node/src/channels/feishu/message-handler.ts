@@ -296,6 +296,76 @@ export class MessageHandler {
   }
 
   /**
+   * Get forwarded message content (root message in a topic thread).
+   *
+   * When a user forwards messages from a topic thread, the root_id contains
+   * the ID of the root message (the first message in that topic thread).
+   * This method retrieves the content of that root message and all its replies
+   * to provide context for the agent.
+   *
+   * Issue #846: Support reading forwarded conversation records and quoted replies
+   */
+  private async getRootMessageContext(rootId: string): Promise<{ text: string; attachment?: MessageAttachment } | undefined> {
+    if (!this.client) {
+      return undefined;
+    }
+
+    try {
+      const response = await this.client.im.message.get({
+        path: {
+          message_id: rootId,
+        },
+        params: {
+          user_id_type: 'open_id',
+        },
+      });
+
+      const message = response.data as { message?: { message_type?: string; content?: string; message_id?: string } };
+      if (!message?.message) {
+        return undefined;
+      }
+
+      const msgType = message.message.message_type;
+      const msgContent = message.message.content || '{}';
+      const msgId = message.message.message_id || rootId;
+
+      let quotedText = '';
+      try {
+        if (msgType === 'text') {
+          const parsed = JSON.parse(msgContent);
+          quotedText = parsed.text || msgContent || '';
+        } else if (msgType === 'post') {
+          const parsed = JSON.parse(msgContent);
+          if (parsed.content && Array.isArray(parsed.content)) {
+            for (const row of parsed.content) {
+              if (Array.isArray(row)) {
+                for (const segment of row) {
+                  if (segment?.tag === 'text' && segment.text) {
+                    quotedText += segment.text;
+                  }
+                }
+              }
+            }
+          }
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
+          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
+        }
+      } catch {
+        quotedText = msgContent || '';
+      }
+
+      if (!quotedText.trim()) {
+        return undefined;
+      }
+
+      return { text: `> **转发的消息**:\n> ${quotedText.split('\n').join('\n> ')}` };
+    } catch (error) {
+      logger.debug({ err: error, rootId }, 'Failed to get root message context');
+      return undefined;
+    }
+  }
+
+  /**
    * Handle quoted/replied file/image/media message.
    *
    * Downloads the file to workspace and returns both a descriptive prompt
@@ -381,7 +451,7 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id, root_id } = message;
     const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
@@ -628,6 +698,13 @@ export class MessageHandler {
       quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
+    // Get forwarded message context if this is a forwarded message
+    // Issue #846: Support reading forwarded conversation records
+    let forwardedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
+    if (root_id) {
+      forwardedMessageResult = await this.getRootMessageContext(root_id);
+    }
+
     // Get chat history context for passive mode
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
@@ -641,14 +718,21 @@ export class MessageHandler {
     if (quotedMessageResult?.text) {
       metadata.quotedMessage = quotedMessageResult.text;
     }
+    if (forwardedMessageResult?.text) {
+      metadata.forwardedMessage = forwardedMessageResult.text;
+    }
     if (chatHistoryContext) {
       metadata.chatHistoryContext = chatHistoryContext;
     }
 
-    // Build attachments from quoted message if available
-    const quotedAttachments = quotedMessageResult?.attachment
-      ? [quotedMessageResult.attachment]
-      : undefined;
+    // Build attachments from quoted/forwarded message if available
+    const messageAttachments: MessageAttachment[] = [];
+    if (quotedMessageResult?.attachment) {
+      messageAttachments.push(quotedMessageResult.attachment);
+    }
+    if (forwardedMessageResult?.attachment) {
+      messageAttachments.push(forwardedMessageResult.attachment);
+    }
 
     // Emit as incoming message
     await this.callbacks.emitMessage({
@@ -660,7 +744,7 @@ export class MessageHandler {
       timestamp: create_time,
       threadId,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-      attachments: quotedAttachments,
+      attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
     });
   }
 
