@@ -46,3 +46,19 @@ export { RestChannel, type RestChannelConfig, type IFileStorageService } from '.
 
 // Feishu Channel (Issue #1040 - migrated from src/channels)
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
+
+// WeChat Channel (Issue #1406 - MVP v1)
+export { WeChatChannel, WeChatApiClient, WeChatAuthHandler } from './wechat/index.js';
+export type {
+  WeChatChannelConfig,
+  WeChatChannelEvent,
+  QRCodeStatus,
+  QRCodeResponse,
+  QRCodeStatusResponse,
+  OutgoingTextPayload,
+  ApiResponse as WeChatApiResponse,
+  SendMessageResponse,
+  AuthState,
+  AuthCredentials,
+  QRCodeEvent,
+} from './wechat/index.js';
