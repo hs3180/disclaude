@@ -129,11 +129,12 @@ export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => Ch
 export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
 
 // ============================================================================
-// TaskFlowOrchestrator Interface
+// TaskFlowOrchestrator Interface (Removed in Issue #1309)
 // ============================================================================
 
 /**
- * MessageCallbacks - Callbacks for sending messages via TaskFlowOrchestrator.
+ * MessageCallbacks - Callbacks for sending messages.
+ * Kept for compatibility with other components.
  */
 export interface MessageCallbacks {
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
@@ -141,28 +142,9 @@ export interface MessageCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
 }
 
-/**
- * TaskFlowOrchestratorInterface - Interface for task flow management.
- */
-export interface TaskFlowOrchestratorInterface {
-  /**
-   * Start the orchestrator.
-   */
-  start(): Promise<void>;
-
-  /**
-   * Stop the orchestrator.
-   */
-  stop(): void;
-}
-
-/**
- * TaskFlowOrchestratorFactory - Factory function to create TaskFlowOrchestrator.
- */
-export type TaskFlowOrchestratorFactory = (
-  messageCallbacks: MessageCallbacks,
-  logger: Logger
-) => TaskFlowOrchestratorInterface;
+// NOTE: TaskFlowOrchestratorInterface and TaskFlowOrchestratorFactory removed in Issue #1309
+// Deep Task is now handled via schedule-based approach
+// @see examples/schedules/deep-task.example.md
 
 // ============================================================================
 // generateInteractionPrompt Callback
@@ -244,6 +226,10 @@ export interface ScheduleManagerInterface {
  * WorkerNode requires these dependencies to be provided by the main application.
  * This allows WorkerNode to remain in the @disclaude/worker-node package
  * without importing from src/.
+ *
+ * NOTE: createTaskFlowOrchestrator removed in Issue #1309
+ * Deep Task is now handled via schedule-based approach
+ * @see examples/schedules/deep-task.example.md
  */
 export interface WorkerNodeDependencies {
   /** Function to get the workspace directory */
@@ -254,9 +240,6 @@ export interface WorkerNodeDependencies {
 
   /** Factory to create ScheduleAgent instances (for Scheduler) */
   createScheduleAgent: ScheduleAgentFactory;
-
-  /** Factory to create TaskFlowOrchestrator */
-  createTaskFlowOrchestrator: TaskFlowOrchestratorFactory;
 
   /** Function to generate interaction prompts from card actions */
   generateInteractionPrompt: GenerateInteractionPromptCallback;

@@ -26,6 +26,7 @@ export { getWorkerNodeCapabilities } from '@disclaude/core';
 export { WorkerNode, type WorkerNodeOptions } from './worker-node.js';
 
 // Dependency interfaces (for external use)
+// NOTE: TaskFlowOrchestratorInterface and TaskFlowOrchestratorFactory removed in Issue #1309
 export type {
   WorkerNodeDependencies,
   AgentPoolInterface,
@@ -34,8 +35,6 @@ export type {
   ChatAgentFactory,
   ScheduleAgentFactory,
   MessageCallbacks,
-  TaskFlowOrchestratorInterface,
-  TaskFlowOrchestratorFactory,
   GenerateInteractionPromptCallback,
   SchedulerInterface,
   ScheduleFileWatcherInterface,
@@ -77,27 +76,16 @@ export {
 } from './schedule/index.js';
 
 // Task module (Issue #1041 - migrated from main package)
+// NOTE: TaskFileWatcher, ReflectionController, TaskFlowOrchestrator removed in Issue #1309
+// Deep Task is now handled via schedule-based approach
+// @see examples/schedules/deep-task.example.md
 export {
   DialogueMessageTracker,
   TaskFileManager,
   TaskTracker,
-  TaskFileWatcher,
-  ReflectionController,
-  TaskFlowOrchestrator,
-  TerminationConditions,
-  DEFAULT_REFLECTION_CONFIG,
   // Types
   type TaskFileManagerConfig,
   type TaskDefinitionDetails,
-  type TaskFileWatcherOptions,
-  type OnTaskCreated,
-  type ReflectionConfig,
-  type ReflectionMetrics,
-  type ReflectionEvent,
-  type ReflectionEvaluationResult,
-  type ReflectionContext,
-  type TaskFlowOrchestratorConfig,
-  type SetMessageSentCallbackFn,
 } from './task/index.js';
 
 export type { AgentMessage } from '@disclaude/core';

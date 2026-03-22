@@ -139,6 +139,9 @@ async function main(): Promise<void> {
   // Create dependency container
   // Note: In a real deployment, these dependencies would be provided by the main application
   // For CLI mode, we provide minimal implementations
+  // NOTE: TaskFlowOrchestrator removed in Issue #1309
+  // Deep Task is now handled via schedule-based approach
+  // @see examples/schedules/deep-task.example.md
   const dependencies: WorkerNodeDependencies = {
     getWorkspaceDir: () => Config.getWorkspaceDir(),
     createChatAgent: () => {
@@ -146,9 +149,6 @@ async function main(): Promise<void> {
     },
     createScheduleAgent: () => {
       throw new Error('ScheduleAgent not available in standalone worker mode');
-    },
-    createTaskFlowOrchestrator: () => {
-      throw new Error('TaskFlowOrchestrator not available in standalone worker mode');
     },
     generateInteractionPrompt: () => {
       throw new Error('generateInteractionPrompt not available in standalone worker mode');

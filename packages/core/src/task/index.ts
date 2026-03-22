@@ -4,6 +4,10 @@
  * Provides task management utilities for worker nodes.
  *
  * @module task
+ *
+ * NOTE: TaskFileWatcher and ReflectionController have been removed in Issue #1309.
+ * Deep Task execution is now handled via schedule-based approach.
+ * @see examples/schedules/deep-task.example.md
  */
 
 // Types
@@ -17,25 +21,3 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
-
-// Task File Watcher
-export { TaskFileWatcher, type TaskFileWatcherOptions, type OnTaskCreated } from './task-file-watcher.js';
-
-// Reflection Pattern
-export {
-  ReflectionController,
-  TerminationConditions,
-  DEFAULT_REFLECTION_CONFIG,
-  type ReflectionConfig,
-  type ReflectionMetrics,
-  type ReflectionEvent,
-  type ReflectionEvaluationResult,
-  type ReflectionContext,
-  type ReflectionPhaseStatus,
-  type ReflectionPhaseResult,
-  type ReflectionPhaseMetrics,
-  type ExecutePhaseExecutor,
-  type EvaluatePhaseExecutor,
-  type ReflectPhaseExecutor,
-  type TerminationCondition,
-} from './reflection.js';

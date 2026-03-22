@@ -206,6 +206,9 @@ export {
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)
+// NOTE: TaskFileWatcher and ReflectionController removed in Issue #1309
+// Deep Task is now handled via schedule-based approach
+// @see examples/schedules/deep-task.example.md
 export type {
   TaskDefinitionDetails,
 } from './task/index.js';
@@ -214,18 +217,7 @@ export {
   DialogueMessageTracker,
   TaskTracker,
   TaskFileManager,
-  TaskFileWatcher,
-  ReflectionController,
-  TerminationConditions,
-  DEFAULT_REFLECTION_CONFIG,
   type TaskFileManagerConfig,
-  type TaskFileWatcherOptions,
-  type OnTaskCreated,
-  type ReflectionConfig,
-  type ReflectionMetrics,
-  type ReflectionEvent,
-  type ReflectionEvaluationResult,
-  type ReflectionContext,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
