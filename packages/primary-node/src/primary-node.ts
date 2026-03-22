@@ -425,20 +425,47 @@ export class PrimaryNode extends EventEmitter {
     };
 
     // Issue #1382: Use unified createScheduleExecutor
+    // Issue #1412: Implement full PilotCallbacks using channels for card/file sending
     // This enables Primary Node to execute scheduled tasks locally
     const executor = createScheduleExecutor({
       agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
-        // Convert SchedulerCallbacks to PilotCallbacks
+        // Issue #1412: Create PilotCallbacks using SchedulerCallbacks and channels
+        // Primary Node has direct access to channels for sending cards and files
         const pilotCallbacks: PilotCallbacks = {
           sendMessage: callbacks.sendMessage,
-          sendCard: async (_chatId: string, _card: Record<string, unknown>, _description?: string) => {
-            // Card sending not typically needed for scheduled tasks
+          sendCard: async (targetChatId: string, card: Record<string, unknown>, description?: string) => {
+            const channel = this.channels.values().next().value;
+            if (channel && 'sendMessage' in channel) {
+              await channel.sendMessage({
+                type: 'card',
+                chatId: targetChatId,
+                card,
+                description,
+              });
+            } else {
+              logger.warn({ chatId: targetChatId }, 'No channel available for scheduler card');
+            }
           },
-          sendFile: async (_chatId: string, _filePath: string) => {
-            // File sending not typically needed for scheduled tasks
+          sendFile: async (targetChatId: string, filePath: string) => {
+            const channel = this.channels.values().next().value;
+            if (channel && 'sendMessage' in channel) {
+              await channel.sendMessage({
+                type: 'file',
+                chatId: targetChatId,
+                filePath,
+              });
+            } else {
+              logger.warn({ chatId: targetChatId }, 'No channel available for scheduler file');
+            }
           },
-          onDone: async (_chatId: string) => {
-            // Completion handled by scheduler
+          onDone: async (targetChatId: string) => {
+            const channel = this.channels.values().next().value;
+            if (channel && 'sendMessage' in channel) {
+              await channel.sendMessage({
+                type: 'done',
+                chatId: targetChatId,
+              });
+            }
           },
         };
         return AgentFactory.createScheduleAgent(chatId, pilotCallbacks) as ScheduleAgent;
