@@ -192,6 +192,11 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * 追加到系统提示的内容（Issue #1228）
+   * 用于注入 SOUL 人格定义等自定义系统提示
+   */
+  appendSystemPrompt?: string;
 }
 
 // ============================================================================

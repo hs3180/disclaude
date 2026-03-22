@@ -61,6 +61,12 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #1228: SOUL 人格定义注入
+  // 将 appendSystemPrompt 传递给 SDK
+  if (options.appendSystemPrompt) {
+    sdkOptions.appendSystemPrompt = options.appendSystemPrompt;
+  }
+
   return sdkOptions;
 }
 

@@ -314,3 +314,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL module - agent personality/behavior definitions (Issue #1228)
+export {
+  findSoul,
+  loadSoul,
+  loadSoulWithContext,
+  listSouls,
+  type SoulContext,
+} from './souls/index.js';
