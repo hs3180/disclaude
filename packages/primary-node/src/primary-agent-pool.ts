@@ -48,6 +48,21 @@ export class PrimaryAgentPool {
   }
 
   /**
+   * Stop the current query for a chatId without resetting the session.
+   * Issue #1349: /stop command
+   *
+   * @param chatId - Chat ID to stop
+   * @returns true if a query was stopped, false if no active query
+   */
+  stop(chatId: string): boolean {
+    const agent = this.agents.get(chatId);
+    if (agent) {
+      return agent.stop(chatId);
+    }
+    return false;
+  }
+
+  /**
    * Dispose all agents and clear the pool.
    */
   disposeAll(): void {

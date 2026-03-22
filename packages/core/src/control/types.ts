@@ -34,6 +34,8 @@ export interface ControlHandlerContext {
   /** AgentPool 实例 */
   agentPool: {
     reset(chatId: string): void;
+    /** Issue #1349: Stop current query without resetting session */
+    stop(chatId: string): boolean;
   };
 
   /** 节点相关能力 */

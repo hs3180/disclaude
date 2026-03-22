@@ -195,6 +195,18 @@ export interface ChatAgent extends Disposable {
    * @param keepContext - If true, reloads history context after reset (default: false)
    */
   reset(chatId?: string, keepContext?: boolean): void;
+
+  /**
+   * Stop the current query without resetting the session.
+   * Issue #1349: /stop command
+   *
+   * Unlike reset(), this only interrupts the current streaming response
+   * while preserving the session state and conversation context.
+   *
+   * @param chatId - Optional chat ID to stop specific session
+   * @returns true if a query was stopped, false if no active query
+   */
+  stop(chatId?: string): boolean;
 }
 
 // ============================================================================
