@@ -53,3 +53,10 @@ export {
 
 // Ask User
 export { ask_user } from './ask-user.js';
+
+// Task Status (Issue #857: Progress reporting)
+export {
+  get_current_task_status,
+  get_all_active_tasks,
+  type TaskStatusResult,
+} from './task-status.js';

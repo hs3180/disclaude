@@ -31,6 +31,7 @@ import {
   type TaskFileManagerConfig,
   DialogueMessageTracker,
   TaskTracker,
+  TaskContext,
   type AgentMessage,
   FeishuOutputAdapter,
   handleError,
@@ -174,6 +175,32 @@ export class TaskFlowOrchestrator {
     const taskDir = path.dirname(taskPath);
     const taskId = path.basename(taskDir);
 
+    // Read task.md to get title for TaskContext
+    let taskTitle = 'Processing task...';
+    try {
+      const taskSpec = await this.taskFileManager.readTaskSpec(taskId);
+      // Extract title from first markdown heading or first line
+      const titleMatch = taskSpec.match(/^#\s+(.+)$/m);
+      if (titleMatch) {
+        taskTitle = titleMatch[1].replace(/^Task:\s*/i, '');
+      } else {
+        const [firstLine] = taskSpec.split('\n');
+        taskTitle = firstLine.substring(0, 50);
+      }
+    } catch {
+      // Use default title if can't read task spec
+    }
+
+    // Issue #857: Initialize TaskContext for progress reporting
+    TaskContext.start(
+      taskId,
+      chatId,
+      taskTitle,
+      taskPath,
+      DIALOGUE.MAX_ITERATIONS
+    );
+    this.logger.debug({ taskId, chatId, taskTitle }, 'TaskContext initialized');
+
     // Create message tracker
     const messageTracker = new DialogueMessageTracker();
 
@@ -220,6 +247,10 @@ export class TaskFlowOrchestrator {
 
     // Create execute phase: runs Evaluator via SkillAgent
     const executePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      // Issue #857: Track iteration start
+      TaskContext.startIteration(context.taskId, context.iteration);
+      TaskContext.updatePhase(context.taskId, 'evaluate', `Evaluating task (iteration ${context.iteration})`);
+
       // Ensure iteration directory exists
       await self.taskFileManager.createIteration(context.taskId, context.iteration);
 
@@ -244,15 +275,21 @@ export class TaskFlowOrchestrator {
 
       const evaluator = new SkillAgentBase(skillConfig, 'skills/evaluator/SKILL.md');
 
+      const phaseStart = Date.now();
       try {
         yield* evaluator.executeWithContext({ templateVars });
       } finally {
+        // Issue #857: Track evaluate phase completion
+        TaskContext.completeIterationPhase(context.taskId, 'evaluate', Date.now() - phaseStart);
         evaluator.dispose();
       }
     };
 
     // Create evaluate phase: runs Executor via SkillAgent (after Evaluator)
     const evaluatePhase = async function* (context: ReflectionContext): AsyncGenerator<AgentMessage> {
+      // Issue #857: Track phase change
+      TaskContext.updatePhase(context.taskId, 'execute', `Executing task (iteration ${context.iteration})`);
+
       // Check if task is already complete
       const hasFinalResult = await self.taskFileManager.hasFinalResult(context.taskId);
       if (hasFinalResult) {
@@ -297,8 +334,11 @@ export class TaskFlowOrchestrator {
 
       const executor = new SkillAgentBase(skillConfig, 'skills/executor/SKILL.md');
 
+      const phaseStart = Date.now();
       try {
         yield* executor.executeWithContext({ templateVars });
+        // Issue #857: Track execute phase completion
+        TaskContext.completeIterationPhase(context.taskId, 'execute', Date.now() - phaseStart);
       } catch (error) {
         yield {
           content: `❌ **Task execution failed**: ${error instanceof Error ? error.message : String(error)}`,
@@ -323,6 +363,9 @@ export class TaskFlowOrchestrator {
           continue;
         }
 
+        // Issue #857: Update elapsed time periodically
+        TaskContext.updateElapsedTime(taskId);
+
         // Send to user
         await adapter.write(content, message.messageType ?? 'text', {
           toolName: message.metadata?.toolName as string | undefined,
@@ -343,10 +386,18 @@ export class TaskFlowOrchestrator {
       const hasFinalResult = await this.taskFileManager.hasFinalResult(taskId);
       if (hasFinalResult) {
         completionReason = 'task_done';
+        // Issue #857: Mark task as completed
+        TaskContext.complete(taskId);
+        this.logger.debug({ taskId }, 'TaskContext marked as completed');
       }
     } catch (error) {
       this.logger.error({ err: error, chatId }, 'Task flow failed');
       completionReason = 'error';
+
+      // Issue #857: Mark task as failed
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      TaskContext.fail(taskId, errorMessage);
+      this.logger.debug({ taskId, errorMessage }, 'TaskContext marked as failed');
 
       const enriched = handleError(error, {
         category: ErrorCategory.SDK,
@@ -363,6 +414,14 @@ export class TaskFlowOrchestrator {
       // Clean up message tracking callback to prevent memory leaks
       if (this.config.setMessageSentCallback) {
         this.config.setMessageSentCallback(null);
+      }
+
+      // Issue #857: Ensure TaskContext is finalized
+      const ctx = TaskContext.get(taskId);
+      if (ctx && ctx.status === 'running') {
+        // Task may have been cancelled or terminated unexpectedly
+        TaskContext.cancel(taskId);
+        this.logger.debug({ taskId }, 'TaskContext cancelled (task was still running)');
       }
 
       // Check if no user message was sent and send warning

@@ -218,6 +218,8 @@ export {
   ReflectionController,
   TerminationConditions,
   DEFAULT_REFLECTION_CONFIG,
+  // Issue #857: Task Context for progress reporting
+  TaskContext,
   type TaskFileManagerConfig,
   type TaskFileWatcherOptions,
   type OnTaskCreated,
@@ -226,6 +228,10 @@ export {
   type ReflectionEvent,
   type ReflectionEvaluationResult,
   type ReflectionContext,
+  type TaskContextInfo,
+  type TaskStatus as TaskContextStatus,
+  type TaskPhase as TaskContextPhase,
+  type IterationInfo,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

@@ -9,6 +9,15 @@
 // Types
 export type { TaskDefinitionDetails, TaskMessageType } from './types.js';
 
+// Task Context (Issue #857: Progress reporting)
+export {
+  TaskContext,
+  type TaskContextInfo,
+  type TaskStatus,
+  type TaskPhase,
+  type IterationInfo,
+} from './task-context.js';
+
 // Dialogue Message Tracker
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';
 

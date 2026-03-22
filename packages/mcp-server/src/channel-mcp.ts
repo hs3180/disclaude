@@ -15,7 +15,8 @@ import {
   send_card,
   send_interactive,
   send_file,
-  setMessageSentCallback
+  setMessageSentCallback,
+  get_current_task_status,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -37,6 +38,7 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { get_current_task_status } from './tools/task-status.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -327,6 +329,55 @@ Templates can include these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #857: Task status tool for Progress Reporter Agent
+  {
+    name: 'get_current_task_status',
+    description: `Get the current active task status.
+
+This tool allows the Reporter Agent to query the current deep task state and decide when/if to send progress updates to the user.
+
+## Returns
+- **hasActiveTask**: Whether there is an active task
+- **task**: Task context information (if active)
+- **formattedStatus**: Human-readable status string
+
+## Task Context Information
+- Task ID, title, status
+- Current iteration and phase
+- Progress percentage and ETA
+- Elapsed time
+- Current step (if any)
+- Error message (if failed)
+
+## Example Response
+\`\`\`
+📊 **Task Status Report**
+
+**Task ID**: cli_1234567890
+**Title**: Analyzing the codebase...
+**Status**: 🔄 running
+**Phase**: execute
+**Iteration**: 3/20
+**Progress**: ████░░░░░░ 15%
+**Elapsed**: 2m 30s
+**ETA**: ~14m
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      try {
+        const result = await get_current_task_status();
+        if (!result.hasActiveTask) {
+          return toolSuccess('ℹ️ No active task found.');
+        }
+        if (!result.success) {
+          return toolSuccess(`⚠️ Failed to get task status: ${result.error}`);
+        }
+        return toolSuccess(result.formattedStatus || 'Task status retrieved.');
+      } catch (error) {
+        return toolSuccess(`⚠️ Task status check failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
