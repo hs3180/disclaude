@@ -46,3 +46,6 @@ export { RestChannel, type RestChannelConfig, type IFileStorageService } from '.
 
 // Feishu Channel (Issue #1040 - migrated from src/channels)
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
+
+// WeChat Channel (Issue #1406 - ilink API integration)
+export { WeChatChannel, type WeChatChannelConfig } from './wechat/wechat-channel.js';
