@@ -8,8 +8,11 @@ import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 
 // Legacy test files that still use vi.mock() for external SDKs
-// These will be refactored to use nock instead
-const legacyMockTestFiles = [];
+// These will be refactored to use nock or dependency injection instead
+// TODO(#918): Refactor ws-connection-manager.test.ts to use dependency injection
+const legacyMockTestFiles = [
+  'packages/primary-node/src/channels/feishu/ws-connection-manager.test.ts',
+];
 
 export default [
   {

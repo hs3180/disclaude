@@ -17,8 +17,8 @@ export const handlePassive: CommandHandler = (
     };
   }
 
+  const { chatId } = command;
   const args = command.data?.args as string | undefined;
-  const chatId = command.chatId;
 
   if (args === 'on') {
     passiveMode.setEnabled(chatId, true);

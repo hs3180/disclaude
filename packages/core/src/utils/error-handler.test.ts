@@ -355,7 +355,7 @@ describe('handleError', () => {
     }).toThrow(AppError);
   });
 
-  it('should call userNotifier with user message', async () => {
+  it('should call userNotifier with user message', () => {
     const error = new Error('test');
     const notifier = vi.fn();
 
