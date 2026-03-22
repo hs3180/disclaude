@@ -91,6 +91,15 @@ class WorkerAgentPool implements AgentPoolInterface {
     }
   }
 
+  stop(chatId: string): boolean {
+    const agent = this.agents.get(chatId);
+    if (agent) {
+      this.log.debug({ chatId }, 'Stopping ChatAgent query for chatId');
+      return agent.stop(chatId);
+    }
+    return false;
+  }
+
   disposeAll(): void {
     this.log.info('Disposing all ChatAgent instances');
     const agents = Array.from(this.agents.entries());

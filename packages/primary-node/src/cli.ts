@@ -176,6 +176,7 @@ async function main(): Promise<void> {
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string) => agentPool.reset(chatId),
+      stop: (chatId: string) => agentPool.stop(chatId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

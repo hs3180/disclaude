@@ -17,6 +17,7 @@ export const handleHelp: CommandHandler = (
       '|------|------|------|',
       '| `/help` | 显示帮助信息 | `/help` |',
       '| `/reset` | 重置当前会话 | `/reset` |',
+      '| `/stop` | 停止当前响应 | `/stop` |',
       '| `/status` | 查看服务状态 | `/status` |',
       '| `/restart` | 重启 Agent 实例 | `/restart` |',
       '| `/passive` | 切换被动模式 | `/passive on\\|off` |',

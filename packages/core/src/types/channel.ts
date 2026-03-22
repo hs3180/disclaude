@@ -106,6 +106,7 @@ export interface OutgoingMessage {
 export type ControlCommandType =
   | 'reset'
   | 'restart'
+  | 'stop'
   | 'status'
   | 'help'
   | 'list-nodes'

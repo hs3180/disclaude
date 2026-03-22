@@ -823,6 +823,46 @@ export class Pilot extends BaseAgent implements ChatAgent {
   }
 
   /**
+   * Stop the current query without resetting the session.
+   * Issue #1349: /stop command
+   *
+   * Unlike reset(), this only interrupts the current streaming response
+   * while preserving the session state and conversation context.
+   * The user can continue the conversation after stopping.
+   *
+   * @param chatId - Optional chat ID (must match bound chatId if provided)
+   * @returns true if a query was stopped, false if no active query
+   */
+  stop(chatId?: string): boolean {
+    // Issue #644: If chatId is provided, it must match bound chatId
+    if (chatId && chatId !== this.boundChatId) {
+      this.logger.warn(
+        { boundChatId: this.boundChatId, requestedChatId: chatId },
+        'Stop called for different chatId, ignoring'
+      );
+      return false;
+    }
+
+    // Check if there's an active query to stop
+    if (!this.queryHandle) {
+      this.logger.debug({ chatId: this.boundChatId }, 'No active query to stop');
+      return false;
+    }
+
+    this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
+
+    // Cancel the current query (not close, to allow continuation)
+    this.queryHandle.cancel();
+    this.queryHandle = undefined;
+
+    // Note: We do NOT set isSessionActive to false here
+    // The session remains active, just the current query is cancelled
+    // The channel is preserved so new messages can still be sent
+
+    return true;
+  }
+
+  /**
    * Dispose of resources held by this agent.
    *
    * Implements Disposable interface (Issue #328).

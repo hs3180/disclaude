@@ -55,6 +55,12 @@ export interface ChatAgent {
   reset(chatId?: string, keepContext?: boolean): void;
 
   /**
+   * Stop the current query without resetting the session.
+   * Issue #1349: /stop command
+   */
+  stop(chatId?: string): boolean;
+
+  /**
    * Dispose of resources.
    */
   dispose(): void;
@@ -79,6 +85,12 @@ export interface AgentPoolInterface {
    * Reset the ChatAgent for a chatId.
    */
   reset(chatId: string, keepContext?: boolean): void;
+
+  /**
+   * Stop the current query for a chatId without resetting the session.
+   * Issue #1349: /stop command
+   */
+  stop(chatId: string): boolean;
 
   /**
    * Dispose all agents.

@@ -138,6 +138,22 @@ export class AgentPool {
   }
 
   /**
+   * Stop the current query for a chatId without resetting the session.
+   * Issue #1349: /stop command
+   *
+   * @param chatId - The chat identifier
+   * @returns true if a query was stopped, false if no active query
+   */
+  stop(chatId: string): boolean {
+    const agent = this.chatAgents.get(chatId);
+    if (agent) {
+      this.log.debug({ chatId }, 'Stopping ChatAgent query for chatId');
+      return agent.stop(chatId);
+    }
+    return false;
+  }
+
+  /**
    * Get the number of active ChatAgent instances.
    *
    * @returns Number of chat agents
