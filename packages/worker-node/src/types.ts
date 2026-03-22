@@ -111,9 +111,9 @@ export interface PilotCallbacks {
   /** Send a text message */
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
   /** Send an interactive card */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
+  sendCard?: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
   /** Send a file */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
+  sendFile?: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
 }

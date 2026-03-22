@@ -25,14 +25,14 @@ export interface PilotCallbacks {
    * @param description - Optional description for logging
    * @param parentMessageId - Optional parent message ID for thread replies
    */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
+  sendCard?: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
 
   /**
    * Send a file to the user.
    * @param chatId - Platform-specific chat identifier
    * @param filePath - Local file path to send
    */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
+  sendFile?: (chatId: string, filePath: string) => Promise<void>;
 
   /**
    * Called when the Agent query completes (result message received).
