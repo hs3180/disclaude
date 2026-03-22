@@ -64,6 +64,11 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  // Issue #1391: Create group chat
+  createGroup?: (
+    topic?: string,
+    members?: string[]
+  ) => Promise<{ chatId: string }>;
 }
 
 /**
@@ -211,6 +216,27 @@ export function createInteractiveMessageHandler(
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Issue #1391: Create group chat
+        case 'feishuCreateGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers?.createGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu createGroup handler not available',
+            };
+          }
+          const { topic, members } =
+            request.payload as IpcRequestPayloads['feishuCreateGroup'];
+          try {
+            const result = await feishuHandlers.createGroup(topic, members);
+            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, payload: { success: false, error: errorMessage } };
           }
         }
 

@@ -500,6 +500,23 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Create a group chat via IPC.
+   * Issue #1391: Temporary session management support.
+   */
+  async feishuCreateGroup(
+    topic?: string,
+    members?: string[]
+  ): Promise<{ success: boolean; chatId?: string; error?: string }> {
+    try {
+      return await this.request('feishuCreateGroup', { topic, members });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, topic }, 'feishuCreateGroup failed');
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

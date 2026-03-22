@@ -85,3 +85,19 @@ export {
 export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
+
+// Temporary Session (Issue #1391)
+export type {
+  SessionStatus,
+  SessionOption,
+  CreateGroupConfig,
+  SessionResponse,
+  TemporarySessionConfig,
+  TemporarySession,
+  CreateSessionOptions,
+} from './temporary-session.js';
+export {
+  TemporarySessionManager,
+  getSessionManager,
+  resetSessionManager,
+} from './temporary-session.js';
