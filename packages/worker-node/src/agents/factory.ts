@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -181,15 +181,26 @@ export class AgentFactory {
    * Issue #711: ScheduleAgents are short-lived and should NOT be stored in AgentPool.
    * - Maximum lifetime: 24 hours
    * - Caller is responsible for disposing after execution
+   * Issue #1412: Accepts both SchedulerCallbacks (simplified) and PilotCallbacks (full).
    *
    * @param chatId - Chat ID for message delivery
-   * @param callbacks - Callbacks for sending messages
+   * @param callbacks - SchedulerCallbacks or PilotCallbacks for sending messages
    * @param options - Optional configuration overrides
    * @returns ChatAgent instance (caller must dispose)
    *
    * @example
    * ```typescript
-   * const agent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+   * // Using SchedulerCallbacks (simplified - recommended for scheduled tasks)
+   * const agent = AgentFactory.createScheduleAgent('chat-123', {
+   *   sendMessage: async (chatId, text) => { ... }
+   * });
+   *
+   * // Using PilotCallbacks (full - for subagents)
+   * const agent = AgentFactory.createScheduleAgent('chat-123', {
+   *   sendMessage: async (chatId, text) => { ... },
+   *   sendCard: async (chatId, card) => { ... },
+   *   sendFile: async (chatId, filePath) => { ... },
+   * });
    * try {
    *   await agent.executeOnce(chatId, prompt);
    * } finally {
@@ -199,14 +210,25 @@ export class AgentFactory {
    */
   static createScheduleAgent(
     chatId: string,
-    callbacks: PilotCallbacks,
+    callbacks: SchedulerCallbacks | PilotCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
     const baseConfig = this.getBaseConfig(options);
+
+    // Issue #1412: Convert SchedulerCallbacks to PilotCallbacks if needed
+    // Check if callbacks has the full PilotCallbacks interface
+    const pilotCallbacks: PilotCallbacks = 'sendCard' in callbacks
+      ? callbacks as PilotCallbacks
+      : {
+          sendMessage: callbacks.sendMessage,
+          sendCard: async () => { /* Not used for scheduled tasks */ },
+          sendFile: async () => { /* Not used for scheduled tasks */ },
+        };
+
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
-      callbacks,
+      callbacks: pilotCallbacks,
     };
 
     return new Pilot(config);
