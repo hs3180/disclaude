@@ -15,7 +15,8 @@ import {
   send_card,
   send_interactive,
   send_file,
-  setMessageSentCallback
+  setMessageSentCallback,
+  start_discussion
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -37,6 +38,7 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { start_discussion } from './tools/start-discussion.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -327,6 +329,53 @@ Templates can include these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #631: start_discussion tool
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking discussion in a group chat.
+
+Creates a new group chat (or uses an existing one) and sends context to a ChatAgent.
+The tool returns immediately — the ChatAgent handles the discussion asynchronously.
+
+## When to Use
+- When you need to discuss a topic with users without blocking the current task
+- When you want to spawn a separate ChatAgent for a focused discussion
+- When offline users need to be notified about something
+
+## Parameters
+- **context** (required): The context/prompt to send to the ChatAgent
+- **topic**: Discussion topic (used as group name for new groups)
+- **chatId**: Use an existing group chat (mutually exclusive with members)
+- **members**: Member open_ids for creating a new group (mutually exclusive with chatId)
+
+## Example
+\`\`\`json
+{
+  "context": "用户希望讨论代码格式化方案...",
+  "topic": "代码格式化讨论",
+  "members": ["ou_xxx", "ou_yyy"]
+}
+\`\`\``,
+    parameters: z.object({
+      context: z.string().describe('The context/prompt to send to the ChatAgent for discussion'),
+      topic: z.string().optional().describe('Discussion topic (used as group name for new groups)'),
+      chatId: z.string().optional().describe('Existing group chat ID (mutually exclusive with members)'),
+      members: z.array(z.string()).optional().describe('Member open_ids for creating a new group'),
+    }),
+    handler: async ({ context, topic, chatId, members }: {
+      context: string;
+      topic?: string;
+      chatId?: string;
+      members?: string[];
+    }) => {
+      try {
+        const result = await start_discussion({ context, topic, chatId, members });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion start failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

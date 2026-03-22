@@ -89,3 +89,15 @@ export interface AskUserResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Result type for start_discussion tool.
+ * Issue #631 - 离线提问机制
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  isNewGroup?: boolean;
+  error?: string;
+}

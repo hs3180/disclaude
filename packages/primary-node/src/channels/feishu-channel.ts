@@ -563,6 +563,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Get the Feishu Lark client instance.
+   * Used by IPC handlers for operations like group creation.
+   * Issue #631: start_discussion tool needs access to Lark API.
+   */
+  getLarkClient(): lark.Client | undefined {
+    return this.client;
+  }
+
   // ─── WebSocket health monitoring (Issue #1351) ────────────────────────
 
   /**

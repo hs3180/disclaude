@@ -64,6 +64,7 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  createGroup: (topic?: string, members?: string[]) => Promise<{ chatId: string }>;
 }
 
 /**
@@ -208,6 +209,27 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu group operations (Issue #631)
+        case 'feishuCreateGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { topic, members } =
+            request.payload as IpcRequestPayloads['feishuCreateGroup'];
+          try {
+            const result = await feishuHandlers.createGroup(topic, members);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
