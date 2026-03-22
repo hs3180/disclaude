@@ -85,3 +85,10 @@ export {
 export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
+
+// Output Validator (Issue #1332)
+export type { OutputValidationResult, OutputValidatorConfig } from './output-validator.js';
+export {
+  validateOutput,
+  quickCheck,
+} from './output-validator.js';

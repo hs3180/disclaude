@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
+import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, validateOutput } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 // Type alias for backward compatibility within this module
@@ -654,8 +654,27 @@ export class Pilot extends BaseAgent implements ChatAgent {
           'SDK message received'
         );
 
-        // Send message content to callback
+        // Send message content to callback (with hallucination detection)
         if (parsed.content) {
+          // Issue #1332: Validate output for hallucination/garbage content
+          const validation = validateOutput(parsed.content);
+          if (!validation.valid) {
+            this.logger.warn(
+              {
+                chatId,
+                messageCount,
+                type: parsed.type,
+                reason: validation.reason,
+                issues: validation.issues,
+                confidence: validation.confidence,
+                contentPreview: parsed.content.slice(0, 200),
+              },
+              'Skipping message - potential hallucination detected'
+            );
+            // Skip sending this message, but continue processing
+            continue;
+          }
+
           const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
           await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
         }
