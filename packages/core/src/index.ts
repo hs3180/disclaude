@@ -176,6 +176,10 @@ export {
   type ProcessMessageResult,
   type SessionStats,
   type ConversationMessageContext,
+  SessionTimeoutManager,
+  type SessionTimeoutConfig,
+  type ResolvedSessionTimeoutConfig,
+  type SessionTimeoutCallbacks,
 } from './conversation/index.js';
 
 // Scheduling module (Issue #1041, Issue #1382)

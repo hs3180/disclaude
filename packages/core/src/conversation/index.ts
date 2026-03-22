@@ -5,6 +5,7 @@
  * - MessageQueue: Producer-consumer pattern for message streaming
  * - ConversationSessionManager: Agent-agnostic session lifecycle
  * - ConversationOrchestrator: High-level conversation coordination
+ * - SessionTimeoutManager: Automatic session timeout management
  *
  * @module conversation
  */
@@ -18,6 +19,12 @@ export {
   ConversationOrchestrator,
   type ConversationOrchestratorConfig,
 } from './conversation-orchestrator.js';
+export {
+  SessionTimeoutManager,
+  type SessionTimeoutConfig,
+  type ResolvedSessionTimeoutConfig,
+  type SessionTimeoutCallbacks,
+} from './session-timeout-manager.js';
 
 export type {
   QueuedMessage,
