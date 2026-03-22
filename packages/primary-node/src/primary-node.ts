@@ -52,9 +52,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
-  type ScheduleAgent,
 } from '@disclaude/core';
-import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
+import { createDefaultScheduleAgentFactory } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -425,12 +424,10 @@ export class PrimaryNode extends EventEmitter {
     };
 
     // Issue #1382: Use unified createScheduleExecutor
-    // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
-    // This enables Primary Node to execute scheduled tasks locally
+    // Issue #1446: Use createDefaultScheduleAgentFactory from worker-node
+    // This eliminates inline agentFactory coupling to worker-node internals
     const executor = createScheduleExecutor({
-      agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks)) as ScheduleAgent;
-      },
+      agentFactory: createDefaultScheduleAgentFactory(),
       callbacks: schedulerCallbacks,
     });
 

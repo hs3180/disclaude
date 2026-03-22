@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type ScheduleAgent, type ScheduleAgentFactory as CoreScheduleAgentFactory } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -83,6 +83,37 @@ export function toPilotCallbacks(callbacks: SchedulerCallbacks): PilotCallbacks 
     sendFile: async () => {},
     // No-op: Completion handled by scheduler
     onDone: async () => {},
+  };
+}
+
+// ============================================================================
+// Issue #1446: Unified schedule agent factory for use with createScheduleExecutor
+// ============================================================================
+
+/**
+ * Create a default ScheduleAgentFactory for use with `createScheduleExecutor` from core.
+ *
+ * This provides the standard agent factory that wraps `AgentFactory.createScheduleAgent`
+ * with `toPilotCallbacks` conversion, eliminating the need for callers to inline this logic.
+ *
+ * Issue #1446: Moves executor building logic out of primary-node into a unified factory.
+ *
+ * @returns A ScheduleAgentFactory compatible with `createScheduleExecutor` from @disclaude/core
+ *
+ * @example
+ * ```typescript
+ * import { createScheduleExecutor } from '@disclaude/core';
+ * import { createDefaultScheduleAgentFactory } from '@disclaude/worker-node';
+ *
+ * const executor = createScheduleExecutor({
+ *   agentFactory: createDefaultScheduleAgentFactory(),
+ *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
+ * });
+ * ```
+ */
+export function createDefaultScheduleAgentFactory(): CoreScheduleAgentFactory {
+  return (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
+    return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks)) as unknown as ScheduleAgent;
   };
 }
 
