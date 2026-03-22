@@ -27,7 +27,8 @@ export interface IncomingMessage {
   content: string;
 
   /** Message type (text, image, file, etc.) */
-  messageType: 'text' | 'image' | 'file' | 'media' | 'post' | 'card';
+  // Issue #846: Add 'share_chat' for forwarded chat history messages
+  messageType: 'text' | 'image' | 'file' | 'media' | 'post' | 'card' | 'share_chat';
 
   /** Timestamp when message was created (ms since epoch) */
   timestamp?: number;
