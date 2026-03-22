@@ -75,5 +75,8 @@
   "bugs": {
     "url": "https://github.com/hs3180/disclaude/issues"
   },
-  "homepage": "https://github.com/hs3180/disclaude#readme"
+  "homepage": "https://github.com/hs3180/disclaude#readme",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.16.1"
+  }
 }

@@ -41,6 +41,10 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // ACP Provider factory functions (Issue #1435)
+  getAcpProvider,
+  registerAcpProvider,
+  clearAcpProviderCache,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types
@@ -314,3 +318,37 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// ACP (Agent Communication Protocol) module (Issue #1435)
+// Standardized Agent communication with session lifecycle management
+export {
+  ClaudeAcpProvider,
+  AcpSessionStore,
+  acpUpdateToAgentMessage,
+  agentMessageToAcpUpdate,
+  // ACP types
+  type AcpSessionState,
+  type AcpSessionInfo,
+  type AcpSessionOptions,
+  type AcpListSessionsOptions,
+  type AcpListSessionsResult,
+  type AcpStopReason,
+  type AcpPromptOptions,
+  type AcpPromptResult,
+  type AcpAttachment,
+  type AcpSessionUpdateType,
+  type AcpSessionUpdate,
+  type AcpSessionUpdateData,
+  type AcpContentData,
+  type AcpToolCallData,
+  type AcpToolOutputData,
+  type AcpExecPlanData,
+  type AcpExecPlanStep,
+  type AcpModeUpdateData,
+  type AcpCompletedData,
+  type AcpUsageStats,
+  type AcpCapabilities,
+  type AcpProviderInfo,
+  type IAcpProvider,
+  type AcpProviderFactory,
+} from './acp/index.js';

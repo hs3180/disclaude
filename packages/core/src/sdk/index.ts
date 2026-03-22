@@ -130,4 +130,8 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // ACP Provider 工厂 (Issue #1435)
+  getAcpProvider,
+  registerAcpProvider,
+  clearAcpProviderCache,
 } from './factory.js';

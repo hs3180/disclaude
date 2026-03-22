@@ -3,6 +3,11 @@
  *
  * 提供创建和管理 Provider 实例的统一入口。
  * 支持运行时切换不同的 Agent SDK 实现。
+ *
+ * ## ACP Provider 支持 (Issue #1435)
+ *
+ * 除了传统的 IAgentSDKProvider，工厂还支持 ACP Provider。
+ * 使用 `getAcpProvider()` 获取 ACP Provider 实例。
  */
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
@@ -10,6 +15,8 @@ import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
 import { createLogger } from '../utils/logger.js';
+import { ClaudeAcpProvider } from '../acp/providers/claude/index.js';
+import type { IAcpProvider, AcpProviderFactory } from '../acp/interface.js';
 
 /**
  * 模块级标志位，保证 skills setup 幂等（只执行一次）
@@ -176,5 +183,79 @@ export function isProviderAvailable(type: ProviderType): boolean {
     return provider.validateConfig();
   } catch {
     return false;
+  }
+}
+
+// ============================================================================
+// ACP Provider 管理 (Issue #1435)
+// ============================================================================
+
+/**
+ * ACP Provider 注册表
+ */
+const acpProviderRegistry = new Map<string, AcpProviderFactory>([
+  ['claude-acp', () => new ClaudeAcpProvider()],
+]);
+
+/**
+ * 缓存的 ACP Provider 实例
+ */
+const acpProviderCache = new Map<string, IAcpProvider>();
+
+/**
+ * 获取 ACP Provider 实例
+ *
+ * 如果缓存中存在则返回缓存的实例，否则创建新实例并自动初始化。
+ *
+ * @param type - ACP Provider 类型，默认 'claude-acp'
+ * @returns 已初始化的 ACP Provider 实例
+ * @throws 如果 Provider 类型未注册
+ */
+export async function getAcpProvider(type?: string): Promise<IAcpProvider> {
+  const providerType = type ?? 'claude-acp';
+
+  // 检查缓存
+  const cached = acpProviderCache.get(providerType);
+  if (cached) {
+    return cached;
+  }
+
+  // 获取工厂函数
+  const factory = acpProviderRegistry.get(providerType);
+  if (!factory) {
+    throw new Error(
+      `Unknown ACP provider type: ${providerType}. Available: ${[...acpProviderRegistry.keys()].join(', ')}`
+    );
+  }
+
+  // 创建、初始化并缓存实例
+  const provider = factory();
+  await provider.initialize();
+  acpProviderCache.set(providerType, provider);
+
+  return provider;
+}
+
+/**
+ * 注册新的 ACP Provider 类型
+ *
+ * @param type - ACP Provider 类型名称
+ * @param factory - ACP Provider 工厂函数
+ */
+export function registerAcpProvider(type: string, factory: AcpProviderFactory): void {
+  acpProviderRegistry.set(type, factory);
+  acpProviderCache.delete(type);
+}
+
+/**
+ * 清除 ACP Provider 缓存
+ *
+ * @param type - 可选，指定要清除的 Provider 类型。不指定则清除全部。
+ */
+export function clearAcpProviderCache(type?: string): void {
+  if (type) {
+    acpProviderCache.delete(type);
+  } else {
+    acpProviderCache.clear();
   }
 }
