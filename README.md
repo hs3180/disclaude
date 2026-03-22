@@ -6,6 +6,13 @@
 
 A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Ruliu/如流) with the Claude Agent SDK. Written in TypeScript, it enables chat-driven development, code editing, file operations, and browser automation through conversational interfaces.
 
+## 📚 Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
+| [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+
 ## Features
 
 - **Chat-driven development** - Read, edit, and write code through natural conversation
