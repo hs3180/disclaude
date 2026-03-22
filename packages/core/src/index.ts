@@ -300,6 +300,9 @@ export {
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
+// Agent Definitions module (Issue #1410)
+export * from './agents/agent-definition.js';
+
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 
