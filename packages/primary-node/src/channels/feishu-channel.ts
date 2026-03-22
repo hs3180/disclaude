@@ -35,7 +35,10 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  TriggerDetector,
+  SessionEndManager,
 } from './feishu/index.js';
+import { getGroupService } from '../platforms/feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -145,6 +148,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
 
+  /** Session end trigger detection (Issue #1229) */
+  private triggerDetector: TriggerDetector;
+  /** Session end cleanup manager (Issue #1229) */
+  private sessionEndManager?: SessionEndManager;
+
   /**
    * Offline message queue (Issue #1351).
    *
@@ -164,6 +172,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
+
+    // Initialize session end components (Issue #1229)
+    this.triggerDetector = new TriggerDetector();
 
     // Create message callbacks
     const callbacks: MessageCallbacks = {
@@ -209,6 +220,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Initialize message handler
     this.feishuMessageHandler.initialize(this.client);
+
+    // Initialize session end manager (Issue #1229)
+    this.sessionEndManager = new SessionEndManager({
+      groupService: getGroupService(),
+      workspaceDir: Config.getWorkspaceDir(),
+    });
 
     // Create event dispatcher — each handler records application-level message receipt
     // as a supplementary liveness signal for WsConnectionManager.
@@ -358,6 +375,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Check for session-end trigger phrase
+        let textToSend = message.text || '';
+        const { cleanedText, trigger } = this.triggerDetector.detectAndStrip(textToSend);
+
+        if (trigger.detected && cleanedText.trim()) {
+          // Send cleaned message (without trigger phrase) first
+          textToSend = cleanedText.trim();
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -365,10 +391,23 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // Issue #1229: Handle session end after message is sent
+        if (trigger.detected && this.client && this.sessionEndManager) {
+          logger.info(
+            { chatId: message.chatId, reason: trigger.reason },
+            'Session end trigger detected, initiating cleanup'
+          );
+          // Fire and forget — don't block message flow on session cleanup
+          this.sessionEndManager.handleSessionEnd(message.chatId, trigger, this.client)
+            .catch((err) => {
+              logger.error({ err, chatId: message.chatId }, 'Session end cleanup failed');
+            });
+        }
         break;
       }
 
