@@ -52,28 +52,38 @@ const logger = createLogger('FeishuChannel');
  */
 function extractChatIdFromEvent(data: unknown): string | undefined {
   const raw = data as Record<string, unknown>;
-  if (!raw) return undefined;
+  if (!raw) {
+    return undefined;
+  }
 
   // Try message event format: data.event.message.chat_id
   const event = raw.event as Record<string, unknown> | undefined;
   if (event?.message) {
     const message = event.message as Record<string, unknown>;
-    if (typeof message.chat_id === 'string') return message.chat_id;
+    if (typeof message.chat_id === 'string') {
+      return message.chat_id;
+    }
   }
 
   // Try card action format: data.context.open_chat_id
   if (raw.context) {
     const context = raw.context as Record<string, unknown>;
-    if (typeof context.open_chat_id === 'string') return context.open_chat_id;
+    if (typeof context.open_chat_id === 'string') {
+      return context.open_chat_id;
+    }
   }
 
   // Try member added event format: data.event.chat_id
-  if (event && typeof event.chat_id === 'string') return event.chat_id;
+  if (event && typeof event.chat_id === 'string') {
+    return event.chat_id;
+  }
 
   // Try P2P chat entered format: data.event.user.open_id
   if (event?.user) {
     const user = event.user as Record<string, unknown>;
-    if (typeof user.open_id === 'string') return user.open_id;
+    if (typeof user.open_id === 'string') {
+      return user.open_id;
+    }
   }
 
   return undefined;
@@ -298,7 +308,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.wsConnectionManager.on('reconnected', (attempt) => {
       logger.info({ attempt }, 'WebSocket reconnected successfully');
       // Flush offline message queue after reconnect
-      this.flushOfflineQueue();
+      void this.flushOfflineQueue();
     });
 
     this.wsConnectionManager.on('reconnectFailed', (totalAttempts) => {
