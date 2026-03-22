@@ -54,8 +54,7 @@ import {
   type SchedulerCallbacks,
   type ScheduleAgent,
 } from '@disclaude/core';
-import { AgentFactory } from '@disclaude/worker-node';
-import type { PilotCallbacks } from '@disclaude/worker-node';
+import { AgentFactory, type PilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';

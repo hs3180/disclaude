@@ -49,7 +49,6 @@
 
 import { EventEmitter } from 'events';
 import { WS_HEALTH, createLogger } from '@disclaude/core';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import * as lark from '@larksuiteoapi/node-sdk';
 
 const logger = createLogger('WsConnectionManager');
@@ -384,6 +383,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * Stop the connection manager and clean up all resources.
    */
   async stop(): Promise<void> {
+    await Promise.resolve();
     logger.info('WsConnectionManager stopping');
 
     this.stopHealthCheck();
@@ -742,7 +742,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     );
 
     this.reconnectTimer = setTimeout(() => {
-      this.performReconnectAttempt();
+      void this.performReconnectAttempt();
     }, delay);
 
     if (this.reconnectTimer.unref) {

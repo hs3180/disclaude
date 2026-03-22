@@ -24,7 +24,7 @@ export const handleStatus: CommandHandler = (
       '',
       `**节点 ID**: ${localNodeId}`,
       `**连接节点数**: ${nodeCount}`,
-      `**执行节点**:`,
+      '**执行节点**:',
       nodeLines,
     ].join('\n'),
   };

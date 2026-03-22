@@ -241,6 +241,7 @@ describe('withRetry', () => {
     let callCount = 0;
 
     const operation = async () => {
+      await Promise.resolve();
       callCount++;
       if (callCount === 1) {
         throw networkError;
