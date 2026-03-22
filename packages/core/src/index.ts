@@ -314,3 +314,32 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Temporary Session module (Issue #1391)
+export {
+  type SessionStatus,
+  type SessionCreateGroup,
+  type SessionOption,
+  type SessionResponse,
+  type SessionContext,
+  type TemporarySession,
+  type CreateTempSessionOptions,
+  type SessionFile,
+  getSessionsDir,
+  ensureSessionsDir,
+  getSessionFilePath,
+  createSession,
+  readSession,
+  writeSession,
+  updateSessionStatus,
+  activateSession,
+  expireSessionWithResponse,
+  expireSessionTimeout,
+  listSessions,
+  listPendingSessions,
+  listActiveSessions,
+  listExpiredSessions,
+  isSessionTimedOut,
+  deleteSession,
+  findSessionByMessageId,
+} from './session/index.js';
