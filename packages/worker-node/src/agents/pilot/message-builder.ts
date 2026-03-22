@@ -7,6 +7,7 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1228: Added SOUL (personality/behavior) injection for discussion focus.
  */
 
 import { Config, type ChannelCapabilities } from '@disclaude/core';
@@ -24,8 +25,19 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - SOUL personality injection (Issue #1228)
  */
 export class MessageBuilder {
+  /**
+   * Optional SOUL content for personality injection.
+   * Issue #1228: When set, injected into the system prompt to provide
+   * personality-driven behavior (e.g., keeping discussions focused).
+   */
+  private readonly soulContent?: string;
+
+  constructor(soulContent?: string) {
+    this.soulContent = soulContent;
+  }
   /**
    * Build enhanced content with Feishu context.
    *
@@ -100,6 +112,9 @@ ${msg.persistedHistoryContext}
     // Build output format guidance section (Issue #962)
     const outputFormatGuidance = this.buildOutputFormatGuidance();
 
+    // Build SOUL personality section (Issue #1228)
+    const soulSection = this.buildSoulSection();
+
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
@@ -126,6 +141,7 @@ To notify the user in your FINAL response, use:
 **Message ID:** ${msg.messageId}
 **Sender Open ID:** ${msg.senderOpenId}
 ${persistedHistorySection}${chatHistorySection}${mentionSection}
+${soulSection}
 
 ---
 
@@ -144,6 +160,10 @@ ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
 **Chat ID:** ${chatId}
 **Message ID:** ${msg.messageId}
 ${persistedHistorySection}${chatHistorySection}
+${soulSection}
+
+---
+
 ## Tools
 ${toolsSection}
 ${nextStepGuidance}
@@ -152,6 +172,33 @@ ${locationAwarenessGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
+  }
+
+  /**
+   * Build SOUL personality section for the prompt.
+   *
+   * Issue #1228: Injects a personality/behavior definition into the system prompt.
+   * The SOUL content comes from a Markdown file (e.g., souls/discussion.md) and
+   * provides personality-driven behavior without complex detection mechanisms.
+   *
+   * When no soul is configured, returns an empty string (no impact on normal behavior).
+   *
+   * @returns SOUL section string, or empty string if no soul is active
+   */
+  private buildSoulSection(): string {
+    if (!this.soulContent) {
+      return '';
+    }
+
+    return `
+---
+
+## SOUL (Personality & Behavior)
+
+Follow these personality guidelines in all your responses:
+
+${this.soulContent}
+---`;
   }
 
   /**

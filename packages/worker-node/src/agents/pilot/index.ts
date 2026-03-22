@@ -99,13 +99,36 @@ export class Pilot extends BaseAgent implements ChatAgent {
     });
 
     // Initialize message builder (Issue #697)
-    this.messageBuilder = new MessageBuilder();
+    // Issue #1228: Load soul content for personality injection
+    this.messageBuilder = new MessageBuilder(this.loadSoulContent());
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
 
   protected getAgentName(): string {
     return 'Pilot';
+  }
+
+  /**
+   * Load SOUL content from config for personality injection.
+   * Issue #1228: Reads the active soul Markdown file and returns its content.
+   *
+   * @returns Soul content string, or undefined if no soul is configured
+   */
+  private loadSoulContent(): string | undefined {
+    const soulConfig = Config.getSoulConfig();
+    if (!soulConfig.active) {
+      return undefined;
+    }
+
+    const content = Config.loadSoulContent(soulConfig.active);
+    if (content) {
+      this.logger.info({ soul: soulConfig.active }, 'SOUL personality loaded for Pilot');
+    } else {
+      this.logger.warn({ soul: soulConfig.active }, 'SOUL personality configured but file not found');
+    }
+
+    return content || undefined;
   }
 
   /**

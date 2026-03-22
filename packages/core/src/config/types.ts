@@ -270,6 +270,23 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Soul (personality/behavior) configuration for agent.
+ * Issue #1228: SOUL system for keeping discussions focused.
+ *
+ * Soul definitions are Markdown files stored in `souls/{name}.md`.
+ * When active, the soul content is injected into the agent's system prompt,
+ * providing personality-driven behavior without complex detection mechanisms.
+ */
+export interface SoulConfig {
+  /**
+   * Name of the active soul (maps to souls/{name}.md).
+   * When set, the corresponding soul Markdown file is loaded and injected
+   * into the agent's system prompt. Empty or unset = no soul active.
+   */
+  active?: string;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +322,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Soul (personality/behavior) configuration (Issue #1228) */
+  soul?: SoulConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

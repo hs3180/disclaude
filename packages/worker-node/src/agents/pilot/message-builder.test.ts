@@ -4,6 +4,7 @@
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Issue #1228: Tests for SOUL personality injection.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -292,6 +293,93 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('Convert JSON objects to readable text');
       expect(result).toContain('Markdown tables instead of raw JSON');
+    });
+  });
+
+  describe('SOUL personality injection (Issue #1228)', () => {
+    it('should not include SOUL section when no soul is configured', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('SOUL');
+      expect(result).not.toContain('Personality & Behavior');
+    });
+
+    it('should include SOUL section when soul content is provided', () => {
+      const soulBuilder = new MessageBuilder('# Test Soul\n\nStay focused.');
+      const result = soulBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('SOUL (Personality & Behavior)');
+      expect(result).toContain('Follow these personality guidelines');
+      expect(result).toContain('# Test Soul');
+      expect(result).toContain('Stay focused.');
+    });
+
+    it('should include SOUL section for messages with senderOpenId', () => {
+      const soulBuilder = new MessageBuilder('# Discussion SOUL\n\nStay on topic.');
+      const result = soulBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-456',
+      }, 'chat-123');
+
+      expect(result).toContain('SOUL (Personality & Behavior)');
+      expect(result).toContain('# Discussion SOUL');
+      expect(result).toContain('Stay on topic.');
+    });
+
+    it('should not include SOUL section for skill commands even when soul is configured', () => {
+      const soulBuilder = new MessageBuilder('# Discussion SOUL\n\nStay on topic.');
+      const result = soulBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('SOUL');
+      expect(result).toContain('/reset');
+    });
+
+    it('should place SOUL section between context and tools', () => {
+      const soulBuilder = new MessageBuilder('# My Soul\n\nBe helpful.');
+      const result = soulBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-123',
+      }, 'chat-123');
+
+      const soulIndex = result.indexOf('SOUL (Personality & Behavior)');
+      const toolsIndex = result.indexOf('## Tools');
+      const userMsgIndex = result.indexOf('--- User Message ---');
+
+      expect(soulIndex).toBeGreaterThan(-1);
+      expect(toolsIndex).toBeGreaterThan(soulIndex);
+      expect(userMsgIndex).toBeGreaterThan(toolsIndex);
+    });
+
+    it('should preserve soul markdown formatting in output', () => {
+      const soulContent = `# Discussion SOUL
+
+I am a focused discussion partner.
+
+## Core Truths
+
+**Stay on topic.**
+The initial question is my north star.`;
+      const soulBuilder = new MessageBuilder(soulContent);
+      const result = soulBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('# Discussion SOUL');
+      expect(result).toContain('## Core Truths');
+      expect(result).toContain('**Stay on topic.**');
+      expect(result).toContain('The initial question is my north star.');
     });
   });
 });

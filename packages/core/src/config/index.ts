@@ -7,7 +7,7 @@
  * All configuration is read from the config file.
  */
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -400,5 +401,43 @@ export class Config {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
     };
+  }
+
+  /**
+   * Get soul (personality/behavior) configuration.
+   * Issue #1228: SOUL system for agent personality injection.
+   *
+   * @returns Soul configuration (active soul name and variables)
+   */
+  static getSoulConfig(): SoulConfig {
+    return fileConfigOnly.soul || {};
+  }
+
+  /**
+   * Load soul content from a Markdown file.
+   * Issue #1228: Reads souls/{soulName}.md from the workspace directory.
+   *
+   * Soul files are plain Markdown that define an agent's personality and behavior.
+   * The content is injected into the agent's system prompt to provide personality-driven
+   * behavior without complex detection mechanisms.
+   *
+   * @param soulName - Name of the soul (maps to souls/{soulName}.md)
+   * @returns Soul content as string, or null if not found
+   */
+  static loadSoulContent(soulName: string): string | null {
+    const soulPath = path.resolve(this.getWorkspaceDir(), 'souls', `${soulName}.md`);
+    if (!existsSync(soulPath)) {
+      logger.debug({ soulPath, soulName }, 'Soul file not found');
+      return null;
+    }
+
+    try {
+      const content = readFileSync(soulPath, 'utf-8');
+      logger.info({ soulName, soulPath, contentLength: content.length }, 'Loaded soul content');
+      return content;
+    } catch (err) {
+      logger.error({ err, soulPath, soulName }, 'Failed to load soul file');
+      return null;
+    }
   }
 }
