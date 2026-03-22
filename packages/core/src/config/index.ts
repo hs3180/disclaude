@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  SdkConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -400,5 +401,16 @@ export class Config {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
     };
+  }
+
+  /**
+   * Get SDK configuration.
+   * Controls SDK behavior parameters like output token limits.
+   * @see Issue #1335
+   *
+   * @returns SDK configuration object
+   */
+  static getSdkConfig(): SdkConfig {
+    return fileConfigOnly.sdk || {};
   }
 }

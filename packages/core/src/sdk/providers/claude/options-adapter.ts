@@ -61,6 +61,20 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // SDK 行为参数 (Issue #1335)
+  if (options.maxOutputTokens !== undefined) {
+    sdkOptions.maxOutputTokens = options.maxOutputTokens;
+  }
+  if (options.maxContext !== undefined) {
+    sdkOptions.maxContext = options.maxContext;
+  }
+  if (options.temperature !== undefined) {
+    sdkOptions.temperature = options.temperature;
+  }
+  if (options.extendedThinking !== undefined) {
+    sdkOptions.extendedThinking = options.extendedThinking;
+  }
+
   return sdkOptions;
 }
 

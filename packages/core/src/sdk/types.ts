@@ -192,6 +192,14 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /** 最大输出 token 数 (Issue #1335) */
+  maxOutputTokens?: number;
+  /** 最大上下文窗口大小 (Issue #1335) */
+  maxContext?: number;
+  /** 模型温度 (Issue #1335) */
+  temperature?: number;
+  /** 是否启用扩展思考模式 (Issue #1335) */
+  extendedThinking?: boolean;
 }
 
 // ============================================================================

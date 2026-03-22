@@ -37,6 +37,7 @@
 
 import type { AgentMessage, FileRef } from '../types/index.js';
 import type { InlineToolDefinition, McpServerConfig } from '../sdk/index.js';
+import type { SdkConfig } from '../config/index.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -555,6 +556,8 @@ export interface AgentRuntimeContext {
   getGlobalEnv(): Record<string, string>;
   /** Check if Agent Teams mode is enabled */
   isAgentTeamsEnabled(): boolean;
+  /** Get SDK configuration (Issue #1335) */
+  getSdkConfig(): SdkConfig;
 
   // Platform adapters (optional - only needed for ChatAgent)
   /** Create MCP server instance for a chatId */

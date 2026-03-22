@@ -270,6 +270,21 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * SDK configuration section (Issue #1335).
+ * Controls SDK behavior parameters like output token limits.
+ */
+export interface SdkConfig {
+  /** Maximum tokens for a single output (default: SDK default) */
+  maxOutputTokens?: number;
+  /** Maximum context window size (default: SDK default) */
+  maxContext?: number;
+  /** Model temperature for controlling randomness (0.0 to 1.0) */
+  temperature?: number;
+  /** Enable/disable extended thinking mode */
+  extendedThinking?: boolean;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +320,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** SDK configuration (Issue #1335) */
+  sdk?: SdkConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

@@ -25,7 +25,7 @@ import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
-import { Config } from '../config/index.js';
+import { Config, type SdkConfig } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 
 // Re-export BaseAgentConfig for backward compatibility
@@ -192,6 +192,21 @@ export abstract class BaseAgent implements Disposable {
       options.model = this.model;
     }
 
+    // Set SDK behavior parameters (Issue #1335)
+    const sdkConfig = this.getSdkConfig();
+    if (sdkConfig.maxOutputTokens !== undefined) {
+      options.maxOutputTokens = sdkConfig.maxOutputTokens;
+    }
+    if (sdkConfig.maxContext !== undefined) {
+      options.maxContext = sdkConfig.maxContext;
+    }
+    if (sdkConfig.temperature !== undefined) {
+      options.temperature = sdkConfig.temperature;
+    }
+    if (sdkConfig.extendedThinking !== undefined) {
+      options.extendedThinking = sdkConfig.extendedThinking;
+    }
+
     return options;
   }
 
@@ -234,6 +249,17 @@ export abstract class BaseAgent implements Disposable {
       return getRuntimeContext().isAgentTeamsEnabled();
     }
     return false;
+  }
+
+  /**
+   * Get SDK configuration from runtime context.
+   * @see Issue #1335
+   */
+  protected getSdkConfig(): SdkConfig {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getSdkConfig();
+    }
+    return Config.getSdkConfig();
   }
 
   /**
