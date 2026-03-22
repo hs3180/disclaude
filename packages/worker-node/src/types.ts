@@ -106,14 +106,18 @@ export interface AgentPoolInterface {
  * PilotCallbacks - Callbacks for ChatAgent to send messages.
  *
  * Used when creating ChatAgent instances.
+ *
+ * Issue #1412: sendCard and sendFile are optional since Pilot only uses
+ * sendMessage and onDone. Primary Node can use channel API directly for
+ * card and file sending, avoiding unnecessary indirection.
  */
 export interface PilotCallbacks {
   /** Send a text message */
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-  /** Send an interactive card */
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
-  /** Send a file */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
+  /** Send an interactive card (optional - use channel API directly in Primary Node) */
+  sendCard?: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
+  /** Send a file (optional - use channel API directly in Primary Node) */
+  sendFile?: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
 }
