@@ -394,11 +394,24 @@ export class Config {
   static getSessionRestoreConfig(): {
     historyDays: number;
     maxContextLength: number;
+    sessionTimeout: {
+      enabled: boolean;
+      idleMinutes: number;
+      maxSessions: number;
+      checkIntervalMinutes: number;
+    };
   } {
     const config = fileConfigOnly.sessionRestore || {};
+    const timeoutConfig = config.sessionTimeout || {};
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
+      sessionTimeout: {
+        enabled: timeoutConfig.enabled ?? false,
+        idleMinutes: timeoutConfig.idleMinutes ?? 30,
+        maxSessions: timeoutConfig.maxSessions ?? 100,
+        checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+      },
     };
   }
 }

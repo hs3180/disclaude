@@ -172,6 +172,9 @@ async function main(): Promise<void> {
   // Create AgentPool for Primary Node
   const agentPool = new PrimaryAgentPool();
 
+  // Start session timeout management (Issue #1313)
+  agentPool.startSessionTimeoutManager();
+
   // Create unified control handler context
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {

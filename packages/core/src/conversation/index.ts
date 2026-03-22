@@ -18,6 +18,11 @@ export {
   ConversationOrchestrator,
   type ConversationOrchestratorConfig,
 } from './conversation-orchestrator.js';
+export {
+  SessionTimeoutManager,
+  type SessionTimeoutCallbacks,
+  type SessionTimeoutManagerConfig,
+} from './session-timeout-manager.js';
 
 export type {
   QueuedMessage,
