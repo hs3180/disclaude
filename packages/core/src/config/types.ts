@@ -270,6 +270,21 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Context compacting configuration (Issue #1336).
+ * Controls framework-level auto compacting for active agents.
+ * The framework monitors cumulative input token usage and triggers
+ * compaction when the threshold is reached.
+ */
+export interface ContextCompactConfig {
+  /** Enable framework-level auto compacting (default: false, opt-in) */
+  enabled?: boolean;
+  /** Token threshold to trigger compaction (default: 150000) */
+  thresholdTokens?: number;
+  /** How often to check token usage in seconds (default: 60) */
+  checkIntervalSeconds?: number;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +320,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Framework-level auto compacting configuration (Issue #1336) */
+  contextCompact?: ContextCompactConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
