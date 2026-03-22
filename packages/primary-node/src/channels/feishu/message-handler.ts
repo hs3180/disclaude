@@ -235,7 +235,7 @@ export class MessageHandler {
    * For image/file/media, downloads the file and returns both a text prompt
    * and a structured MessageAttachment so the agent can access the file.
    */
-  private async getQuotedMessageContext(parentId: string): Promise<QuotedMessageResult | undefined> {
+  private async getQuotedMessageContext(parent_id: string): Promise<QuotedMessageResult | undefined> {
     if (!this.client) {
       return undefined;
     }
@@ -243,7 +243,7 @@ export class MessageHandler {
     try {
       const response = await this.client.im.message.get({
         path: {
-          message_id: parentId,
+          message_id: parent_id,
         },
         params: {
           user_id_type: 'open_id',
@@ -257,7 +257,7 @@ export class MessageHandler {
 
       const msgType = message.message.message_type;
       const msgContent = message.message.content || '{}';
-      const msgId = message.message.message_id || parentId;
+      const msgId = message.message.message_id || parent_id;
 
       let quotedText = '';
       try {
@@ -290,7 +290,7 @@ export class MessageHandler {
 
       return { text: `> **引用的消息**:\n> ${quotedText.split('\n').join('\n> ')}` };
     } catch (error) {
-      logger.debug({ err: error, parentId }, 'Failed to get quoted message context');
+      logger.debug({ err: error, parent_id }, 'Failed to get quoted message context');
       return undefined;
     }
   }
@@ -439,6 +439,7 @@ export class MessageHandler {
       }
 
       // Download file to workspace/downloads directory
+      // Issue #1205: Add parent_id fallback for forwarded/quoted images
       let localPath: string | undefined;
       if (this.client) {
         try {
@@ -446,17 +447,44 @@ export class MessageHandler {
           await fs.mkdir(downloadDir, { recursive: true });
           localPath = path.join(downloadDir, String(fileName || fileKey));
 
-          logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
+          logger.info({ fileKey, fileName, localPath, messageId: message_id, parent_id }, 'Downloading file from Feishu');
 
-          const response = await this.client.im.messageResource.get({
-            path: { message_id, file_key: fileKey },
-            params: { type: message_type },
-          });
-          await response.writeFile(localPath);
-
-          logger.info({ fileKey, localPath }, 'File downloaded successfully');
+          try {
+            // Try primary message_id first
+            const response = await this.client.im.messageResource.get({
+              path: { message_id, file_key: fileKey },
+              params: { type: message_type },
+            });
+            await response.writeFile(localPath);
+            logger.info({ fileKey, localPath, messageId: message_id }, 'File downloaded successfully');
+          } catch (primaryError) {
+            // Issue #1205: If primary message_id fails and we have a parent_id, try fallback
+            // This handles forwarded/quoted images where message_id and image_key may not match
+            if (parent_id && parent_id !== message_id) {
+              logger.info(
+                { messageId: message_id, parent_id, fileKey, error: (primaryError as Error).message },
+                'Primary message_id download failed, trying parent_id fallback for forwarded/quoted image'
+              );
+              try {
+                const response = await this.client.im.messageResource.get({
+                  path: { message_id: parent_id, file_key: fileKey },
+                  params: { type: message_type },
+                });
+                await response.writeFile(localPath);
+                logger.info({ fileKey, localPath, parent_id }, 'File downloaded successfully via parent_id fallback');
+              } catch (fallbackError) {
+                logger.warn(
+                  { parent_id, fileKey, error: (fallbackError as Error).message },
+                  'parent_id fallback also failed'
+                );
+                throw primaryError;
+              }
+            } else {
+              throw primaryError;
+            }
+          }
         } catch (downloadError) {
-          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+          logger.error({ err: downloadError, fileKey, messageId: message_id, parent_id }, 'Failed to download file');
         }
       }
 
