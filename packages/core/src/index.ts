@@ -314,3 +314,26 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Racing module - Agent Framework benchmarking (Issue #1334)
+export {
+  RaceExecutor,
+  RaceReportGenerator,
+  type RaceConfig,
+  type RaceParticipantConfig,
+  type RaceTask,
+  type RaceMode,
+  type TaskCategory,
+  type RaceCallbacks,
+  type RaceResult,
+  type RaceTaskResult,
+  type RaceParticipantResult,
+  type RaceParticipantMetrics,
+  type RaceRanking,
+  type QualityEvaluation,
+  type RankingCriterion,
+  type RankingWeights,
+  type RaceState,
+  type RaceProgress,
+  type ReportConfig,
+} from './racing/index.js';
