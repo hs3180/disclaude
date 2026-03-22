@@ -41,6 +41,10 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // Model routing (Issue #1338)
+  classifyTask,
+  routeModel,
+  buildRoutingContext,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types
@@ -77,6 +81,12 @@ export type {
   IAgentSDKProvider,
   ProviderFactory,
   ProviderConstructor,
+  // Model routing types (Issue #1338)
+  TaskType as ModelRouterTaskType,
+  ModelRoutingRule,
+  ModelRoutingConfig as SdkModelRoutingConfig,
+  ModelRoutingResult,
+  RoutingContext,
 } from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040)

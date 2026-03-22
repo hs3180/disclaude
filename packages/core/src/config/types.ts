@@ -19,6 +19,36 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Model routing rule configuration.
+ * Used in agent.modelRouting.rules to route tasks to specific models.
+ *
+ * @see Issue #1338
+ */
+export interface ModelRoutingRuleConfig {
+  /** Match by task type (coding, research, evaluation, reporting, general) */
+  taskType?: string;
+  /** Match by skill name (exact or partial match, e.g. 'evaluator') */
+  skill?: string;
+  /** Model to use when this rule matches */
+  model: string;
+  /** Optional provider override for this rule */
+  provider?: 'anthropic' | 'glm';
+}
+
+/**
+ * Model routing configuration.
+ * Enables intelligent model selection based on task type and skill name.
+ *
+ * @see Issue #1338
+ */
+export interface ModelRoutingConfig {
+  /** Whether model routing is enabled (default: false) */
+  enabled?: boolean;
+  /** Routing rules evaluated in order, first match wins */
+  rules?: ModelRoutingRuleConfig[];
+}
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -40,6 +70,12 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * Smart model routing configuration.
+   * Routes different task types to optimal models based on task characteristics.
+   * @see Issue #1338
+   */
+  modelRouting?: ModelRoutingConfig;
 }
 
 /**

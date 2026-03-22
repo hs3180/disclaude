@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  ModelRoutingConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -294,6 +295,21 @@ export class Config {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
+    };
+  }
+
+  /**
+   * Get model routing configuration.
+   * Returns the routing config from disclaude.config.yaml.
+   * @see Issue #1338
+   *
+   * @returns Model routing configuration
+   */
+  static getModelRoutingConfig(): ModelRoutingConfig {
+    const routing = fileConfigOnly.agent?.modelRouting;
+    return {
+      enabled: routing?.enabled ?? false,
+      rules: routing?.rules ?? [],
     };
   }
 

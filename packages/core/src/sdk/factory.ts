@@ -10,6 +10,8 @@ import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
 import { createLogger } from '../utils/logger.js';
+export { classifyTask, routeModel, buildRoutingContext } from './model-router.js';
+export type { TaskType, ModelRoutingRule, ModelRoutingConfig, ModelRoutingResult, RoutingContext } from './model-router.js';
 
 /**
  * 模块级标志位，保证 skills setup 幂等（只执行一次）

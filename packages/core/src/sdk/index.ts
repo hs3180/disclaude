@@ -131,3 +131,21 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// 模型路由导出 (Issue #1338)
+// ============================================================================
+
+export {
+  classifyTask,
+  routeModel,
+  buildRoutingContext,
+} from './model-router.js';
+
+export type {
+  TaskType,
+  ModelRoutingRule,
+  ModelRoutingConfig,
+  ModelRoutingResult,
+  RoutingContext,
+} from './model-router.js';
