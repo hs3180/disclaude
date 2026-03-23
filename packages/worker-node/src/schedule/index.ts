@@ -11,6 +11,9 @@
  * Note: CRUD operations (create/update/delete) are handled via file system directly.
  * Users create schedule files manually, and ScheduleFileWatcher auto-loads them.
  *
+ * Issue #1446: Scheduler and ScheduleManager are now re-exported from @disclaude/core
+ * to eliminate duplicate implementations.
+ *
  * @module @disclaude/worker-node/schedule
  *
  * @see Issue #3 - Scheduled task feature
@@ -21,10 +24,12 @@
  * @see Issue #355 - Remove unused CRUD methods
  * @see Issue #869 - Cooldown period for scheduled tasks
  * @see Issue #1041 - Migrate to @disclaude/worker-node package
+ * @see Issue #1446 - Remove duplicate implementations, re-export from core
  */
 
-export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from './schedule-manager.js';
-export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+// Issue #1446: Re-export Scheduler and ScheduleManager from core (eliminates duplicate code)
+export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from '@disclaude/core';
+export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from '@disclaude/core';
 // ScheduleFileScanner, ScheduleFileWatcher re-exported from core (Issue #1395)
 export {
   ScheduleFileScanner,

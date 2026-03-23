@@ -60,7 +60,13 @@ import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
  * provides no-op implementations for sendCard, sendFile, and onDone to
  * satisfy the PilotCallbacks interface.
  *
+ * ⚠️ Scheduled task scenarios only require sendMessage capability.
+ * sendCard, sendFile, and onDone are all no-op implementations.
+ * If scheduled tasks need to send cards/files in the future,
+ * the SchedulerCallbacks interface needs to be extended.
+ *
  * Issue #1412: Removes duplicate empty implementations from Primary Node.
+ * Issue #1446: Documents limitation of callback conversion.
  *
  * @param callbacks - SchedulerCallbacks with sendMessage method
  * @returns PilotCallbacks with functional sendMessage and no-op other methods
