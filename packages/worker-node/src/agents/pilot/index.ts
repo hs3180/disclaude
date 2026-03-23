@@ -33,6 +33,8 @@
  */
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { readFile } from 'fs/promises';
+import path from 'path';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
 import type { PilotCallbacks, PilotConfig } from './types.js';
@@ -81,6 +83,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // First message chat history (Issue #1230)
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
+
+  // Project context from CLAUDE.md (Issue #1506)
+  private projectContext?: string;
+  private projectContextLoaded = false;
+  private projectContextLoadPromise?: Promise<void>;
 
   constructor(config: PilotConfig) {
     super(config);
@@ -253,6 +260,89 @@ export class Pilot extends BaseAgent implements ChatAgent {
   }
 
   /**
+   * Load project context from CLAUDE.md (Issue #1506).
+   *
+   * Reads the CLAUDE.md file from the workspace root directory to provide
+   * project-specific development guidance to the agent. The content is
+   * loaded once and cached for the lifetime of this Pilot instance.
+   */
+  private async loadProjectContext(): Promise<void> {
+    // If already loading, wait for the existing promise
+    if (this.projectContextLoadPromise) {
+      return this.projectContextLoadPromise;
+    }
+
+    // If already loaded, return immediately
+    if (this.projectContextLoaded) {
+      return;
+    }
+
+    // Start loading
+    this.projectContextLoadPromise = this.doLoadProjectContext();
+    try {
+      await this.projectContextLoadPromise;
+    } finally {
+      this.projectContextLoadPromise = undefined;
+    }
+  }
+
+  /**
+   * Internal method to perform the actual CLAUDE.md loading.
+   *
+   * Reads CLAUDE.md from the workspace directory with a size limit
+   * to avoid excessive token usage in the prompt.
+   */
+  private async doLoadProjectContext(): Promise<void> {
+    const MAX_CLAUDE_MD_SIZE = 32 * 1024; // 32 KB limit
+
+    try {
+      const workspaceDir = Config.getWorkspaceDir();
+      const claudeMdPath = path.join(workspaceDir, 'CLAUDE.md');
+
+      this.logger.info(
+        { chatId: this.boundChatId, claudeMdPath },
+        'Loading project context from CLAUDE.md'
+      );
+
+      const content = await readFile(claudeMdPath, 'utf-8');
+
+      if (content.trim()) {
+        // Truncate if too large
+        this.projectContext = content.length > MAX_CLAUDE_MD_SIZE
+          ? content.slice(0, MAX_CLAUDE_MD_SIZE) + '\n\n... (truncated)'
+          : content;
+
+        this.logger.info(
+          { chatId: this.boundChatId, contentLength: this.projectContext.length },
+          'Project context loaded from CLAUDE.md successfully'
+        );
+      } else {
+        this.logger.debug(
+          { chatId: this.boundChatId },
+          'CLAUDE.md is empty, skipping project context'
+        );
+      }
+
+      this.projectContextLoaded = true;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        this.logger.debug(
+          { chatId: this.boundChatId },
+          'CLAUDE.md not found in workspace, skipping project context'
+        );
+      } else {
+        this.logger.warn(
+          { err, chatId: this.boundChatId },
+          'Failed to load CLAUDE.md, skipping project context'
+        );
+      }
+      // Mark as loaded even on error to prevent retry loops
+      this.projectContextLoaded = true;
+    }
+  }
+
+  /**
    * Start the agent session (ChatAgent interface).
    *
    * Called once before processing any messages. For Pilot, this is a no-op
@@ -305,6 +395,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
         text: userInput.content,
         messageId,
         senderOpenId,
+        projectContext: this.projectContext,
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -359,6 +450,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
 
+    // Issue #1506: Load project context from CLAUDE.md (not triggered by startAgentLoop in CLI mode)
+    if (!this.projectContextLoaded) {
+      await this.loadProjectContext();
+    }
+
     // Add MCP servers
     const mcpServers: Record<string, unknown> = {};
 
@@ -390,6 +486,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
+      projectContext: this.projectContext,
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -495,6 +592,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      projectContext: this.projectContext,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {
@@ -541,6 +639,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
     if (!this.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
       this.loadFirstMessageHistory().catch((err) => {
         this.logger.error({ err, chatId }, 'Failed to load first message history in background');
+      });
+    }
+
+    // Issue #1506: Load project context from CLAUDE.md
+    if (!this.projectContextLoaded) {
+      this.loadProjectContext().catch((err) => {
+        this.logger.error({ err, chatId }, 'Failed to load project context in background');
       });
     }
 

@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';
 
 /**
@@ -130,6 +131,9 @@ export class MessageBuilder {
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
+    // Project context from CLAUDE.md (Issue #1506)
+    const projectContextSection = buildProjectContextGuidance(msg.projectContext);
+
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
@@ -155,6 +159,10 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+
+    if (projectContextSection) {
+      sections.push(projectContextSection);
     }
 
     if (toolsSection) {

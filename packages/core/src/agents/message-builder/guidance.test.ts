@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,34 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectContextGuidance()).toBe('');
+    expect(buildProjectContextGuidance(undefined)).toBe('');
+  });
+
+  it('should return formatted section when context is provided', () => {
+    const claudeMdContent = '# Project Guidelines\n\n- Use TypeScript\n- Follow conventional commits';
+    const result = buildProjectContextGuidance(claudeMdContent);
+
+    expect(result).toContain('Project Context (CLAUDE.md)');
+    expect(result).toContain('Project Guidelines');
+    expect(result).toContain('Use TypeScript');
+    expect(result).toContain('Follow conventional commits');
+  });
+
+  it('should include the CLAUDE.md source reference', () => {
+    const result = buildProjectContextGuidance('some content');
+    expect(result).toContain('CLAUDE.md');
+    expect(result).toContain('workspace');
+  });
+
+  it('should include instruction to follow conventions', () => {
+    const result = buildProjectContextGuidance('# Rules\nBe careful');
+    expect(result).toContain('Follow these conventions');
+    expect(result).toContain('development tasks');
   });
 });

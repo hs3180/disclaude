@@ -508,4 +508,54 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context section when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules\n- Use strict TypeScript',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('Project Rules');
+      expect(result).toContain('Use strict TypeScript');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context');
+      expect(result).not.toContain('CLAUDE.md');
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        projectContext: '# Rules\n- Follow conventions',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context');
+      expect(result).not.toContain('CLAUDE.md');
+    });
+
+    it('should place project context after history and before tools', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'History...',
+        projectContext: '# Project Context',
+      }, 'chat-456');
+
+      const historyIdx = result.indexOf('Recent Chat History');
+      const projectCtxIdx = result.indexOf('Project Context (CLAUDE.md)');
+      const outputFormatIdx = result.indexOf('Output Format Requirements');
+      expect(projectCtxIdx).toBeGreaterThan(historyIdx);
+      expect(outputFormatIdx).toBeGreaterThan(projectCtxIdx);
+    });
+  });
 });
