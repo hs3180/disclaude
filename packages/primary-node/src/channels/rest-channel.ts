@@ -345,40 +345,150 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     // For text responses
     if (message.type === 'text' && message.text) {
-      // Sync mode: buffer text responses
-      if (messageId) {
-        const buffer = this.responseBuffers.get(messageId);
-        if (buffer) {
-          buffer.push(message.text);
-        } else {
-          logger.warn(
-            { chatId: message.chatId, messageId },
-            'No buffer found for text message'
-          );
-        }
-      }
+      this.bufferResponse(message.chatId, messageId, message.text);
+    }
 
-      // Async mode: add to session messages
-      const session = this.sessionStates.get(message.chatId);
-      if (session) {
-        const now = Date.now();
-        const assistantMessageId = `resp_${now}_${Math.random().toString(36).slice(2, 8)}`;
-        session.messages.push({
-          id: assistantMessageId,
-          role: 'assistant',
-          content: message.text,
-          timestamp: now,
-        });
-        session.lastMessageId = assistantMessageId;
-        session.updatedAt = now;
-        logger.debug(
-          { chatId: message.chatId, messageId: assistantMessageId },
-          'Async session: added assistant message'
-        );
+    // Issue #1523: Handle card messages by extracting text content
+    // Cards sent via IPC (e.g., send_card, send_interactive) are converted
+    // to text for REST channel since REST doesn't natively render Feishu cards.
+    if (message.type === 'card' && message.card) {
+      const cardText = this.extractTextFromCard(message.card);
+      if (cardText) {
+        this.bufferResponse(message.chatId, messageId, cardText);
       }
     }
 
     return Promise.resolve();
+  }
+
+  /**
+   * Buffer a text response for both sync and async modes.
+   * Issue #1523: Extracted from doSendMessage for reuse by card handling.
+   */
+  private bufferResponse(chatId: string, messageId: string | undefined, text: string): void {
+    // Sync mode: buffer text responses
+    if (messageId) {
+      const buffer = this.responseBuffers.get(messageId);
+      if (buffer) {
+        buffer.push(text);
+      } else {
+        logger.warn(
+          { chatId, messageId },
+          'No buffer found for text message'
+        );
+      }
+    }
+
+    // Async mode: add to session messages
+    const session = this.sessionStates.get(chatId);
+    if (session) {
+      const now = Date.now();
+      const assistantMessageId = `resp_${now}_${Math.random().toString(36).slice(2, 8)}`;
+      session.messages.push({
+        id: assistantMessageId,
+        role: 'assistant',
+        content: text,
+        timestamp: now,
+      });
+      session.lastMessageId = assistantMessageId;
+      session.updatedAt = now;
+      logger.debug(
+        { chatId, messageId: assistantMessageId },
+        'Async session: added assistant message'
+      );
+    }
+  }
+
+  /**
+   * Extract readable text from a Feishu card JSON structure.
+   *
+   * Traverses the card elements to extract text content from
+   * markdown, plain_text, and lark_md elements.
+   *
+   * Issue #1523: Enables REST channel to display card content as text.
+   */
+  private extractTextFromCard(card: Record<string, unknown>): string {
+    const parts: string[] = [];
+
+    // Extract header title
+    const header = card.header as Record<string, unknown> | undefined;
+    if (header) {
+      const title = header.title as Record<string, unknown> | undefined;
+      if (title) {
+        const content = title.content as string | undefined;
+        if (content) {
+          parts.push(content);
+        }
+      }
+    }
+
+    // Extract elements
+    const elements = card.elements as Array<Record<string, unknown>> | undefined;
+    if (elements) {
+      for (const element of elements) {
+        const text = this.extractTextFromElement(element);
+        if (text) {
+          parts.push(text);
+        }
+      }
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Extract text from a single card element.
+   * Handles markdown, plain_text, and lark_md element types.
+   */
+  private extractTextFromElement(element: Record<string, unknown>): string | undefined {
+    const tag = element.tag as string | undefined;
+
+    // Markdown element
+    if (tag === 'markdown') {
+      const content = element.content as string | undefined;
+      return content;
+    }
+
+    // Plain text div element
+    if (tag === 'div') {
+      const text = element.text as Record<string, unknown> | undefined;
+      if (text) {
+        const content = text.content as string | undefined;
+        return content;
+      }
+      // div may have fields
+      const fields = element.fields as Array<Record<string, unknown>> | undefined;
+      if (fields) {
+        const fieldTexts: string[] = [];
+        for (const field of fields) {
+          const fieldText = field.text as Record<string, unknown> | undefined;
+          if (fieldText) {
+            const content = fieldText.content as string | undefined;
+            if (content) {
+              fieldTexts.push(content);
+            }
+          }
+        }
+        return fieldTexts.join('\n');
+      }
+    }
+
+    // Note element
+    if (tag === 'note') {
+      const elements = element.elements as Array<Record<string, unknown>> | undefined;
+      if (elements) {
+        const noteTexts: string[] = [];
+        for (const subElement of elements) {
+          const text = this.extractTextFromElement(subElement);
+          if (text) {
+            noteTexts.push(text);
+          }
+        }
+        return noteTexts.join(' ');
+      }
+    }
+
+    return undefined;
   }
 
   protected checkHealth(): boolean {

@@ -36,12 +36,16 @@ import { EventEmitter } from 'events';
 import {
   createLogger,
   type IChannel,
+  type OutgoingMessage,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   generateSocketPath,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type InteractiveMessageHandlers,
+  type IpcRequest,
+  type IpcResponse,
+  type IpcRequestPayloads,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -260,8 +264,11 @@ export class PrimaryNode extends EventEmitter {
    * Start the IPC server for MCP Server connections.
    *
    * The IPC server accepts connections from MCP Server child processes
-   * and allows them to call Feishu API handlers directly (no WebSocket bridging needed
+   * and allows them to call channel API handlers directly (no WebSocket bridging needed
    * since Primary Node has direct access to the channels).
+   *
+   * Issue #1523: Routes IPC requests to the correct channel based on chatId,
+   * instead of hardcoding Feishu handlers for all requests.
    */
   protected async startIpcServer(): Promise<void> {
     if (this.ipcServer) {
@@ -278,11 +285,8 @@ export class PrimaryNode extends EventEmitter {
       cleanupExpiredContexts: () => 0,
     };
 
-    // Create the request handler with Feishu handlers container
-    const requestHandler = createInteractiveMessageHandler(
-      stubHandlers,
-      this.feishuHandlersContainer
-    );
+    // Create channel-aware request handler (Issue #1523)
+    const requestHandler = this.createChannelAwareHandler(stubHandlers);
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
       socketPath: generateSocketPath(),
@@ -295,6 +299,132 @@ export class PrimaryNode extends EventEmitter {
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
 
     logger.info({ socketPath }, 'IPC server started for MCP Server connections');
+  }
+
+  /**
+   * Resolve the appropriate channel for a given chatId.
+   *
+   * Uses channel type and chatId format to determine the target channel:
+   * - Feishu chatIds (starting with 'oc_') → Feishu channel
+   * - Other chatIds → first non-Feishu channel (e.g., REST)
+   *
+   * Issue #1523: Channel-aware routing for IPC requests.
+   */
+  protected resolveChannelForChatId(chatId: string): IChannel | undefined {
+    const isFeishuChatId = chatId.startsWith('oc_');
+
+    for (const channel of this.channels.values()) {
+      if (channel.status !== 'running') {
+        continue;
+      }
+      if (isFeishuChatId && channel.name === 'Feishu') {
+        return channel;
+      }
+      if (!isFeishuChatId && channel.name !== 'Feishu') {
+        return channel;
+      }
+    }
+
+    // Fallback: if no specific match, try any running channel
+    for (const channel of this.channels.values()) {
+      if (channel.status === 'running') {
+        return channel;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Create a channel-aware IPC request handler.
+   *
+   * Routes IPC message operations (feishuSendMessage, feishuSendCard, etc.)
+   * to the correct channel based on chatId, instead of always routing to Feishu.
+   *
+   * Issue #1523: Fix IPC handler routing REST channel requests to FeishuChannel.
+   */
+  protected createChannelAwareHandler(
+    interactiveHandlers: InteractiveMessageHandlers
+  ): (request: IpcRequest) => Promise<IpcResponse> {
+    // Use the core createInteractiveMessageHandler for interactive message operations
+    const baseHandler = createInteractiveMessageHandler(
+      interactiveHandlers,
+      this.feishuHandlersContainer
+    );
+
+    return async (request: IpcRequest): Promise<IpcResponse> => {
+      // For non-message operations, delegate to base handler
+      if (request.type !== 'feishuSendMessage' &&
+          request.type !== 'feishuSendCard' &&
+          request.type !== 'feishuUploadFile') {
+        return baseHandler(request);
+      }
+
+      // Channel-aware routing for message operations
+      try {
+        switch (request.type) {
+          case 'feishuSendMessage': {
+            const { chatId, text, threadId } =
+              request.payload as IpcRequestPayloads['feishuSendMessage'];
+            const channel = this.resolveChannelForChatId(chatId);
+            if (!channel) {
+              return { id: request.id, success: false, error: `No channel found for chatId: ${chatId}` };
+            }
+            await channel.sendMessage({
+              chatId,
+              type: 'text',
+              text,
+              threadId,
+            } as OutgoingMessage);
+            return { id: request.id, success: true, payload: { success: true } };
+          }
+
+          case 'feishuSendCard': {
+            const { chatId, card, threadId, description } =
+              request.payload as IpcRequestPayloads['feishuSendCard'];
+            const channel = this.resolveChannelForChatId(chatId);
+            if (!channel) {
+              return { id: request.id, success: false, error: `No channel found for chatId: ${chatId}` };
+            }
+            await channel.sendMessage({
+              chatId,
+              type: 'card',
+              card,
+              threadId,
+              description,
+            } as OutgoingMessage);
+            return { id: request.id, success: true, payload: { success: true } };
+          }
+
+          case 'feishuUploadFile': {
+            const { chatId, filePath, threadId } =
+              request.payload as IpcRequestPayloads['feishuUploadFile'];
+            const channel = this.resolveChannelForChatId(chatId);
+            if (!channel) {
+              return { id: request.id, success: false, error: `No channel found for chatId: ${chatId}` };
+            }
+            await channel.sendMessage({
+              chatId,
+              type: 'file',
+              filePath,
+              threadId,
+            } as OutgoingMessage);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, fileKey: '', fileType: 'file', fileName: filePath.split('/').pop() || 'file', fileSize: 0 },
+            };
+          }
+
+          default:
+            return baseHandler(request);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error({ err: error, requestType: request.type }, 'Error handling channel-aware IPC request');
+        return { id: request.id, success: false, error: errorMessage };
+      }
+    };
   }
 
   /**

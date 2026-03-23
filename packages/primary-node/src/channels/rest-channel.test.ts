@@ -445,4 +445,186 @@ describe('RestChannel', () => {
       expect(channel.isHealthy()).toBe(false);
     });
   });
+
+  describe('Issue #1523: Card message handling', () => {
+    it('should buffer card header title as text in sync mode', async () => {
+      channel = new RestChannel({ port: testPort });
+      await channel.start();
+
+      const chatId = 'test-card-sync';
+      const messageId = 'msg-001';
+
+      // Simulate sync mode setup (normally done by handleChat)
+      (channel as any).responseBuffers.set(messageId, []);
+      (channel as any).chatToMessage.set(chatId, messageId);
+
+      // Send a card with header
+      await channel.sendMessage({
+        chatId,
+        type: 'card',
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: 'Card Title',
+            },
+          },
+          elements: [],
+        },
+      });
+
+      const buffer = (channel as any).responseBuffers.get(messageId);
+      expect(buffer).toBeDefined();
+      expect(buffer).toContain('Card Title');
+
+      await channel.stop();
+    });
+
+    it('should extract text from markdown card elements', async () => {
+      channel = new RestChannel({ port: testPort });
+      await channel.start();
+
+      const chatId = 'test-card-markdown';
+      const messageId = 'msg-002';
+
+      (channel as any).responseBuffers.set(messageId, []);
+      (channel as any).chatToMessage.set(chatId, messageId);
+
+      await channel.sendMessage({
+        chatId,
+        type: 'card',
+        card: {
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: 'Status',
+            },
+          },
+          elements: [
+            { tag: 'markdown', content: '**Bold text** and normal text' },
+            { tag: 'markdown', content: 'Second paragraph' },
+          ],
+        },
+      });
+
+      const buffer = (channel as any).responseBuffers.get(messageId);
+      // extractTextFromCard joins header + elements with \n
+      expect(buffer).toHaveLength(1);
+      expect(buffer[0]).toContain('Status');
+      expect(buffer[0]).toContain('**Bold text** and normal text');
+      expect(buffer[0]).toContain('Second paragraph');
+
+      await channel.stop();
+    });
+
+    it('should extract text from div card elements', async () => {
+      channel = new RestChannel({ port: testPort });
+      await channel.start();
+
+      const chatId = 'test-card-div';
+      const messageId = 'msg-003';
+
+      (channel as any).responseBuffers.set(messageId, []);
+      (channel as any).chatToMessage.set(chatId, messageId);
+
+      await channel.sendMessage({
+        chatId,
+        type: 'card',
+        card: {
+          elements: [
+            {
+              tag: 'div',
+              text: {
+                tag: 'lark_md',
+                content: 'Div content here',
+              },
+            },
+          ],
+        },
+      });
+
+      const buffer = (channel as any).responseBuffers.get(messageId);
+      expect(buffer).toContain('Div content here');
+
+      await channel.stop();
+    });
+
+    it('should handle card with no extractable text gracefully', async () => {
+      channel = new RestChannel({ port: testPort });
+      await channel.start();
+
+      const chatId = 'test-card-empty';
+      const messageId = 'msg-004';
+
+      (channel as any).responseBuffers.set(messageId, []);
+      (channel as any).chatToMessage.set(chatId, messageId);
+
+      // Card with action buttons only (no text content)
+      await channel.sendMessage({
+        chatId,
+        type: 'card',
+        card: {
+          elements: [
+            {
+              tag: 'action',
+              actions: [
+                { tag: 'button', text: { tag: 'plain_text', content: 'Click' }, value: 'click' },
+              ],
+            },
+          ],
+        },
+      });
+
+      const buffer = (channel as any).responseBuffers.get(messageId);
+      // No text extracted, buffer should remain empty
+      expect(buffer).toEqual([]);
+
+      await channel.stop();
+    });
+
+    it('should handle mixed text and card messages in sequence', async () => {
+      channel = new RestChannel({ port: testPort });
+      await channel.start();
+
+      const chatId = 'test-mixed';
+      const messageId = 'msg-005';
+
+      (channel as any).responseBuffers.set(messageId, []);
+      (channel as any).chatToMessage.set(chatId, messageId);
+
+      // Send text first
+      await channel.sendMessage({
+        chatId,
+        type: 'text',
+        text: 'Hello',
+      });
+
+      // Then send a card
+      await channel.sendMessage({
+        chatId,
+        type: 'card',
+        card: {
+          header: {
+            title: { tag: 'plain_text', content: 'Info' },
+          },
+          elements: [
+            { tag: 'markdown', content: 'Card body' },
+          ],
+        },
+      });
+
+      // Then send more text
+      await channel.sendMessage({
+        chatId,
+        type: 'text',
+        text: 'World',
+      });
+
+      const buffer = (channel as any).responseBuffers.get(messageId);
+      // Card text is joined with \n (header + elements)
+      expect(buffer).toEqual(['Hello', 'Info\nCard body', 'World']);
+
+      await channel.stop();
+    });
+  });
 });
