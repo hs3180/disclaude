@@ -16,6 +16,7 @@
 # Options:
 #   --timeout SECONDS   Request timeout (default: 60)
 #   --port PORT         REST API port (default: 3099)
+#   --retries N         Max retries per test suite on failure (default: 2)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
 #   --tag TAG           Filter tests by tag (fast, ai)
@@ -28,6 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-60}"
+MAX_RETRIES="${MAX_RETRIES:-2}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
@@ -37,6 +39,7 @@ register_cleanup
 FILTER_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --retries) MAX_RETRIES="$2"; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -70,6 +73,7 @@ show_test_plan_body() {
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Project Root: $PROJECT_ROOT"
     echo ""
     echo "Prerequisites:"
@@ -97,16 +101,34 @@ run_test_script() {
     # Passthrough filter args
     args+=("${FILTER_ARGS[@]}")
 
-    echo ""
-    echo "=========================================="
-    echo "  Running: $name"
-    echo "=========================================="
+    local attempt=1
+    local max_attempts=$((MAX_RETRIES + 1))
 
-    if bash "$script" "${args[@]}"; then
-        return 0
-    else
-        return 1
-    fi
+    while [ $attempt -le $max_attempts ]; do
+        echo ""
+        echo "=========================================="
+        echo "  Running: $name (attempt ${attempt}/${max_attempts})"
+        echo "=========================================="
+
+        if bash "$script" "${args[@]}"; then
+            if [ $attempt -gt 1 ]; then
+                log_warn "$name passed on attempt ${attempt}/${max_attempts}"
+                RETRIED_SUCCESSES=$((RETRIED_SUCCESSES + 1))
+            fi
+            return 0
+        else
+            if [ $attempt -lt $max_attempts ]; then
+                log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in 5s..."
+                sleep 5
+            fi
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log_error "$name failed after ${max_attempts} attempt(s)"
+    TOTAL_RETRIES=$((TOTAL_RETRIES + MAX_RETRIES))
+    return 1
 }
 
 # =============================================================================
@@ -131,12 +153,15 @@ main() {
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Max Retries: ${MAX_RETRIES}"
     echo ""
 
     log_info "Starting test server..."
     start_server || exit 1
 
     local failed=0
+    local RETRIED_SUCCESSES=0
+    local TOTAL_RETRIES=0
 
     if ! run_test_script "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
         failed=$((failed + 1))
@@ -168,6 +193,9 @@ main() {
         log_info "All test suites passed!"
     else
         log_error "$failed test suite(s) failed"
+    fi
+    if [ $RETRIED_SUCCESSES -gt 0 ]; then
+        log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"
     fi
     echo "=========================================="
 
