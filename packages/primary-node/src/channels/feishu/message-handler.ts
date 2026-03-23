@@ -24,6 +24,7 @@ import {
   type IncomingMessage,
   type MessageAttachment,
   type ControlCommand,
+  type ControlCommandType,
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
@@ -791,7 +792,7 @@ export class MessageHandler {
 
       if (this.controlHandler) {
         const response = await this.callbacks.emitControl({
-          type: cmd as 'reset' | 'status' | 'passive',
+          type: cmd as ControlCommandType,
           chatId: chat_id,
           data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
         });
@@ -808,7 +809,7 @@ export class MessageHandler {
         }
       }
 
-      // Default command handling
+      // Default command handling (fallback when controlHandler is not available)
       if (cmd === 'reset') {
         await this.callbacks.sendMessage({
           chatId: chat_id,
@@ -823,6 +824,16 @@ export class MessageHandler {
           chatId: chat_id,
           type: 'text',
           text: '📊 **状态**\n\nChannel: Feishu\nStatus: running',
+        });
+        return;
+      }
+
+      // Issue #1494: Fallback /stop handling when controlHandler is unavailable
+      if (cmd === 'stop') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '⏹️ **停止命令已发送**\n\n当前会话将尝试停止响应。',
         });
         return;
       }
