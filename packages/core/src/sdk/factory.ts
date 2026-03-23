@@ -7,7 +7,7 @@
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
-import { ClaudeSDKProvider } from './providers/index.js';
+import { ClaudeSDKProvider, OpenAIProvider } from './providers/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -26,6 +26,7 @@ export type ProviderType = 'claude' | string;
  */
 const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['claude', () => new ClaudeSDKProvider()],
+  ['openai', () => new OpenAIProvider()],
 ]);
 
 /**

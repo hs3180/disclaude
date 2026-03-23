@@ -15,7 +15,12 @@
  * ├── factory.ts               # Provider 工厂
  * └── providers/
  *     ├── index.ts
- *     └── claude/              # Claude SDK 实现
+ *     ├── claude/              # Claude SDK 实现
+ *     │   ├── index.ts
+ *     │   ├── provider.ts
+ *     │   ├── message-adapter.ts
+ *     │   └── options-adapter.ts
+ *     └── openai/              # OpenAI SDK 实现
  *         ├── index.ts
  *         ├── provider.ts
  *         ├── message-adapter.ts
@@ -114,7 +119,7 @@ export type {
 // Provider 导出
 // ============================================================================
 
-export { ClaudeSDKProvider } from './providers/index.js';
+export { ClaudeSDKProvider, OpenAIProvider } from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出
