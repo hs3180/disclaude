@@ -7,6 +7,7 @@
  * Issue #893: Added in-prompt next-step guidance.
  * Issue #962: Added output format guidance to prevent raw JSON in responses.
  * Issue #1198: Added location awareness guidance - agent should not infer user location.
+ * Issue #1371: Added runtime-env guidance - agent awareness of shared state variables.
  */
 
 import { Config, type ChannelCapabilities } from '@disclaude/core';
@@ -24,6 +25,7 @@ import type { MessageData } from './types.js';
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Runtime-env guidance (Issue #1371)
  */
 export class MessageBuilder {
   /**
@@ -103,6 +105,9 @@ ${msg.persistedHistoryContext}
     // Build location awareness guidance section (Issue #1198)
     const locationAwarenessGuidance = this.buildLocationAwarenessGuidance();
 
+    // Build runtime-env guidance section (Issue #1371)
+    const runtimeEnvGuidance = this.buildRuntimeEnvGuidance();
+
     // For regular messages: context FIRST, then user message
     if (msg.senderOpenId) {
       const mentionSection = capabilities?.supportsMention !== false
@@ -134,6 +139,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${runtimeEnvGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -149,6 +155,7 @@ ${toolsSection}
 ${nextStepGuidance}
 ${outputFormatGuidance}
 ${locationAwarenessGuidance}
+${runtimeEnvGuidance}
 
 --- User Message ---
 ${msg.text}${this.buildAttachmentsInfo(msg.attachments)}`;
@@ -454,5 +461,64 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+  }
+
+  /**
+   * Build runtime-env guidance section for the prompt.
+   *
+   * Issue #1371: Agents run in SDK subprocesses and cannot access in-memory
+   * singletons from the main process. The `.runtime-env` file in the workspace
+   * directory provides a file-based mechanism for cross-process state sharing.
+   * This guidance makes agents aware of available shared variables and how to
+   * read/write them, so agents can leverage runtime-env for inter-process
+   * communication (e.g., GitHub tokens, task state, etc.).
+   *
+   * @returns Runtime-env guidance string
+   */
+  private buildRuntimeEnvGuidance(): string {
+    return `
+
+---
+
+## Runtime Environment (.runtime-env)
+
+**Shared state file**: Your workspace contains a \`.runtime-env\` file that enables cross-process state sharing between the main process, MCP servers, skills, and agent subprocesses.
+
+### How It Works
+
+- Runtime environment variables are stored in \`{workspace}/.runtime-env\` (KEY=VALUE format)
+- Variables are **automatically loaded** into your environment at startup (via \`process.env\`)
+- Skills and tools can **read and write** to this file during execution
+
+### Known Variables
+
+| Variable | Description | Writer |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub Installation Access Token (auto-refreshed) | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601) | \`github-jwt-auth\` skill |
+
+### Reading Variables
+
+- **Already in your environment**: Most runtime-env variables are pre-loaded. You can use them directly (e.g., \`GH_TOKEN\` is available as \`process.env.GH_TOKEN\`).
+- **Read the file directly**: Use the Read tool on \`.runtime-env\` to see all current variables.
+
+### Writing Variables
+
+When a skill needs to share state with other processes, it can write to \`.runtime-env\`:
+
+\`\`\`
+# Read current values
+cat .runtime-env
+
+# Write/update a variable (KEY=VALUE format, one per line)
+echo "MY_KEY=my_value" >> .runtime-env
+\`\`\`
+
+### Important Notes
+
+- This file is in \`.gitignore\` — never commit it
+- Tokens have expiration times — check \`GH_TOKEN_EXPIRES_AT\` before use
+- Prefer using existing variables over creating new ones
+- When GitHub operations fail with auth errors, the token may need refreshing via the \`/github-jwt-auth\` skill`;
   }
 }

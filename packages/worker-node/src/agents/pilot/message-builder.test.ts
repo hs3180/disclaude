@@ -4,6 +4,7 @@
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Issue #1371: Tests for runtime-env guidance in agent prompt.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -292,6 +293,72 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('Convert JSON objects to readable text');
       expect(result).toContain('Markdown tables instead of raw JSON');
+    });
+  });
+
+  describe('buildRuntimeEnvGuidance (Issue #1371)', () => {
+    it('should include runtime-env guidance in regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Runtime Environment');
+      expect(result).toContain('.runtime-env');
+      expect(result).toContain('cross-process state sharing');
+    });
+
+    it('should mention known runtime-env variables', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('GH_TOKEN');
+      expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+      expect(result).toContain('github-jwt-auth');
+    });
+
+    it('should explain how to read and write runtime-env variables', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Reading Variables');
+      expect(result).toContain('Writing Variables');
+      expect(result).toContain('process.env');
+    });
+
+    it('should include security and usage notes', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('.gitignore');
+      expect(result).toContain('expiration');
+    });
+
+    it('should not include runtime-env guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Runtime Environment');
+      expect(result).not.toContain('.runtime-env');
+    });
+
+    it('should include runtime-env guidance in messages with senderOpenId', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Runtime Environment');
+      expect(result).toContain('GH_TOKEN');
     });
   });
 });
