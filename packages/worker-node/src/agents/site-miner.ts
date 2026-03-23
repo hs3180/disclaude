@@ -137,7 +137,7 @@ export async function checkPlaywrightHealth(): Promise<{
 /**
  * SiteMiner - Site information mining Subagent.
  *
- * Implements Subagent interface (extends SkillAgent) for:
+ * Implements Subagent interface for:
  * - Single-shot task execution via execute()
  * - Tool encapsulation via asTool()
  * - MCP server configuration via getMcpServer()
@@ -146,7 +146,7 @@ export async function checkPlaywrightHealth(): Promise<{
  * ```typescript
  * const siteMiner = new SiteMiner(config);
  *
- * // Use as SkillAgent
+ * // Execute task
  * for await (const response of siteMiner.execute('Extract data from https://example.com')) {
  *   console.log(response.content);
  * }

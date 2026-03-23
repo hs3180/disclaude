@@ -3,8 +3,10 @@
  *
  * Issue #997: Unifies subagent creation across:
  * - Schedule Task agents
- * - Skill agents
  * - Task agents
+ *
+ * Issue #1501: Removed 'skill' type (SkillAgent removed from architecture).
+ * Skill execution is now handled through Pilot + .md-defined subagents.
  *
  * Features:
  * - Unified spawn API with consistent options
@@ -24,9 +26,9 @@
  * │        ▼                    ▼                               │
  * │   ┌─────────┐   ┌────────────────────────────────────┐     │
  * │   │ Process │   │         SubagentType               │     │
- * │   │ Manager │   │  ┌─────────┐ ┌─────────┐ ┌───────┐│     │
- * │   └─────────┘   │  │schedule │ │  skill  │ │ task  ││     │
- * │                 │  └─────────┘ └─────────┘ └───────┘│     │
+ * │   │ Manager │   │  ┌─────────┐ ┌──────────┐         │     │
+ * │   └─────────┘   │  │schedule │ │  task    │         │     │
+ * │                 │  └─────────┘ └──────────┘         │     │
  * │                 └────────────────────────────────────┘     │
  * │                                                             │
  * │   list() ──► SubagentHandle[]                              │
@@ -40,7 +42,7 @@
 
 import { randomUUID } from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
-import { Config, createLogger, findSkill, type ChatAgent } from '@disclaude/core';
+import { Config, createLogger, type ChatAgent } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
 import type { PilotCallbacks } from './pilot/index.js';
 
@@ -52,8 +54,11 @@ const logger = createLogger('SubagentManager');
 
 /**
  * Type of subagent to spawn.
+ *
+ * Note: 'skill' type was removed in Issue #1501 as part of the architecture
+ * simplification. Skill execution is now handled through Pilot + .md-defined subagents.
  */
-export type SubagentType = 'schedule' | 'skill' | 'task';
+export type SubagentType = 'schedule' | 'task';
 
 /**
  * Isolation mode for subagent execution.
@@ -71,9 +76,9 @@ export type SubagentStatus = 'starting' | 'running' | 'completed' | 'failed' | '
  * @example
  * ```typescript
  * const options: SubagentOptions = {
- *   type: 'skill',
- *   name: 'playwright-agent',
- *   prompt: 'Navigate to example.com',
+ *   type: 'task',
+ *   name: 'research-task',
+ *   prompt: 'Research topic X',
  *   chatId: 'chat-123',
  *   callbacks: {
  *     sendMessage: async (chatId, text) => { ... },
@@ -94,8 +99,6 @@ export interface SubagentOptions {
   chatId: string;
   /** Callbacks for sending messages */
   callbacks: PilotCallbacks;
-  /** Optional template variables for skill agents */
-  templateVars?: Record<string, string>;
   /** Optional cron expression for scheduled execution (only for type='schedule') */
   schedule?: string;
   /** Optional timeout in milliseconds */
@@ -154,18 +157,17 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
  *
  * Provides a unified interface for creating subagents of different types:
  * - **schedule**: For scheduled task execution (uses AgentFactory.createScheduleAgent)
- * - **skill**: For skill-based execution (runs in child process)
  * - **task**: For one-time task execution (uses AgentFactory.createTaskAgent)
  *
  * @example
  * ```typescript
  * const manager = new SubagentManager();
  *
- * // Spawn a skill agent
+ * // Spawn a task agent
  * const handle = await manager.spawn({
- *   type: 'skill',
- *   name: 'playwright-agent',
- *   prompt: 'Navigate to example.com',
+ *   type: 'task',
+ *   name: 'research-task',
+ *   prompt: 'Research topic X',
  *   chatId: 'chat-123',
  *   callbacks: {
  *     sendMessage: async (chatId, text) => { ... },
@@ -234,9 +236,6 @@ export class SubagentManager {
 
     try {
       switch (options.type) {
-        case 'skill':
-          await this.spawnSkillAgent(subagentId, options);
-          break;
         case 'schedule':
           await this.spawnScheduleAgent(subagentId, options);
           break;
@@ -255,104 +254,6 @@ export class SubagentManager {
     }
 
     return handle;
-  }
-
-  /**
-   * Spawn a skill agent in a child process.
-   */
-  private async spawnSkillAgent(
-    subagentId: string,
-    options: SubagentOptions
-  ): Promise<void> {
-    const handle = this.handles.get(subagentId);
-    if (!handle) {
-      throw new Error(`Subagent handle not found: ${subagentId}`);
-    }
-
-    // Verify skill exists
-    const skillPath = await findSkill(options.name);
-    if (!skillPath) {
-      throw new Error(`Skill not found: ${options.name}`);
-    }
-
-    // Build environment for child process
-    const env = {
-      ...process.env,
-      SKILL_PATH: skillPath,
-      SKILL_CHAT_ID: options.chatId,
-      SKILL_TEMPLATE_VARS: options.templateVars ? JSON.stringify(options.templateVars) : '{}',
-      SKILL_AGENT_ID: subagentId,
-    };
-
-    // Spawn child process
-    const childProcess = spawn(
-      process.execPath,
-      [
-        '--import',
-        'tsx',
-        require.resolve('../cli-entry.js'),
-        'skill',
-        'run',
-        options.name,
-        '--chat-id',
-        options.chatId,
-      ],
-      {
-        cwd: Config.getWorkspaceDir(),
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,
-      }
-    );
-
-    this.processes.set(subagentId, childProcess);
-    handle.status = 'running';
-    handle.pid = childProcess.pid;
-
-    logger.info({ subagentId, pid: childProcess.pid, skill: options.name }, 'Skill subagent started');
-    this.notifyStatusChange(handle);
-
-    // Collect output
-    let output = '';
-    childProcess.stdout?.on('data', (data) => {
-      output += data.toString();
-      options.onProgress?.(data.toString());
-    });
-
-    childProcess.stderr?.on('data', (data) => {
-      output += data.toString();
-      logger.debug({ subagentId, stderr: data.toString() }, 'Skill subagent stderr');
-    });
-
-    // Handle completion
-    childProcess.on('close', (code) => {
-      handle.completedAt = new Date();
-      handle.output = output;
-
-      if (code === 0) {
-        handle.status = 'completed';
-        logger.info({ subagentId, skill: options.name }, 'Skill subagent completed');
-      } else if (handle.status !== 'stopped') {
-        handle.status = 'failed';
-        handle.error = `Process exited with code ${code}`;
-        logger.error({ subagentId, code, skill: options.name }, 'Skill subagent failed');
-      }
-
-      this.notifyStatusChange(handle);
-      this.processes.delete(subagentId);
-    });
-
-    // Handle timeout
-    if (options.timeout) {
-      setTimeout(() => {
-        if (this.processes.has(subagentId)) {
-          void this.terminate(subagentId);
-          handle.status = 'failed';
-          handle.error = 'Timeout exceeded';
-          this.notifyStatusChange(handle);
-        }
-      }, options.timeout);
-    }
   }
 
   /**

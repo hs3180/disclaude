@@ -6,11 +6,11 @@
  *
  * {task_id}/
  *   ├── task.md
- *   ├── final_result.md (created by SkillAgent with evaluator skill when task is COMPLETE)
+ *   ├── final_result.md (created by evaluator skill when task is COMPLETE)
  *   └── iterations/
  *       ├── iter-1/
- *       │   ├── evaluation.md (created by SkillAgent with evaluator skill)
- *       │   └── execution.md (created by SkillAgent with executor skill)
+ *       │   ├── evaluation.md (created by evaluator skill)
+ *       │   └── execution.md (created by executor skill)
  *       ├── iter-2/
  *       │   ├── evaluation.md
  *       │   └── execution.md

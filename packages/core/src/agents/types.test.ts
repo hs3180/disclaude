@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { z } from 'zod';
 import {
   isChatAgent,
-  isSkillAgent,
   isSubagent,
   isDisposable,
   setRuntimeContext,
@@ -14,7 +13,6 @@ import {
   hasRuntimeContext,
   clearRuntimeContext,
   type ChatAgent,
-  type SkillAgent,
   type Subagent,
   type Disposable,
   type AgentRuntimeContext,
@@ -53,44 +51,13 @@ describe('Type Guards', () => {
     });
 
     it('should return false for wrong type', () => {
-      const skillAgent = { type: 'skill', name: 'test' };
-      expect(isChatAgent(skillAgent)).toBe(false);
+      const subagent = { type: 'subagent', name: 'test' };
+      expect(isChatAgent(subagent)).toBe(false);
     });
 
     it('should return false for object without type', () => {
       expect(isChatAgent({})).toBe(false);
       expect(isChatAgent({ name: 'test' })).toBe(false);
-    });
-  });
-
-  describe('isSkillAgent', () => {
-    it('should return true for valid SkillAgent', () => {
-      const skillAgent: SkillAgent = {
-        type: 'skill',
-        name: 'test-skill',
-        async *execute() {},
-        dispose() {},
-      };
-
-      expect(isSkillAgent(skillAgent)).toBe(true);
-    });
-
-    it('should return false for null', () => {
-      expect(isSkillAgent(null)).toBe(false);
-    });
-
-    it('should return false for undefined', () => {
-      expect(isSkillAgent(undefined)).toBe(false);
-    });
-
-    it('should return false for wrong type', () => {
-      const chatAgent = { type: 'chat', name: 'test' };
-      expect(isSkillAgent(chatAgent)).toBe(false);
-    });
-
-    it('should return false for subagent type', () => {
-      const subagent = { type: 'subagent', name: 'test' };
-      expect(isSkillAgent(subagent)).toBe(false);
     });
   });
 
@@ -149,19 +116,19 @@ describe('Type Guards', () => {
       expect(isSubagent(undefined)).toBe(false);
     });
 
-    it('should return false for SkillAgent (missing asTool)', () => {
-      const skillAgent = {
+    it('should return false for Subagent missing asTool', () => {
+      const invalidSubagent = {
         type: 'subagent',
         name: 'test',
         dispose: () => {},
       };
 
-      expect(isSubagent(skillAgent)).toBe(false);
+      expect(isSubagent(invalidSubagent)).toBe(false);
     });
 
     it('should return false for object with wrong type', () => {
       const wrongType = {
-        type: 'skill',
+        type: 'chat',
         name: 'test',
         asTool: () => ({}),
         getMcpServer: () => undefined,
