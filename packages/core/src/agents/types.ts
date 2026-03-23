@@ -1,42 +1,22 @@
 /**
  * Agent Type Definitions - Unified interfaces for Agent classification.
  *
- * This module defines the core interfaces for the Agent architecture as described in Issue #282:
+ * This module defines the core interfaces for the Agent architecture (Issue #1501):
  *
- * ┌─────────────────────────────────────────────────────────────┐
- * │                      Agent 体系                              │
- * ├─────────────────────────────────────────────────────────────┤
- * │                                                             │
- * │  ┌─────────────────┐     ┌─────────────────────────────┐   │
- * │  │  ChatAgent      │     │  SkillAgent                 │   │
- * │  │  (对话型)        │     │  (技能型)                   │   │
- * │  │                 │     │                             │   │
- * │  │  ┌───────────┐  │     │  ┌─────────┐ ┌─────────┐   │   │
- * │  │  │  Pilot    │  │     │  │Evaluator│ │Executor │...│   │
- * │  │  └───────────┘  │     │  └─────────┘ └─────────┘   │   │
- * │  └─────────────────┘     └─────────────────────────────┘   │
- * │           │                           │                     │
- * │           │ 调用工具                   │ 被封装              │
- * │           ▼                           ▼                     │
- * │  ┌─────────────────────────────────────────────────────┐   │
- * │  │  Subagent (工具封装)                                 │   │
- * │  │  ┌───────────┐                                      │   │
- * │  │  │ SiteMiner │  ← SkillAgent + 独立 MCP Server      │   │
- * │  │  └───────────┘                                      │   │
- * │  └─────────────────────────────────────────────────────┘   │
- * │                                                             │
- * └─────────────────────────────────────────────────────────────┘
+ * Simplified Architecture (Pilot-only):
+ * - Pilot is the single Agent implementation in code
+ * - Subagent functionality is defined via .md files in .claude/agents/
+ * - Managed by Claude Code's native subagent mechanism (Issue #1410)
  *
- * Key Design Principles:
- * 1. **ChatAgent** - For continuous conversation with streaming input/output
- * 2. **SkillAgent** - For single-shot task execution (input → output)
- * 3. **Subagent** - SkillAgent that can be encapsulated as a tool
+ * Key Design Principles (Issue #1501):
+ * 1. **Pilot as the only Agent implementation** - Single code-level Agent type
+ * 2. **SkillAgent removed** - Skills handled via Pilot or .md-defined subagents
+ * 3. **Subagent via .md files** - Defined in .claude/agents/, managed by Claude Code
  *
  * @module agents/types
  */
 
 import type { AgentMessage, FileRef } from '../types/index.js';
-import type { InlineToolDefinition, McpServerConfig } from '../sdk/index.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -100,20 +80,17 @@ export interface UserInput {
 }
 
 // ============================================================================
-// ChatAgent Interface (对话型 Agent)
+// ChatAgent Interface (Issue #1501: Only remaining Agent type)
 // ============================================================================
 
 /**
  * ChatAgent - Continuous conversation agent with streaming input/output.
  *
- * Characteristics:
- * - Maintains persistent conversation session
- * - Streaming input from user
- * - Streaming output to user
- * - Maintains session state across messages
- *
- * Current implementations:
- * - `Pilot` - Main conversational agent with user
+ * This is the **only** agent interface in the simplified architecture (Issue #1501).
+ * Pilot implements this interface and serves as the universal agent for all scenarios:
+ * - Long-lived conversation (via handleInput + processMessage)
+ * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
+ * - Scheduled tasks (via createScheduleAgent factory method)
  *
  * @example
  * ```typescript
@@ -210,110 +187,6 @@ export interface ChatAgent extends Disposable {
 }
 
 // ============================================================================
-// SkillAgent Interface (技能型 Agent)
-// ============================================================================
-
-/**
- * SkillAgent - Single-shot task execution agent.
- *
- * Characteristics:
- * - Single task execution (input → output)
- * - No persistent session state (or limited state)
- * - Returns results and terminates
- *
- * Current implementations:
- * - `Evaluator` - Evaluates task completion
- * - `Executor` - Executes specific tasks
- * - `Reporter` - Generates user feedback reports
- *
- * @example
- * ```typescript
- * const skillAgent: SkillAgent = new Evaluator(config);
- *
- * // Execute single task
- * for await (const response of skillAgent.execute(taskInput)) {
- *   console.log(response.content);
- * }
- *
- * skillAgent.dispose();
- * ```
- */
-export interface SkillAgent extends Disposable {
-  /** Agent type identifier */
-  readonly type: 'skill';
-
-  /** Agent name for logging */
-  readonly name: string;
-
-  /**
-   * Execute a single task and yield results.
-   *
-   * @param input - Task input as string or structured data
-   * @yields AgentMessage responses
-   */
-  execute(input: string | UserInput[]): AsyncGenerator<AgentMessage>;
-}
-
-// ============================================================================
-// Subagent Interface (工具封装型 Agent)
-// ============================================================================
-
-/**
- * Subagent - SkillAgent that can be encapsulated as a tool.
- *
- * Characteristics:
- * - Extends SkillAgent capabilities
- * - Can be exposed as an inline tool for other agents
- * - May have its own isolated MCP server
- * - Has distinct type identifier 'subagent'
- *
- * Current implementations:
- * - `SiteMiner` - Playwright-based site mining, exposed as tool
- *
- * @example
- * ```typescript
- * const subagent: Subagent = createSiteMiner();
- *
- * // Use as SkillAgent
- * for await (const response of subagent.execute(taskInput)) {
- *   console.log(response.content);
- * }
- *
- * // Or use as tool definition for other agents
- * const toolDef = subagent.asTool();
- * // toolDef can be added to another agent's MCP server
- *
- * // Get MCP server config if running standalone
- * const mcpConfig = subagent.getMcpServer();
- * ```
- */
-export interface Subagent extends Omit<SkillAgent, 'type'> {
-  /** Agent type identifier - subagent is a distinct type from skill */
-  readonly type: 'subagent';
-
-  /**
-   * Get the agent's tool definition for use by other agents.
-   *
-   * Returns an InlineToolDefinition that can be added to an
-   * inline MCP server, allowing other agents to invoke this
-   * subagent as a tool.
-   *
-   * @returns Tool definition for MCP registration
-   */
-  asTool(): InlineToolDefinition;
-
-  /**
-   * Get MCP server configuration for standalone execution.
-   *
-   * Returns configuration for running this subagent with its
-   * own isolated MCP server (e.g., for context isolation).
-   *
-   * @returns MCP server configuration, or undefined if not applicable
-   */
-  getMcpServer(): McpServerConfig | undefined;
-}
-
-// ============================================================================
 // Agent Type Guards
 // ============================================================================
 
@@ -326,39 +199,6 @@ export function isChatAgent(agent: unknown): agent is ChatAgent {
     agent !== null &&
     'type' in agent &&
     (agent as { type: string }).type === 'chat'
-  );
-}
-
-/**
- * Type guard to check if an agent is a SkillAgent.
- */
-export function isSkillAgent(agent: unknown): agent is SkillAgent {
-  return (
-    typeof agent === 'object' &&
-    agent !== null &&
-    'type' in agent &&
-    (agent as { type: string }).type === 'skill'
-  );
-}
-
-/**
- * Type guard to check if an agent is a Subagent.
- *
- * Checks for:
- * 1. type === 'subagent'
- * 2. Has asTool() method
- * 3. Has getMcpServer() method
- */
-export function isSubagent(agent: unknown): agent is Subagent {
-  return (
-    typeof agent === 'object' &&
-    agent !== null &&
-    'type' in agent &&
-    (agent as { type: string }).type === 'subagent' &&
-    'asTool' in agent &&
-    typeof (agent as { asTool: unknown }).asTool === 'function' &&
-    'getMcpServer' in agent &&
-    typeof (agent as { getMcpServer: unknown }).getMcpServer === 'function'
   );
 }
 
@@ -447,64 +287,13 @@ export interface ChatAgentConfig extends BaseAgentConfig {
   };
 }
 
-/**
- * Configuration for SkillAgent (Evaluator, Executor, Reporter).
- *
- * Extends BaseAgentConfig with optional agent-specific settings.
- *
- * @example
- * ```typescript
- * // Evaluator config
- * const evaluatorConfig: SkillAgentConfig = {
- *   apiKey: 'sk-...',
- *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
- *   subdirectory: 'regular',
- * };
- *
- * // Executor config
- * const executorConfig: SkillAgentConfig = {
- *   apiKey: 'sk-...',
- *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
- *   abortSignal: controller.signal,
- * };
- * ```
- */
-export interface SkillAgentConfig extends BaseAgentConfig {
-  /** Optional subdirectory for task files (Evaluator) */
-  subdirectory?: string;
-  /** Optional abort signal for cancellation (Executor) */
-  abortSignal?: AbortSignal;
-}
-
-/**
- * Configuration for Subagent (SiteMiner).
- *
- * Subagents extend SkillAgent capabilities with tool encapsulation.
- *
- * @example
- * ```typescript
- * const config: SubagentConfig = {
- *   apiKey: 'sk-...',
- *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
- *   defaultTimeout: 120000, // 2 minutes
- * };
- * ```
- */
-export interface SubagentConfig extends SkillAgentConfig {
-  /** Default timeout for operations in milliseconds */
-  defaultTimeout?: number;
-}
-
 // ============================================================================
 // Agent Factory Types
 // ============================================================================
 
 /**
  * Configuration for creating agents.
- * @deprecated Use BaseAgentConfig, ChatAgentConfig, or SkillAgentConfig instead.
+ * @deprecated Use BaseAgentConfig or ChatAgentConfig instead.
  */
 export interface AgentConfig {
   /** API key for authentication */
@@ -616,20 +405,24 @@ export function clearRuntimeContext(): void {
 }
 
 // ============================================================================
-// Agent Factory Types
+// Agent Factory Types (Issue #1501: Simplified)
 // ============================================================================
 
 /**
  * Factory for creating Agent instances.
  *
  * Issue #711: Agent Lifecycle Management Strategy
+ * Issue #1501: Simplified to only create ChatAgent (Pilot) instances
  *
  * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
  * |----------------|----------------|--------------|------------------|
  * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
  * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
  * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
- * | SkillAgent     | ❌ No          | Task finish  | None (temporary) |
+ *
+ * Note: SkillAgent and Subagent have been removed (Issue #1501).
+ * - Skills are now handled via Pilot.executeOnce() or .md-defined subagents
+ * - Subagents are defined via .claude/agents/*.md files (Issue #1410)
  *
  * @example
  * ```typescript
@@ -645,12 +438,6 @@ export function clearRuntimeContext(): void {
  * } finally {
  *   scheduleAgent.dispose();
  * }
- *
- * // Create SkillAgent
- * const evaluator = factory.createSkillAgent('evaluator');
- *
- * // Create Subagent
- * const siteMiner = factory.createSubagent('site-miner');
  * ```
  */
 export interface AgentFactoryInterface {
@@ -672,17 +459,4 @@ export interface AgentFactoryInterface {
    * Short-lived, caller must dispose after task completion.
    */
   createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
-
-  /**
-   * Create a SkillAgent instance.
-   * Short-lived, caller must dispose after execution.
-   */
-  createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgent>;
-
-  /**
-   * Create a Subagent instance.
-   * Short-lived, caller must dispose after execution.
-   */
-  createSubagent(name: string, ...args: unknown[]): Subagent;
 }
-
