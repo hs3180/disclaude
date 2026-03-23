@@ -27,6 +27,7 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import { SharedMemory } from '../config/shared-memory.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -171,11 +172,15 @@ export abstract class BaseAgent implements Disposable {
       options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
     }
 
-    // Set environment: config env + runtime env file (Issue #1361)
+    // Set environment: config env + runtime env file (Issue #1361) + shared memory (Issue #1371)
     const loggingConfig = this.getLoggingConfig();
+    const sharedMemory = new SharedMemory(this.getWorkspaceDir());
+    const sharedEnvVars = sharedMemory.exportAsEnvVars();
+    sharedMemory.dispose();
     const globalEnv = {
       ...this.getGlobalEnv(),
       ...loadRuntimeEnv(this.getWorkspaceDir()),
+      ...sharedEnvVars,
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
