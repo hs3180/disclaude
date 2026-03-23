@@ -157,7 +157,9 @@ export class MessageBuilder {
       sections.push(postHistory);
     }
 
-    sections.push(`\n---\n\n## Tools\n${toolsSection ?? ''}`);
+    if (toolsSection) {
+      sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+    }
 
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);

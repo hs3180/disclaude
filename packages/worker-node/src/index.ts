@@ -33,9 +33,6 @@ export type {
   ChatAgent,
   ChatAgentFactory,
   ScheduleAgentFactory,
-  MessageCallbacks,
-  TaskFlowOrchestratorInterface,
-  TaskFlowOrchestratorFactory,
   GenerateInteractionPromptCallback,
   SchedulerInterface,
   ScheduleFileWatcherInterface,
@@ -81,23 +78,9 @@ export {
   DialogueMessageTracker,
   TaskFileManager,
   TaskTracker,
-  TaskFileWatcher,
-  ReflectionController,
-  TaskFlowOrchestrator,
-  TerminationConditions,
-  DEFAULT_REFLECTION_CONFIG,
   // Types
   type TaskFileManagerConfig,
   type TaskDefinitionDetails,
-  type TaskFileWatcherOptions,
-  type OnTaskCreated,
-  type ReflectionConfig,
-  type ReflectionMetrics,
-  type ReflectionEvent,
-  type ReflectionEvaluationResult,
-  type ReflectionContext,
-  type TaskFlowOrchestratorConfig,
-  type SetMessageSentCallbackFn,
 } from './task/index.js';
 
 export type { AgentMessage } from '@disclaude/core';

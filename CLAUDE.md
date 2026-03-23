@@ -488,6 +488,55 @@ Create `.claude/skills/<skill-name>/SKILL.md`:
 
 The skill will be available to the agent automatically.
 
+## Project-Level Agent Definitions
+
+Claude Code supports project-level agent definitions in `.claude/agents/`. These are Markdown files with YAML frontmatter that define specialized sub-agents.
+
+### Preset Agents
+
+Disclaude bundles preset agent definitions that are automatically copied to `.claude/agents/` on startup:
+
+| Agent | Description | Tools |
+|-------|-------------|-------|
+| `site-miner` | Website information mining via Playwright | Read, Write, Bash, Glob, Grep, mcp__playwright__* |
+
+### Agent Definition Format
+
+Create `.claude/agents/<agent-name>.md`:
+
+```markdown
+---
+name: <agent-name>
+description: When to use this agent (Claude uses this for auto-delegation)
+tools: ["Read", "Write", "Bash"]
+model: sonnet
+---
+
+# Agent Name
+
+Detailed instructions for the agent...
+```
+
+### Key Fields
+
+| Field | Description |
+|-------|-------------|
+| `name` | Unique agent identifier |
+| `description` | Claude uses this to decide when to delegate to this agent |
+| `tools` | Available tools for this agent |
+| `model` | Model to use (`sonnet`, `opus`, `haiku`) |
+
+### Relationship to Skills
+
+| File | Defines | Purpose |
+|------|---------|---------|
+| `SKILL.md` | Capabilities (what to do) | Task execution instructions |
+| Agent `.md` | Behavior (how to act) | Persistent agent personality and workflow |
+
+### User Customizations
+
+User-created agent files in `.claude/agents/` are **never overwritten** by preset agents during setup.
+
 ## Documentation Guidelines
 
 ### Code Comments Over Separate Documentation

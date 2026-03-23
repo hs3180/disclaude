@@ -338,6 +338,32 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Custom content here.');
     });
 
+    it('should not include tools section when buildToolsSection is not provided', () => {
+      const options: MessageBuilderOptions = {};
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('## Tools');
+    });
+
+    it('should not include tools section when buildToolsSection returns empty string', () => {
+      const options: MessageBuilderOptions = {
+        buildToolsSection: () => '',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('## Tools');
+    });
+
     it('should include tools section when buildToolsSection is provided', () => {
       const options: MessageBuilderOptions = {
         buildToolsSection: () => '- Custom tool: `custom_tool`',

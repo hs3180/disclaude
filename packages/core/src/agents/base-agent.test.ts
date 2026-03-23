@@ -4,8 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult } from './base-agent.js';
-import type { BaseAgentConfig } from './types.js';
-import { setRuntimeContext, clearRuntimeContext } from './types.js';
+import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
 
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
