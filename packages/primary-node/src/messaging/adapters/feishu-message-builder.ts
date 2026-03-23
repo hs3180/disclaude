@@ -1,11 +1,13 @@
 /**
  * Feishu-specific channel sections for MessageBuilder.
  *
- * Issue #1492: Extracted from worker-node MessageBuilder.
+ * Issue #1499: Moved from @disclaude/worker-node to @disclaude/primary-node
+ * to decouple Feishu-specific logic from the generic worker-node runtime.
+ *
  * Provides Feishu-specific content sections that are injected
  * into the core MessageBuilder via the MessageBuilderOptions callbacks.
  *
- * @module pilot/feishu-sections
+ * @module messaging/adapters/feishu-message-builder
  */
 
 import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
@@ -181,6 +183,9 @@ function hasImageAnalyzerMcp(): boolean {
  *
  * Returns the options object with all Feishu channel section builders
  * configured for use with the core MessageBuilder.
+ *
+ * Issue #1499: Moved from worker-node to primary-node. Use this function
+ * when creating Pilot instances for Feishu channels.
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */

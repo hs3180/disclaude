@@ -174,3 +174,6 @@ export {
   resetRestAdapter,
   type RestMessage,
 } from './adapters/rest-adapter.js';
+
+// Channel-specific MessageBuilder options (Issue #1499)
+export { createFeishuMessageBuilderOptions } from './adapters/feishu-message-builder.js';

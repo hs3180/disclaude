@@ -4,10 +4,34 @@
  * Manages ChatAgent instances for each chatId, using AgentFactory
  * from @disclaude/worker-node to create Pilot instances.
  *
+ * Issue #1499: Accepts optional MessageBuilderOptions for channel-specific
+ * message building (e.g., Feishu sections). This decouples Feishu-specific
+ * logic from worker-node.
+ *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
+import { type MessageBuilderOptions } from '@disclaude/core';
 import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
+
+/**
+ * Options for PrimaryAgentPool initialization.
+ *
+ * Issue #1499: Allows injecting channel-specific MessageBuilderOptions
+ * at pool creation time.
+ */
+export interface PrimaryAgentPoolOptions {
+  /**
+   * Channel-specific MessageBuilderOptions.
+   *
+   * When provided, all Pilot instances created by this pool will use
+   * these options for building enhanced message content (e.g., platform
+   * headers, tool sections, attachment extras).
+   *
+   * Example: createFeishuMessageBuilderOptions() for Feishu channels.
+   */
+  messageBuilderOptions?: MessageBuilderOptions;
+}
 
 /**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
@@ -17,6 +41,11 @@ import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/wo
  */
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
+  private readonly options: PrimaryAgentPoolOptions;
+
+  constructor(options: PrimaryAgentPoolOptions = {}) {
+    this.options = options;
+  }
 
   /**
    * Get or create a ChatAgent instance for the given chatId.
@@ -28,7 +57,9 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks);
+      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+        messageBuilderOptions: this.options.messageBuilderOptions,
+      });
       this.agents.set(chatId, agent);
     }
     return agent;

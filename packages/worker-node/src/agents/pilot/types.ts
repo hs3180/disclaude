@@ -5,7 +5,7 @@
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, BaseAgentConfig } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -86,6 +86,20 @@ export interface PilotConfig extends BaseAgentConfig {
    * Issue #857: Task progress tracking for complex tasks.
    */
   complexityThreshold?: number;
+
+  /**
+   * Channel-specific MessageBuilder options.
+   *
+   * When provided, the Pilot will use these options for building
+   * enhanced message content (e.g., platform headers, tool sections,
+   * attachment extras). When omitted, a default empty MessageBuilder
+   * is used with no channel-specific extensions.
+   *
+   * Issue #1499: Decouple Feishu-specific logic from worker-node.
+   * Callers (e.g., primary-node) should provide channel-specific
+   * options when creating Pilot instances.
+   */
+  messageBuilderOptions?: MessageBuilderOptions;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)
