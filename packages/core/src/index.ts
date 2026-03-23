@@ -314,3 +314,18 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Discussion module - offline discussion management (Issue #631)
+export {
+  DiscussionManager,
+  getDiscussionManager,
+  resetDiscussionManager,
+  type DiscussionTopic,
+  type DiscussionAction,
+  type DiscussionResult,
+  type DiscussionStatus,
+  type DiscussionRecord,
+  type CreateDiscussionOptions,
+  type ConcludeDiscussionOptions,
+  type DiscussionManagerConfig,
+} from './discussion/index.js';

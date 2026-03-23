@@ -12,3 +12,12 @@ export {
   resetDebugGroupService,
   type DebugGroupInfo,
 } from './debug-group-service.js';
+
+export {
+  DiscussionService,
+  getDiscussionService,
+  initDiscussionService,
+  resetDiscussionService,
+  type DiscussionServiceConfig,
+  type CreateDiscussionResult,
+} from './discussion-service.js';

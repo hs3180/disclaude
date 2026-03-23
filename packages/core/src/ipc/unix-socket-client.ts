@@ -500,6 +500,22 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Create a Feishu group chat via IPC (Issue #631).
+   */
+  async feishuCreateGroup(
+    name: string,
+    members?: string[]
+  ): Promise<{ success: boolean; chatId?: string; error?: string }> {
+    try {
+      return await this.request('feishuCreateGroup', { name, members });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, name }, 'feishuCreateGroup failed');
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {
