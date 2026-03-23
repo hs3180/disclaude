@@ -10,8 +10,8 @@ import {
   type ReflectionConfig,
   type ReflectionEvaluationResult,
   type ReflectionContext,
-  type AgentMessage,
 } from './reflection.js';
+import type { AgentMessage } from '../types/agent.js';
 
 // ============================================================================
 // Helpers
@@ -259,7 +259,7 @@ describe('ReflectionController', () => {
       const evaluatePhase = createEvaluatePhase([makeMessage('evaluating')]);
 
       const generator = controller.run('task-1', executePhase, evaluatePhase);
-      const { messages, result } = await collectAll(generator);
+      const { messages } = await collectAll(generator);
 
       // Should have messages from execute and evaluate phases
       expect(messages.length).toBeGreaterThanOrEqual(2);
@@ -279,7 +279,7 @@ describe('ReflectionController', () => {
       const evaluatePhase = createEvaluatePhase([makeMessage('evaluating')]);
 
       const generator = controller.run('task-1', executePhase, evaluatePhase);
-      const { messages } = await collectAll(generator);
+      await collectAll(generator);
 
       // Should run only 1 iteration then stop
       const metrics = controller.getMetrics();

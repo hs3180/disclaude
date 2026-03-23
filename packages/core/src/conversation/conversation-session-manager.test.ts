@@ -22,6 +22,7 @@ function createMockLogger() {
     silent: vi.fn(),
     child: vi.fn().mockReturnThis(),
     level: 'info' as const,
+    get msgPrefix() { return ''; },
   };
 }
 
@@ -44,7 +45,7 @@ describe('ConversationSessionManager', () => {
 
   beforeEach(() => {
     logger = createMockLogger();
-    manager = new ConversationSessionManager({ logger });
+    manager = new ConversationSessionManager({ logger: logger as any });
   });
 
   describe('has', () => {
@@ -205,7 +206,7 @@ describe('ConversationSessionManager', () => {
     });
 
     it('should mark session as closed before deleting', () => {
-      const session = manager.getOrCreate('chat-1');
+      manager.getOrCreate('chat-1');
       // We can't directly observe the closed state since it's deleted,
       // but we can verify the session was removed
       manager.delete('chat-1');
