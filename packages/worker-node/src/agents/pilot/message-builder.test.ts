@@ -1,7 +1,10 @@
 /**
- * Tests for MessageBuilder class.
+ * Tests for MessageBuilder with Feishu channel extensions.
  *
- * Issue #809: Tests for image analyzer MCP hint in buildAttachmentsInfo.
+ * Issue #1492: Tests for Feishu-specific channel sections used with
+ * the core MessageBuilder.
+ *
+ * Issue #809: Tests for image analyzer MCP hint in buildAttachmentExtra.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
  */
@@ -9,24 +12,47 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MessageBuilder } from './message-builder.js';
+import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
+import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+
+/** Helper to create capabilities with specific supportedMcpTools */
+const withTools = (tools: string[]): ChannelCapabilities => ({
+  ...DEFAULT_CHANNEL_CAPABILITIES,
+  supportedMcpTools: tools,
+});
 
 // Mock config
-vi.mock('@disclaude/core', () => ({
-  Config: {
-    getMcpServersConfig: vi.fn(() => null),
-  },
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    Config: {
+      ...actual.Config,
+      getMcpServersConfig: vi.fn(() => null),
+    },
+  };
+});
 
-describe('MessageBuilder', () => {
+describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
 
   beforeEach(() => {
-    messageBuilder = new MessageBuilder();
+    messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('buildEnhancedContent with Feishu header', () => {
+    it('should include Feishu platform header', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('You are responding in a Feishu chat.');
+    });
   });
 
   describe('buildEnhancedContent with persistedHistoryContext (Issue #955)', () => {
@@ -77,13 +103,8 @@ describe('MessageBuilder', () => {
     });
   });
 
-  describe('buildAttachmentsInfo (Issue #809)', () => {
-    // Access private method for testing
-    const getAttachmentsInfo = (mb: MessageBuilder, attachments?: any[]) =>
-      (mb as any).buildAttachmentsInfo(attachments);
-
+  describe('buildAttachmentExtra - image analyzer hint (Issue #809)', () => {
     it('should include image analyzer hint for image attachments when MCP is configured', async () => {
-      // Import Config to get access to the mocked version
       const { Config } = await import('@disclaude/core');
       vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
         '4_5v_mcp': { command: 'test-command' },
@@ -95,9 +116,16 @@ describe('MessageBuilder', () => {
         mimeType: 'image/png',
         size: 1024,
         localPath: '/tmp/test.png',
+        source: 'user' as const,
+        createdAt: Date.now(),
       }];
 
-      const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
+      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: imageAttachment,
+      } as MessageData, 'chat-123');
 
       // Issue #656: Enhanced image analysis prompt
       expect(result).toContain('Image Analysis Required');
@@ -116,11 +144,17 @@ describe('MessageBuilder', () => {
         mimeType: 'image/png',
         size: 1024,
         localPath: '/tmp/test.png',
+        source: 'user' as const,
+        createdAt: Date.now(),
       }];
 
-      const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
+      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: imageAttachment,
+      } as MessageData, 'chat-123');
 
-      // Should not contain enhanced image analysis prompt
       expect(result).not.toContain('Image Analysis Required');
       expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
     });
@@ -137,21 +171,18 @@ describe('MessageBuilder', () => {
         mimeType: 'text/plain',
         size: 1024,
         localPath: '/tmp/test.txt',
+        source: 'user' as const,
+        createdAt: Date.now(),
       }];
 
-      const result = getAttachmentsInfo(new MessageBuilder(), textAttachment);
+      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: textAttachment,
+      } as MessageData, 'chat-123');
 
-      expect(result).not.toContain('Image attachment(s) detected');
-    });
-
-    it('should return empty string for no attachments', () => {
-      const result = getAttachmentsInfo(messageBuilder, []);
-      expect(result).toBe('');
-    });
-
-    it('should return empty string for undefined attachments', () => {
-      const result = getAttachmentsInfo(messageBuilder, undefined);
-      expect(result).toBe('');
+      expect(result).not.toContain('Image Analysis Required');
     });
 
     it('should detect various image analyzer MCP names', async () => {
@@ -169,85 +200,75 @@ describe('MessageBuilder', () => {
           mimeType: 'image/jpeg',
           size: 1024,
           localPath: '/tmp/test.jpg',
+          source: 'user' as const,
+          createdAt: Date.now(),
         }];
 
-        const result = getAttachmentsInfo(new MessageBuilder(), imageAttachment);
-        // Issue #656: Enhanced prompt includes image analysis workflow
+        const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+        const result = builder.buildEnhancedContent({
+          text: 'Hello',
+          messageId: 'msg-123',
+          attachments: imageAttachment,
+        } as MessageData, 'chat-123');
+
         expect(result).toContain('Image Analysis Required');
       }
     });
   });
 
-  describe('buildToolsSection - MCP tool name format', () => {
-    // Access private method for testing
-    const getToolsSection = (mb: MessageBuilder, chatId: string, messageId: string, capabilities?: any) =>
-      (mb as any).buildToolsSection(chatId, messageId, capabilities);
-
+  describe('buildToolsSection - Feishu MCP tool names', () => {
     it('should include full MCP tool name mcp__channel-mcp__send_text', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text'] }
-      );
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text']));
 
       expect(result).toContain('mcp__channel-mcp__send_text');
       expect(result).toContain('chat-123');
-      expect(result).toContain('msg-456');
     });
 
     it('should include send_card when available', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text', 'send_card'] }
-      );
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']));
 
       expect(result).toContain('mcp__channel-mcp__send_card');
     });
 
     it('should include send_interactive when available', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text', 'send_interactive'] }
-      );
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_interactive']));
 
       expect(result).toContain('mcp__channel-mcp__send_interactive');
     });
 
     it('should include IMPORTANT warning to use correct tool', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text'] }
-      );
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text']));
 
       expect(result).toContain('**IMPORTANT**');
       expect(result).toContain('Do NOT use any other MCP server');
     });
 
-    it('should include full MCP tool name mcp__channel-mcp__send_file when available', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text', 'send_file'] }
-      );
+    it('should include mcp__channel-mcp__send_file when available', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_file']));
 
       expect(result).toContain('mcp__channel-mcp__send_file');
     });
 
     it('should not include send_file when not in supportedMcpTools', () => {
-      const result = getToolsSection(
-        new MessageBuilder(),
-        'chat-123',
-        'msg-456',
-        { supportedMcpTools: ['send_text'] }
-      );
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text']));
 
       expect(result).toContain('send_file is NOT supported');
     });
@@ -282,16 +303,37 @@ describe('MessageBuilder', () => {
 
       expect(result).not.toContain('Output Format Requirements');
     });
+  });
 
-    it('should include guidance for converting JSON to readable format', () => {
+  describe('Feishu @ mention section', () => {
+    it('should include mention section when senderOpenId is provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
-        senderOpenId: 'user-123',
+        senderOpenId: 'user-456',
       }, 'chat-123');
 
-      expect(result).toContain('Convert JSON objects to readable text');
-      expect(result).toContain('Markdown tables instead of raw JSON');
+      expect(result).toContain('@ Mention the User');
+      expect(result).toContain('user-456');
+    });
+
+    it('should not include mention section when senderOpenId is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('@ Mention the User');
+    });
+
+    it('should not include mention section when supportsMention is false', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        senderOpenId: 'user-456',
+      }, 'chat-123', { ...DEFAULT_CHANNEL_CAPABILITIES, supportsMention: false });
+
+      expect(result).not.toContain('@ Mention the User');
     });
   });
 });
