@@ -8,8 +8,7 @@
  * @module pilot/feishu-sections
  */
 
-import { Config } from '@disclaude/core';
-import type { MessageBuilderContext, MessageBuilderOptions } from '@disclaude/core';
+import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -118,8 +117,7 @@ ${messagingTools.join('\n')}
  * Issue #656: Enhanced prompt for better image analyzer MCP scheduling.
  */
 function buildFeishuAttachmentExtra(ctx: MessageBuilderContext): string {
-  const { msg } = ctx;
-  const attachments = msg.attachments;
+  const { msg: { attachments } } = ctx;
 
   if (!attachments || attachments.length === 0) {
     return '';

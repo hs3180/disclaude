@@ -32,14 +32,13 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
+import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+import type { PilotCallbacks, PilotConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
-import { MessageBuilder } from '@disclaude/core';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
-import type { PilotCallbacks, PilotConfig } from './types.js';
 
 // Re-export types for backward compatibility
 export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';

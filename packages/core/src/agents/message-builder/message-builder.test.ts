@@ -5,8 +5,6 @@
  * Tests framework-agnostic behavior without channel-specific extensions.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES } from '../../index.js';
 import type { MessageBuilderOptions } from './types.js';
@@ -452,7 +450,8 @@ describe('MessageBuilder', () => {
       expect(buildToolsSection).toHaveBeenCalled();
 
       // Verify context passed to callbacks
-      const ctx = buildHeader.mock.calls[0][0];
+      // eslint-disable-next-line prefer-destructuring
+      const [ctx] = buildHeader.mock.calls[0];
       expect(ctx.chatId).toBe('chat-456');
       expect(ctx.msg.text).toBe('Hello');
       expect(ctx.msg.senderOpenId).toBe('user-789');
