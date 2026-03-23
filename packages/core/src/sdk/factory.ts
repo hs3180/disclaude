@@ -9,12 +9,14 @@ import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './
 import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
+import { setupAgentsInWorkspace } from '../utils/agents-setup.js';
 import { createLogger } from '../utils/logger.js';
 
 /**
- * 模块级标志位，保证 skills setup 幂等（只执行一次）
+ * 模块级标志位，保证 skills/agents setup 幂等（只执行一次）
  */
 let skillsSetupDone = false;
+let agentsSetupDone = false;
 
 /**
  * 已注册的 Provider 类型
@@ -57,6 +59,18 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
     setupSkillsInWorkspace().then((result) => {
       if (!result.success) {
         createLogger('SkillsSetup').warn({ error: result.error }, 'Failed to setup skills');
+      }
+    }).catch(() => {});
+  }
+
+  // Copy preset agent definitions to workspace .claude/agents/ for Claude Code discovery
+  // Fire-and-forget: failure only logs warning, doesn't block agent creation
+  // Issue #1410: Replace SubagentManager with project-level Agent definitions
+  if (!agentsSetupDone) {
+    agentsSetupDone = true;
+    setupAgentsInWorkspace().then((result) => {
+      if (!result.success) {
+        createLogger('AgentsSetup').warn({ error: result.error }, 'Failed to setup agents');
       }
     }).catch(() => {});
   }
