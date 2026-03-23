@@ -86,9 +86,9 @@ export type { AgentMessage } from '@disclaude/core';
 
 // Agents module (Issue #1041 - AgentFactory and Pilot)
 export { AgentFactory, type AgentCreateOptions, toPilotCallbacks } from './agents/factory.js';
-export { Pilot } from './agents/pilot/index.js';
+export { Pilot, type PilotConfig } from './agents/pilot/index.js';
 // Note: PilotCallbacks is already exported from ./types.js above
-// PilotConfig and MessageData types are internal to Pilot implementation
+// PilotConfig now includes optional messageBuilderOptions (Issue #1499)
 
 // Conversation module (Issue #1041 - now re-exported from core)
 export {
