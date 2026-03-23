@@ -38,7 +38,6 @@ import type {
   ChatAgent,
   AgentPoolInterface,
   PilotCallbacks,
-  MessageCallbacks,
   PromptMessage,
   CommandMessage,
   FeedbackMessage,
@@ -167,10 +166,6 @@ export class WorkerNode {
   // Scheduler
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
-  private taskFlowOrchestrator?: {
-    start(): Promise<void>;
-    stop(): void;
-  };
 
   constructor(options: WorkerNodeOptions) {
     const { config, dependencies } = options;
@@ -388,45 +383,13 @@ export class WorkerNode {
       },
     });
 
-    // Initialize TaskFlowOrchestrator using injected factory
-    const messageCallbacks: MessageCallbacks = {
-      sendMessage: (chatId: string, text: string, threadMessageId?: string): Promise<void> => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'text', chatId, text, threadId: threadMessageId }));
-        } else {
-          this.deps.logger.warn({ chatId }, 'Cannot send message: WebSocket not connected');
-        }
-        return Promise.resolve();
-      },
-      sendCard: (chatId: string, card: Record<string, unknown>, _description?: string, threadMessageId?: string): Promise<void> => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'card', chatId, card, threadId: threadMessageId }));
-        } else {
-          this.deps.logger.warn({ chatId }, 'Cannot send card: WebSocket not connected');
-        }
-        return Promise.resolve();
-      },
-      sendFile: (chatId: string, filePath: string): Promise<void> => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'file', chatId, filePath }));
-        } else {
-          this.deps.logger.warn({ chatId }, 'Cannot send file: WebSocket not connected');
-        }
-        return Promise.resolve();
-      },
-    };
-
-    this.taskFlowOrchestrator = this.deps.createTaskFlowOrchestrator(messageCallbacks, this.deps.logger);
-
     // Start scheduler and file watcher
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
-    await this.taskFlowOrchestrator.start();
 
     console.log('✓ Execution capability initialized');
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
-    console.log('✓ TaskFlowOrchestrator started');
   }
 
   /**
@@ -854,9 +817,6 @@ export class WorkerNode {
 
     // Stop scheduler
     this.scheduler?.stop();
-
-    // Stop task flow orchestrator
-    this.taskFlowOrchestrator?.stop();
 
     // Issue #1042: Stop IPC server
     this.stopIpcServer().catch((err) => {

@@ -73,14 +73,6 @@ export {
   stripLeadingMentions,
 } from './mention-parser.js';
 
-// Task State Manager (Issue #468)
-export type { TaskStatus, TaskState } from './task-state-manager.js';
-export {
-  TaskStateManager,
-  getTaskStateManager,
-  resetTaskStateManager,
-} from './task-state-manager.js';
-
 // Skills Setup
 export {
   setupSkillsInWorkspace,
