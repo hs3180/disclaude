@@ -89,3 +89,29 @@ export interface AskUserResult {
   messageId?: string;
   error?: string;
 }
+
+/**
+ * Option for start_discussion tool.
+ */
+export interface StartDiscussionOptions {
+  /** Display text for the option (shown on button) */
+  text: string;
+  /** Value returned when this option is selected (defaults to option_N if not provided) */
+  value?: string;
+  /** Visual style of the button */
+  style?: 'primary' | 'default' | 'danger';
+  /** Action description for the agent to execute when this option is selected */
+  action?: string;
+}
+
+/**
+ * Result type for start_discussion tool.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  messageId?: string;
+  soulLoaded?: boolean;
+  error?: string;
+}

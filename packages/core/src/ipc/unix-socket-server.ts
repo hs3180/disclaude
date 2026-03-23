@@ -64,6 +64,11 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  /**
+   * Create a group chat.
+   * Issue #631: Used by start_discussion MCP tool.
+   */
+  createGroup?: (name?: string, members?: string[]) => Promise<{ chatId: string; name: string }>;
 }
 
 /**
@@ -208,6 +213,38 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu group management (Issue #631)
+        case 'feishuCreateGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          if (!feishuHandlers.createGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createGroup handler not registered',
+            };
+          }
+          const { name, members } =
+            request.payload as IpcRequestPayloads['feishuCreateGroup'];
+          try {
+            const group = await feishuHandlers.createGroup(name, members);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, chatId: group.chatId, name: group.name },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
