@@ -123,11 +123,6 @@ export interface PilotCallbacks {
  */
 export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
 
-/**
- * ScheduleAgentFactory - Factory function to create ScheduleAgent instances.
- */
-export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
-
 // ============================================================================
 // generateInteractionPrompt Callback
 // ============================================================================
@@ -216,8 +211,9 @@ export interface WorkerNodeDependencies {
   /** Factory to create ChatAgent instances (for AgentPool) */
   createChatAgent: ChatAgentFactory;
 
-  /** Factory to create ScheduleAgent instances (for Scheduler) */
-  createScheduleAgent: ScheduleAgentFactory;
+  /** Factory to create ScheduleAgent instances (for Scheduler).
+   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent. */
+  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
 
   /** Function to generate interaction prompts from card actions */
   generateInteractionPrompt: GenerateInteractionPromptCallback;
