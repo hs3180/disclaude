@@ -234,6 +234,13 @@ export {
   type TaskFileManagerConfig,
 } from './task/index.js';
 
+// Task Record Writer (Issue #1234)
+export {
+  recordTaskExecution,
+  formatDuration,
+  type TaskExecutionResult,
+} from './task/index.js';
+
 // Queue module (Issue #1041)
 export {
   TaskQueue,

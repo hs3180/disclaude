@@ -28,6 +28,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import { recordTaskExecution, formatDuration, type TaskExecutionResult } from '../task/task-record-writer.js';
 
 const logger = createLogger('Scheduler');
 
@@ -76,6 +77,8 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /** Workspace directory for task record storage (Issue #1234) */
+  workspaceDir?: string;
 }
 
 /**
@@ -113,6 +116,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private workspaceDir?: string;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -123,6 +127,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.workspaceDir = options.workspaceDir;
     logger.info('Scheduler created');
   }
 
@@ -284,6 +289,11 @@ ${task.prompt}`;
     // Mark task as running
     this.runningTasks.add(task.id);
 
+    // Issue #1234: Record timing for task execution
+    const startTime = new Date();
+    let taskResult: TaskExecutionResult = 'success';
+    let errorNotes: string | undefined;
+
     try {
       // Send start notification
       await this.callbacks.sendMessage(
@@ -301,6 +311,8 @@ ${task.prompt}`;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      taskResult = 'error';
+      errorNotes = errorMessage;
       logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
 
       // Send error notification
@@ -316,6 +328,20 @@ ${task.prompt}`;
       if (task.cooldownPeriod && this.cooldownManager) {
         await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
+      }
+
+      // Issue #1234: Write task execution record to .claude/task-records.md
+      if (this.workspaceDir) {
+        const endTime = new Date();
+        const durationMs = endTime.getTime() - startTime.getTime();
+        await recordTaskExecution(this.workspaceDir, {
+          taskName: task.name,
+          startedAt: startTime.toISOString(),
+          endedAt: endTime.toISOString(),
+          duration: formatDuration(durationMs),
+          result: taskResult,
+          notes: errorNotes,
+        });
       }
     }
   }
