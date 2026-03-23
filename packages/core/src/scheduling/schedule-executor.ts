@@ -26,11 +26,15 @@ import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 /**
  * Interface for an agent that can execute scheduled tasks.
  *
- * This is a minimal interface that both ChatAgent and similar types can satisfy.
+ * This is a minimal interface that ChatAgent naturally satisfies.
+ * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
+ * to enable structural typing without type assertions.
+ *
+ * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
  */
 export interface ScheduleAgent {
   /** Execute the task once with the given prompt */
-  executeOnce: (chatId: string, prompt: string, fileRefs?: unknown, userId?: string) => Promise<void>;
+  executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
   /** Dispose the agent after execution */
   dispose: () => void;
 }
@@ -96,7 +100,7 @@ export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskEx
     const agent = agentFactory(chatId, callbacks);
 
     try {
-      await agent.executeOnce(chatId, prompt, undefined, userId);
+      await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks
     } finally {
       // Always dispose the agent after execution
       agent.dispose();
