@@ -1,8 +1,9 @@
 /**
- * Tests for MessageBuilder with Feishu channel extensions.
+ * Tests for Feishu-specific channel sections with MessageBuilder.
  *
  * Issue #1492: Tests for Feishu-specific channel sections used with
  * the core MessageBuilder.
+ * Issue #1499: Moved from @disclaude/worker-node to @disclaude/primary-node.
  *
  * Issue #809: Tests for image analyzer MCP hint in buildAttachmentExtra.
  * Issue #955: Tests for persisted history context in session restoration.
@@ -13,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
 /** Helper to create capabilities with specific supportedMcpTools */
 const withTools = (tools: string[]): ChannelCapabilities => ({

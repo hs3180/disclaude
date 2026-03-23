@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -121,6 +121,11 @@ export interface AgentCreateOptions {
   apiBaseUrl?: string;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * Channel-specific MessageBuilder options.
+   * Issue #1499: Decouple Feishu-specific logic from worker-node.
+   */
+  messageBuilderOptions?: MessageBuilderOptions;
 }
 
 /**
@@ -207,6 +212,7 @@ export class AgentFactory {
         ...baseConfig,
         chatId,
         callbacks,
+        messageBuilderOptions: options.messageBuilderOptions,
       };
 
       return new Pilot(config);
@@ -250,6 +256,7 @@ export class AgentFactory {
       ...baseConfig,
       chatId,
       callbacks,
+      messageBuilderOptions: options.messageBuilderOptions,
     };
 
     return new Pilot(config);
@@ -287,6 +294,7 @@ export class AgentFactory {
       ...baseConfig,
       chatId,
       callbacks,
+      messageBuilderOptions: options.messageBuilderOptions,
     };
 
     return new Pilot(config);
