@@ -218,18 +218,7 @@ export {
   DialogueMessageTracker,
   TaskTracker,
   TaskFileManager,
-  TaskFileWatcher,
-  ReflectionController,
-  TerminationConditions,
-  DEFAULT_REFLECTION_CONFIG,
   type TaskFileManagerConfig,
-  type TaskFileWatcherOptions,
-  type OnTaskCreated,
-  type ReflectionConfig,
-  type ReflectionMetrics,
-  type ReflectionEvent,
-  type ReflectionEvaluationResult,
-  type ReflectionContext,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

@@ -129,42 +129,6 @@ export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => Ch
 export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
 
 // ============================================================================
-// TaskFlowOrchestrator Interface
-// ============================================================================
-
-/**
- * MessageCallbacks - Callbacks for sending messages via TaskFlowOrchestrator.
- */
-export interface MessageCallbacks {
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-  sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
-}
-
-/**
- * TaskFlowOrchestratorInterface - Interface for task flow management.
- */
-export interface TaskFlowOrchestratorInterface {
-  /**
-   * Start the orchestrator.
-   */
-  start(): Promise<void>;
-
-  /**
-   * Stop the orchestrator.
-   */
-  stop(): void;
-}
-
-/**
- * TaskFlowOrchestratorFactory - Factory function to create TaskFlowOrchestrator.
- */
-export type TaskFlowOrchestratorFactory = (
-  messageCallbacks: MessageCallbacks,
-  logger: Logger
-) => TaskFlowOrchestratorInterface;
-
-// ============================================================================
 // generateInteractionPrompt Callback
 // ============================================================================
 
@@ -254,9 +218,6 @@ export interface WorkerNodeDependencies {
 
   /** Factory to create ScheduleAgent instances (for Scheduler) */
   createScheduleAgent: ScheduleAgentFactory;
-
-  /** Factory to create TaskFlowOrchestrator */
-  createTaskFlowOrchestrator: TaskFlowOrchestratorFactory;
 
   /** Function to generate interaction prompts from card actions */
   generateInteractionPrompt: GenerateInteractionPromptCallback;
