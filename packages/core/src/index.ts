@@ -147,6 +147,19 @@ export {
   BaseAgent,
 } from './agents/base-agent.js';
 
+// Message Builder (Issue #1492: extracted from worker-node to core)
+export {
+  MessageBuilder,
+  buildChatHistorySection,
+  buildPersistedHistorySection,
+  buildNextStepGuidance,
+  buildOutputFormatGuidance,
+  buildLocationAwarenessGuidance,
+  type MessageData,
+  type MessageBuilderContext,
+  type MessageBuilderOptions,
+} from './agents/message-builder/index.js';
+
 // Skill Agent
 export { type SkillAgentExecuteOptions } from './agents/skill-agent.js';
 export { SkillAgent as SkillAgentBase } from './agents/skill-agent.js';

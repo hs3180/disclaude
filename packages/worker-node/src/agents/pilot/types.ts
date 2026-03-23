@@ -2,9 +2,10 @@
  * Type definitions for Pilot agent.
  *
  * Extracted from pilot.ts for better separation of concerns (Issue #697).
+ * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, FileRef, BaseAgentConfig } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -87,16 +88,5 @@ export interface PilotConfig extends BaseAgentConfig {
   complexityThreshold?: number;
 }
 
-/**
- * Message data for processing.
- */
-export interface MessageData {
-  text: string;
-  messageId?: string;
-  senderOpenId?: string;
-  attachments?: FileRef[];
-  /** Chat history context for passive mode (Issue #517) */
-  chatHistoryContext?: string;
-  /** Persisted history context for session restoration (Issue #955) */
-  persistedHistoryContext?: string;
-}
+// Re-export MessageData from core for backward compatibility (Issue #1492)
+export type { MessageData } from '@disclaude/core';

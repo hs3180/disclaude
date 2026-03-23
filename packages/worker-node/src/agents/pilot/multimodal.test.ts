@@ -13,23 +13,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MessageBuilder } from './message-builder.js';
-import type { FileRef } from '@disclaude/core';
+import { MessageBuilder, type MessageData } from '@disclaude/core';
+import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
 
 // Mock config
-vi.mock('@disclaude/core', () => ({
-  Config: {
-    getMcpServersConfig: vi.fn(() => ({
-      '4_5v_mcp': { command: 'test-command' },
-    })),
-  },
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    Config: {
+      ...actual.Config,
+      getMcpServersConfig: vi.fn(() => ({
+        '4_5v_mcp': { command: 'test-command' },
+      })),
+    },
+  };
+});
 
 describe('Multimodal Message Handling (Issue #808)', () => {
   let messageBuilder: MessageBuilder;
 
   beforeEach(() => {
-    messageBuilder = new MessageBuilder();
+    messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
   });
 
   afterEach(() => {
@@ -43,7 +48,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
     fileName: string,
     mimeType: string = 'image/png',
     size: number = 102400
-  ): FileRef => ({
+  ): any => ({
     id: `test-id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     fileName,
     mimeType,
@@ -63,7 +68,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         messageId: 'msg-123',
         senderOpenId: 'user-456',
         attachments: [imageAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       // Should include user's text
       expect(result).toContain(userText);
@@ -87,7 +92,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         text: userText,
         messageId: 'msg-123',
         attachments: [jpegAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('photo.jpg');
       expect(result).toContain('image/jpeg');
@@ -103,7 +108,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         text: userText,
         messageId: 'msg-123',
         attachments: [gifAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('animation.gif');
       expect(result).toContain('image/gif');
@@ -117,7 +122,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         text: userText,
         messageId: 'msg-123',
         attachments: [webpAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('modern-image.webp');
       expect(result).toContain('image/webp');
@@ -126,7 +131,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
 
   describe('Scenario 2: Multiple images for comparison', () => {
     it('should properly format message with multiple image attachments', () => {
-      const attachments: FileRef[] = [
+      const attachments = [
         createImageAttachment('design-v1.png', 'image/png'),
         createImageAttachment('design-v2.png', 'image/png'),
       ];
@@ -137,7 +142,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         messageId: 'msg-123',
         senderOpenId: 'user-456',
         attachments,
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       // Should include user's text
       expect(result).toContain(userText);
@@ -154,7 +159,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
     });
 
     it('should handle multiple images with different formats', () => {
-      const attachments: FileRef[] = [
+      const attachments = [
         createImageAttachment('screenshot.png', 'image/png'),
         createImageAttachment('photo.jpg', 'image/jpeg'),
       ];
@@ -164,7 +169,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         text: userText,
         messageId: 'msg-123',
         attachments,
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('screenshot.png');
       expect(result).toContain('photo.jpg');
@@ -173,7 +178,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
     });
 
     it('should handle three or more images', () => {
-      const attachments: FileRef[] = [
+      const attachments = [
         createImageAttachment('ui-1.png', 'image/png'),
         createImageAttachment('ui-2.png', 'image/png'),
         createImageAttachment('ui-3.png', 'image/png'),
@@ -184,7 +189,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         text: userText,
         messageId: 'msg-123',
         attachments,
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('3 file(s)');
       expect(result).toContain('ui-1.png');
@@ -208,7 +213,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
         messageId: 'msg-123',
         senderOpenId: 'user-456',
         attachments: [imageAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       // Should preserve all text content
       expect(result).toContain('仪表盘截图');
@@ -235,7 +240,7 @@ console.log(data.value);
         text: userText,
         messageId: 'msg-123',
         attachments: [imageAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('错误截图');
       expect(result).toContain('JSON.parse');
@@ -253,7 +258,7 @@ console.log(data.value);
         messageId: 'msg-123',
         senderOpenId: 'user-456',
         attachments: [screenshotAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain(userText);
       expect(result).toContain('code-screenshot.png');
@@ -268,7 +273,7 @@ console.log(data.value);
         text: userText,
         messageId: 'msg-123',
         attachments: [errorScreenshot],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('error-message.png');
       expect(result).toContain(userText);
@@ -282,7 +287,7 @@ console.log(data.value);
         text: userText,
         messageId: 'msg-123',
         attachments: [mockupAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).toContain('ui-mockup.png');
       expect(result).toContain('HTML/CSS');
@@ -311,7 +316,7 @@ console.log(data.value);
           text: 'Test',
           messageId: 'msg-123',
           attachments: [attachment],
-        }, 'chat-789');
+        } as MessageData, 'chat-789');
 
         expect(result).toContain('## 🖼️ Image Analysis Required');
         expect(result).toContain(mimeType);
@@ -324,7 +329,7 @@ console.log(data.value);
         '4_5v_mcp': { command: 'test-command' },
       } as any);
 
-      const pdfAttachment: FileRef = {
+      const pdfAttachment: any = {
         id: 'test-id',
         fileName: 'document.pdf',
         mimeType: 'application/pdf',
@@ -338,7 +343,7 @@ console.log(data.value);
         text: 'Read this document',
         messageId: 'msg-123',
         attachments: [pdfAttachment],
-      }, 'chat-789');
+      } as MessageData, 'chat-789');
 
       expect(result).not.toContain('## 🖼️ Image Analysis Required');
       expect(result).toContain('document.pdf');
@@ -360,7 +365,7 @@ console.log(data.value);
           text: 'Test',
           messageId: 'msg-123',
           attachments: [attachment],
-        }, 'chat-789');
+        } as MessageData, 'chat-789');
 
         expect(result).toContain(expected);
       }
