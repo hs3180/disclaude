@@ -213,3 +213,52 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and shares state with
+ * the main process via a file-based `.runtime-env` mechanism. This guidance
+ * makes agents aware of available shared environment variables and how to
+ * read/write them.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+**Context**: You run in an SDK subprocess. The main process shares state with you via a file-based \`.runtime-env\` mechanism. Runtime environment variables are automatically loaded into your \`process.env\` at startup.
+
+### Known Variables
+
+| Variable | Writer | Description |
+|----------|--------|-------------|
+| \`GH_TOKEN\` | github-jwt-auth skill | GitHub App installation access token |
+| \`GH_TOKEN_EXPIRES_AT\` | github-jwt-auth skill | Token expiry time (ISO 8601) |
+
+### How to Read
+
+Runtime env vars are pre-loaded into \`process.env\`. You can access them directly:
+- Use \`process.env.GH_TOKEN\` in code, or read via \`echo $GH_TOKEN\` in Bash.
+- Check token freshness: compare \`GH_TOKEN_EXPIRES_AT\` with current time before making API calls.
+
+### How to Write
+
+To share data back to the main process (or other agents), write to the \`.runtime-env\` file in the workspace directory using the Write tool:
+
+\`\`\`
+KEY=VALUE
+\`\`\`
+
+One variable per line. The main process will pick up changes on next read.
+
+### Important Notes
+
+- \`.runtime-env\` is in \`.gitignore\` — never commit secrets to the repository.
+- Tokens have limited lifetimes. If a GitHub API call returns 401, the token may have expired — trigger a refresh via the github-jwt-auth skill.
+- Only use runtime-env for cross-process state that cannot be passed via function arguments or tool results.`;
+}
