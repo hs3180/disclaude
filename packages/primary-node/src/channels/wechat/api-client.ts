@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -11,12 +11,15 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
+ * - POST ilink/bot/getuploadurl        - Get CDN upload URL for media
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1475 - WeChat Channel Media Handling
  */
 
 import { createLogger } from '@disclaude/core';
+import type { GetUploadUrlReq, GetUploadUrlResp, MessageItem } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -208,6 +211,83 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  /**
+   * Send a single media item (image, file, etc.) as a message.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * Each item is sent as its own request so that item_list always
+   * has exactly one entry (matches official implementation pattern).
+   *
+   * @param params - Media item parameters
+   */
+  async sendMediaItem(params: {
+    to: string;
+    item: MessageItem;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, item, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [item],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, itemType: item.type }, 'Media item sent');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Media upload endpoints (POST, with auth headers)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get a pre-signed CDN upload URL for a file.
+   *
+   * POST /ilink/bot/getuploadurl
+   *
+   * Returns upload parameters needed for CDN upload, including
+   * the encrypted upload_param and optional thumbnail upload param.
+   *
+   * @param params - Upload URL request parameters
+   * @returns Upload URL response with upload_param
+   */
+  async getUploadUrl(params: GetUploadUrlReq): Promise<GetUploadUrlResp> {
+    const body = {
+      filekey: params.filekey,
+      media_type: params.media_type,
+      to_user_id: params.to_user_id,
+      rawsize: params.rawsize,
+      rawfilemd5: params.rawfilemd5,
+      filesize: params.filesize,
+      no_need_thumb: params.no_need_thumb,
+      aeskey: params.aeskey,
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    const response = await this.postJson<GetUploadUrlResp>('ilink/bot/getuploadurl', body);
+
+    if (!response.upload_param) {
+      throw new Error('getUploadUrl returned no upload_param');
+    }
+
+    logger.debug(
+      { filekey: params.filekey, mediaType: params.media_type },
+      'Upload URL obtained',
+    );
+
+    return response;
   }
 
   // ---------------------------------------------------------------------------
