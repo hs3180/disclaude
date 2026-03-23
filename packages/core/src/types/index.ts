@@ -126,3 +126,6 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// Channel adapter (Issue #1499: decouple Feishu-specific logic from worker-node)
+export type { ChannelAdapter } from './channel-adapter.js';

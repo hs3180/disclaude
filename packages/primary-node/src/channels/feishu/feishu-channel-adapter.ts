@@ -1,14 +1,16 @@
 /**
- * Feishu-specific channel sections for MessageBuilder.
+ * Feishu Channel Adapter - Provides Feishu-specific MessageBuilderOptions.
  *
- * Issue #1492: Extracted from worker-node MessageBuilder.
- * Provides Feishu-specific content sections that are injected
- * into the core MessageBuilder via the MessageBuilderOptions callbacks.
+ * Issue #1499: Decouple Feishu-specific logic from worker-node package.
  *
- * @module pilot/feishu-sections
+ * Moved from `packages/worker-node/src/agents/pilot/feishu-sections.ts`.
+ * This adapter implements the ChannelAdapter interface from @disclaude/core,
+ * providing Feishu-specific content sections for the MessageBuilder.
+ *
+ * @module channels/feishu/feishu-channel-adapter
  */
 
-import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type ChannelAdapter, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -177,18 +179,44 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Feishu Channel Adapter.
+ *
+ * Implements ChannelAdapter to provide Feishu-specific MessageBuilderOptions.
+ * This adapter is used by PrimaryAgentPool to configure Pilot instances
+ * with Feishu-specific prompt sections.
+ *
+ * Issue #1499: Moved from worker-node to primary-node for proper separation.
+ */
+export class FeishuChannelAdapter implements ChannelAdapter {
+  /**
+   * Create Feishu-specific MessageBuilderOptions.
+   *
+   * Returns the options object with all Feishu channel section builders
+   * configured for use with the core MessageBuilder.
+   *
+   * @returns MessageBuilderOptions with Feishu-specific callbacks
+   */
+  createMessageBuilderOptions(): MessageBuilderOptions {
+    return {
+      buildHeader: buildFeishuHeader,
+      buildPostHistory: buildFeishuMentionSection,
+      buildToolsSection: buildFeishuToolsSection,
+      buildAttachmentExtra: buildFeishuAttachmentExtra,
+    };
+  }
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
- * Returns the options object with all Feishu channel section builders
- * configured for use with the core MessageBuilder.
+ * Convenience function that creates a FeishuChannelAdapter and returns
+ * its MessageBuilderOptions. Provided for backward compatibility and
+ * simple use cases where a full adapter instance is not needed.
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
+ *
+ * @deprecated Use `new FeishuChannelAdapter()` instead for better extensibility.
  */
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
-  return {
-    buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
-    buildToolsSection: buildFeishuToolsSection,
-    buildAttachmentExtra: buildFeishuAttachmentExtra,
-  };
+  return new FeishuChannelAdapter().createMessageBuilderOptions();
 }

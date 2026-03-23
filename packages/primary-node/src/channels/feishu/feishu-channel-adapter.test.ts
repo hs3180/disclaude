@@ -1,19 +1,19 @@
 /**
- * Tests for MessageBuilder with Feishu channel extensions.
+ * Tests for FeishuChannelAdapter and Feishu MessageBuilderOptions.
  *
- * Issue #1492: Tests for Feishu-specific channel sections used with
- * the core MessageBuilder.
+ * Issue #1499: Tests moved from worker-node to primary-node since
+ * Feishu-specific logic now lives in primary-node.
  *
- * Issue #809: Tests for image analyzer MCP hint in buildAttachmentExtra.
- * Issue #955: Tests for persisted history context in session restoration.
- * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
+ * Tests for image analyzer MCP hint in buildAttachmentExtra (Issue #809).
+ * Tests for persisted history context in session restoration (Issue #955).
+ * Tests for output format guidance to prevent raw JSON in responses (Issue #962).
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+import { FeishuChannelAdapter, createFeishuMessageBuilderOptions } from './feishu-channel-adapter.js';
 
 /** Helper to create capabilities with specific supportedMcpTools */
 const withTools = (tools: string[]): ChannelCapabilities => ({
@@ -33,15 +33,27 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   };
 });
 
-describe('MessageBuilder with Feishu sections', () => {
+describe('FeishuChannelAdapter', () => {
+  let adapter: FeishuChannelAdapter;
   let messageBuilder: MessageBuilder;
 
   beforeEach(() => {
-    messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
+    adapter = new FeishuChannelAdapter();
+    messageBuilder = new MessageBuilder(adapter.createMessageBuilderOptions());
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('createMessageBuilderOptions', () => {
+    it('should return MessageBuilderOptions with all callbacks defined', () => {
+      const options = adapter.createMessageBuilderOptions();
+      expect(options.buildHeader).toBeDefined();
+      expect(options.buildPostHistory).toBeDefined();
+      expect(options.buildToolsSection).toBeDefined();
+      expect(options.buildAttachmentExtra).toBeDefined();
+    });
   });
 
   describe('buildEnhancedContent with Feishu header', () => {
@@ -120,7 +132,7 @@ describe('MessageBuilder with Feishu sections', () => {
         createdAt: Date.now(),
       }];
 
-      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const builder = new MessageBuilder(adapter.createMessageBuilderOptions());
       const result = builder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -148,7 +160,7 @@ describe('MessageBuilder with Feishu sections', () => {
         createdAt: Date.now(),
       }];
 
-      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const builder = new MessageBuilder(adapter.createMessageBuilderOptions());
       const result = builder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -175,7 +187,7 @@ describe('MessageBuilder with Feishu sections', () => {
         createdAt: Date.now(),
       }];
 
-      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const builder = new MessageBuilder(adapter.createMessageBuilderOptions());
       const result = builder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -204,7 +216,7 @@ describe('MessageBuilder with Feishu sections', () => {
           createdAt: Date.now(),
         }];
 
-        const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+        const builder = new MessageBuilder(adapter.createMessageBuilderOptions());
         const result = builder.buildEnhancedContent({
           text: 'Hello',
           messageId: 'msg-123',
@@ -335,5 +347,29 @@ describe('MessageBuilder with Feishu sections', () => {
 
       expect(result).not.toContain('@ Mention the User');
     });
+  });
+});
+
+describe('createFeishuMessageBuilderOptions (deprecated)', () => {
+  it('should return same options as FeishuChannelAdapter', () => {
+    const adapter = new FeishuChannelAdapter();
+    const adapterOptions = adapter.createMessageBuilderOptions();
+    const functionOptions = createFeishuMessageBuilderOptions();
+
+    // Both should produce the same header
+    const adapterBuilder = new MessageBuilder(adapterOptions);
+    const functionBuilder = new MessageBuilder(functionOptions);
+
+    const adapterResult = adapterBuilder.buildEnhancedContent({
+      text: 'Hello',
+      messageId: 'msg-123',
+    }, 'chat-123');
+
+    const functionResult = functionBuilder.buildEnhancedContent({
+      text: 'Hello',
+      messageId: 'msg-123',
+    }, 'chat-123');
+
+    expect(adapterResult).toBe(functionResult);
   });
 });

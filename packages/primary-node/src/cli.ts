@@ -29,6 +29,7 @@ import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
+import { FeishuChannelAdapter } from './channels/feishu/feishu-channel-adapter.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -170,7 +171,10 @@ async function main(): Promise<void> {
   }
 
   // Create AgentPool for Primary Node
-  const agentPool = new PrimaryAgentPool();
+  // Issue #1499: Use FeishuChannelAdapter for platform-specific message building
+  const agentPool = new PrimaryAgentPool({
+    channelAdapter: new FeishuChannelAdapter(),
+  });
 
   // Create unified control handler context
   const controlHandlerContext: ControlHandlerContext = {

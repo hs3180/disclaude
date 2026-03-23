@@ -5,7 +5,7 @@
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, BaseAgentConfig } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig, ChannelAdapter } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -65,6 +65,7 @@ export interface PilotCallbacks {
  *
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
+ * Issue #1499: Added channelAdapter for platform-agnostic channel configuration.
  */
 export interface PilotConfig extends BaseAgentConfig {
   /**
@@ -86,6 +87,25 @@ export interface PilotConfig extends BaseAgentConfig {
    * Issue #857: Task progress tracking for complex tasks.
    */
   complexityThreshold?: number;
+
+  /**
+   * Channel adapter for platform-specific message building.
+   *
+   * Issue #1499: Decouples Feishu-specific logic from worker-node.
+   * When provided, the adapter's MessageBuilderOptions are used
+   * to customize the agent's prompt content for the specific platform.
+   * When omitted, the MessageBuilder uses default (empty) options.
+   *
+   * @example
+   * ```typescript
+   * const config: PilotConfig = {
+   *   chatId: 'chat-123',
+   *   callbacks,
+   *   channelAdapter: new FeishuChannelAdapter(),
+   * };
+   * ```
+   */
+  channelAdapter?: ChannelAdapter;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

@@ -40,3 +40,9 @@ export {
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,
 } from './ws-connection-manager.js';
+
+// Channel Adapter (Issue #1499: decouple Feishu-specific logic from worker-node)
+export {
+  FeishuChannelAdapter,
+  createFeishuMessageBuilderOptions,
+} from './feishu-channel-adapter.js';

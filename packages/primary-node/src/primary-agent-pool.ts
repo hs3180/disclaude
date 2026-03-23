@@ -4,19 +4,47 @@
  * Manages ChatAgent instances for each chatId, using AgentFactory
  * from @disclaude/worker-node to create Pilot instances.
  *
+ * Issue #1499: Accepts ChannelAdapter for platform-specific message building.
+ *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
+import type { ChannelAdapter } from '@disclaude/core';
 import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
+
+/**
+ * Options for PrimaryAgentPool.
+ *
+ * Issue #1499: Added channelAdapter for platform-agnostic channel configuration.
+ */
+export interface PrimaryAgentPoolOptions {
+  /**
+   * Channel adapter for platform-specific message building.
+   *
+   * Issue #1499: When provided, all Pilot instances created by this pool
+   * will use the adapter's MessageBuilderOptions. This allows the pool
+   * to be configured for any platform (Feishu, WeChat, etc.) without
+   * the worker-node package needing to know about specific platforms.
+   */
+  channelAdapter?: ChannelAdapter;
+}
 
 /**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
  *
  * Each chatId gets its own Pilot instance with full MessageBuilder
  * support for enhanced prompts with context.
+ *
+ * Issue #1499: Supports optional ChannelAdapter for platform-specific
+ * message building configuration.
  */
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
+  private readonly options: PrimaryAgentPoolOptions;
+
+  constructor(options: PrimaryAgentPoolOptions = {}) {
+    this.options = options;
+  }
 
   /**
    * Get or create a ChatAgent instance for the given chatId.
@@ -28,7 +56,9 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks);
+      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+        channelAdapter: this.options.channelAdapter,
+      });
       this.agents.set(chatId, agent);
     }
     return agent;

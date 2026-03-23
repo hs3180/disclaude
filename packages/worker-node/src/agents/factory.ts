@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type ChannelAdapter } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -115,6 +115,11 @@ export interface AgentCreateOptions {
   apiBaseUrl?: string;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * Channel adapter for platform-specific message building.
+   * Issue #1499: Decouples Feishu-specific logic from worker-node.
+   */
+  channelAdapter?: ChannelAdapter;
 }
 
 /**
@@ -201,6 +206,7 @@ export class AgentFactory {
         ...baseConfig,
         chatId,
         callbacks,
+        channelAdapter: options.channelAdapter,
       };
 
       return new Pilot(config);

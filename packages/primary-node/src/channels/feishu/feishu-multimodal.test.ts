@@ -1,7 +1,8 @@
 /**
- * Tests for multimodal message handling in Pilot agent.
+ * Tests for multimodal message handling with FeishuChannelAdapter.
  *
  * Issue #808: Test native multimodal model support in disclaude.
+ * Issue #1499: Moved from worker-node to primary-node.
  *
  * Test scenarios:
  * 1. Single image with text query
@@ -14,7 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, type MessageData } from '@disclaude/core';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+import { FeishuChannelAdapter } from './feishu-channel-adapter.js';
 
 // Mock config
 vi.mock('@disclaude/core', async (importOriginal) => {
@@ -34,7 +35,8 @@ describe('Multimodal Message Handling (Issue #808)', () => {
   let messageBuilder: MessageBuilder;
 
   beforeEach(() => {
-    messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
+    const adapter = new FeishuChannelAdapter();
+    messageBuilder = new MessageBuilder(adapter.createMessageBuilderOptions());
   });
 
   afterEach(() => {

@@ -34,7 +34,6 @@
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
@@ -98,8 +97,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
       maxBackoffMs: 60000,     // Max 1 minute
     });
 
-    // Initialize message builder with Feishu channel extensions (Issue #697, #1492)
-    this.messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
+    // Initialize message builder with channel-specific extensions (Issue #697, #1492, #1499)
+    // Issue #1499: Use channelAdapter if provided, otherwise default to empty options
+    const messageBuilderOptions = config.channelAdapter?.createMessageBuilderOptions() ?? {};
+    this.messageBuilder = new MessageBuilder(messageBuilderOptions);
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
