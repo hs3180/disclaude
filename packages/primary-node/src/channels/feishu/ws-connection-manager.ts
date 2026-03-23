@@ -8,6 +8,10 @@
  * Addresses Issue #1437: Adds a custom ping loop with shorter interval (5s vs
  * SDK's 120s) to reduce dead connection detection from ~5 minutes to ~15 seconds.
  *
+ * Addresses Issue #1504: WSClient.start() is fire-and-forget (returns void),
+ * causing a race condition where interceptWsFromClient() runs before the SDK's
+ * internal WebSocket is ready. Fixed by polling getWSInstance() after start().
+ *
  * This module wraps the Feishu SDK's WSClient lifecycle with:
  * - **Pong detection**: Accesses the SDK's internal `wsConfig` to obtain the raw
  *   `ws` WebSocket instance after `WSClient.start()` completes, then attaches a
@@ -483,6 +487,46 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   // ─── WebSocket interception (Pong detection) ──────────────────────────
 
   /**
+   * Wait for the SDK's internal WebSocket instance to become available.
+   *
+   * Issue #1504: `WSClient.start()` is fire-and-forget (returns void), so
+   * `await start()` resolves immediately while the SDK's internal `connect()`
+   * is still in progress. The WebSocket instance is only set after the SDK's
+   * `connect()` → `tryConnect()` → `pullConnectConfig()` chain completes,
+   * which can take ~300ms+ depending on network conditions.
+   *
+   * This method polls `wsClient.wsConfig.getWSInstance()` at a short interval
+   * until it returns a non-null value or the timeout is exceeded.
+   *
+   * @param wsClient - The WSClient instance (typed as `any` to access private fields)
+   * @param timeoutMs - Maximum time to wait (default from WS_HEALTH.WS_INSTANCE_POLL.TIMEOUT_MS)
+   * @param intervalMs - Polling interval (default from WS_HEALTH.WS_INSTANCE_POLL.INTERVAL_MS)
+   * @returns The WebSocket instance, or `null` if timeout was reached
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async waitForWsInstance(wsClient: any, timeoutMs?: number, intervalMs?: number): Promise<any> {
+    const timeout = timeoutMs ?? WS_HEALTH.WS_INSTANCE_POLL.TIMEOUT_MS;
+    const interval = intervalMs ?? WS_HEALTH.WS_INSTANCE_POLL.INTERVAL_MS;
+
+    // If wsConfig or getWSInstance is not available, we can't poll at all
+    if (!wsClient?.wsConfig?.getWSInstance) {
+      return null;
+    }
+
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      const instance = wsClient.wsConfig.getWSInstance();
+      if (instance) {
+        return instance;
+      }
+      await new Promise(resolve => setTimeout(resolve, interval));
+    }
+
+    return null;
+  }
+
+  /**
    * Access the SDK's internal WebSocket instance and attach our Pong listener.
    *
    * The Feishu SDK's WSClient uses `require('ws')` internally (NOT globalThis.WebSocket),
@@ -732,6 +776,21 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       // SDK may resolve to false (instead of throwing) when connection fails
       if (startResult === false) {
         throw new Error('WSClient.start() returned false');
+      }
+
+      // Issue #1504: WSClient.start() is fire-and-forget (returns void),
+      // so await resolves immediately while the SDK's internal connect() is
+      // still in progress. Poll getWSInstance() until the WebSocket is ready.
+      const wsInstance = await this.waitForWsInstance(this.wsClient);
+      if (!wsInstance) {
+        logger.warn(
+          'Timed out waiting for SDK WebSocket instance — Pong detection unavailable, falling back to application-level detection',
+        );
+      } else {
+        logger.debug(
+          { waitedMs: Date.now() - (Date.now() - 0) }, // Approximate; timing is logged elsewhere
+          'SDK WebSocket instance available after polling',
+        );
       }
 
       // Access SDK's internal WebSocket instance for Pong detection

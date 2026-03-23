@@ -141,6 +141,20 @@ export const WS_HEALTH = {
   CUSTOM_PING_INTERVAL_MS: 5 * 1000, // 5 seconds
 
   /**
+   * Polling configuration for waiting on SDK WebSocket instance availability.
+   *
+   * Issue #1504: WSClient.start() is fire-and-forget (returns void), so the
+   * internal WebSocket may not be ready when start() resolves. We poll
+   * getWSInstance() with a short interval until it returns non-null.
+   */
+  WS_INSTANCE_POLL: {
+    /** Maximum time to wait for the SDK WebSocket instance to become available (ms) */
+    TIMEOUT_MS: 10 * 1000, // 10 seconds
+    /** Interval between polling attempts (ms) */
+    INTERVAL_MS: 50, // 50ms — fast enough to catch the ~300ms delay
+  },
+
+  /**
    * Exponential backoff configuration for reconnection attempts.
    * Uses: delay = min(baseDelay × 2^attempt + jitter, maxDelay)
    * Jitter range: [0, jitterMs) to spread out concurrent reconnects.

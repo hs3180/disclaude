@@ -38,7 +38,7 @@ function createMockWSClient(shouldFail = false, serviceId = 'test-service-id'): 
     sendMessage: vi.fn(),
     wsConfig: {
       getWS: vi.fn().mockReturnValue({ serviceId }),
-      getWSInstance: vi.fn().mockReturnValue(null),
+      getWSInstance: vi.fn().mockReturnValue(new MockWsInstance()),
     },
   };
 }
@@ -55,6 +55,10 @@ const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
   CUSTOM_PING_INTERVAL_MS: 500,
+  WS_INSTANCE_POLL: {
+    TIMEOUT_MS: 3000,
+    INTERVAL_MS: 50,
+  },
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -493,6 +497,69 @@ describe('WsConnectionManager', () => {
     });
   });
 
+  describe('WS instance polling (Issue #1504)', () => {
+    it('should not wait when WS instance is immediately available', async () => {
+      // No delay — WS instance available immediately (default mock behavior)
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      expect(manager.state).toBe('connected');
+      const metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(true);
+    });
+
+    it('should fall back gracefully when wsConfig is unavailable', async () => {
+      // Simulate SDK where wsConfig is not accessible
+      const noWsConfigClient: MockWSClient = {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(),
+        sendMessage: vi.fn(),
+        wsConfig: undefined as unknown as MockWSClient['wsConfig'],
+      };
+
+      manager = createTestManager({
+        wsClient: noWsConfigClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Should still connect, but without WS interception
+      expect(manager.state).toBe('connected');
+      const metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(false);
+    });
+
+    it('should detect Pong when WS instance is available', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        wsClient: mockClient,
+        maxAttempts: 0,
+      });
+
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Verify the WS instance was intercepted
+      const metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(true);
+
+      // Emit a Pong frame through the intercepted WS instance
+      const mgr = manager as any;
+      if (mgr.interceptedWs) {
+        mgr.interceptedWs.instance.emit('message', PONG_BUFFER);
+        expect(pongEvents.length).toBe(1);
+      }
+    });
+  });
+
   describe('custom ping loop', () => {
     it('should send custom pings at configured interval', async () => {
       const mockClient = createMockWSClient(false);
@@ -593,8 +660,6 @@ describe('WsConnectionManager', () => {
       // Remove sendMessage to simulate SDK without it
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mockClient as any).sendMessage = undefined;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mockClient as any).wsConfig = undefined;
 
       manager = createTestManager({
         wsClient: mockClient,
@@ -738,7 +803,7 @@ describe('WsConnectionManager', () => {
         sendMessage: vi.fn(),
         wsConfig: {
           getWS: vi.fn().mockReturnValue({ serviceId: 'test-service-id' }),
-          getWSInstance: vi.fn().mockReturnValue(null),
+          getWSInstance: vi.fn().mockReturnValue(new MockWsInstance()),
         },
       };
 
@@ -783,7 +848,7 @@ describe('WsConnectionManager', () => {
         sendMessage: vi.fn(),
         wsConfig: {
           getWS: vi.fn().mockReturnValue({ serviceId: 'test-service-id' }),
-          getWSInstance: vi.fn().mockReturnValue(null),
+          getWSInstance: vi.fn().mockReturnValue(new MockWsInstance()),
         },
       };
 
