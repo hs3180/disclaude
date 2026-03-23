@@ -65,6 +65,7 @@ export interface PilotCallbacks {
  *
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
+ * Issue #1315: Added systemPromptAppend for SOUL.md personality injection.
  */
 export interface PilotConfig extends BaseAgentConfig {
   /**
@@ -86,6 +87,13 @@ export interface PilotConfig extends BaseAgentConfig {
    * Issue #857: Task progress tracking for complex tasks.
    */
   complexityThreshold?: number;
+
+  /**
+   * System prompt append content for personality injection (Issue #1315).
+   * When set, the agent's system prompt will use the 'claude_code' preset
+   * with this content appended, enabling SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 
   /**
    * Channel-specific MessageBuilder options.

@@ -56,8 +56,14 @@ export interface SchedulerCallbacks {
  * @param chatId - Chat ID to send messages to
  * @param prompt - The task prompt to execute
  * @param userId - Optional user ID for context
+ * @param taskContext - Optional task execution context (Issue #1315: per-task soul)
  */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string) => Promise<void>;
+export interface TaskExecutionContext {
+  /** SOUL.md path or name for personality injection (Issue #1315) */
+  soul?: string;
+}
+
+export type TaskExecutor = (chatId: string, prompt: string, userId?: string, taskContext?: TaskExecutionContext) => Promise<void>;
 
 /**
  * Scheduler options.
@@ -295,7 +301,8 @@ ${task.prompt}`;
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Issue #1041: Use injected executor function
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy);
+      // Issue #1315: Pass task context (soul) for per-task personality injection
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, { soul: task.soul });
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

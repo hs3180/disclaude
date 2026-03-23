@@ -33,4 +33,12 @@ export interface ScheduledTask {
   createdAt: string;
   /** Last execution timestamp (read from file, for display purposes only) */
   lastExecutedAt?: string;
+  /**
+   * SOUL.md path or name for personality injection (Issue #1315).
+   * When set, the agent executing this task will have the specified
+   * SOUL.md content injected into its system prompt.
+   * Can be an absolute path, a tilde path (~/...), or a bare name
+   * to look up in `~/.disclaude/souls/`.
+   */
+  soul?: string;
 }

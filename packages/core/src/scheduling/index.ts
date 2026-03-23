@@ -45,6 +45,7 @@ export {
   Scheduler,
   type SchedulerCallbacks,
   type TaskExecutor,
+  type TaskExecutionContext,
   type SchedulerOptions,
 } from './scheduler.js';
 

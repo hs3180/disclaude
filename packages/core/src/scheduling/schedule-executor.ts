@@ -21,7 +21,7 @@
  * @module @disclaude/core/scheduling
  */
 
-import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
+import type { SchedulerCallbacks, TaskExecutor, TaskExecutionContext } from './scheduler.js';
 
 /**
  * Interface for an agent that can execute scheduled tasks.
@@ -44,11 +44,13 @@ export interface ScheduleAgent {
  *
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
+ * @param soulPath - Optional SOUL.md path for per-task personality injection (Issue #1315)
  * @returns A ScheduleAgent instance (caller must dispose)
  */
 export type ScheduleAgentFactory = (
   chatId: string,
-  callbacks: SchedulerCallbacks
+  callbacks: SchedulerCallbacks,
+  soulPath?: string
 ) => ScheduleAgent;
 
 /**
@@ -71,6 +73,7 @@ export interface ScheduleExecutorOptions {
  *
  * Issue #1382: This enables both Primary Node and Worker Node to use
  * the same executor logic, just with different agent factories.
+ * Issue #1315: Passes task context (soul) to agent factory for per-task personality.
  *
  * @param options - Executor options including agent factory and callbacks
  * @returns A TaskExecutor function for use with Scheduler
@@ -79,8 +82,8 @@ export interface ScheduleExecutorOptions {
  * ```typescript
  * // In Primary Node or Worker Node:
  * const executor = createScheduleExecutor({
- *   agentFactory: (chatId, callbacks) => {
- *     return AgentFactory.createScheduleAgent(chatId, callbacks);
+ *   agentFactory: (chatId, callbacks, soulPath) => {
+ *     return AgentFactory.createScheduleAgent(chatId, callbacks, { soulPath });
  *   },
  *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
  * });
@@ -93,11 +96,12 @@ export interface ScheduleExecutorOptions {
  * ```
  */
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
-  const { agentFactory, callbacks } = options;
+  const { agentFactory } = options;
 
-  return async (chatId: string, prompt: string, userId?: string): Promise<void> => {
+  return async (chatId: string, prompt: string, userId?: string, taskContext?: TaskExecutionContext): Promise<void> => {
     // Create a short-lived agent for this execution
-    const agent = agentFactory(chatId, callbacks);
+    // Issue #1315: Pass soul path from task context for per-task personality injection
+    const agent = agentFactory(chatId, options.callbacks, taskContext?.soul);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks

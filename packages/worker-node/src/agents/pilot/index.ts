@@ -81,12 +81,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
+  // SOUL.md personality injection (Issue #1315)
+  private readonly systemPromptAppend?: string;
+
   constructor(config: PilotConfig) {
     super(config);
 
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+
+    // Issue #1315: Store system prompt append for SOUL.md injection
+    this.systemPromptAppend = config.systemPromptAppend;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -381,6 +387,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
+      ...(this.systemPromptAppend && { systemPromptAppend: this.systemPromptAppend }),
     });
 
     // Get capabilities for message building
@@ -393,7 +400,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       senderOpenId,
     }, chatId, capabilities);
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
+    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), hasSoul: !!this.systemPromptAppend }, 'Starting CLI query with direct prompt');
 
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
@@ -584,10 +591,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
       mcpServers,
+      ...(this.systemPromptAppend && { systemPromptAppend: this.systemPromptAppend }),
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools, hasSoul: !!this.systemPromptAppend },
       'Starting SDK query with message channel'
     );
 

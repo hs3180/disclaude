@@ -212,8 +212,9 @@ export interface WorkerNodeDependencies {
   createChatAgent: ChatAgentFactory;
 
   /** Factory to create ScheduleAgent instances (for Scheduler).
-   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent. */
-  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent.
+   *  Issue #1315: Async to support SOUL.md loading. */
+  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks, options?: { soulPath?: string }) => Promise<ChatAgent>;
 
   /** Function to generate interaction prompts from card actions */
   generateInteractionPrompt: GenerateInteractionPromptCallback;

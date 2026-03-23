@@ -197,6 +197,7 @@ export class ScheduleFileScanner {
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
+        soul: frontmatter['soul'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -238,6 +239,9 @@ export class ScheduleFileScanner {
     }
     if (task.createdAt) {
       frontmatter.push(`createdAt: "${task.createdAt}"`);
+    }
+    if (task.soul) {
+      frontmatter.push(`soul: "${task.soul}"`);
     }
 
     frontmatter.push('---', '');

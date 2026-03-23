@@ -89,6 +89,7 @@ export type {
 
   // 查询选项
   AgentQueryOptions,
+  SystemPromptConfig,
   PermissionMode,
 
   // 查询结果

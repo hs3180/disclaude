@@ -665,13 +665,13 @@ export interface AgentFactoryInterface {
    * Short-lived, caller must dispose after execution.
    * Maximum lifetime: 24 hours.
    */
-  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): Promise<ChatAgent>;
 
   /**
    * Create a TaskAgent instance.
    * Short-lived, caller must dispose after task completion.
    */
-  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): Promise<ChatAgent>;
 
   /**
    * Create a SkillAgent instance.

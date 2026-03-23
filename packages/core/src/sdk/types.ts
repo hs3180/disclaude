@@ -174,6 +174,16 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
 
+/** System prompt configuration for Agent personality injection (Issue #1315) */
+export interface SystemPromptConfig {
+  /** Prompt type: 'preset' to use built-in preset with optional append */
+  type: 'preset';
+  /** Built-in preset name */
+  preset: string;
+  /** Content to append to the preset system prompt (e.g., SOUL.md content) */
+  append?: string;
+}
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -192,6 +202,12 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt configuration for personality injection (Issue #1315).
+   * When set, the agent's system prompt is configured with the specified preset
+   * and optional appended content (e.g., SOUL.md personality definition).
+   */
+  systemPrompt?: SystemPromptConfig;
 }
 
 // ============================================================================

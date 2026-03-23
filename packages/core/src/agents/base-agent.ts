@@ -43,6 +43,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * System prompt append content (Issue #1315).
+   * When set, the system prompt will use the 'claude_code' preset
+   * with this content appended, enabling personality injection via SOUL.md.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -190,6 +196,15 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // System prompt append (Issue #1315: SOUL.md personality injection)
+    if (extra.systemPromptAppend) {
+      options.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: extra.systemPromptAppend,
+      };
     }
 
     return options;

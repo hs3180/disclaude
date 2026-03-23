@@ -67,6 +67,7 @@ export type {
   McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
+  SystemPromptConfig,
   PermissionMode,
   QueryHandle,
   StreamQueryResult,
@@ -211,6 +212,7 @@ export {
   type ScheduleManagerOptions,
   type SchedulerCallbacks,
   type TaskExecutor,
+  type TaskExecutionContext,
   type SchedulerOptions,
   type OnFileAdded,
   type OnFileChanged,
@@ -320,3 +322,13 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md module (Issue #1315) - Agent personality/behavior definition system
+export {
+  SoulLoader,
+  createSoulLoader,
+  getDefaultSoulPath,
+  resolveSoulPath,
+  expandTilde,
+  type SoulLoadResult,
+} from './soul/index.js';

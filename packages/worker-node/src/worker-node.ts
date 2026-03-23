@@ -353,10 +353,11 @@ export class WorkerNode {
         },
       },
       // Provide the executor function for dependency injection
-      executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
+      executor: async (chatId: string, prompt: string, userId?: string, taskContext?: { soul?: string }): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+        // Issue #1315: Pass soul path for per-task personality injection
         const callbacks = createCallbacks(chatId);
-        const agent = this.deps.createScheduleAgent(chatId, callbacks);
+        const agent = await this.deps.createScheduleAgent(chatId, callbacks, { soulPath: taskContext?.soul });
 
         try {
           await agent.executeOnce(chatId, prompt, undefined, userId);
