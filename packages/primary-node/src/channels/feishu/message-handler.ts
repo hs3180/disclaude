@@ -827,30 +827,6 @@ export class MessageHandler {
         return;
       }
 
-      if (cmd === 'passive') {
-        if (args[0] === 'off') {
-          this.passiveModeManager.setPassiveModeDisabled(chat_id, true);
-          await this.callbacks.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '✅ 已禁用被动模式，机器人将回复所有消息。',
-          });
-        } else if (args[0] === 'on') {
-          this.passiveModeManager.setPassiveModeDisabled(chat_id, false);
-          await this.callbacks.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '✅ 已启用被动模式，机器人仅在被 @ 时回复。',
-          });
-        } else {
-          await this.callbacks.sendMessage({
-            chatId: chat_id,
-            type: 'text',
-            text: '用法: /passive on|off',
-          });
-        }
-        return;
-      }
     }
 
     // Get quoted/replied message context if this is a reply
