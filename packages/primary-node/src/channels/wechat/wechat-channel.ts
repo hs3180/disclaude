@@ -92,13 +92,14 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    *
    * Aborts any in-progress authentication.
    */
-  protected async doStop(): Promise<void> {
+  protected doStop(): Promise<void> {
     if (this.auth?.isAuthenticating()) {
       this.auth.abort();
     }
     this.auth = undefined;
     this.client = undefined;
     logger.info('WeChat channel stopped');
+    return Promise.resolve();
   }
 
   /**

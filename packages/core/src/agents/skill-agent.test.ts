@@ -4,8 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SkillAgent } from './skill-agent.js';
-import type { BaseAgentConfig } from './types.js';
-import { setRuntimeContext, clearRuntimeContext } from './types.js';
+import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
 
 // Mock fs/promises
 const mockReadFile = vi.fn();
@@ -105,7 +104,7 @@ describe('SkillAgent', () => {
   });
 
   describe('executeWithContext', () => {
-    it('should auto-initialize if not initialized', async () => {
+    it('should auto-initialize if not initialized', () => {
       const agent = new SkillAgent(config, skillPath);
       expect(agent.type).toBe('skill');
     });
