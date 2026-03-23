@@ -12,6 +12,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 |-------|-------------|
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+| [微信机器人配置](#wechat-微信-bot-configuration) | WeChat (Tencent ilink) Bot 配置说明 |
 
 ## Features
 
@@ -89,6 +90,9 @@ disclaude --help
 
 # Start Feishu bot
 disclaude start --mode feishu
+
+# Start WeChat bot
+disclaude start --mode wechat
 ```
 
 #### Configuration for Global Install
@@ -251,6 +255,54 @@ Ruliu (Baidu InfoFlow) is supported via HTTP Webhook. Configuration:
    ```bash
    disclaude start --mode ruliu
    ```
+
+### WeChat (微信) Bot Configuration
+
+WeChat integration uses the Tencent ilink Bot API with QR code authentication. Currently supports **text message sending** (MVP).
+
+#### Authentication
+
+Two methods are available:
+
+1. **QR Code Login** (default): On startup, a QR code image is generated and opened. Scan it with WeChat to authenticate. The QR code auto-refreshes on expiry (up to 3 times).
+
+2. **Pre-configured Token**: Skip QR login by providing a bot token directly in the configuration.
+
+#### Configuration
+
+Add to your `disclaude.config.yaml`:
+
+```yaml
+wechat:
+  baseUrl: "https://ilinkai.weixin.qq.com"  # API base URL (default shown)
+  token: ""                                  # Optional: pre-configured bot token
+  routeTag: ""                               # Optional: message routing tag
+```
+
+Or via environment variables:
+
+```bash
+export WECHAT_API_BASE_URL="https://ilinkai.weixin.qq.com"
+export WECHAT_BOT_TOKEN="your-bot-token"      # Optional
+export WECHAT_CDN_BASE_URL="https://cdn.example.com"  # Optional
+```
+
+#### Current Capabilities (MVP)
+
+| Feature | Status |
+|---------|--------|
+| Text message sending | ✅ Supported |
+| QR code authentication | ✅ Supported |
+| Card / interactive messages | ❌ Not yet (falls back to text) |
+| File / image sending | ❌ Not yet |
+| Message receiving / long polling | ❌ Not yet |
+| Typing indicator | ❌ Not yet |
+
+#### Start WeChat Bot
+
+```bash
+disclaude start --mode wechat
+```
 
 ## Available Tools
 
