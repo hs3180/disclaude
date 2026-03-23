@@ -24,6 +24,7 @@ import {
   type IncomingMessage,
   type MessageAttachment,
   type ControlCommand,
+  type ControlCommandType,
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
@@ -791,7 +792,7 @@ export class MessageHandler {
 
       if (this.controlHandler) {
         const response = await this.callbacks.emitControl({
-          type: cmd as 'reset' | 'status' | 'passive',
+          type: cmd as ControlCommandType,
           chatId: chat_id,
           data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
         });
