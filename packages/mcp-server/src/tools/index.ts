@@ -14,6 +14,8 @@ export type {
   SendInteractiveResult,
   AskUserOptions,
   AskUserResult,
+  StartDiscussionOptions,
+  StartDiscussionResult,
 } from './types.js';
 
 // Shared utilities
@@ -53,3 +55,6 @@ export {
 
 // Ask User
 export { ask_user } from './ask-user.js';
+
+// Start Discussion (Issue #631)
+export { start_discussion } from './start-discussion.js';

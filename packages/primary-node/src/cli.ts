@@ -30,6 +30,8 @@ import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js'
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
+import { GroupService } from './platforms/feishu/index.js';
+import { createFeishuClient } from './platforms/feishu/create-feishu-client.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -448,6 +450,13 @@ async function main(): Promise<void> {
         // eslint-disable-next-line require-await
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
+        },
+        // Issue #631: Create group chat for start_discussion
+        createGroup: async (name?: string, members?: string[]) => {
+          const groupService = new GroupService();
+          const client = createFeishuClient(Config.FEISHU_APP_ID, Config.FEISHU_APP_SECRET);
+          const group = await groupService.createGroup(client, { topic: name, members });
+          return { chatId: group.chatId, name: group.name };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

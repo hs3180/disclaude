@@ -136,6 +136,23 @@ describe('IPC Protocol', () => {
         payload: {},
       };
       expect(getBotInfo.payload).toEqual({});
+
+      // Issue #631: feishuCreateGroup
+      const createGroup: IpcRequest<'feishuCreateGroup'> = {
+        type: 'feishuCreateGroup',
+        id: 'req-9',
+        payload: { name: 'Discussion Topic', members: ['ou_user1', 'ou_user2'] },
+      };
+      expect(createGroup.payload.name).toBe('Discussion Topic');
+      expect(createGroup.payload.members).toEqual(['ou_user1', 'ou_user2']);
+
+      const createGroupNoMembers: IpcRequest<'feishuCreateGroup'> = {
+        type: 'feishuCreateGroup',
+        id: 'req-10',
+        payload: {},
+      };
+      expect(createGroupNoMembers.payload.name).toBeUndefined();
+      expect(createGroupNoMembers.payload.members).toBeUndefined();
     });
   });
 
@@ -180,6 +197,22 @@ describe('IPC Protocol', () => {
         },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
+
+      // Issue #631: feishuCreateGroup response
+      const createGroupResponse: IpcResponse<'feishuCreateGroup'> = {
+        id: 'req-9',
+        success: true,
+        payload: { success: true, chatId: 'oc_new_group', name: 'Discussion Topic' },
+      };
+      expect(createGroupResponse.payload?.chatId).toBe('oc_new_group');
+      expect(createGroupResponse.payload?.name).toBe('Discussion Topic');
+
+      const createGroupErrorResponse: IpcResponse<'feishuCreateGroup'> = {
+        id: 'req-9',
+        success: false,
+        error: 'Permission denied',
+      };
+      expect(createGroupErrorResponse.success).toBe(false);
     });
   });
 

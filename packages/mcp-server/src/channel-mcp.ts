@@ -15,7 +15,8 @@ import {
   send_card,
   send_interactive,
   send_file,
-  setMessageSentCallback
+  setMessageSentCallback,
+  start_discussion,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -37,6 +38,7 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 export { ask_user } from './tools/ask-user.js';
+export { start_discussion } from './tools/start-discussion.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -327,6 +329,67 @@ Templates can include these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #631: start_discussion - Non-blocking discussion initiation
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking discussion in a group chat.
+
+Creates a new group chat (or uses an existing one) and sends the discussion context to it.
+Returns immediately without waiting for user responses.
+
+**Use cases:**
+- Agent discovers a topic that needs human discussion (repeated commands, user complaints, unnecessary work)
+- Agent needs user input but doesn't want to block current work
+- Initiating review or approval workflows
+
+## Parameters
+- **context**: (Required) The discussion content/context to send
+- **topic**: Discussion topic (used as group name when creating new group)
+- **chatId**: Use existing group chat ID (skip group creation)
+- **members**: Member open_ids for creating new group
+- **options**: Optional response options for users to choose from
+
+**Note:** Either \`chatId\` (use existing group) or \`members\` (create new group) should be provided. If neither is given, only \`topic\` will be used to name the new group.
+
+## Example
+\`\`\`json
+{
+  "topic": "是否应该自动化代码格式化？",
+  "context": "在最近的任务中，发现代码格式化存在不一致的情况。请讨论是否应该引入自动化工具。",
+  "members": ["ou_xxx"],
+  "options": [
+    { "text": "是，应该自动化", "value": "yes" },
+    { "text": "不需要", "value": "no" }
+  ]
+}
+\`\`\``,
+    parameters: z.object({
+      topic: z.string().optional().describe('Discussion topic (used as group name when creating new group)'),
+      context: z.string().describe('Discussion content/context to send to the group'),
+      chatId: z.string().optional().describe('Use existing group chat ID (skip group creation)'),
+      members: z.array(z.string()).optional().describe('Member open_ids for creating new group'),
+      options: z.array(z.object({
+        text: z.string().describe('Button display text'),
+        value: z.string().optional().describe('Button value (defaults to option_N)'),
+        style: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
+        action: z.string().optional().describe('Action description for the agent'),
+      })).optional().describe('Response options for users'),
+    }),
+    handler: async (params: {
+      topic?: string;
+      context: string;
+      chatId?: string;
+      members?: string[];
+      options?: Array<{ text: string; value?: string; style?: 'primary' | 'default' | 'danger'; action?: string }>;
+    }) => {
+      try {
+        const result = await start_discussion(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ start_discussion failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
