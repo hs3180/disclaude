@@ -60,28 +60,160 @@ ls -d workspace/tasks/*/ 2>/dev/null
 ### 4. 执行任务
 
 1. 创建 `running.lock` 文件
-2. 读取 `task.md` 了解任务需求
-3. 分析当前任务状态（检查 `iterations/` 目录下的历史迭代）
-4. 调用 evaluator skill 评估任务完成状态：
+2. **初始化进度跟踪** — 创建 `progress.json`：
+   ```bash
+   echo '{"taskId":"TASK_ID","status":"running","currentPhase":"idle","currentIteration":0,"completedIterations":0,"maxIterations":10,"currentStep":"Task started, preparing evaluation","filesModified":[],"startedAt":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","lastUpdatedAt":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > workspace/tasks/TASK_ID/progress.json
+   ```
+   > 将 `TASK_ID` 替换为实际的任务 ID，`maxIterations` 从 task.md frontmatter 读取。
+
+3. 读取 `task.md` 了解任务需求
+4. 分析当前任务状态（检查 `iterations/` 目录下的历史迭代）
+5. **更新进度：开始评估** — 更新 `progress.json` 的 `currentPhase` 为 `evaluating`：
+   ```bash
+   # 使用 python 或 jq 更新 JSON（示例使用 python）
+   python3 -c "
+   import json, datetime
+   with open('workspace/tasks/TASK_ID/progress.json') as f:
+       p = json.load(f)
+   p['currentPhase'] = 'evaluating'
+   p['currentStep'] = 'Evaluating task completion status'
+   p['lastUpdatedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+   with open('workspace/tasks/TASK_ID/progress.json', 'w') as f:
+       json.dump(p, f, indent=2)
+   "
+   ```
+6. 调用 evaluator skill 评估任务完成状态：
    - 如果评估结果为 COMPLETE：
+     - **更新进度：已完成** — 更新 `progress.json`：
+       ```bash
+       python3 -c "
+       import json, datetime
+       with open('workspace/tasks/TASK_ID/progress.json') as f:
+           p = json.load(f)
+       p['status'] = 'completed'
+       p['currentPhase'] = 'reporting'
+       p['lastEvaluationStatus'] = 'COMPLETE'
+       p['currentStep'] = 'Task completed successfully'
+       p['completedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+       p['lastUpdatedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+       with open('workspace/tasks/TASK_ID/progress.json', 'w') as f:
+           json.dump(p, f, indent=2)
+       "
+       ```
      - 创建 `final_result.md`，写入结果摘要
      - 删除 `running.lock`
    - 如果评估结果为 NEED_EXECUTE：
+     - **更新进度：开始执行** — 更新 `progress.json`：
+       ```bash
+       python3 -c "
+       import json, datetime
+       with open('workspace/tasks/TASK_ID/progress.json') as f:
+           p = json.load(f)
+       p['currentPhase'] = 'executing'
+       p['currentIteration'] = p['completedIterations'] + 1
+       p['lastEvaluationStatus'] = 'NEED_EXECUTE'
+       p['currentStep'] = 'Executing task implementation'
+       p['lastUpdatedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+       with open('workspace/tasks/TASK_ID/progress.json', 'w') as f:
+           json.dump(p, f, indent=2)
+       "
+       ```
      - 调用 executor skill 执行任务
      - 在 `iterations/` 下创建新迭代目录（如 `iter-N/`），保存执行记录
+     - **更新进度：迭代完成** — 更新 `progress.json`：
+       ```bash
+       python3 -c "
+       import json, datetime
+       with open('workspace/tasks/TASK_ID/progress.json') as f:
+           p = json.load(f)
+       p['completedIterations'] = p['completedIterations'] + 1
+       p['currentStep'] = 'Iteration N completed, will evaluate on next scan'
+       p['lastUpdatedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+       with open('workspace/tasks/TASK_ID/progress.json', 'w') as f:
+           json.dump(p, f, indent=2)
+       "
+       ```
      - 删除 `running.lock`
 
 ### 5. 迭代限制
 
 - 统计 `iterations/` 下的子目录数量
 - 从 `task.md` frontmatter 读取 `maxIterations`（默认 10）
-- 如果迭代次数 ≥ maxIterations，创建 `failed.md` 并跳过
+- 如果迭代次数 ≥ maxIterations：
+  - **更新进度：失败** — 更新 `progress.json`：
+    ```bash
+    python3 -c "
+    import json, datetime
+    with open('workspace/tasks/TASK_ID/progress.json') as f:
+        p = json.load(f)
+    p['status'] = 'failed'
+    p['currentStep'] = 'Max iterations reached'
+    p['error'] = 'Exceeded maximum allowed iterations'
+    p['completedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    p['lastUpdatedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with open('workspace/tasks/TASK_ID/progress.json', 'w') as f:
+        json.dump(p, f, indent=2)
+    "
+    ```
+  - 创建 `failed.md` 并跳过
+
+## 进度跟踪（Issue #857）
+
+### progress.json 格式
+
+任务执行期间，`progress.json` 记录实时进度，供独立的 Progress Reporter Agent 读取：
+
+```json
+{
+  "taskId": "om_abc123",
+  "status": "running",
+  "currentPhase": "executing",
+  "currentIteration": 2,
+  "completedIterations": 1,
+  "maxIterations": 10,
+  "currentStep": "Implementing auth module",
+  "lastEvaluationStatus": "NEED_EXECUTE",
+  "filesModified": ["src/auth.ts", "src/auth.test.ts"],
+  "startedAt": "2026-03-24T10:00:00Z",
+  "lastUpdatedAt": "2026-03-24T10:15:30Z"
+}
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `taskId` | string | 任务 ID |
+| `status` | string | `pending` / `running` / `completed` / `failed` |
+| `currentPhase` | string | `idle` / `evaluating` / `executing` / `reporting` |
+| `currentIteration` | number | 当前迭代号（1-indexed） |
+| `completedIterations` | number | 已完成迭代数 |
+| `maxIterations` | number | 最大迭代数 |
+| `currentStep` | string | 当前步骤描述 |
+| `lastEvaluationStatus` | string | `COMPLETE` / `NEED_EXECUTE` |
+| `filesModified` | string[] | 已修改文件列表 |
+| `startedAt` | string | 任务开始时间（ISO 8601） |
+| `lastUpdatedAt` | string | 最后更新时间（ISO 8601） |
+
+### 与 Progress Reporter 的协作
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│   Deep Task     │────▶│   progress.json  │────▶│ Progress Reporter│
+│   (本 Schedule)  │写入  │   (共享状态)      │读取  │   (独立 Schedule) │
+└─────────────────┘     └──────────────────┘     └──────────────────┘
+```
+
+- **本 Schedule** 负责在每个阶段转换时写入 `progress.json`
+- **Progress Reporter Schedule** 独立运行，读取 `progress.json` 并向用户发送进度卡片
+- 两者通过文件系统解耦，互不阻塞
 
 ## 任务目录结构
 
 ```
 tasks/{taskId}/
 ├── task.md           → 存在 = 任务已创建
+├── progress.json     → 进度跟踪状态（Issue #857）
 ├── final_result.md   → 存在 = 任务已完成 ✅
 ├── running.lock      → 存在 = 任务执行中 🔄
 ├── failed.md         → 存在 = 任务失败 ❌
