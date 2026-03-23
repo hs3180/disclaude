@@ -77,3 +77,8 @@ export {
 export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
+
+// Agents Setup (Issue #1410)
+export {
+  setupAgentsInWorkspace,
+} from './agents-setup.js';
