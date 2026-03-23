@@ -36,3 +36,12 @@ export {
   type TimeoutCheckResult,
   type ResolvedTimeoutConfig,
 } from './session-timeout-manager.js';
+
+// Compaction management (Issue #1336)
+export {
+  CompactionManager,
+  type CompactionCallbacks,
+  type CompactionCheckResult,
+  type TokenUsageStats,
+  type ResolvedCompactionConfig,
+} from './compaction-manager.js';

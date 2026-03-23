@@ -181,6 +181,7 @@ export {
   ConversationSessionManager,
   ConversationOrchestrator,
   SessionTimeoutManager,
+  CompactionManager,
   type ConversationOrchestratorConfig,
   type ConversationSessionManagerConfig,
   type QueuedMessage,
@@ -193,6 +194,10 @@ export {
   type SessionTimeoutCallbacks,
   type TimeoutCheckResult,
   type ResolvedTimeoutConfig,
+  type CompactionCallbacks,
+  type CompactionCheckResult,
+  type TokenUsageStats,
+  type ResolvedCompactionConfig,
 } from './conversation/index.js';
 
 // Scheduling module (Issue #1041, Issue #1382)

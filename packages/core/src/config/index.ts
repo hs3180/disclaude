@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  CompactionConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -432,6 +433,28 @@ export class Config {
       idleMinutes: timeoutConfig.idleMinutes ?? 30,
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+    };
+  }
+
+  /**
+   * Get compaction configuration.
+   * Controls framework-level context compaction for active agent sessions.
+   * @see Issue #1336
+   *
+   * @returns Compaction configuration with defaults, or null if disabled
+   */
+  static getCompactionConfig(): CompactionConfig & { enabled: boolean } | null {
+    const compactionConfig = fileConfigOnly.sessionRestore?.compaction;
+    if (!compactionConfig || compactionConfig.enabled === false) {
+      return null;
+    }
+    return {
+      enabled: true,
+      threshold: compactionConfig.threshold ?? 0.80,
+      strategy: compactionConfig.strategy ?? 'auto',
+      maxContextTokens: compactionConfig.maxContextTokens ?? 180000,
+      minTokens: compactionConfig.minTokens ?? 50000,
+      checkIntervalMinutes: compactionConfig.checkIntervalMinutes ?? 2,
     };
   }
 }

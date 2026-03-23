@@ -269,6 +269,56 @@ export interface SessionRestoreConfig {
   maxContextLength?: number;
   /** Session timeout configuration (Issue #1313) */
   sessionTimeout?: SessionTimeoutConfig;
+  /** Compaction configuration (Issue #1336) */
+  compaction?: CompactionConfig;
+}
+
+/**
+ * Compaction strategy options (Issue #1336).
+ * Controls how framework-level context compaction is performed.
+ */
+export type CompactionStrategy = 'auto' | 'reset' | 'disabled';
+
+/**
+ * Compaction configuration (Issue #1336).
+ * Controls framework-level context compaction for active agent sessions.
+ *
+ * This provides unified compaction management across all SDK providers,
+ * independent of provider-specific compaction behavior.
+ */
+export interface CompactionConfig {
+  /** Enable compaction management (default: false) */
+  enabled?: boolean;
+  /**
+   * Token usage threshold (0.0 - 1.0) to trigger compaction.
+   * Represents the fraction of maxContextTokens at which compaction triggers.
+   * Default: 0.80 (trigger when 80% of context is used)
+   */
+  threshold?: number;
+  /**
+   * Compaction strategy:
+   * - 'auto': Monitor and track, let SDK handle actual compaction (default)
+   * - 'reset': Proactively reset session with context preservation
+   * - 'disabled': Disable framework-level compaction entirely
+   */
+  strategy?: CompactionStrategy;
+  /**
+   * Maximum context tokens for the model.
+   * Used to calculate the absolute token threshold.
+   * Default: 180000 (conservative for Claude 200k context)
+   */
+  maxContextTokens?: number;
+  /**
+   * Minimum cumulative input tokens before compaction can trigger.
+   * Prevents premature compaction in early conversation turns.
+   * Default: 50000
+   */
+  minTokens?: number;
+  /**
+   * Check interval in minutes between compaction checks.
+   * Default: 2
+   */
+  checkIntervalMinutes?: number;
 }
 
 /**
