@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1474 - WeChat Channel: Message Listening
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatUpdate } from './monitor.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -207,6 +209,42 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Uses long-polling with the specified timeout. On timeout (AbortError),
+   * returns an empty array — this is normal for long-polling behavior.
+   *
+   * @param timeoutSeconds - Long-poll timeout in seconds (default: 35)
+   * @returns Array of new messages (updates), empty if no new messages
+   */
+  async getUpdates(timeoutSeconds: number = LONG_POLL_TIMEOUT_MS / 1000): Promise<WeChatUpdate[]> {
+    const body = {
+      timeout: timeoutSeconds,
+    };
+
+    try {
+      const data = await this.postJson<{
+        data?: { updates?: WeChatUpdate[] };
+      }>('ilink/bot/getupdates', body);
+
+      const updates = data.data?.updates ?? [];
+      if (updates.length > 0) {
+        logger.debug({ count: updates.length }, 'Received new updates');
+      }
+      return updates;
+    } catch (error) {
+      // Timeout during long polling is normal — return empty array
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out');
+        return [];
+      }
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
