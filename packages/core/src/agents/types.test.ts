@@ -26,13 +26,13 @@ describe('Type Guards', () => {
       const chatAgent: ChatAgent = {
         type: 'chat',
         name: 'test-agent',
-        start: async () => {},
-        handleInput: async function* () {},
-        processMessage: () => {},
-        executeOnce: async () => {},
-        reset: () => {},
-        stop: () => true,
-        dispose: () => {},
+        async start() {},
+        async *handleInput() {},
+        processMessage() {},
+        async executeOnce() {},
+        reset() {},
+        stop() { return true; },
+        dispose() {},
       };
 
       expect(isChatAgent(chatAgent)).toBe(true);
@@ -68,8 +68,8 @@ describe('Type Guards', () => {
       const skillAgent: SkillAgent = {
         type: 'skill',
         name: 'test-skill',
-        execute: async function* () {},
-        dispose: () => {},
+        async *execute() {},
+        dispose() {},
       };
 
       expect(isSkillAgent(skillAgent)).toBe(true);
@@ -99,15 +99,17 @@ describe('Type Guards', () => {
       const subagent: Subagent = {
         type: 'subagent',
         name: 'test-subagent',
-        execute: async function* () {},
-        dispose: () => {},
-        asTool: () => ({
-          name: 'test',
-          description: 'test',
-          parameters: z.object({}),
-          handler: async () => 'result',
-        }),
-        getMcpServer: () => undefined,
+        async *execute() {},
+        dispose() {},
+        asTool() {
+          return {
+            name: 'test',
+            description: 'test',
+            parameters: z.object({}),
+            handler() { return Promise.resolve('result'); },
+          };
+        },
+        getMcpServer() { return undefined; },
       };
 
       expect(isSubagent(subagent)).toBe(true);
@@ -117,19 +119,23 @@ describe('Type Guards', () => {
       const subagent: Subagent = {
         type: 'subagent',
         name: 'test-subagent',
-        execute: async function* () {},
-        dispose: () => {},
-        asTool: () => ({
-          name: 'test',
-          description: 'test',
-          parameters: z.object({}),
-          handler: async () => 'result',
-        }),
-        getMcpServer: () => ({
-          type: 'inline',
-          name: 'test-mcp',
-          version: '1.0.0',
-        }),
+        async *execute() {},
+        dispose() {},
+        asTool() {
+          return {
+            name: 'test',
+            description: 'test',
+            parameters: z.object({}),
+            handler() { return Promise.resolve('result'); },
+          };
+        },
+        getMcpServer() {
+          return {
+            type: 'inline',
+            name: 'test-mcp',
+            version: '1.0.0',
+          };
+        },
       };
 
       expect(isSubagent(subagent)).toBe(true);
@@ -200,13 +206,13 @@ describe('Type Guards', () => {
       const chatAgent: ChatAgent = {
         type: 'chat',
         name: 'test-agent',
-        start: async () => {},
-        handleInput: async function* () {},
-        processMessage: () => {},
-        executeOnce: async () => {},
-        reset: () => {},
-        stop: () => true,
-        dispose: () => {},
+        async start() {},
+        async *handleInput() {},
+        processMessage() {},
+        async executeOnce() {},
+        reset() {},
+        stop() { return true; },
+        dispose() {},
       };
 
       expect(isDisposable(chatAgent)).toBe(true);
@@ -286,11 +292,11 @@ describe('Runtime Context', () => {
         getLoggingConfig: () => ({ sdkDebug: true }),
         getGlobalEnv: () => ({ NODE_ENV: 'test' }),
         isAgentTeamsEnabled: () => true,
-        createMcpServer: async () => ({}),
-        sendMessage: async () => {},
-        sendCard: async () => {},
-        sendFile: async () => {},
-        findSkill: async () => undefined,
+        createMcpServer() { return Promise.resolve({}); },
+        async sendMessage() {},
+        async sendCard() {},
+        async sendFile() {},
+        findSkill() { return Promise.resolve(undefined); },
       };
 
       setRuntimeContext(ctx);

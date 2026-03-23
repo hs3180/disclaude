@@ -106,6 +106,7 @@ export class WeChatApiClient {
 
     const response = await this.fetchJson<{ qrcode?: string; qrcode_img_content?: string }>(url, { method: 'GET', headers });
 
+    // eslint-disable-next-line eqeqeq -- intentional nullish check (null || undefined)
     if (response.qrcode == null || response.qrcode_img_content == null) {
       throw new Error('Failed to get QR code: missing fields in response');
     }
@@ -262,7 +263,7 @@ export class WeChatApiClient {
    * Matches official implementation: random uint32 -> decimal string -> base64.
    */
   private randomWechatUin(): string {
-    const uint32 = crypto.getRandomValues(new Uint32Array(1))[0];
+    const [uint32] = crypto.getRandomValues(new Uint32Array(1));
     return Buffer.from(String(uint32), 'utf-8').toString('base64');
   }
 

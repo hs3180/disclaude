@@ -85,8 +85,8 @@ describe('callback-manager', () => {
       expect(() => invokeMessageSentCallback('chat-123')).not.toThrow();
     });
 
-    it('should handle async callback that throws', async () => {
-      const callback = vi.fn().mockImplementation(async () => {
+    it('should handle async callback that throws', () => {
+      const callback = vi.fn().mockImplementation(() => {
         throw new Error('Async callback error');
       });
       setMessageSentCallback(callback);

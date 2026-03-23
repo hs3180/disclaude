@@ -509,7 +509,7 @@ describe('WsConnectionManager', () => {
 
       // Should have called sendMessage with a ping frame
       expect(mockClient.sendMessage).toHaveBeenCalledTimes(1);
-      const sentFrame = mockClient.sendMessage.mock.calls[0][0];
+      const [[sentFrame]] = mockClient.sendMessage.mock.calls;
       expect(sentFrame.headers[0].key).toBe('type');
       expect(sentFrame.headers[0].value).toBe('ping');
       expect(sentFrame.method).toBe(0); // FrameType.control

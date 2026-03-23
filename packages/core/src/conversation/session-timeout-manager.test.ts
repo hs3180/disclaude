@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionTimeoutManager, type SessionTimeoutCallbacks, type TimeoutCheckResult } from './session-timeout-manager.js';
+import { SessionTimeoutManager, type SessionTimeoutCallbacks } from './session-timeout-manager.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('test');
@@ -359,7 +359,7 @@ describe('SessionTimeoutManager', () => {
       const now = Date.now();
       const callbacks = createMockCallbacks({
         getActiveSessions: () => ['chat-1', 'chat-2'],
-        getLastActivity: (chatId: string) => {
+        getLastActivity: (_chatId: string) => {
           // Both very idle (Phase 1 will close them)
           return now - 60 * 60 * 1000;
         },

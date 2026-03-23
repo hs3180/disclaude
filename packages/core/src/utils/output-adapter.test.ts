@@ -3,8 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { CLIOutputAdapter, FeishuOutputAdapter } from './output-adapter.js';
-import type { FeishuOutputAdapterOptions } from './output-adapter.js';
+import { CLIOutputAdapter, FeishuOutputAdapter, type FeishuOutputAdapterOptions } from './output-adapter.js';
 
 // ============================================================================
 // CLIOutputAdapter

@@ -295,7 +295,7 @@ describe('SessionManager', () => {
   });
 
   describe('PilotSession', () => {
-    it('should have correct createdAt timestamp', async () => {
+    it('should have correct createdAt timestamp', () => {
       const before = Date.now();
       const handle = createMockHandle();
       const channel = new MessageChannel();

@@ -147,11 +147,11 @@ export class SessionTimeoutManager {
    *
    * @returns Promise that resolves when the check completes (or immediately if one is running)
    */
-  async runCheck(): Promise<TimeoutCheckResult | null> {
+  runCheck(): Promise<TimeoutCheckResult | null> {
     // Guard: if a check is already running, return existing promise
     if (this.runningPromise) {
       this.logger.warn('Check already in progress, skipping');
-      return null;
+      return Promise.resolve(null);
     }
 
     this.runningPromise = this.executeCheck().finally(() => {
@@ -167,7 +167,7 @@ export class SessionTimeoutManager {
    *
    * @returns Promise that resolves when the check completes
    */
-  async checkNow(): Promise<TimeoutCheckResult | null> {
+  checkNow(): Promise<TimeoutCheckResult | null> {
     return this.runCheck();
   }
 
