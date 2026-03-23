@@ -123,11 +123,6 @@ export interface PilotCallbacks {
  */
 export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
 
-/**
- * ScheduleAgentFactory - Factory function to create ScheduleAgent instances.
- */
-export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
-
 // ============================================================================
 // TaskFlowOrchestrator Interface
 // ============================================================================
@@ -253,7 +248,7 @@ export interface WorkerNodeDependencies {
   createChatAgent: ChatAgentFactory;
 
   /** Factory to create ScheduleAgent instances (for Scheduler) */
-  createScheduleAgent: ScheduleAgentFactory;
+  createScheduleAgent: ChatAgentFactory;
 
   /** Factory to create TaskFlowOrchestrator */
   createTaskFlowOrchestrator: TaskFlowOrchestratorFactory;

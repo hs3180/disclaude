@@ -23,8 +23,9 @@
  * @see Issue #1041 - Migrate to @disclaude/worker-node package
  */
 
-export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from './schedule-manager.js';
-export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+// Issue #1446: Re-export ScheduleManager and Scheduler from core to eliminate duplicate implementations
+export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from '@disclaude/core';
+export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from '@disclaude/core';
 // ScheduleFileScanner, ScheduleFileWatcher re-exported from core (Issue #1395)
 export {
   ScheduleFileScanner,

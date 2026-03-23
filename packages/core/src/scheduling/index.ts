@@ -8,7 +8,6 @@
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
  * - Scheduler: Cron-based task execution (with dependency injection)
- * - ScheduleExecutor: Unified executor factory (Issue #1382)
  *
  * @module @disclaude/core/scheduling
  */
@@ -48,10 +47,3 @@ export {
   type SchedulerOptions,
 } from './scheduler.js';
 
-// Schedule Executor (Issue #1382)
-export {
-  createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
-  type ScheduleExecutorOptions,
-} from './schedule-executor.js';

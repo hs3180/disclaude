@@ -49,10 +49,8 @@ import {
   CooldownManager,
   Config,
   type ScheduledTask,
-  // Issue #1382: Unified schedule executor
-  createScheduleExecutor,
   type SchedulerCallbacks,
-  type ScheduleAgent,
+  type TaskExecutor,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -392,7 +390,7 @@ export class PrimaryNode extends EventEmitter {
    * Initialize the scheduler for scheduled task execution.
    *
    * Issue #1377: Scheduler integration for Primary Node
-   * Issue #1382: Use unified createScheduleExecutor for task execution
+   * Issue #1446: Directly construct TaskExecutor for scheduled tasks
    */
   protected async initScheduler(): Promise<void> {
     const workspaceDir = Config.getWorkspaceDir();
@@ -424,15 +422,17 @@ export class PrimaryNode extends EventEmitter {
       },
     };
 
-    // Issue #1382: Use unified createScheduleExecutor
+    // Issue #1446: Directly construct TaskExecutor (removed createScheduleExecutor abstraction)
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // This enables Primary Node to execute scheduled tasks locally
-    const executor = createScheduleExecutor({
-      agentFactory: (chatId: string, callbacks: SchedulerCallbacks): ScheduleAgent => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks)) as ScheduleAgent;
-      },
-      callbacks: schedulerCallbacks,
-    });
+    const executor: TaskExecutor = async (chatId: string, prompt: string, userId?: string): Promise<void> => {
+      const agent = AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(schedulerCallbacks));
+      try {
+        await agent.executeOnce(chatId, prompt, undefined, userId);
+      } finally {
+        agent.dispose();
+      }
+    };
 
     // Initialize Scheduler
     this.scheduler = new Scheduler({

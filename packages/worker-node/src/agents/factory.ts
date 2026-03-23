@@ -56,9 +56,9 @@ import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 /**
  * Convert SchedulerCallbacks to PilotCallbacks with no-op implementations.
  *
- * Scheduled tasks typically only need sendMessage capability. This helper
- * provides no-op implementations for sendCard, sendFile, and onDone to
- * satisfy the PilotCallbacks interface.
+ * ⚠️ Scheduled tasks only need sendMessage capability.
+ * sendCard/sendFile/onDone are all no-op implementations.
+ * If future scheduled tasks need card/file sending, extend SchedulerCallbacks interface.
  *
  * Issue #1412: Removes duplicate empty implementations from Primary Node.
  *
