@@ -92,6 +92,9 @@ function parseScheduleFrontmatter(content: string): {
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
         break;
+      case 'model':
+        frontmatter[key] = value.replace(/^["']|["']$/g, '');
+        break;
     }
   }
 
@@ -197,6 +200,7 @@ export class ScheduleFileScanner {
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
+        model: frontmatter['model'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -238,6 +242,9 @@ export class ScheduleFileScanner {
     }
     if (task.createdAt) {
       frontmatter.push(`createdAt: "${task.createdAt}"`);
+    }
+    if (task.model) {
+      frontmatter.push(`model: "${task.model}"`);
     }
 
     frontmatter.push('---', '');
