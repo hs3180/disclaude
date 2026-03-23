@@ -116,27 +116,22 @@ export {
   type RestartDecision,
 } from '@disclaude/core';
 
-// Agent types re-exported from @disclaude/core (Issue #1041)
+// Agent types re-exported from @disclaude/core (Issue #1041, Issue #1501)
 // Note: ChatAgent type is in ./types.js for WorkerNode dependencies
 // The core has the unified ChatAgent interface for agent classification
+// Issue #1501: SkillAgent and Subagent types removed from core
 export type {
   Disposable,
   AgentUserInput as UserInput,
-  SkillAgent as SkillAgentInterface,
-  Subagent,
   AgentProvider,
   BaseAgentConfig,
   ChatAgentConfig,
-  SkillAgentConfig,
-  SubagentConfig,
   AgentConfig,
   AgentFactoryInterface,
 } from '@disclaude/core';
 
 export {
   isChatAgent,
-  isSkillAgent,
-  isSubagent,
   isDisposable,
 } from '@disclaude/core';
 
