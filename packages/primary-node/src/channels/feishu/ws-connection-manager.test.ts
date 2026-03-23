@@ -55,6 +55,8 @@ const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
   CUSTOM_PING_INTERVAL_MS: 500,
+  WS_INSTANCE_POLL_TIMEOUT_MS: 2000,
+  WS_INSTANCE_POLL_INTERVAL_MS: 50,
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -490,6 +492,171 @@ describe('WsConnectionManager', () => {
       // If it used application-level: 3s < 5s → would NOT be dead
       await vi.advanceTimersByTimeAsync(3000);
       expect(deadEvents.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('WebSocket instance polling (Issue #1504)', () => {
+    it('should activate Pong detection when SDK WebSocket becomes available after polling', async () => {
+      // Simulate the real-world race condition: SDK start() resolves but
+      // getWSInstance() returns null initially, then returns a valid instance
+      // after ~200ms (simulating SDK internal connect() completing).
+      let getInstanceCallCount = 0;
+      const delayedWs = new MockWsInstance();
+
+      const delayedClient = createMockWSClient(false);
+      delayedClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
+        getInstanceCallCount++;
+        // Return null for the first 3 calls, then return the ws instance
+        if (getInstanceCallCount <= 3) {
+          return null;
+        }
+        return delayedWs;
+      });
+
+      manager = createTestManager({
+        wsClient: delayedClient,
+        maxAttempts: 0,
+        customPingIntervalMs: 0, // Disable custom ping to isolate polling test
+      });
+
+      const stateChanges: string[] = [];
+      manager.on('stateChange', (state) => stateChanges.push(state));
+
+      await manager.start(mockEventDispatcher as never);
+
+      // After start(), the manager should be connected even though
+      // Pong detection hasn't been activated yet (polling in background)
+      expect(manager.state).toBe('connected');
+
+      // Before polling completes: hasWsInterception should be false
+      // (first call to getWSInstance returned null)
+      let metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(false);
+
+      // Advance time past the polling interval to allow the background
+      // polling to discover the WebSocket instance
+      // 3 failed polls × 50ms = 150ms, then 4th poll succeeds
+      await vi.advanceTimersByTimeAsync(200);
+
+      // After polling succeeds, Pong detection should be active
+      metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(true);
+
+      // Verify the intercepted WebSocket actually receives messages
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+      delayedWs.emit('message', PONG_BUFFER);
+      expect(pongEvents.length).toBe(1);
+    });
+
+    it('should remain in fallback mode when SDK WebSocket never becomes available', async () => {
+      // Simulate SDK where getWSInstance() always returns null
+      const alwaysNullClient = createMockWSClient(false);
+      alwaysNullClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: alwaysNullClient,
+        maxAttempts: 0,
+        customPingIntervalMs: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance past the polling timeout (2s)
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS + 500);
+
+      // Should still be connected (fallback mode) but without Pong detection
+      expect(manager.state).toBe('connected');
+      const metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(false);
+    });
+
+    it('should stop polling when manager is stopped', async () => {
+      const alwaysNullClient = createMockWSClient(false);
+      alwaysNullClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: alwaysNullClient,
+        maxAttempts: 0,
+        customPingIntervalMs: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance a bit but not to timeout
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Stop the manager
+      await manager.stop();
+
+      // Advance past the timeout — polling should have stopped
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS + 1000);
+
+      // Manager should be stopped, no crash from polling
+      expect(manager.state).toBe('stopped');
+    });
+
+    it('should handle SDK WebSocket becoming available then disappearing (TOCTOU avoidance)', async () => {
+      // This test verifies the TOCTOU fix: even if getWSInstance() returns
+      // a value during polling, but interceptWsFromClient receives it via
+      // preObtainedInstance (not re-querying), the interception is reliable.
+      let callCount = 0;
+      const validWs = new MockWsInstance();
+
+      const flakyClient = createMockWSClient(false);
+      flakyClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
+        callCount++;
+        // Return null initially, then return instance once, then null again
+        if (callCount <= 2) return null;
+        if (callCount === 3) return validWs; // Poll gets this
+        return null; // Subsequent queries return null (TOCTOU scenario)
+      });
+
+      manager = createTestManager({
+        wsClient: flakyClient,
+        maxAttempts: 0,
+        customPingIntervalMs: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance for polling to discover the instance
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Pong detection should be active despite the instance disappearing
+      // from getWSInstance() because pollForWsInstance() passes the instance
+      // directly to interceptWsFromClient() (TOCTOU avoidance)
+      const metrics = manager.getMetrics();
+      expect(metrics.hasWsInterception).toBe(true);
+
+      // Verify the listener is on the correct instance
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+      validWs.emit('message', PONG_BUFFER);
+      expect(pongEvents.length).toBe(1);
+    });
+
+    it('should not block connectFresh() when polling is needed', async () => {
+      // Verify that start() returns quickly even when getWSInstance() returns null
+      // (polling runs in background, doesn't block connection establishment)
+      const slowClient = createMockWSClient(false);
+      slowClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: slowClient,
+        maxAttempts: 0,
+        customPingIntervalMs: 0,
+      });
+
+      const startPromise = manager.start(mockEventDispatcher as never);
+
+      // start() should resolve quickly (not wait for polling timeout)
+      // In fake timer environment, polling setTimeout doesn't advance
+      // until we call advanceTimersByTimeAsync, but start() should still
+      // resolve because polling is fire-and-forget
+      await startPromise;
+
+      expect(manager.state).toBe('connected');
     });
   });
 

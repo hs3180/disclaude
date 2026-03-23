@@ -159,6 +159,22 @@ export const WS_HEALTH = {
   },
 
   /**
+   * SDK WebSocket instance polling configuration (Issue #1504).
+   *
+   * The Feishu SDK's WSClient.start() is fire-and-forget — it resolves before
+   * the internal WebSocket connection is established (~300ms typically).
+   * We poll getWSInstance() until it returns non-null, then attach our Pong listener.
+   *
+   * The polling runs in the background (non-blocking) so connection establishment
+   * and health monitoring start immediately. Pong detection is upgraded from
+   * "fallback mode" to "active" once the instance becomes available.
+   */
+  /** Maximum time to wait for SDK WebSocket instance to become available */
+  WS_INSTANCE_POLL_TIMEOUT_MS: 10 * 1000, // 10 seconds
+  /** Interval between polling attempts */
+  WS_INSTANCE_POLL_INTERVAL_MS: 50, // 50ms
+
+  /**
    * Offline message queue configuration.
    * Messages sent during reconnection are queued and flushed after reconnect.
    */
