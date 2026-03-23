@@ -300,6 +300,24 @@ export {
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
+// Dynamic channel plugin system (Issue #1422)
+export {
+  ChannelRegistry,
+  ChannelLoader,
+  findDisclaudeDir,
+  findDynamicChannelsFile,
+  readDynamicChannelsFile,
+  writeDynamicChannel,
+  removeDynamicChannel,
+  isChannelPlugin,
+  isChannelFactory,
+  DYNAMIC_CHANNELS_FILENAME,
+  type ChannelPlugin,
+  type ChannelFactory,
+  type DynamicChannelEntry,
+  type DynamicChannelsFile,
+} from './channels/index.js';
+
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 
