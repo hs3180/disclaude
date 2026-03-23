@@ -267,6 +267,23 @@ export interface SessionRestoreConfig {
   historyDays?: number;
   /** Maximum characters for restored session context (default: 4000) */
   maxContextLength?: number;
+  /** Session timeout configuration (Issue #1313) */
+  sessionTimeout?: SessionTimeoutConfig;
+}
+
+/**
+ * Session timeout configuration (Issue #1313).
+ * Controls automatic cleanup of idle sessions to release resources.
+ */
+export interface SessionTimeoutConfig {
+  /** Enable session timeout management (default: false) */
+  enabled?: boolean;
+  /** Minutes of inactivity before session is closed (default: 30) */
+  idleMinutes?: number;
+  /** Maximum concurrent sessions allowed (default: 100) */
+  maxSessions?: number;
+  /** Interval in minutes between timeout checks (default: 5) */
+  checkIntervalMinutes?: number;
 }
 
 /**
