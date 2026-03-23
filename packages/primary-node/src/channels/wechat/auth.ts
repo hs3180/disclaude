@@ -1,13 +1,15 @@
 /**
  * WeChat Authentication Module (MVP).
  *
- * Handles QR code-based bot authentication flow:
- * 1. Generate QR code URL via API
- * 2. Display QR code (terminal ASCII or log URL)
- * 3. Poll login status until confirmed or expired
- * 4. Return bot token on success
+ * Handles QR code-based bot authentication flow based on the official
+ * @tencent-weixin/openclaw-weixin implementation:
  *
- * Status flow: wait → scaned → confirmed | expired
+ * 1. Generate QR code URL via GET /ilink/bot/get_bot_qrcode?bot_type=3
+ * 2. Display QR code for user to scan
+ * 3. Long-poll GET /ilink/bot/get_qrcode_status?qrcode=xxx (35s timeout)
+ * 4. On timeout → treat as 'wait' and retry
+ * 5. On 'expired' → refresh QR code (up to MAX_QR_REFRESH_COUNT times)
+ * 6. On 'confirmed' → return bot token
  *
  * @module channels/wechat/auth
  * @see Issue #1473 - WeChat Channel MVP
@@ -15,14 +17,22 @@
 
 import { createLogger } from '@disclaude/core';
 import type { WeChatApiClient } from './api-client.js';
+import QRCode from 'qrcode';
+import { execSync } from 'node:child_process';
 
 const logger = createLogger('WeChatAuth');
 
-/** Default QR code polling interval in milliseconds. */
-const QR_POLL_INTERVAL_MS = 3000;
+/** Path to save QR code PNG image. */
+const QR_IMAGE_PATH = '/tmp/weixin-login-qrcode.png';
 
-/** Default QR code expiration time in seconds. */
-const QR_EXPIRATION_S = 300;
+/** Max number of times to auto-refresh expired QR code. */
+const MAX_QR_REFRESH_COUNT = 3;
+
+/** Default timeout for the entire auth flow (milliseconds). */
+const DEFAULT_AUTH_TIMEOUT_MS = 480_000; // 8 minutes
+
+/** Delay between poll retries (milliseconds). */
+const POLL_RETRY_DELAY_MS = 1_000;
 
 /**
  * Authentication result.
@@ -32,13 +42,12 @@ export interface AuthResult {
   success: boolean;
   /** Bot token (on success) */
   token?: string;
-  /** Bot ID (on success) */
+  /** Bot ID (ilink_bot_id, on success) */
   botId?: string;
-  /** User info who scanned the QR code (on success) */
-  userInfo?: {
-    name: string;
-    id: string;
-  };
+  /** User ID of the person who scanned the QR code (on success) */
+  userId?: string;
+  /** Base URL returned by the server (on success) */
+  baseUrl?: string;
   /** Error message (on failure) */
   error?: string;
 }
@@ -48,33 +57,21 @@ export interface AuthResult {
  *
  * Manages the QR code login flow:
  * - Generates QR code for user to scan
- * - Polls status until login is confirmed or expires
+ * - Long-polls status until login is confirmed or expires
+ * - Auto-refreshes expired QR codes
  * - Returns auth token on success
  */
 export class WeChatAuth {
   private readonly client: WeChatApiClient;
-  private readonly pollInterval: number;
-  private readonly expiration: number;
   private abortController?: AbortController;
 
   /**
    * Create a new authentication handler.
    *
    * @param client - WeChat API client
-   * @param options - Authentication options
    */
-  constructor(
-    client: WeChatApiClient,
-    options?: {
-      /** Polling interval in ms (default: 3000) */
-      pollInterval?: number;
-      /** QR code expiration in seconds (default: 300) */
-      expiration?: number;
-    }
-  ) {
+  constructor(client: WeChatApiClient) {
     this.client = client;
-    this.pollInterval = options?.pollInterval || QR_POLL_INTERVAL_MS;
-    this.expiration = options?.expiration || QR_EXPIRATION_S;
   }
 
   /**
@@ -83,63 +80,77 @@ export class WeChatAuth {
    * This will:
    * 1. Request a QR code URL from the API
    * 2. Log the URL for the user to scan
-   * 3. Poll the login status until confirmed or expired
+   * 3. Long-poll the login status until confirmed or timed out
+   * 4. Auto-refresh expired QR codes (up to 3 times)
    *
+   * @param options - Authentication options
    * @returns Authentication result with bot token
    */
-  async authenticate(): Promise<AuthResult> {
+  async authenticate(options?: {
+    /** Total auth timeout in ms (default: 480000 / 8 minutes) */
+    timeoutMs?: number;
+  }): Promise<AuthResult> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
-    try {
-      // Step 1: Get QR code URL
-      logger.info('Requesting QR code for WeChat bot login...');
-      const qrUrl = await this.client.getBotQrCode();
+    const timeoutMs = Math.max(options?.timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS, 1000);
+    const deadline = Date.now() + timeoutMs;
+    let qrRefreshCount = 0;
+    let scannedPrinted = false;
 
-      logger.info('========================================');
-      logger.info('  WeChat Bot Login - Scan QR Code');
-      logger.info('========================================');
-      logger.info(`  QR Code URL: ${qrUrl}`);
-      logger.info('  Please scan this QR code with WeChat.');
-      logger.info('  Waiting for confirmation...');
-      logger.info('========================================');
+    try {
+      // Step 1: Get initial QR code
+      let qrData = await this.client.getBotQrCode();
+      this.logQrCode(qrData.qrUrl);
 
       // Step 2: Poll login status
-      const startTime = Date.now();
-      const expirationMs = this.expiration * 1000;
-
-      while (!signal.aborted) {
-        const elapsed = Date.now() - startTime;
-
-        if (elapsed > expirationMs) {
-          logger.warn('QR code expired');
-          return { success: false, error: 'QR code expired' };
-        }
-
+      while (!signal.aborted && Date.now() < deadline) {
         try {
-          const status = await this.client.getQrCodeStatus();
+          const status = await this.client.getQrCodeStatus(qrData.qrcode);
 
           switch (status.status) {
             case 'wait':
-              logger.debug('Waiting for QR code scan...');
+              process.stdout.write('.');
               break;
 
             case 'scaned':
-              logger.info('QR code scanned, waiting for confirmation...');
+              if (!scannedPrinted) {
+                process.stdout.write('\nQR code scanned, waiting for confirmation...\n');
+                scannedPrinted = true;
+              }
               break;
 
+            case 'expired': {
+              qrRefreshCount++;
+              if (qrRefreshCount > MAX_QR_REFRESH_COUNT) {
+                logger.warn('QR code expired too many times, giving up');
+                return { success: false, error: 'QR code expired too many times' };
+              }
+
+              process.stdout.write(`\nQR code expired, refreshing... (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})\n`);
+              logger.info(`QR expired, refreshing (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})`);
+
+              qrData = await this.client.getBotQrCode();
+              this.logQrCode(qrData.qrUrl);
+              scannedPrinted = false;
+              break;
+            }
+
             case 'confirmed':
-              logger.info({ botId: status.botId }, 'Login confirmed!');
+              if (!status.botId) {
+                logger.error('Login confirmed but ilink_bot_id missing');
+                return { success: false, error: 'Login confirmed but bot ID missing' };
+              }
+
+              logger.info({ botId: status.botId, userId: status.userId }, 'Login confirmed!');
+              process.stdout.write('\nLogin confirmed!\n');
               return {
                 success: true,
                 token: status.botToken,
                 botId: status.botId,
-                userInfo: status.userInfo,
+                userId: status.userId,
+                baseUrl: status.baseUrl,
               };
-
-            case 'expired':
-              logger.warn('QR code expired during polling');
-              return { success: false, error: 'QR code expired' };
 
             default:
               logger.warn({ status: status.status }, 'Unknown QR code status');
@@ -154,7 +165,7 @@ export class WeChatAuth {
 
         // Wait before next poll
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, this.pollInterval);
+          const timer = setTimeout(resolve, POLL_RETRY_DELAY_MS);
           signal.addEventListener('abort', () => {
             clearTimeout(timer);
             resolve();
@@ -162,8 +173,11 @@ export class WeChatAuth {
         });
       }
 
-      // Aborted by caller
-      return { success: false, error: 'Authentication aborted' };
+      // Timeout
+      if (signal.aborted) {
+        return { success: false, error: 'Authentication aborted' };
+      }
+      return { success: false, error: 'Authentication timed out' };
     } finally {
       this.abortController = undefined;
     }
@@ -184,5 +198,25 @@ export class WeChatAuth {
    */
   isAuthenticating(): boolean {
     return !!this.abortController && !this.abortController.signal.aborted;
+  }
+
+  /**
+   * Render QR code as PNG image and open it.
+   */
+  private logQrCode(qrUrl: string): void {
+    try {
+      QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
+        width: 400,
+        margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+      });
+      execSync(`open "${QR_IMAGE_PATH}"`);
+      process.stdout.write(`\nQR code image: ${QR_IMAGE_PATH}\n`);
+      process.stdout.write(`URL: ${qrUrl}\n`);
+      process.stdout.write('Please scan the QR code with WeChat.\n\n');
+    } catch {
+      // Fallback to URL if image generation fails
+      process.stdout.write(`\nScan this URL with WeChat: ${qrUrl}\n\n`);
+    }
   }
 }
