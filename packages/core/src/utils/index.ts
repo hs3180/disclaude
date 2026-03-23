@@ -85,3 +85,9 @@ export {
 export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
+
+// Race Metrics (Issue #1334)
+export type { RaceMetrics, RaceMetricsCollectorOptions } from './race-metrics.js';
+export {
+  RaceMetricsCollector,
+} from './race-metrics.js';

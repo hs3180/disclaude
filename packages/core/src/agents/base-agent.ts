@@ -23,6 +23,7 @@ import {
 import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
+import { RaceMetricsCollector, type RaceMetricsCollectorOptions } from '../utils/race-metrics.js';
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
@@ -280,19 +281,30 @@ export abstract class BaseAgent implements Disposable {
     // Use SDK provider
     const iterator = this.sdkProvider.queryOnce(sdkInput, options);
 
-    for await (const message of iterator) {
-      const parsed = this.convertToLegacyFormat(message);
+    // Collect race metrics during execution
+    const metricsCollector = this.createMetricsCollector();
 
-      // Log SDK message with full details for debugging
-      this.logger.debug({
-        provider: this.provider,
-        messageType: parsed.type,
-        contentLength: parsed.content?.length || 0,
-        toolName: parsed.metadata?.toolName,
-        rawMessage: message,
-      }, 'SDK message received');
+    try {
+      for await (const message of iterator) {
+        const parsed = this.convertToLegacyFormat(message);
 
-      yield { parsed, raw: message };
+        // Record metrics from each message
+        metricsCollector.recordMessage(message.metadata, parsed.type);
+
+        // Log SDK message with full details for debugging
+        this.logger.debug({
+          provider: this.provider,
+          messageType: parsed.type,
+          contentLength: parsed.content?.length || 0,
+          toolName: parsed.metadata?.toolName,
+          rawMessage: message,
+        }, 'SDK message received');
+
+        yield { parsed, raw: message };
+      }
+    } finally {
+      // Finalize and log race metrics when execution completes
+      metricsCollector.finalize();
     }
   }
 
@@ -334,19 +346,30 @@ export abstract class BaseAgent implements Disposable {
 
     const self = this;
     async function* wrappedIterator(): AsyncGenerator<IteratorYieldResult> {
-      for await (const message of result.iterator) {
-        const parsed = self.convertToLegacyFormat(message);
+      // Collect race metrics during execution
+      const metricsCollector = self.createMetricsCollector();
 
-        // Log SDK message with full details for debugging
-        self.logger.debug({
-          provider: self.provider,
-          messageType: parsed.type,
-          contentLength: parsed.content?.length || 0,
-          toolName: parsed.metadata?.toolName,
-          rawMessage: message,
-        }, 'SDK message received');
+      try {
+        for await (const message of result.iterator) {
+          const parsed = self.convertToLegacyFormat(message);
 
-        yield { parsed, raw: message };
+          // Record metrics from each message
+          metricsCollector.recordMessage(message.metadata, parsed.type);
+
+          // Log SDK message with full details for debugging
+          self.logger.debug({
+            provider: self.provider,
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            rawMessage: message,
+          }, 'SDK message received');
+
+          yield { parsed, raw: message };
+        }
+      } finally {
+        // Finalize and log race metrics when execution completes
+        metricsCollector.finalize();
       }
     }
 
@@ -429,5 +452,28 @@ export abstract class BaseAgent implements Disposable {
     }
     this.logger.debug(`${this.getAgentName()} disposed`);
     this.initialized = false;
+  }
+
+  /**
+   * Create a RaceMetricsCollector for tracking execution metrics.
+   *
+   * Uses agent's provider, model, and name for automatic identification.
+   * The taskType defaults to 'general' — subclasses can override by
+   * passing a custom taskType via the options parameter.
+   *
+   * @param options - Optional overrides for collector configuration
+   * @returns Configured RaceMetricsCollector instance
+   */
+  protected createMetricsCollector(
+    options?: Partial<RaceMetricsCollectorOptions>
+  ): RaceMetricsCollector {
+    return new RaceMetricsCollector({
+      agentType: this.getAgentName(),
+      provider: this.provider,
+      model: this.model,
+      taskType: 'general',
+      logger: this.logger,
+      ...options,
+    });
   }
 }
