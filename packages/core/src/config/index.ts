@@ -81,26 +81,29 @@ export class Config {
           static readonly SDK_DEBUG = fileConfigOnly.logging?.sdkDebug ?? true;
 
           // Skills configuration - loaded from package installation directory
-          static readonly SKILLS_DIR = Config.getBuiltinSkillsDir();
+          static readonly SKILLS_DIR = Config.getBuiltinDir('skills');
+
+          // Agents configuration - loaded from package installation directory
+          static readonly AGENTS_DIR = Config.getBuiltinDir('agents');
 
   /**
-   * Get the built-in skills directory from package installation.
-   * Skills are bundled with the package and loaded from the install location.
+   * Get a built-in resource directory from package installation.
+   * Shared resolution logic for skills, agents, and other bundled resources.
    *
    * After bundling, import.meta.url points to the entry point file:
-   * - cli-entry.js (bundled): dist/cli-entry.js -> skills (one level up)
-   * - index.js (module): dist/config/index.js -> skills (two levels up)
+   * - cli-entry.js (bundled): dist/cli-entry.js -> <dirName> (one level up)
+   * - index.js (module): dist/config/index.js -> <dirName> (two levels up)
    *
    * When bundled as CommonJS, import.meta.url is undefined, so we use __dirname.
    *
-   * @returns Absolute path to the skills directory
+   * @param dirName - Directory name to resolve (e.g. 'skills', 'agents')
+   * @returns Absolute path to the directory
    */
-  private static getBuiltinSkillsDir(): string {
+  private static getBuiltinDir(dirName: string): string {
     // In CommonJS bundling, import.meta.url is undefined
     // Use process.cwd() as fallback and resolve from install directory
     if (typeof import.meta.url === 'undefined') {
-      // When bundled as CJS, we're in /app and skills is at /app/skills
-      return '/app/skills';
+      return path.join('/app', dirName);
     }
 
     const moduleUrl = fileURLToPath(import.meta.url);
@@ -110,26 +113,26 @@ export class Config {
     // Bundled files are directly in dist/, modules are in dist/config/
     const isBundled = path.basename(moduleDir) === 'dist';
 
-    let skillsDir: string;
+    let resolvedDir: string;
     if (isBundled) {
-      // dist/cli-entry.js -> dist/ -> ../skills
-      skillsDir = path.resolve(moduleDir, '..', 'skills');
+      // dist/cli-entry.js -> dist/ -> ../<dirName>
+      resolvedDir = path.resolve(moduleDir, '..', dirName);
     } else {
-      // dist/config/index.js -> dist/ -> ../../skills
-      skillsDir = path.resolve(moduleDir, '..', '..', 'skills');
+      // dist/config/index.js -> dist/ -> ../../<dirName>
+      resolvedDir = path.resolve(moduleDir, '..', '..', dirName);
     }
 
     // In monorepo layout, the resolved path may point inside a package
-    // (e.g. /app/packages/core/skills) where no skills exist.
-    // Fall back to <cwd>/skills (i.e. /app/skills) in that case.
-    if (!existsSync(skillsDir)) {
-      const cwdSkills = path.resolve(process.cwd(), 'skills');
-      if (existsSync(cwdSkills)) {
-        return cwdSkills;
+    // (e.g. /app/packages/core/<dirName>) where the resource doesn't exist.
+    // Fall back to <cwd>/<dirName> in that case.
+    if (!existsSync(resolvedDir)) {
+      const cwdDir = path.resolve(process.cwd(), dirName);
+      if (existsSync(cwdDir)) {
+        return cwdDir;
       }
     }
 
-    return skillsDir;
+    return resolvedDir;
   }
 
   /**
@@ -175,6 +178,15 @@ export class Config {
    */
   static getSkillsDir(): string {
     return this.SKILLS_DIR;
+  }
+
+  /**
+   * Get the agents directory.
+   *
+   * @returns Absolute path to the agents directory
+   */
+  static getAgentsDir(): string {
+    return this.AGENTS_DIR;
   }
 
   /**
