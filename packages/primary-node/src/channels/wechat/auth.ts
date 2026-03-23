@@ -91,7 +91,7 @@ export class WeChatAuth {
     timeoutMs?: number;
   }): Promise<AuthResult> {
     this.abortController = new AbortController();
-    const signal = this.abortController.signal;
+    const { signal } = this.abortController;
 
     const timeoutMs = Math.max(options?.timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS, 1000);
     const deadline = Date.now() + timeoutMs;
