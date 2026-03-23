@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, SoulLoader, getDefaultSoulPath } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -115,6 +115,12 @@ export interface AgentCreateOptions {
   apiBaseUrl?: string;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * SOUL.md path for personality injection (Issue #1315).
+   * When set, loads the SOUL.md file and injects its content
+   * into the agent's system prompt via systemPrompt.append.
+   */
+  soulPath?: string;
 }
 
 /**
@@ -145,6 +151,28 @@ export class AgentFactory {
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
+  }
+
+  /**
+   * Load SOUL.md content for personality injection (Issue #1315).
+   *
+   * Resolves the soul path with the following priority:
+   * 1. Explicit path from AgentCreateOptions.soulPath
+   * 2. Path from config (soul.path)
+   * 3. Default path (~/.disclaude/SOUL.md)
+   *
+   * @param options - Optional agent creation options
+   * @returns SOUL.md content string, or undefined if not available
+   */
+  private static async loadSoulContent(options: AgentCreateOptions = {}): Promise<string | undefined> {
+    const soulPath = options.soulPath ?? Config.getSoulConfig().path ?? getDefaultSoulPath();
+    if (!soulPath) {
+      return undefined;
+    }
+
+    const loader = new SoulLoader(soulPath);
+    const result = await loader.load();
+    return result.loaded ? result.content : undefined;
   }
 
   // ============================================================================
@@ -219,6 +247,8 @@ export class AgentFactory {
    * - Maximum lifetime: 24 hours
    * - Caller is responsible for disposing after execution
    *
+   * Issue #1315: Supports SOUL.md personality injection via options.soulPath.
+   *
    * @param chatId - Chat ID for message delivery
    * @param callbacks - Callbacks for sending messages
    * @param options - Optional configuration overrides
@@ -226,7 +256,7 @@ export class AgentFactory {
    *
    * @example
    * ```typescript
-   * const agent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+   * const agent = await AgentFactory.createScheduleAgent('chat-123', callbacks);
    * try {
    *   await agent.executeOnce(chatId, prompt);
    * } finally {
@@ -234,16 +264,18 @@ export class AgentFactory {
    * }
    * ```
    */
-  static createScheduleAgent(
+  static async createScheduleAgent(
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
+  ): Promise<ChatAgent> {
     const baseConfig = this.getBaseConfig(options);
+    const soulContent = await this.loadSoulContent(options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
       callbacks,
+      ...(soulContent && { systemPromptAppend: soulContent }),
     };
 
     return new Pilot(config);
@@ -256,6 +288,8 @@ export class AgentFactory {
    * - Maximum lifetime: Until task completion
    * - Caller is responsible for disposing after execution
    *
+   * Issue #1315: Supports SOUL.md personality injection via options.soulPath.
+   *
    * @param chatId - Chat ID for message delivery
    * @param callbacks - Callbacks for sending messages
    * @param options - Optional configuration overrides
@@ -263,7 +297,7 @@ export class AgentFactory {
    *
    * @example
    * ```typescript
-   * const agent = AgentFactory.createTaskAgent('chat-123', callbacks);
+   * const agent = await AgentFactory.createTaskAgent('chat-123', callbacks);
    * try {
    *   await agent.executeOnce(chatId, prompt);
    * } finally {
@@ -271,16 +305,18 @@ export class AgentFactory {
    * }
    * ```
    */
-  static createTaskAgent(
+  static async createTaskAgent(
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
+  ): Promise<ChatAgent> {
     const baseConfig = this.getBaseConfig(options);
+    const soulContent = await this.loadSoulContent(options);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
       callbacks,
+      ...(soulContent && { systemPromptAppend: soulContent }),
     };
 
     return new Pilot(config);

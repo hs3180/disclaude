@@ -67,6 +67,7 @@ export type {
   McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
+  SystemPromptConfig,
   PermissionMode,
   QueryHandle,
   StreamQueryResult,
@@ -314,3 +315,11 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md module (Issue #1315) - Agent personality/behavior definition system
+export {
+  SoulLoader,
+  createSoulLoader,
+  getDefaultSoulPath,
+  type SoulLoadResult,
+} from './soul/index.js';

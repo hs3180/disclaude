@@ -126,7 +126,7 @@ export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => Ch
 /**
  * ScheduleAgentFactory - Factory function to create ScheduleAgent instances.
  */
-export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+export type ScheduleAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent | Promise<ChatAgent>;
 
 // ============================================================================
 // TaskFlowOrchestrator Interface

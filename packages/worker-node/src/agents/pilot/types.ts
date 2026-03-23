@@ -85,6 +85,13 @@ export interface PilotConfig extends BaseAgentConfig {
    * Issue #857: Task progress tracking for complex tasks.
    */
   complexityThreshold?: number;
+
+  /**
+   * System prompt append content for personality injection (Issue #1315).
+   * When set, the agent's system prompt will use the 'claude_code' preset
+   * with this content appended, enabling SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 }
 
 /**

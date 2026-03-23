@@ -401,4 +401,17 @@ export class Config {
       maxContextLength: config.maxContextLength ?? 4000,
     };
   }
+
+  /**
+   * Get SOUL.md configuration.
+   * Controls how Agent personality/behavior definitions are loaded.
+   * @see Issue #1315
+   *
+   * @returns Soul configuration object
+   */
+  static getSoulConfig(): {
+    path?: string;
+  } {
+    return fileConfigOnly.soul || {};
+  }
 }

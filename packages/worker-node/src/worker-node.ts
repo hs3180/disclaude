@@ -361,7 +361,7 @@ export class WorkerNode {
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
         const callbacks = createCallbacks(chatId);
-        const agent = this.deps.createScheduleAgent(chatId, callbacks);
+        const agent = await this.deps.createScheduleAgent(chatId, callbacks);
 
         try {
           await agent.executeOnce(chatId, prompt, undefined, userId);
