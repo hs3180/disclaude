@@ -46,3 +46,6 @@ export { RestChannel, type RestChannelConfig, type IFileStorageService } from '.
 
 // Feishu Channel (Issue #1040 - migrated from src/channels)
 export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
+
+// WeChat Channel (Issue #1473 - MVP: Auth + Send Message)
+export { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
