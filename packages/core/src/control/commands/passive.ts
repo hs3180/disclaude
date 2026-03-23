@@ -30,6 +30,14 @@ export const handlePassive: CommandHandler = (
     return { success: true, message: '🔔 被动模式已关闭' };
   }
 
+  // 参数校验：有参数但不是有效值时拒绝操作
+  if (args !== undefined && args !== 'on' && args !== 'off') {
+    return {
+      success: false,
+      message: '⚠️ 无效参数。用法: `/passive [on|off]`',
+    };
+  }
+
   // 无参数时切换状态
   const current = passiveMode.isEnabled(chatId);
   passiveMode.setEnabled(chatId, !current);
