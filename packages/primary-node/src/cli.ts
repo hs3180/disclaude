@@ -273,6 +273,16 @@ async function main(): Promise<void> {
 
     feishuChannel = new FeishuChannel(feishuChannelConfig);
 
+    // Integrate passive mode into unified control handler context (Issue #1464)
+    // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
+    // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
+    const feishuChannelRef = feishuChannel;
+    controlHandlerContext.passiveMode = {
+      isEnabled: (chatId: string) => !feishuChannelRef.isPassiveModeDisabled(chatId),
+      setEnabled: (chatId: string, enabled: boolean) =>
+        feishuChannelRef.setPassiveModeDisabled(chatId, !enabled),
+    };
+
     // Create PilotCallbacks for Feishu channel
     const createFeishuCallbacks = (): PilotCallbacks => ({
       sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {

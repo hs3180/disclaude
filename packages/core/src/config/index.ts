@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  SessionTimeoutConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -399,6 +400,26 @@ export class Config {
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
+    };
+  }
+
+  /**
+   * Get session timeout configuration.
+   * Controls automatic cleanup of idle sessions.
+   * @see Issue #1313
+   *
+   * @returns Session timeout configuration with defaults, or null if disabled
+   */
+  static getSessionTimeoutConfig(): SessionTimeoutConfig & { enabled: boolean } | null {
+    const timeoutConfig = fileConfigOnly.sessionRestore?.sessionTimeout;
+    if (!timeoutConfig || timeoutConfig.enabled === false) {
+      return null;
+    }
+    return {
+      enabled: true,
+      idleMinutes: timeoutConfig.idleMinutes ?? 30,
+      maxSessions: timeoutConfig.maxSessions ?? 100,
+      checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
 }

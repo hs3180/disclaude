@@ -8,7 +8,7 @@
  * ESM namespace exports.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Use vi.hoisted to define mock functions that can be referenced in vi.mock factory
 const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink } = vi.hoisted(() => ({

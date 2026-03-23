@@ -167,6 +167,7 @@ export {
   MessageQueue,
   ConversationSessionManager,
   ConversationOrchestrator,
+  SessionTimeoutManager,
   type ConversationOrchestratorConfig,
   type ConversationSessionManagerConfig,
   type QueuedMessage,
@@ -176,6 +177,9 @@ export {
   type ProcessMessageResult,
   type SessionStats,
   type ConversationMessageContext,
+  type SessionTimeoutCallbacks,
+  type TimeoutCheckResult,
+  type ResolvedTimeoutConfig,
 } from './conversation/index.js';
 
 // Scheduling module (Issue #1041, Issue #1382)
