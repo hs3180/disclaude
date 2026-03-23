@@ -8,7 +8,7 @@
 #   ./tests/integration/use-case-2-task-execution.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: 120)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
