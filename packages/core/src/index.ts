@@ -314,3 +314,18 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Compaction module - framework-level context compaction (Issue #1336)
+export {
+  CompactionManager,
+  DEFAULT_COMPACTION_CONFIG,
+} from './compaction/index.js';
+export type {
+  CompactionConfig,
+  ResolvedCompactionConfig,
+  CompactionStrategy,
+  ContextUsage,
+  CompactionEvent,
+  CompactionEventType,
+  CompactionEventCallback,
+} from './compaction/index.js';

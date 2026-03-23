@@ -270,6 +270,37 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Compaction strategy for context management.
+ * @see Issue #1336
+ */
+export type CompactionStrategy = 'auto' | 'sdk' | 'disabled';
+
+/**
+ * Compaction configuration for framework-level context management.
+ * Controls how the framework manages context compaction for active agent sessions.
+ * @see Issue #1336
+ */
+export interface CompactionConfig {
+  /**
+   * Compaction strategy (default: 'sdk').
+   * - 'auto': Framework monitors context and triggers compaction at threshold.
+   * - 'sdk': SDK handles compaction; framework only monitors.
+   * - 'disabled': No automatic compaction.
+   */
+  strategy?: CompactionStrategy;
+  /**
+   * Context usage threshold (0.0 - 1.0) to trigger compaction (default: 0.85).
+   * Only used when strategy is 'auto'.
+   */
+  threshold?: number;
+  /**
+   * Maximum context tokens for the model (default: 200000).
+   * Used to calculate context usage ratio.
+   */
+  maxContextTokens?: number;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +336,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Compaction configuration for framework-level context management (Issue #1336) */
+  compaction?: CompactionConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

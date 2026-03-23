@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  CompactionConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -399,6 +400,26 @@ export class Config {
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
+    };
+  }
+
+  /**
+   * Get compaction configuration for framework-level context management.
+   * Controls how the framework manages context compaction for active agent sessions.
+   * @see Issue #1336
+   *
+   * @returns Compaction configuration with defaults
+   */
+  static getCompactionConfig(): {
+    strategy: CompactionConfig['strategy'];
+    threshold: number;
+    maxContextTokens: number;
+  } {
+    const config = fileConfigOnly.compaction || {};
+    return {
+      strategy: config.strategy ?? 'sdk',
+      threshold: config.threshold ?? 0.85,
+      maxContextTokens: config.maxContextTokens ?? 200000,
     };
   }
 }

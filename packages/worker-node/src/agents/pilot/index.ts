@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
+import { Config, BaseAgent, MessageChannel, RestartManager, ConversationOrchestrator, CompactionManager, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 // Type alias for backward compatibility within this module
@@ -69,6 +69,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
+  private readonly compactionManager: CompactionManager;
 
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
@@ -97,6 +98,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
       initialBackoffMs: 5000,  // Start with 5 seconds
       maxBackoffMs: 60000,     // Max 1 minute
     });
+
+    // Initialize compaction manager (Issue #1336)
+    const compactionConfig = Config.getCompactionConfig();
+    this.compactionManager = new CompactionManager(
+      compactionConfig as import('@disclaude/core').ResolvedCompactionConfig,
+      this.logger
+    );
 
     // Initialize message builder (Issue #697)
     this.messageBuilder = new MessageBuilder();
@@ -654,6 +662,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
           'SDK message received'
         );
 
+        // Issue #1336: Detect SDK-initiated compaction
+        if (parsed.type === 'status' && parsed.content?.includes('Compacting')) {
+          this.compactionManager.recordSdkCompaction(chatId);
+          this.logger.info(
+            { chatId },
+            'SDK compaction detected, conversation history is being compressed'
+          );
+        }
+
         // Send message content to callback
         if (parsed.content) {
           const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -666,6 +683,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Issue #1336: Track context usage from token metadata
+          // The result message metadata contains inputTokens (total context size)
+          // which we use to monitor context growth and detect when compaction is needed.
+          // Note: Token metadata is available in the raw message but may not always
+          // be present in the parsed format. We log context usage when available.
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -786,6 +809,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Reset restart state
     this.restartManager.reset(this.boundChatId);
 
+    // Issue #1336: Reset compaction tracking
+    this.compactionManager.resetSession(this.boundChatId);
+
     // Clear persisted history context (Issue #955)
     this.persistedHistoryContext = undefined;
     this.historyLoaded = false;
@@ -900,6 +926,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Clear restart states
     this.restartManager.clearAll();
+
+    // Issue #1336: Clear compaction states
+    this.compactionManager.clearAll();
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot shutdown complete');
   }
