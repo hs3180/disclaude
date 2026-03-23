@@ -43,6 +43,8 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** System prompt append content (Issue #1315: SOUL.md personality injection) */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -101,6 +103,8 @@ export abstract class BaseAgent implements Disposable {
   readonly apiBaseUrl?: string;
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
+  /** System prompt append content for personality injection (Issue #1315: SOUL.md) */
+  readonly systemPromptAppend?: string;
 
   protected readonly logger: Logger;
   protected initialized = false;
@@ -111,6 +115,7 @@ export abstract class BaseAgent implements Disposable {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
+    this.systemPromptAppend = config.systemPromptAppend;
 
     // Get provider from config, fallback to runtime context
     // This allows agents to be created with explicit provider setting
@@ -190,6 +195,13 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // System prompt append (Issue #1315: SOUL.md personality injection)
+    // Prefer explicit extra parameter, fall back to instance property
+    const promptAppend = extra.systemPromptAppend ?? this.systemPromptAppend;
+    if (promptAppend) {
+      options.systemPromptAppend = promptAppend;
     }
 
     return options;

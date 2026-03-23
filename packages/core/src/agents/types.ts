@@ -409,6 +409,8 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /** System prompt append content for personality injection (Issue #1315: SOUL.md) */
+  systemPromptAppend?: string;
 }
 
 /**

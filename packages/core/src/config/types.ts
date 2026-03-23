@@ -270,6 +270,15 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * SOUL.md configuration section (Issue #1315).
+ * Controls Agent personality/behavior definition loading.
+ */
+export interface SoulConfig {
+  /** Path to the SOUL.md file (absolute or relative to config dir) */
+  path?: string;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -305,6 +314,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** SOUL.md personality/behavior configuration (Issue #1315) */
+  soul?: SoulConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

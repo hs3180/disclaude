@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -399,6 +400,29 @@ export class Config {
     return {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
+    };
+  }
+
+  /**
+   * Get SOUL.md personality configuration.
+   * Returns the soul path from config, resolved to absolute path if relative.
+   * @see Issue #1315
+   *
+   * @returns Soul configuration with resolved path, or undefined if not configured
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    const soulConfig = fileConfigOnly.soul;
+    if (!soulConfig?.path) {
+      return undefined;
+    }
+
+    // Resolve relative paths against config directory
+    const resolvedPath = path.isAbsolute(soulConfig.path)
+      ? soulConfig.path
+      : path.resolve(Config.CONFIG_DIR, soulConfig.path);
+
+    return {
+      path: resolvedPath,
     };
   }
 }

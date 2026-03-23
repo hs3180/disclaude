@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, SoulLoader, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -100,6 +100,42 @@ async function getSkillAgentClass() {
   return _SkillAgentClass;
 }
 
+// ============================================================================
+// Issue #1315: SOUL.md personality injection
+// ============================================================================
+
+/** Cached SOUL.md content loaded once at startup */
+let cachedSoulContent: string | undefined;
+let soulLoadPromise: Promise<void> | null = null;
+
+/**
+ * Initialize SOUL.md loading (called once at startup).
+ * Non-blocking: starts async load but doesn't block factory methods.
+ */
+function initSoulLoading(): void {
+  if (soulLoadPromise) return; // Already initialized
+
+  soulLoadPromise = (async () => {
+    try {
+      const soulConfig = Config.getSoulConfig();
+      if (!soulConfig?.path) {
+        return; // No SOUL.md configured
+      }
+      const loader = new SoulLoader(soulConfig.path);
+      const result = await loader.load();
+      if (result.loaded) {
+        cachedSoulContent = result.content;
+      }
+    } catch {
+      // Silently ignore SOUL.md loading errors - not critical
+      cachedSoulContent = undefined;
+    }
+  })();
+}
+
+// Initialize SOUL.md loading on module import
+initSoulLoading();
+
 /**
  * Options for creating agents with custom configuration.
  * Uses unified configuration structure (Issue #327).
@@ -144,6 +180,8 @@ export class AgentFactory {
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
+      // Issue #1315: Inject SOUL.md personality content
+      ...(cachedSoulContent && { systemPromptAppend: cachedSoulContent }),
     };
   }
 
