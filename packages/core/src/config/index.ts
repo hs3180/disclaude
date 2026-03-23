@@ -64,6 +64,22 @@ export class Config {
   static readonly FEISHU_APP_SECRET = fileConfigOnly.feishu?.appSecret || '';
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
 
+  // WeChat configuration (from config file or environment variables)
+  // Config file: channels.wechat.baseUrl / channels.wechat.token / channels.wechat.cdnBaseUrl
+  // Env vars: WECHAT_API_BASE_URL / WECHAT_BOT_TOKEN / WECHAT_CDN_BASE_URL
+  static readonly WECHAT_BASE_URL =
+    (fileConfigOnly as { channels?: Record<string, { baseUrl?: string }> }).channels?.wechat?.baseUrl
+    || process.env.WECHAT_API_BASE_URL
+    || '';
+  static readonly WECHAT_BOT_TOKEN =
+    (fileConfigOnly as { channels?: Record<string, { token?: string }> }).channels?.wechat?.token
+    || process.env.WECHAT_BOT_TOKEN
+    || '';
+  static readonly WECHAT_CDN_BASE_URL =
+    (fileConfigOnly as { channels?: Record<string, { cdnBaseUrl?: string }> }).channels?.wechat?.cdnBaseUrl
+    || process.env.WECHAT_CDN_BASE_URL
+    || '';
+
   // GLM configuration (from config file)
           // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
