@@ -29,6 +29,7 @@ import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
+import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -169,8 +170,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Create AgentPool for Primary Node
-  const agentPool = new PrimaryAgentPool();
+  // Create AgentPool for Primary Node with Feishu message builder options
+  // Issue #1499: Channel-specific options are injected here, not in worker-node
+  const agentPool = new PrimaryAgentPool({
+    messageBuilderOptions: createFeishuMessageBuilderOptions(),
+  });
 
   // Create unified control handler context
   const controlHandlerContext: ControlHandlerContext = {

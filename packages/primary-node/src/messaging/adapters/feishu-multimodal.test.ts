@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, type MessageData } from '@disclaude/core';
-import { createFeishuMessageBuilderOptions } from './feishu-sections.js';
+import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
 // Mock config
 vi.mock('@disclaude/core', async (importOriginal) => {
