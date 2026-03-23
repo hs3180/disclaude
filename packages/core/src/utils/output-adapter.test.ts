@@ -2,7 +2,7 @@
  * Tests for Output Adapters (packages/core/src/utils/output-adapter.ts)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CLIOutputAdapter, FeishuOutputAdapter } from './output-adapter.js';
 import type { FeishuOutputAdapterOptions } from './output-adapter.js';
 
@@ -12,11 +12,10 @@ import type { FeishuOutputAdapterOptions } from './output-adapter.js';
 
 describe('CLIOutputAdapter', () => {
   let adapter: CLIOutputAdapter;
-  let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     adapter = new CLIOutputAdapter();
-    stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -24,18 +23,14 @@ describe('CLIOutputAdapter', () => {
     vi.restoreAllMocks();
   });
 
-  function afterEach() {
-    vi.restoreAllMocks();
-  }
-
   it('should write to stdout', () => {
     adapter.write('hello', 'text');
-    expect(stdoutWriteSpy).toHaveBeenCalled();
+    expect(process.stdout.write).toHaveBeenCalled();
   });
 
   it('should format non-text messages with colors', () => {
     adapter.write('error message', 'error');
-    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+    expect(process.stdout.write).toHaveBeenCalledWith(
       expect.stringContaining('error message')
     );
   });

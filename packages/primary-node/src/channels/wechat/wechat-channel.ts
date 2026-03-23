@@ -5,10 +5,12 @@
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
  *
+ * Based on official @tencent-weixin/openclaw-weixin implementation.
+ *
  * Not included in MVP (future issues):
- * - Message listening / long polling
+ * - Message listening / long polling (getupdates)
  * - Media handling (CDN upload)
- * - CLI integration / config injection
+ * - Typing indicator
  * - Unit tests
  *
  * @module channels/wechat/wechat-channel
@@ -23,7 +25,7 @@ import type { WeChatChannelConfig } from './types.js';
 const logger = createLogger('WeChatChannel');
 
 /** Default API base URL for WeChat ilink Bot API. */
-const DEFAULT_BASE_URL = 'https://api.weixin.qq.com';
+const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
 /**
  * WeChat Channel - MVP implementation.
@@ -37,7 +39,6 @@ const DEFAULT_BASE_URL = 'https://api.weixin.qq.com';
 export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private readonly baseUrl: string;
   private readonly routeTag?: string;
-  private readonly qrExpiration?: number;
   private client?: WeChatApiClient;
   private auth?: WeChatAuth;
 
@@ -45,7 +46,6 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     super(config, 'wechat', 'WeChat');
     this.baseUrl = config.baseUrl || DEFAULT_BASE_URL;
     this.routeTag = config.routeTag;
-    this.qrExpiration = config.qrExpiration;
   }
 
   /**
@@ -71,9 +71,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     // Run QR code authentication
-    this.auth = new WeChatAuth(this.client, {
-      expiration: this.qrExpiration,
-    });
+    this.auth = new WeChatAuth(this.client);
 
     logger.info('Starting WeChat QR code authentication...');
     const result = await this.auth.authenticate();
@@ -84,7 +82,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
     this.client.setToken(result.token);
     logger.info(
-      { botId: result.botId, userInfo: result.userInfo },
+      { botId: result.botId, userId: result.userId },
       'WeChat channel authenticated successfully'
     );
   }
@@ -115,7 +113,11 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     if (message.type === 'text' && message.text) {
-      await this.client.sendText(message.chatId, message.text);
+      await this.client.sendText({
+        to: message.chatId,
+        content: message.text,
+        contextToken: message.threadId,
+      });
       return;
     }
 

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import pino from 'pino';
 import { ConversationSessionManager } from './conversation-session-manager.js';
 import type { QueuedMessage } from './types.js';
 
@@ -10,19 +11,9 @@ import type { QueuedMessage } from './types.js';
 // Helpers
 // ============================================================================
 
-/** Create a mock logger. */
+/** Create a mock logger matching pino.Logger type. */
 function createMockLogger() {
-  return {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    fatal: vi.fn(),
-    trace: vi.fn(),
-    silent: vi.fn(),
-    child: vi.fn().mockReturnThis(),
-    level: 'info' as const,
-  };
+  return pino({ level: 'silent' }) as unknown as pino.Logger;
 }
 
 /** Create a basic QueuedMessage. */
@@ -205,7 +196,7 @@ describe('ConversationSessionManager', () => {
     });
 
     it('should mark session as closed before deleting', () => {
-      const session = manager.getOrCreate('chat-1');
+      manager.getOrCreate('chat-1');
       // We can't directly observe the closed state since it's deleted,
       // but we can verify the session was removed
       manager.delete('chat-1');
