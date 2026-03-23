@@ -270,6 +270,41 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Per-agent-type model preference configuration.
+ * Maps agent type names to their preferred model settings.
+ * @see Issue #1338
+ */
+export interface ModelPreferenceEntry {
+  /** Model identifier to use for this agent type */
+  model: string;
+  /** Optional provider override (defaults to global provider) */
+  provider?: 'anthropic' | 'glm';
+  /** Optional API base URL override */
+  apiBaseUrl?: string;
+}
+
+/**
+ * Model preference configuration section.
+ * Allows different agent types to use different models for cost/performance optimization.
+ *
+ * @example
+ * ```yaml
+ * modelPreference:
+ *   chatAgent:
+ *     model: "glm-4.7"
+ *   skillAgent:
+ *     model: "claude-sonnet-4-20250514"
+ *     provider: "anthropic"
+ * ```
+ *
+ * @see Issue #1338
+ */
+export interface ModelPreferenceConfig {
+  /** Per-agent-type model overrides */
+  [agentType: string]: ModelPreferenceEntry;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -307,6 +342,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** Model preference per agent type (Issue #1338) */
+  modelPreference?: ModelPreferenceConfig;
 }
 
 /**

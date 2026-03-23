@@ -250,6 +250,30 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Model Preference Configuration (Issue #1338)
+# -----------------------------------------------------------------------------
+# Override the global model for specific agent types.
+# This allows using different models for different tasks:
+# - Coding tasks (skill, task agents) → use coding-optimized models
+# - General chat → use faster, cheaper models
+#
+# Supported agent types: chatAgent, scheduleAgent, taskAgent, skillAgent, subagent
+#
+# When not configured, all agents use the global model (from agent/glm section).
+#
+# modelPreference:
+#   chatAgent:
+#     model: "glm-4.7"
+#   skillAgent:
+#     model: "claude-sonnet-4-20250514"
+#     provider: "anthropic"
+#   taskAgent:
+#     model: "claude-sonnet-4-20250514"
+#     provider: "anthropic"
+#   scheduleAgent:
+#     model: "glm-4.7"
+
 # =============================================================================
 # Notes
 # =============================================================================

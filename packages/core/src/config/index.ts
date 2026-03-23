@@ -22,6 +22,7 @@ import type {
   TransportConfig,
   McpServerConfig,
   DebugConfig,
+  ModelPreferenceConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -29,6 +30,13 @@ export * from './types.js';
 export * from './loader.js';
 export * from './tool-configuration.js';
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
+export {
+  resolveModelPreference,
+  AGENT_TYPES,
+  type AgentType,
+  type ModelPreferenceConfig,
+  type ModelPreferenceEntry,
+} from './model-preference.js';
 
 const logger = createLogger('Config');
 
@@ -400,5 +408,16 @@ export class Config {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
     };
+  }
+
+  /**
+   * Get model preference configuration for per-agent-type model selection.
+   * Allows different agent types to use different models based on their needs.
+   * @see Issue #1338
+   *
+   * @returns Model preference configuration or undefined
+   */
+  static getModelPreferenceConfig(): ModelPreferenceConfig | undefined {
+    return fileConfigOnly.modelPreference;
   }
 }

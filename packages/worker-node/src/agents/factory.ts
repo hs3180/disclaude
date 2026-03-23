@@ -45,7 +45,7 @@
  * @module agents/factory
  */
 
-import { Config, findSkill, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
+import { Config, findSkill, resolveModelPreference, AGENT_TYPES, type ChatAgent, type SkillAgent as SkillAgentInterface, type Subagent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 import { createSiteMiner, isPlaywrightAvailable } from './site-miner.js';
 
@@ -132,17 +132,27 @@ export class AgentFactory {
   /**
    * Get base agent configuration from Config with optional overrides.
    *
+   * When agentType is provided, applies per-agent-type model preferences
+   * from the modelPreference config section (Issue #1338).
+   *
    * @param options - Optional configuration overrides
+   * @param agentType - Optional agent type for model preference resolution
    * @returns BaseAgentConfig with merged configuration
    */
-  private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
-    const defaultConfig = Config.getAgentConfig();
+  private static getBaseConfig(options: AgentCreateOptions = {}, agentType?: string): BaseAgentConfig {
+    const globalConfig = Config.getAgentConfig();
+    const modelPreferenceConfig = Config.getModelPreferenceConfig();
+
+    // Resolve model preference if agentType is provided
+    const resolvedConfig = agentType
+      ? resolveModelPreference(agentType, modelPreferenceConfig, globalConfig, options)
+      : globalConfig;
 
     return {
-      apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
-      provider: options.provider ?? defaultConfig.provider,
-      apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      apiKey: resolvedConfig.apiKey,
+      model: resolvedConfig.model,
+      provider: resolvedConfig.provider,
+      apiBaseUrl: resolvedConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }
@@ -196,7 +206,7 @@ export class AgentFactory {
         options = opt || {};
       }
 
-      const baseConfig = this.getBaseConfig(options);
+      const baseConfig = this.getBaseConfig(options, AGENT_TYPES.CHAT);
       const config: PilotConfig = {
         ...baseConfig,
         chatId,
@@ -239,7 +249,7 @@ export class AgentFactory {
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig(options, AGENT_TYPES.SCHEDULE);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
@@ -276,7 +286,7 @@ export class AgentFactory {
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig(options, AGENT_TYPES.TASK);
     const config: PilotConfig = {
       ...baseConfig,
       chatId,
@@ -316,7 +326,7 @@ export class AgentFactory {
    */
   static async createSkillAgent(name: string, ...args: unknown[]): Promise<SkillAgentInterface> {
     const options = (args[0] as AgentCreateOptions) || {};
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.getBaseConfig(options, AGENT_TYPES.SKILL);
 
     // Use dynamic skill discovery (Issue #430)
     const skillPath = await findSkill(name);
@@ -354,8 +364,18 @@ export class AgentFactory {
         throw new Error('SiteMiner requires Playwright MCP to be configured');
       }
 
-      // Create and return the SiteMiner instance
-      const siteMinerFactory = createSiteMiner(config);
+      // Apply model preference for subagent type (Issue #1338)
+      const globalConfig = Config.getAgentConfig();
+      const modelPreferenceConfig = Config.getModelPreferenceConfig();
+      const resolvedConfig = resolveModelPreference(
+        AGENT_TYPES.SUBAGENT,
+        modelPreferenceConfig,
+        globalConfig,
+        config || {}
+      );
+
+      // Create and return the SiteMiner instance with resolved config
+      const siteMinerFactory = createSiteMiner({ ...config, ...resolvedConfig });
       return siteMinerFactory as unknown as Subagent;
     }
     throw new Error(`Unknown Subagent: ${name}`);
