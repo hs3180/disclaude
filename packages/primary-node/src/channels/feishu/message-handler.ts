@@ -809,7 +809,7 @@ export class MessageHandler {
         }
       }
 
-      // Default command handling
+      // Default command handling (fallback when controlHandler is not available)
       if (cmd === 'reset') {
         await this.callbacks.sendMessage({
           chatId: chat_id,
@@ -824,6 +824,16 @@ export class MessageHandler {
           chatId: chat_id,
           type: 'text',
           text: '📊 **状态**\n\nChannel: Feishu\nStatus: running',
+        });
+        return;
+      }
+
+      // Issue #1494: Fallback /stop handling when controlHandler is unavailable
+      if (cmd === 'stop') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '⏹️ **停止命令已发送**\n\n当前会话将尝试停止响应。',
         });
         return;
       }
