@@ -122,8 +122,6 @@ describe('UnixSocketIpcClient', () => {
         // eslint-disable-next-line require-await
         uploadFile: async () => ({ fileKey: '', fileType: 'file', fileName: 'f', fileSize: 0 }),
         // eslint-disable-next-line require-await
-        getBotInfo: async () => ({ openId: 'ou_test' }),
-        // eslint-disable-next-line require-await
         sendInteractive: async (_chatId, params) => {
           // Mock handler that returns a messageId
           return { messageId: `om_${params.options[0]?.value}` };
