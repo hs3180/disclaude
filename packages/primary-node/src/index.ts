@@ -100,6 +100,20 @@ export {
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.
 
+// Channel descriptor and lifecycle management (Issue #1594 Phase 2)
+export {
+  ChannelLifecycleManager,
+  type ChannelDescriptor,
+  type ChannelSetupContext,
+  type PilotCallbacksFactory,
+  type IAgentPoolForWiring,
+  type IPrimaryNodeForWiring,
+} from './channel-descriptor.js';
+
+// Built-in channel descriptors (Issue #1594 Phase 2)
+export { restDescriptor } from './channels/descriptors/rest-descriptor.js';
+export { feishuDescriptor } from './channels/descriptors/feishu-descriptor.js';
+
 export {
   WebSocketServerService,
   type WebSocketServerServiceConfig,
