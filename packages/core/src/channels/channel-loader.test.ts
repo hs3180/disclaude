@@ -1,25 +1,26 @@
 /**
  * Tests for Channel Loader.
  *
+ * Uses a virtual filesystem mock — zero real disk I/O.
+ *
  * @module channels/channel-loader.test
  */
 
-import fs from 'fs';
 import path from 'path';
-import os from 'os';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { mockFs, resetVfs } from './mock-fs.js';
 import { ChannelLoader } from './channel-loader.js';
 import { addChannel } from './channel-directory.js';
 
+vi.mock('fs', () => ({ default: mockFs, ...mockFs }));
+
 describe('ChannelLoader', () => {
   let tmpDir: string;
+  let counter = 0;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-loader-test-'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    resetVfs();
+    tmpDir = `/mock/channel-loader-test-${++counter}`;
   });
 
   describe('constructor', () => {
@@ -79,8 +80,8 @@ describe('ChannelLoader', () => {
 
       // Create corrupted channel (missing required fields)
       const channelsDir = path.resolve(tmpDir, '.disclaude', 'channels');
-      fs.mkdirSync(path.join(channelsDir, 'corrupted'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, 'corrupted', 'channel.yaml'), 'name: broken\n', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, 'corrupted'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, 'corrupted', 'channel.yaml'), 'name: broken\n', 'utf-8');
 
       const loader = new ChannelLoader({ baseDir: tmpDir });
       const channels = loader.load();
@@ -136,8 +137,8 @@ describe('ChannelLoader', () => {
 
     it('should return invalid channel with error', () => {
       const channelsDir = path.resolve(tmpDir, '.disclaude', 'channels');
-      fs.mkdirSync(path.join(channelsDir, 'bad'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, 'bad', 'channel.yaml'), 'name: broken\n', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, 'bad'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, 'bad', 'channel.yaml'), 'name: broken\n', 'utf-8');
 
       const loader = new ChannelLoader({ baseDir: tmpDir });
       const channel = loader.loadOne('bad');

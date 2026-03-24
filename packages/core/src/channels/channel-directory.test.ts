@@ -1,13 +1,14 @@
 /**
  * Tests for Channel Directory Manager.
  *
+ * Uses a virtual filesystem mock — zero real disk I/O.
+ *
  * @module channels/channel-directory.test
  */
 
-import fs from 'fs';
 import path from 'path';
-import os from 'os';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { mockFs, resetVfs } from './mock-fs.js';
 import {
   resolveChannelsDir,
   resolveChannelDir,
@@ -22,15 +23,15 @@ import {
   listChannels,
 } from './channel-directory.js';
 
+vi.mock('fs', () => ({ default: mockFs, ...mockFs }));
+
 describe('ChannelDirectory', () => {
   let tmpDir: string;
+  let counter = 0;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-test-'));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    resetVfs();
+    tmpDir = `/mock/channel-test-${++counter}`;
   });
 
   describe('resolveChannelsDir', () => {
@@ -96,7 +97,7 @@ describe('ChannelDirectory', () => {
   describe('parseChannelConfig', () => {
     it('should parse a valid channel.yaml', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, [
+      mockFs.writeFileSync(configPath, [
         'id: wechat',
         'name: WeChat Channel',
         'module: "@disclaude/wechat-channel"',
@@ -123,7 +124,7 @@ describe('ChannelDirectory', () => {
 
     it('should default enabled to true when not specified', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, [
+      mockFs.writeFileSync(configPath, [
         'id: test',
         'name: Test',
         'module: "./test-module"',
@@ -135,7 +136,7 @@ describe('ChannelDirectory', () => {
 
     it('should default enabled to true when explicitly false', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, [
+      mockFs.writeFileSync(configPath, [
         'id: test',
         'name: Test',
         'module: "./test-module"',
@@ -148,14 +149,14 @@ describe('ChannelDirectory', () => {
 
     it('should throw for missing id', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, 'name: Test\nmodule: "./test"', 'utf-8');
+      mockFs.writeFileSync(configPath, 'name: Test\nmodule: "./test"', 'utf-8');
 
       expect(() => parseChannelConfig(configPath)).toThrow('missing or invalid "id"');
     });
 
     it('should throw for missing module', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, 'id: test\nname: Test', 'utf-8');
+      mockFs.writeFileSync(configPath, 'id: test\nname: Test', 'utf-8');
 
       expect(() => parseChannelConfig(configPath)).toThrow('missing or invalid "module"');
     });
@@ -166,7 +167,7 @@ describe('ChannelDirectory', () => {
 
     it('should handle minimal config', () => {
       const configPath = path.join(tmpDir, 'channel.yaml');
-      fs.writeFileSync(configPath, 'id: x\nname: X\nmodule: x', 'utf-8');
+      mockFs.writeFileSync(configPath, 'id: x\nname: X\nmodule: x', 'utf-8');
 
       const manifest = parseChannelConfig(configPath);
       expect(manifest.version).toBeUndefined();
@@ -226,8 +227,8 @@ describe('ChannelDirectory', () => {
       const channelDir = resolveChannelDir('wechat', tmpDir);
       const configPath = resolveChannelConfigPath('wechat', tmpDir);
 
-      expect(fs.existsSync(channelDir)).toBe(true);
-      expect(fs.existsSync(configPath)).toBe(true);
+      expect(mockFs.existsSync(channelDir)).toBe(true);
+      expect(mockFs.existsSync(configPath)).toBe(true);
 
       const manifest = parseChannelConfig(configPath);
       expect(manifest.id).toBe('wechat');
@@ -284,44 +285,36 @@ describe('ChannelDirectory', () => {
     it('should create parent directories if needed', () => {
       addChannel('test', './test', {}, tmpDir);
 
-      expect(fs.existsSync(path.resolve(tmpDir, '.disclaude', 'channels'))).toBe(true);
+      expect(mockFs.existsSync(path.resolve(tmpDir, '.disclaude', 'channels'))).toBe(true);
     });
 
     it('should clean up directory on write failure', () => {
+      // Simulate writeFileSync failure via spy
+      const writeSpy = vi.spyOn(mockFs, 'writeFileSync').mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      });
+
+      expect(() => addChannel('cleanup-test', './test', {}, tmpDir)).toThrow();
+      writeSpy.mockRestore();
+
       const channelDir = resolveChannelDir('cleanup-test', tmpDir);
-      const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(channelsDir, { recursive: true });
-      // Pre-create the directory to make mkdir succeed
-      fs.mkdirSync(channelDir, { recursive: true });
-
-      // Make the directory read-only so writeFileSync fails
-      fs.chmodSync(channelDir, 0o444);
-
-      try {
-        expect(() => addChannel('cleanup-test', './test', {}, tmpDir)).toThrow();
-      } finally {
-        // Restore permissions for cleanup
-        fs.chmodSync(channelDir, 0o755);
-      }
-
-      // After write failure, the directory should be cleaned up
-      // so addChannel can be retried
-      expect(fs.existsSync(channelDir)).toBe(false);
+      // After write failure, the directory should be cleaned up so addChannel can be retried
+      expect(mockFs.existsSync(channelDir)).toBe(false);
 
       // Verify retry succeeds
       addChannel('cleanup-test', './test', {}, tmpDir);
-      expect(fs.existsSync(channelDir)).toBe(true);
-      expect(fs.existsSync(resolveChannelConfigPath('cleanup-test', tmpDir))).toBe(true);
+      expect(mockFs.existsSync(channelDir)).toBe(true);
+      expect(mockFs.existsSync(resolveChannelConfigPath('cleanup-test', tmpDir))).toBe(true);
     });
   });
 
   describe('removeChannel', () => {
     it('should remove channel directory', () => {
       addChannel('test', './test', {}, tmpDir);
-      expect(fs.existsSync(resolveChannelDir('test', tmpDir))).toBe(true);
+      expect(mockFs.existsSync(resolveChannelDir('test', tmpDir))).toBe(true);
 
       removeChannel('test', tmpDir);
-      expect(fs.existsSync(resolveChannelDir('test', tmpDir))).toBe(false);
+      expect(mockFs.existsSync(resolveChannelDir('test', tmpDir))).toBe(false);
     });
 
     it('should throw for non-existent channel', () => {
@@ -330,8 +323,8 @@ describe('ChannelDirectory', () => {
 
     it('should throw for directory without channel.yaml', () => {
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(channelsDir, { recursive: true });
-      fs.mkdirSync(path.join(channelsDir, 'not-a-channel'), { recursive: true });
+      mockFs.mkdirSync(channelsDir, { recursive: true });
+      mockFs.mkdirSync(path.join(channelsDir, 'not-a-channel'), { recursive: true });
 
       expect(() => removeChannel('not-a-channel', tmpDir)).toThrow('does not contain channel.yaml');
     });
@@ -384,8 +377,8 @@ describe('ChannelDirectory', () => {
 
     it('should return invalid entry for corrupted config', () => {
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, 'bad'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, 'bad', 'channel.yaml'), 'invalid: [yaml', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, 'bad'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, 'bad', 'channel.yaml'), 'invalid: [yaml', 'utf-8');
 
       const entry = getChannel('bad', tmpDir);
       expect(entry).toBeDefined();
@@ -395,8 +388,8 @@ describe('ChannelDirectory', () => {
 
     it('should return invalid entry when YAML id does not match directory name', () => {
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, 'mismatch'), { recursive: true });
-      fs.writeFileSync(
+      mockFs.mkdirSync(path.join(channelsDir, 'mismatch'), { recursive: true });
+      mockFs.writeFileSync(
         path.join(channelsDir, 'mismatch', 'channel.yaml'),
         'id: different-id\nname: Different\nmodule: ./test',
         'utf-8',
@@ -439,7 +432,7 @@ describe('ChannelDirectory', () => {
 
       // Create a non-channel directory
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, 'not-a-channel'), { recursive: true });
+      mockFs.mkdirSync(path.join(channelsDir, 'not-a-channel'), { recursive: true });
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(1);
@@ -451,8 +444,8 @@ describe('ChannelDirectory', () => {
 
       // Create a hidden directory
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, '.hidden'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, '.hidden', 'channel.yaml'), 'id: .hidden\nname: Hidden\nmodule: ./hidden', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, '.hidden'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, '.hidden', 'channel.yaml'), 'id: .hidden\nname: Hidden\nmodule: ./hidden', 'utf-8');
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(1);
@@ -463,8 +456,8 @@ describe('ChannelDirectory', () => {
 
       // Create a directory with invalid ID (starts with hyphen)
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, '-invalid'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, '-invalid', 'channel.yaml'), 'id: -invalid\nname: Invalid\nmodule: ./test', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, '-invalid'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, '-invalid', 'channel.yaml'), 'id: -invalid\nname: Invalid\nmodule: ./test', 'utf-8');
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(1);
@@ -475,8 +468,8 @@ describe('ChannelDirectory', () => {
 
       // Create a channel with corrupted config (missing required fields)
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, 'corrupted'), { recursive: true });
-      fs.writeFileSync(path.join(channelsDir, 'corrupted', 'channel.yaml'), 'name: broken\n', 'utf-8');
+      mockFs.mkdirSync(path.join(channelsDir, 'corrupted'), { recursive: true });
+      mockFs.writeFileSync(path.join(channelsDir, 'corrupted', 'channel.yaml'), 'name: broken\n', 'utf-8');
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(2);
@@ -499,8 +492,8 @@ describe('ChannelDirectory', () => {
 
       // Create a channel where YAML id doesn't match directory name
       const channelsDir = resolveChannelsDir(tmpDir);
-      fs.mkdirSync(path.join(channelsDir, 'mismatch'), { recursive: true });
-      fs.writeFileSync(
+      mockFs.mkdirSync(path.join(channelsDir, 'mismatch'), { recursive: true });
+      mockFs.writeFileSync(
         path.join(channelsDir, 'mismatch', 'channel.yaml'),
         'id: wrong-id\nname: Wrong\nmodule: ./test',
         'utf-8',
