@@ -28,6 +28,11 @@ import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
+import {
+  buildInteractiveCard,
+  buildActionPrompts,
+  validateInteractiveParams,
+} from './platforms/feishu/card-builders/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
@@ -445,7 +450,7 @@ async function main(): Promise<void> {
             fileSize: 0,
           };
         },
-        // Issue #1570: Build interactive card from raw parameters in Primary Node
+        // Issue #1571: Build interactive card from raw parameters using extracted builder
         sendInteractive: async (chatId: string, params: {
           question: string;
           options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
@@ -454,39 +459,17 @@ async function main(): Promise<void> {
           threadId?: string;
           actionPrompts?: Record<string, string>;
         }) => {
-          const { question, options, title, context, threadId } = params;
-          const cardTitle = title ?? '交互消息';
+          const { question, options, title, context, threadId, actionPrompts } = params;
 
-          const elements: unknown[] = [];
-
-          if (context) {
-            elements.push({ tag: 'markdown', content: context });
+          // Validate params at IPC boundary (data comes from external MCP Server process)
+          const validationError = validateInteractiveParams(params);
+          if (validationError) {
+            logger.warn({ chatId, error: validationError }, 'sendInteractive: invalid params');
+            throw new Error(`Invalid interactive params: ${validationError}`);
           }
 
-          elements.push({ tag: 'markdown', content: question });
-
-          elements.push({ tag: 'hr' });
-
-          const actionButtons = options.map((opt) => ({
-            tag: 'button' as const,
-            text: { tag: 'plain_text' as const, content: opt.text },
-            value: opt.value,
-            type: opt.type ?? 'default',
-          }));
-
-          elements.push({
-            tag: 'action',
-            actions: actionButtons,
-          });
-
-          const card: Record<string, unknown> = {
-            config: { wide_screen_mode: true },
-            header: {
-              title: { tag: 'plain_text', content: cardTitle },
-              template: 'blue',
-            },
-            elements,
-          };
+          // Build card using extracted builder (Primary Node owns the full card lifecycle)
+          const card = buildInteractiveCard({ question, options, title, context });
 
           await feishuChannel.sendMessage({
             chatId,
@@ -495,11 +478,24 @@ async function main(): Promise<void> {
             threadId,
           });
 
+          // Build action prompts: use caller-provided prompts or generate defaults
+          const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
+            ? actionPrompts
+            : buildActionPrompts(options);
+
           // Issue #1570: Return synthetic messageId for action prompt registration.
           // Real messageId propagation requires doSendMessage() changes (future phase).
           const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
 
-          return { messageId: syntheticMessageId };
+          // TODO(Phase 3 #1572): Move action prompt registration to Primary Node.
+          // Currently MCP Server handles registration using the returned messageId + actionPrompts.
+          // The synthetic messageId means registration will work but won't match the real Feishu message.
+          logger.debug(
+            { chatId, syntheticMessageId, actionCount: Object.keys(resolvedActionPrompts).length },
+            'sendInteractive: card sent (synthetic messageId — action prompts should be registered by caller)'
+          );
+
+          return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
