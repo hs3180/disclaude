@@ -99,6 +99,20 @@ export type {
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';
 
+// Dynamic Channel Plugin types (Issue #1422)
+export type {
+  ChannelPluginManifest,
+  DynamicChannelEntry,
+  ChannelLoaderOptions,
+  AddChannelOptions,
+  ChannelListResult,
+} from './channel-plugin.js';
+
+export {
+  SAFE_CHANNEL_ID_PATTERN,
+  RESERVED_CHANNEL_IDS,
+} from './channel-plugin.js';
+
 // Primary Node types (Issue #1040)
 export type {
   NodeType,
