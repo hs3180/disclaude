@@ -98,6 +98,18 @@ export class ChannelManager {
   }
 
   /**
+   * Unregister a channel by ID.
+   * Issue #1594: Added for PrimaryNode integration.
+   */
+  unregister(channelId: string): boolean {
+    const removed = this.channels.delete(channelId);
+    if (removed) {
+      logger.info({ channelId }, 'Channel unregistered');
+    }
+    return removed;
+  }
+
+  /**
    * Get the number of registered channels.
    */
   size(): number {

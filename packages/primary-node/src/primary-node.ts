@@ -57,6 +57,7 @@ import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
+import { ChannelManager } from './channel-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -136,8 +137,8 @@ export class PrimaryNode extends EventEmitter {
   protected cardActionRouter: CardActionRouter;
   protected debugGroupService: DebugGroupService;
 
-  // Registered channels
-  protected channels: Map<string, IChannel> = new Map();
+  // Channel management (Issue #1594: unified channel lifecycle)
+  protected channelManager: ChannelManager;
 
   // IPC Server for MCP Server connections (Issue #1042)
   protected ipcServer: UnixSocketIpcServer | null = null;
@@ -175,6 +176,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize DebugGroupService
     this.debugGroupService = getDebugGroupService();
+
+    // Initialize ChannelManager (Issue #1594: unified channel lifecycle)
+    this.channelManager = new ChannelManager();
 
     logger.info({
       nodeId: this.localNodeId,
@@ -231,25 +235,25 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Register a communication channel.
+   * Delegates to ChannelManager (Issue #1594: unified channel lifecycle).
    */
   registerChannel(channel: IChannel): void {
-    if (this.channels.has(channel.id)) {
-      logger.warn({ channelId: channel.id }, 'Channel already registered, replacing');
-    }
-
-    this.channels.set(channel.id, channel);
-    logger.info({ channelId: channel.id }, 'Channel registered');
+    this.channelManager.register(channel);
   }
 
   /**
    * Unregister a communication channel.
    */
   unregisterChannel(channelId: string): boolean {
-    const removed = this.channels.delete(channelId);
-    if (removed) {
-      logger.info({ channelId }, 'Channel unregistered');
-    }
-    return removed;
+    return this.channelManager.unregister(channelId);
+  }
+
+  /**
+   * Get the ChannelManager for advanced channel operations.
+   * Issue #1594: unified channel lifecycle.
+   */
+  getChannelManager(): ChannelManager {
+    return this.channelManager;
   }
 
   // ============================================================================
@@ -329,14 +333,14 @@ export class PrimaryNode extends EventEmitter {
    * Get all registered channels.
    */
   getChannels(): IChannel[] {
-    return Array.from(this.channels.values());
+    return this.channelManager.getAll();
   }
 
   /**
    * Get a channel by ID.
    */
   getChannel(channelId: string): IChannel | undefined {
-    return this.channels.get(channelId);
+    return this.channelManager.get(channelId);
   }
 
   /**
@@ -408,8 +412,8 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
     const schedulerCallbacks: SchedulerCallbacks = {
       sendMessage: async (chatId: string, message: string): Promise<void> => {
-        // Find channel and send message
-        const channel = this.channels.values().next().value;
+        // Find channel and send message via ChannelManager (Issue #1594)
+        const [channel] = this.channelManager.getAll();
         if (channel && 'sendMessage' in channel) {
           // Construct proper OutgoingMessage object (Issue #1384)
           await channel.sendMessage({
