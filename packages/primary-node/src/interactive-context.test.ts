@@ -130,12 +130,12 @@ describe('InteractiveContextStore', () => {
       expect(store.generatePrompt('msg-2', 'chat-1', 'click')).toBe('Fixed prompt text');
     });
 
-    it('should handle undefined actionText gracefully', () => {
+    it('should handle undefined actionText by replacing with empty string', () => {
       store.register('msg-3', 'chat-1', {
         action: '[用户操作] {{actionText}}选择了{{actionValue}}',
       });
       const prompt = store.generatePrompt('msg-3', 'chat-1', 'action', undefined);
-      expect(prompt).toBe('[用户操作] {{actionText}}选择了action');
+      expect(prompt).toBe('[用户操作] 选择了action');
     });
   });
 

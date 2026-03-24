@@ -98,6 +98,7 @@ describe('IPC Protocol', () => {
         id: 'req-4',
         payload: {
           messageId: 'msg-1',
+          chatId: 'chat-1',
           actionValue: 'action1',
           actionText: 'Click me',
           actionType: 'button',

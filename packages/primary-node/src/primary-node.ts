@@ -58,7 +58,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
-import { InteractiveContextStore } from './interactive-context.js'; (refactor(primary-node): Phase 3 — move interactive context management to Primary Node (#1572))
+import { InteractiveContextStore } from './interactive-context.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -185,7 +185,7 @@ export class PrimaryNode extends EventEmitter {
     this.channelManager = new ChannelManager();
 
     // Initialize InteractiveContextStore (Issue #1572)
-    this.interactiveContextStore = new InteractiveContextStore(); (refactor(primary-node): Phase 3 — move interactive context management to Primary Node (#1572))
+    this.interactiveContextStore = new InteractiveContextStore();
 
     logger.info({
       nodeId: this.localNodeId,
@@ -299,11 +299,12 @@ export class PrimaryNode extends EventEmitter {
       unregisterActionPrompts: (messageId: string) => contextStore.unregister(messageId),
       generateInteractionPrompt: (
         messageId: string,
+        chatId: string,
         actionValue: string,
         actionText?: string,
         actionType?: string,
         formData?: Record<string, unknown>
-      ) => contextStore.generatePrompt(messageId, '', actionValue, actionText, actionType, formData),
+      ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText, actionType, formData),
       cleanupExpiredContexts: () => contextStore.cleanupExpired(),
     };
 
