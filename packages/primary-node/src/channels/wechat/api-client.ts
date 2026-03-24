@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -11,12 +11,20 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
+ * - POST ilink/bot/upload              - Upload media to CDN
+ * - POST ilink/bot/typing              - Send typing indicator
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { createLogger } from '@disclaude/core';
+import type {
+  WeChatGetUpdatesResponse,
+  WeChatCdnUploadResponse,
+  WeChatTypingResponse,
+} from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -29,10 +37,13 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/** Maximum file size for CDN upload (20MB). */
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and media handling.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -210,6 +221,232 @@ export class WeChatApiClient {
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
   }
 
+  /**
+   * Send an image message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    to: string;
+    imageUrl: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, imageUrl, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, imageUrl }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    to: string;
+    fileUrl: string;
+    fileName?: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, fileUrl, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 3, file_item: { url: fileUrl, file_name: fileName } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message listening (getUpdates long-poll)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Blocks until new messages arrive or timeout (35s).
+   * On client-side timeout, returns empty array (normal for long polling).
+   *
+   * @param options - Poll options
+   * @returns Array of new message updates (empty on timeout)
+   */
+  async getUpdates(options?: {
+    /** AbortSignal for graceful shutdown */
+    signal?: AbortSignal;
+    /** Custom timeout in ms (default: 35s) */
+    timeoutMs?: number;
+  }): Promise<import('./types.js').WeChatUpdate[]> {
+    const url = `${this.baseUrl}/ilink/bot/getupdates`;
+    const timeoutMs = options?.timeoutMs ?? LONG_POLL_TIMEOUT_MS;
+
+    const body = {};
+
+    try {
+      const data = await this.postJson<WeChatGetUpdatesResponse>(
+        url.replace(this.baseUrl + '/', ''),
+        body,
+        { timeoutMs, signal: options?.signal }
+      );
+
+      return data.update_list ?? [];
+    } catch (error) {
+      // Timeout during long polling is normal — return empty
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out, returning empty');
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Media upload
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a file to WeChat CDN.
+   *
+   * POST /ilink/bot/upload
+   *
+   * @param params - Upload parameters
+   * @returns CDN URL and file key of the uploaded file
+   */
+  async uploadMedia(params: {
+    /** File content as Buffer */
+    fileData: Buffer;
+    /** File name (with extension) */
+    fileName: string;
+    /** MIME type */
+    mimeType?: string;
+  }): Promise<{ url: string; fileKey: string }> {
+    const { fileData, fileName, mimeType } = params;
+
+    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(`File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES})`);
+    }
+
+    const url = `${this.baseUrl}/ilink/bot/upload`;
+
+    const headers = this.buildAuthHeaders('');
+    headers['Content-Type'] = mimeType || 'application/octet-stream';
+    // Remove Content-Length as it will be set by the form-data boundary
+    delete headers['Content-Length'];
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', new Blob([fileData], { type: mimeType || 'application/octet-stream' }), fileName);
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'AuthorizationType': headers['AuthorizationType'],
+          'Authorization': headers['Authorization'] || '',
+          'X-WECHAT-UIN': headers['X-WECHAT-UIN'],
+          ...(this.routeTag ? { 'SKRouteTag': this.routeTag } : {}),
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'Upload failed');
+        throw new Error(`WeChat upload error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatCdnUploadResponse;
+
+      const ret = data.ret;
+      if (ret !== undefined && ret !== 0) {
+        const errMsg = (data as Record<string, unknown>).err_msg as string || `Error code ${ret}`;
+        throw new Error(`WeChat upload error [${ret}]: ${errMsg}`);
+      }
+
+      if (!data.url || !data.file_key) {
+        throw new Error('Upload response missing url or file_key');
+      }
+
+      logger.info({ fileName, url: data.url, fileKey: data.file_key }, 'File uploaded to CDN');
+      return { url: data.url, fileKey: data.file_key };
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typing indicator
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a typing indicator to a user.
+   *
+   * POST /ilink/bot/typing
+   *
+   * Informs the user that the bot is processing their message.
+   *
+   * @param params - Typing indicator parameters
+   */
+  async sendTyping(params: { to: string }): Promise<void> {
+    const { to } = params;
+
+    const body = {
+      to_user_id: to,
+    };
+
+    try {
+      await this.postJson<WeChatTypingResponse>(
+        'ilink/bot/typing',
+        body,
+        { timeoutMs: 5_000 } // Short timeout for typing indicator
+      );
+      logger.debug({ to }, 'Typing indicator sent');
+    } catch (error) {
+      // Typing indicator failure should not block message processing
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error), to },
+        'Failed to send typing indicator (non-fatal)'
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
@@ -217,8 +454,12 @@ export class WeChatApiClient {
   /**
    * Make an authenticated POST request to the API.
    */
-  private async postJson<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-    const url = `${this.baseUrl}/${endpoint}`;
+  private async postJson<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<T> {
+    const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}/${endpoint}`;
     const bodyStr = JSON.stringify(body);
 
     const headers = this.buildAuthHeaders(bodyStr);
@@ -229,7 +470,8 @@ export class WeChatApiClient {
       method: 'POST',
       headers,
       body: bodyStr,
-      timeoutMs: DEFAULT_API_TIMEOUT_MS,
+      timeoutMs: options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
+      signal: options?.signal,
     });
 
     return data;
@@ -282,10 +524,16 @@ export class WeChatApiClient {
     headers: Record<string, string>;
     body?: string;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Link external signal if provided
+    if (opts.signal) {
+      opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
 
     try {
       const response = await fetch(url, {

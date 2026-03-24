@@ -60,12 +60,12 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
   factory: (config) => new WeChatChannel(config),
   defaultCapabilities: {
     supportsCard: false,
-    supportsThread: false,
-    supportsFile: false,
+    supportsThread: true,
+    supportsFile: true,
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
-    supportedMcpTools: ['send_text'],
+    supportedMcpTools: ['send_text', 'send_file'],
   },
 };
 
