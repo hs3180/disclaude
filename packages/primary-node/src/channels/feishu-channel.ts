@@ -537,6 +537,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the underlying Feishu API client.
+   * Issue #1545: Used by IPC handlers for group dissolution.
+   */
+  getClient(): lark.Client | undefined {
+    return this.client;
+  }
+
+  /**
    * Set the WelcomeService for this channel.
    */
   setWelcomeService(service: WelcomeService): void {

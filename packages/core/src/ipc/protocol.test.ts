@@ -136,6 +136,14 @@ describe('IPC Protocol', () => {
         payload: {},
       };
       expect(getBotInfo.payload).toEqual({});
+
+      // Issue #1545: feishuDissolveGroup
+      const dissolveGroup: IpcRequest<'feishuDissolveGroup'> = {
+        type: 'feishuDissolveGroup',
+        id: 'req-11',
+        payload: { chatId: 'oc_group_to_dissolve' },
+      };
+      expect(dissolveGroup.payload.chatId).toBe('oc_group_to_dissolve');
     });
   });
 
@@ -180,6 +188,22 @@ describe('IPC Protocol', () => {
         },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
+
+      // Issue #1545: feishuDissolveGroup response
+      const dissolveGroupResponse: IpcResponse<'feishuDissolveGroup'> = {
+        id: 'req-11',
+        success: true,
+        payload: { success: true },
+      };
+      expect(dissolveGroupResponse.payload?.success).toBe(true);
+
+      const dissolveGroupErrorResponse: IpcResponse<'feishuDissolveGroup'> = {
+        id: 'req-11',
+        success: false,
+        error: 'Not group owner',
+      };
+      expect(dissolveGroupErrorResponse.success).toBe(false);
+      expect(dissolveGroupErrorResponse.error).toBe('Not group owner');
     });
   });
 

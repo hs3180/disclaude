@@ -64,6 +64,11 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  /**
+   * Dissolve a group chat.
+   * Issue #1545: Used by feishuDissolveChat MCP tool.
+   */
+  dissolveGroup?: (chatId: string) => Promise<void>;
 }
 
 /**
@@ -208,6 +213,38 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu group management (Issue #1545)
+        case 'feishuDissolveGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          if (!feishuHandlers.dissolveGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'dissolveGroup handler not registered',
+            };
+          }
+          const { chatId } =
+            request.payload as IpcRequestPayloads['feishuDissolveGroup'];
+          try {
+            await feishuHandlers.dissolveGroup(chatId);
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

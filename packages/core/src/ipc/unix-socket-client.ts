@@ -500,6 +500,30 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Dissolve a group chat via IPC.
+   * Issue #1545: Used by feishu_dissolve_chat MCP tool.
+   */
+  async feishuDissolveGroup(
+    chatId: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('feishuDissolveGroup', { chatId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'feishuDissolveGroup failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

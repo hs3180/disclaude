@@ -449,6 +449,15 @@ async function main(): Promise<void> {
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
         },
+        // Issue #1545: Dissolve group via IPC
+        dissolveGroup: async (chatId: string) => {
+          const client = feishuChannel.getClient();
+          if (!client) {
+            throw new Error('Feishu client not initialized');
+          }
+          const { dissolveChat } = await import('./platforms/feishu/chat-ops.js');
+          await dissolveChat(client, chatId);
+        },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
       logger.info('Feishu IPC handlers registered');
