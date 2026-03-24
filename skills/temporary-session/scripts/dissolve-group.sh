@@ -47,7 +47,7 @@ fi
 # --- Validate chatId ---
 
 if ! validate_chat_id "$CHAT_ID"; then
-  echo "{\"success\": false, \"error\": \"Invalid chatId format: $CHAT_ID\"}"
+  jq -n --arg err "Invalid chatId format: $CHAT_ID" '{"success": false, "error": $err}'
   exit 1
 fi
 
@@ -76,10 +76,10 @@ ERROR_MSG=$(echo "$RESPONSE" | jq -r '.msg // "unknown error"')
 # Feishu returns code 0 on success
 if [[ "$ERROR_CODE" != "0" ]]; then
   log_error "Failed to dissolve group $CHAT_ID (code: $ERROR_CODE, msg: $ERROR_MSG)"
-  echo "{\"success\": false, \"error\": \"Failed to dissolve group: $ERROR_MSG\"}"
+  jq -n --arg err "Failed to dissolve group: $ERROR_MSG" '{"success": false, "error": $err}'
   exit 1
 fi
 
 log_info "Group dissolved: $CHAT_ID"
-echo "{\"success\": true, \"chatId\": \"$CHAT_ID\"}"
+jq -n --arg chatId "$CHAT_ID" '{"success": true, "chatId": $chatId}'
 exit 0

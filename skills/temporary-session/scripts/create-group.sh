@@ -91,17 +91,17 @@ ERROR_MSG=$(echo "$RESPONSE" | jq -r '.msg // "unknown error"')
 
 if [[ -z "$CHAT_ID" ]]; then
   log_error "Failed to create group (code: $ERROR_CODE, msg: $ERROR_MSG)"
-  echo "{\"success\": false, \"error\": \"Failed to create group: $ERROR_MSG\"}"
+  jq -n --arg err "Failed to create group: $ERROR_MSG" '{"success": false, "error": $err}'
   exit 1
 fi
 
 # Validate the returned chatId
 if ! validate_chat_id "$CHAT_ID"; then
   log_error "Invalid chatId returned from API: $CHAT_ID"
-  echo "{\"success\": false, \"error\": \"Invalid chatId returned: $CHAT_ID\"}"
+  jq -n --arg err "Invalid chatId returned: $CHAT_ID" '{"success": false, "error": $err}'
   exit 1
 fi
 
 log_info "Group created: $CHAT_ID ($GROUP_NAME)"
-echo "{\"success\": true, \"chatId\": \"$CHAT_ID\"}"
+jq -n --arg chatId "$CHAT_ID" '{"success": true, "chatId": $chatId}'
 exit 0
