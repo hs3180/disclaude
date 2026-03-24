@@ -15,7 +15,12 @@
  * ├── factory.ts               # Provider 工厂
  * └── providers/
  *     ├── index.ts
- *     └── claude/              # Claude SDK 实现
+ *     ├── claude/              # Claude SDK 实现
+ *     │   ├── index.ts
+ *     │   ├── provider.ts
+ *     │   ├── message-adapter.ts
+ *     │   └── options-adapter.ts
+ *     └── openai/              # OpenAI Agents SDK 实现
  *         ├── index.ts
  *         ├── provider.ts
  *         ├── message-adapter.ts
@@ -25,18 +30,22 @@
  * ## 使用示例
  *
  * ```typescript
- * import { getProvider } from '@disclaude/core';
+ * import { getProvider, setDefaultProvider } from '@disclaude/core';
  *
- * // 获取默认 Provider
- * const provider = getProvider();
+ * // 获取默认 Provider (Claude)
+ * const claudeProvider = getProvider();
+ *
+ * // 切换到 OpenAI Provider
+ * setDefaultProvider('openai');
+ * const openaiProvider = getProvider();
  *
  * // 一次性查询
- * for await (const message of provider.queryOnce('Hello', options)) {
+ * for await (const message of openaiProvider.queryOnce('Hello', options)) {
  *   console.log(message.content);
  * }
  *
  * // 流式查询
- * const result = provider.queryStream(inputGenerator, options);
+ * const result = openaiProvider.queryStream(inputGenerator, options);
  * for await (const message of result.iterator) {
  *   console.log(message.content);
  * }
@@ -47,11 +56,11 @@
  * ```typescript
  * import { registerProvider, type IAgentSDKProvider } from '@disclaude/core';
  *
- * class OpenAIProvider implements IAgentSDKProvider {
+ * class MyProvider implements IAgentSDKProvider {
  *   // 实现接口方法...
  * }
  *
- * registerProvider('openai', () => new OpenAIProvider());
+ * registerProvider('my-provider', () => new MyProvider());
  * ```
  *
  * @module sdk
@@ -115,6 +124,7 @@ export type {
 // ============================================================================
 
 export { ClaudeSDKProvider } from './providers/index.js';
+export { OpenAISDKProvider } from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出

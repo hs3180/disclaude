@@ -221,7 +221,7 @@ export function isDisposable(obj: unknown): obj is Disposable {
 /**
  * API provider type.
  */
-export type AgentProvider = 'anthropic' | 'glm';
+export type AgentProvider = 'anthropic' | 'glm' | 'openai';
 
 /**
  * Base configuration for all agents.
