@@ -134,19 +134,19 @@ export function createInteractiveMessageHandler(
           return { id: request.id, success: true, payload: { cleaned } };
         }
 
-        // Feishu API operations (Issue #1035)
+        // Platform API operations (Issue #1035, #1565)
         // Issue #1120: Use container for dynamic handler registration
-        case 'feishuSendMessage': {
+        case 'sendMessage': {
           const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Platform API handlers not available',
             };
           }
           const { chatId, text, threadId } =
-            request.payload as IpcRequestPayloads['feishuSendMessage'];
+            request.payload as IpcRequestPayloads['sendMessage'];
           try {
             await feishuHandlers.sendMessage(chatId, text, threadId);
             return { id: request.id, success: true, payload: { success: true } };
@@ -156,17 +156,17 @@ export function createInteractiveMessageHandler(
           }
         }
 
-        case 'feishuSendCard': {
+        case 'sendCard': {
           const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Platform API handlers not available',
             };
           }
           const { chatId, card, threadId, description } =
-            request.payload as IpcRequestPayloads['feishuSendCard'];
+            request.payload as IpcRequestPayloads['sendCard'];
           try {
             await feishuHandlers.sendCard(chatId, card, threadId, description);
             return { id: request.id, success: true, payload: { success: true } };
@@ -176,17 +176,17 @@ export function createInteractiveMessageHandler(
           }
         }
 
-        case 'feishuUploadFile': {
+        case 'uploadFile': {
           const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Platform API handlers not available',
             };
           }
           const { chatId, filePath, threadId } =
-            request.payload as IpcRequestPayloads['feishuUploadFile'];
+            request.payload as IpcRequestPayloads['uploadFile'];
           try {
             const result = await feishuHandlers.uploadFile(chatId, filePath, threadId);
             return { id: request.id, success: true, payload: { success: true, ...result } };
@@ -196,13 +196,13 @@ export function createInteractiveMessageHandler(
           }
         }
 
-        case 'feishuGetBotInfo': {
+        case 'getBotInfo': {
           const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Platform API handlers not available',
             };
           }
           try {
