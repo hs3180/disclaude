@@ -288,6 +288,18 @@ async function main(): Promise<void> {
     feishuChannel = new FeishuChannel(feishuChannelConfig);
     primaryNode.registerChannel(feishuChannel);
 
+    // Issue #1572: Set up action prompt resolver using InteractiveContextStore.
+    // When card action callbacks arrive, the message handler will use this to
+    // look up the registered prompt template instead of using hardcoded text.
+    // The config is accessed by reference in start(), so modifying it here works.
+    const contextStore = primaryNode.getInteractiveContextStore();
+    feishuChannelConfig.resolveActionPrompt = (
+      messageId: string,
+      chatId: string,
+      actionValue: string,
+      actionText?: string,
+    ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
+
     // Integrate passive mode into unified control handler context (Issue #1464)
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
     // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
@@ -485,13 +497,9 @@ async function main(): Promise<void> {
           // Real messageId propagation requires doSendMessage() changes (future phase).
           const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
 
-          // TODO(Phase 3 #1572): Move action prompt registration to Primary Node.
-          // Currently MCP Server handles registration using the returned messageId + actionPrompts.
-          // The synthetic messageId means registration will work but won't match the real Feishu message.
-          logger.debug(
-            { chatId, syntheticMessageId, actionCount: Object.keys(resolvedActionPrompts).length },
-            'sendInteractive: card sent (synthetic messageId — action prompts should be registered by caller)'
-          );
+          // Issue #1572: Action prompt registration is handled by unix-socket-server.ts
+          // (unified path in createInteractiveMessageHandler). The server registers
+          // prompts from the returned result, avoiding duplicate registration here.
 
           return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
         },

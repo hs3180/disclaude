@@ -38,7 +38,7 @@ describe('UnixSocketIpcServer', () => {
         mockContexts.set(messageId, { chatId, actionPrompts });
       },
       unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
-      generateInteractionPrompt: (messageId, actionValue, actionText) => {
+      generateInteractionPrompt: (messageId, _chatId, actionValue, actionText) => {
         const context = mockContexts.get(messageId);
         if (!context) {
           return undefined;
@@ -135,7 +135,7 @@ describe('UnixSocketIpcClient', () => {
         mockContexts.set(messageId, { chatId, actionPrompts });
       },
       unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
-      generateInteractionPrompt: (messageId, actionValue, actionText) => {
+      generateInteractionPrompt: (messageId, _chatId, actionValue, actionText) => {
         const context = mockContexts.get(messageId);
         if (!context) {
           return undefined;
@@ -209,12 +209,12 @@ describe('UnixSocketIpcClient', () => {
       actionPrompts: { confirm: 'User clicked {{actionText}}' },
     });
 
-    const prompt = await client.generateInteractionPrompt('msg-2', 'confirm', 'Confirm');
+    const prompt = await client.generateInteractionPrompt('msg-2', 'chat-1', 'confirm', 'Confirm');
     expect(prompt).toBe('User clicked Confirm');
   });
 
   it('should return null for non-existent prompt template', async () => {
-    const prompt = await client.generateInteractionPrompt('non-existent', 'confirm');
+    const prompt = await client.generateInteractionPrompt('non-existent', 'chat-1', 'confirm');
     expect(prompt).toBeNull();
   });
 
@@ -293,7 +293,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
+        generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
         cleanupExpiredContexts: () => 0,
       });
 
@@ -333,7 +333,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
+        generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
         cleanupExpiredContexts: () => 0,
       });
 
@@ -371,7 +371,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
+        generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
         cleanupExpiredContexts: () => 0,
       });
 
@@ -407,7 +407,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
         getActionPrompts: () => undefined,
         registerActionPrompts: () => {},
         unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
+        generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
         cleanupExpiredContexts: () => 0,
       });
 

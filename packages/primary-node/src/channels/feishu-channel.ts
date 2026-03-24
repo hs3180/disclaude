@@ -116,6 +116,16 @@ export interface FeishuChannelConfig {
       trigger?: string;
     };
   }) => Promise<boolean>;
+  /**
+   * Resolve action prompt for a card action.
+   * Issue #1572: Looks up the prompt template from InteractiveContextStore.
+   */
+  resolveActionPrompt?: (
+    messageId: string,
+    chatId: string,
+    actionValue: string,
+    actionText?: string,
+  ) => string | undefined;
 }
 
 /**
@@ -180,6 +190,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         await this.sendMessage(message as OutgoingMessage);
       },
       routeCardAction: config.routeCardAction,
+      resolveActionPrompt: config.resolveActionPrompt,
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({

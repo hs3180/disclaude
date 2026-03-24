@@ -39,6 +39,7 @@ export interface InteractiveMessageHandlers {
   unregisterActionPrompts: (messageId: string) => boolean;
   generateInteractionPrompt: (
     messageId: string,
+    chatId: string,
     actionValue: string,
     actionText?: string,
     actionType?: string,
@@ -123,10 +124,11 @@ export function createInteractiveMessageHandler(
         }
 
         case 'generateInteractionPrompt': {
-          const { messageId, actionValue, actionText, actionType, formData } =
+          const { messageId, chatId, actionValue, actionText, actionType, formData } =
             request.payload as IpcRequestPayloads['generateInteractionPrompt'];
           const prompt = handlers.generateInteractionPrompt(
             messageId,
+            chatId,
             actionValue,
             actionText,
             actionType,
@@ -230,10 +232,13 @@ export function createInteractiveMessageHandler(
 
             // Register action prompts so card callbacks can find them
             // Issue #1570: Primary Node owns the full interactive card lifecycle
-            if (actionPrompts && result.messageId) {
-              handlers.registerActionPrompts(result.messageId, chatId, actionPrompts);
+            // Issue #1572: Use resolved actionPrompts from result (may include auto-generated defaults)
+            const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
+              ?? actionPrompts;
+            if (resolvedPrompts && result.messageId) {
+              handlers.registerActionPrompts(result.messageId, chatId, resolvedPrompts);
               logger.debug(
-                { messageId: result.messageId, chatId, actionCount: Object.keys(actionPrompts).length },
+                { messageId: result.messageId, chatId, actionCount: Object.keys(resolvedPrompts).length },
                 'sendInteractive: action prompts registered'
               );
             }

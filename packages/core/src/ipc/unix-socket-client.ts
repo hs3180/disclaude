@@ -393,6 +393,7 @@ export class UnixSocketIpcClient {
    */
   async generateInteractionPrompt(
     messageId: string,
+    chatId: string,
     actionValue: string,
     actionText?: string,
     actionType?: string,
@@ -401,6 +402,7 @@ export class UnixSocketIpcClient {
     try {
       const response = await this.request('generateInteractionPrompt', {
         messageId,
+        chatId,
         actionValue,
         actionText,
         actionType,

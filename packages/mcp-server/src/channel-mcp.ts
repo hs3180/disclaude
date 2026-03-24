@@ -28,8 +28,6 @@ export { send_file } from './tools/send-file.js';
 export {
   send_interactive,
   send_interactive_message,
-  generateInteractionPrompt,
-  getActionPrompts,
   startIpcServer,
   stopIpcServer,
   isIpcServerRunning,

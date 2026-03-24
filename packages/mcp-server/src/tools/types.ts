@@ -47,16 +47,6 @@ export type MessageSentCallback = (chatId: string) => void;
 export type ActionPromptMap = Record<string, string>;
 
 /**
- * Context for an interactive message.
- */
-export interface InteractiveMessageContext {
-  messageId: string;
-  chatId: string;
-  actionPrompts: ActionPromptMap;
-  createdAt: number;
-}
-
-/**
  * Result type for send_interactive_message tool.
  */
 export interface SendInteractiveResult {
