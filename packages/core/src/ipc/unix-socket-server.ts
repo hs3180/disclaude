@@ -63,7 +63,6 @@ export interface FeishuApiHandlers {
     filePath: string,
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
-  getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
   sendInteractive: (
     chatId: string,
     params: {
@@ -201,24 +200,6 @@ export function createInteractiveMessageHandler(
           try {
             const result = await feishuHandlers.uploadFile(chatId, filePath, threadId);
             return { id: request.id, success: true, payload: { success: true, ...result } };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { id: request.id, success: false, error: errorMessage };
-          }
-        }
-
-        case 'feishuGetBotInfo': {
-          const feishuHandlers = feishuHandlersContainer?.handlers;
-          if (!feishuHandlers) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'Feishu API handlers not available',
-            };
-          }
-          try {
-            const botInfo = await feishuHandlers.getBotInfo();
-            return { id: request.id, success: true, payload: botInfo };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
