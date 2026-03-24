@@ -19,8 +19,6 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
-  AskUserOptions,
-  AskUserResult,
 } from './tools/types.js';
 
 // Shared utilities
@@ -59,9 +57,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
-
-// Tools - Ask User
-export { ask_user } from './tools/ask-user.js';
 
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
