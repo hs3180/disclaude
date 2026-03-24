@@ -23,6 +23,7 @@ import {
   createInboundAttachment,
   createControlHandler,
   type ControlHandlerContext,
+  buildActionPrompts,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
@@ -450,8 +451,19 @@ async function main(): Promise<void> {
           return feishuChannel.getBotInfo();
         },
         // Issue #1571: Phase 2 — Primary Node owns full card building lifecycle
+        // Issue #1572: Phase 3 — Also register action prompts in InteractiveContextStore
         sendInteractive: async (params) => {
-          return await feishuChannel.buildInteractiveCard(params);
+          const result = await feishuChannel.buildInteractiveCard(params);
+          // Register prompts in InteractiveContextStore for IPC-based lookup
+          if (result.success && result.messageId) {
+            const actionPrompts = buildActionPrompts(params.options, params.context);
+            primaryNode.getInteractiveContextStore().register(
+              result.messageId,
+              params.chatId,
+              actionPrompts
+            );
+          }
+          return result;
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

@@ -57,6 +57,7 @@ import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
+import { InteractiveContextStore } from './interactive-context.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -143,6 +144,9 @@ export class PrimaryNode extends EventEmitter {
   protected ipcServer: UnixSocketIpcServer | null = null;
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
 
+  // Interactive context store (Issue #1572: Phase 3)
+  protected interactiveContextStore: InteractiveContextStore;
+
   // Scheduler (Issue #1377)
   protected scheduler?: Scheduler;
   protected scheduleManager?: ScheduleManager;
@@ -175,6 +179,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize DebugGroupService
     this.debugGroupService = getDebugGroupService();
+
+    // Initialize InteractiveContextStore (Issue #1572: Phase 3)
+    this.interactiveContextStore = new InteractiveContextStore();
 
     logger.info({
       nodeId: this.localNodeId,
@@ -269,18 +276,28 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Create stub interactive message handlers (Primary Node doesn't need interaction prompts)
-    const stubHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: () => undefined,
-      registerActionPrompts: () => {},
-      unregisterActionPrompts: () => false,
-      generateInteractionPrompt: () => undefined,
-      cleanupExpiredContexts: () => 0,
+    // Issue #1572: Phase 3 — Primary Node owns interactive context lifecycle
+    // Use real InteractiveContextStore instead of stubs
+    const store = this.interactiveContextStore;
+    const contextHandlers: InteractiveMessageHandlers = {
+      getActionPrompts: (messageId: string) => store.get(messageId),
+      registerActionPrompts: (messageId: string, _chatId: string, actionPrompts: Record<string, string>) => {
+        store.register(messageId, _chatId, actionPrompts);
+      },
+      unregisterActionPrompts: (messageId: string) => store.unregister(messageId),
+      generateInteractionPrompt: (
+        messageId: string,
+        actionValue: string,
+        actionText?: string,
+        actionType?: string,
+        formData?: Record<string, unknown>
+      ) => store.generatePrompt(messageId, actionValue, actionText, actionType, formData),
+      cleanupExpiredContexts: () => store.cleanupExpired(),
     };
 
     // Create the request handler with Feishu handlers container
     const requestHandler = createInteractiveMessageHandler(
-      stubHandlers,
+      contextHandlers,
       this.feishuHandlersContainer
     );
 
@@ -323,6 +340,15 @@ export class PrimaryNode extends EventEmitter {
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
     logger.info('Feishu API handlers registered for IPC');
+  }
+
+  /**
+   * Get the InteractiveContextStore.
+   *
+   * Issue #1572: Phase 3 — Exposes the context store for card action processing.
+   */
+  getInteractiveContextStore(): InteractiveContextStore {
+    return this.interactiveContextStore;
   }
 
   /**
@@ -377,6 +403,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Stop IPC server (Issue #1042)
     await this.stopIpcServer();
+
+    // Dispose interactive context store (Issue #1572: Phase 3)
+    this.interactiveContextStore.dispose();
 
     this.running = false;
     this.emit('stopped');
