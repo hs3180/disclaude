@@ -58,6 +58,22 @@ export interface MessageCallbacks {
       trigger?: string;
     };
   }) => Promise<boolean>;
+  /**
+   * Resolve action prompt for a card action.
+   * Issue #1572: Looks up the prompt template from InteractiveContextStore.
+   *
+   * @param messageId - Card message ID (from Feishu callback)
+   * @param chatId - Chat ID
+   * @param actionValue - Action value from the button
+   * @param actionText - Action display text (optional)
+   * @returns The generated prompt, or undefined if no template found
+   */
+  resolveActionPrompt?: (
+    messageId: string,
+    chatId: string,
+    actionValue: string,
+    actionText?: string,
+  ) => string | undefined;
 }
 
 /**
@@ -976,7 +992,20 @@ export class MessageHandler {
 
     // Emit card action as a message to the agent
     try {
-      const messageContent = `用户点击了按钮「${buttonText}」`;
+      // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
+      // Falls back to default text if no prompt template is registered.
+      let messageContent: string;
+      if (this.callbacks.resolveActionPrompt) {
+        const promptFromTemplate = this.callbacks.resolveActionPrompt(
+          message_id,
+          chat_id,
+          action.value,
+          action.text,
+        );
+        messageContent = promptFromTemplate || `用户点击了按钮「${buttonText}」`;
+      } else {
+        messageContent = `用户点击了按钮「${buttonText}」`;
+      }
 
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,

@@ -17,7 +17,6 @@ export type {
   SendFileResult,
   MessageSentCallback,
   ActionPromptMap,
-  InteractiveMessageContext,
   SendInteractiveResult,
 } from './tools/types.js';
 
@@ -45,11 +44,6 @@ export { send_file } from './tools/send-file.js';
 export {
   send_interactive_message,
   send_interactive,
-  registerActionPrompts,
-  getActionPrompts,
-  unregisterActionPrompts,
-  generateInteractionPrompt,
-  cleanupExpiredContexts,
   startIpcServer,
   stopIpcServer,
   isIpcServerRunning,

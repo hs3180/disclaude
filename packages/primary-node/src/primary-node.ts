@@ -58,6 +58,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
+import { InteractiveContextStore } from './interactive-context.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -150,6 +151,9 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
 
+  // Interactive context store (Issue #1572: Phase 3 of #1568)
+  protected interactiveContextStore: InteractiveContextStore;
+
   constructor(config: PrimaryNodeOptions = {}) {
     super();
     this.port = config.port || 3001;
@@ -179,6 +183,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize ChannelManager (Issue #1594: unified channel lifecycle)
     this.channelManager = new ChannelManager();
+
+    // Initialize InteractiveContextStore (Issue #1572)
+    this.interactiveContextStore = new InteractiveContextStore();
 
     logger.info({
       nodeId: this.localNodeId,
@@ -234,6 +241,14 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Get the InteractiveContextStore.
+   * Issue #1572: Phase 3 of IPC layer responsibility refactoring.
+   */
+  getInteractiveContextStore(): InteractiveContextStore {
+    return this.interactiveContextStore;
+  }
+
+  /**
    * Register a communication channel.
    * Delegates to ChannelManager (Issue #1594: unified channel lifecycle).
    */
@@ -273,18 +288,29 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Create stub interactive message handlers (Primary Node doesn't need interaction prompts)
-    const stubHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: () => undefined,
-      registerActionPrompts: () => {},
-      unregisterActionPrompts: () => false,
-      generateInteractionPrompt: () => undefined,
-      cleanupExpiredContexts: () => 0,
+    // Issue #1572: Use real InteractiveContextStore handlers (Phase 3 of #1568).
+    // Previously these were stubs; now Primary Node owns the full interactive context lifecycle.
+    const contextStore = this.interactiveContextStore;
+    const realHandlers: InteractiveMessageHandlers = {
+      getActionPrompts: (messageId: string) => contextStore.getActionPrompts(messageId),
+      registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
+        contextStore.register(messageId, chatId, actionPrompts);
+      },
+      unregisterActionPrompts: (messageId: string) => contextStore.unregister(messageId),
+      generateInteractionPrompt: (
+        messageId: string,
+        chatId: string,
+        actionValue: string,
+        actionText?: string,
+        actionType?: string,
+        formData?: Record<string, unknown>
+      ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText, actionType, formData),
+      cleanupExpiredContexts: () => contextStore.cleanupExpired(),
     };
 
     // Create the request handler with Feishu handlers container
     const requestHandler = createInteractiveMessageHandler(
-      stubHandlers,
+      realHandlers,
       this.feishuHandlersContainer
     );
 
