@@ -376,42 +376,6 @@ export class UnixSocketIpcClient {
     }
   }
 
-  /**
-   * Get action prompts for a message.
-   */
-  async getActionPrompts(messageId: string): Promise<Record<string, string> | null> {
-    try {
-      const response = await this.request('getActionPrompts', { messageId });
-      return response.prompts;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Generate interaction prompt via IPC.
-   */
-  async generateInteractionPrompt(
-    messageId: string,
-    actionValue: string,
-    actionText?: string,
-    actionType?: string,
-    formData?: Record<string, unknown>
-  ): Promise<string | null> {
-    try {
-      const response = await this.request('generateInteractionPrompt', {
-        messageId,
-        actionValue,
-        actionText,
-        actionType,
-        formData,
-      });
-      return response.prompt;
-    } catch {
-      return null;
-    }
-  }
-
   // ============================================================================
   // Feishu API Operations (Issue #1035)
   // ============================================================================

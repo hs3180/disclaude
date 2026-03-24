@@ -1,6 +1,9 @@
 /**
  * Tests for IPC module - Unix Socket cross-process communication.
  *
+ * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers from
+ * createInteractiveMessageHandler — IPC only handles parameter passing.
+ *
  * @module ipc/ipc.test
  */
 
@@ -26,38 +29,10 @@ describe('UnixSocketIpcServer', () => {
   let socketPath: string;
   let handler: ReturnType<typeof createInteractiveMessageHandler>;
 
-  const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
-
   beforeEach(() => {
     socketPath = generateSocketPath();
-    mockContexts.clear();
 
-    handler = createInteractiveMessageHandler({
-      getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
-      registerActionPrompts: (messageId, chatId, actionPrompts) => {
-        mockContexts.set(messageId, { chatId, actionPrompts });
-      },
-      unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
-      generateInteractionPrompt: (messageId, actionValue, actionText) => {
-        const context = mockContexts.get(messageId);
-        if (!context) {
-          return undefined;
-        }
-        const template = context.actionPrompts[actionValue];
-        if (!template) {
-          return undefined;
-        }
-        return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
-      },
-      cleanupExpiredContexts: () => {
-        let cleaned = 0;
-        for (const [key] of mockContexts) {
-          mockContexts.delete(key);
-          cleaned++;
-        }
-        return cleaned;
-      },
-    });
+    handler = createInteractiveMessageHandler();
 
     server = new UnixSocketIpcServer(handler, { socketPath });
   });
@@ -108,31 +83,11 @@ describe('UnixSocketIpcClient', () => {
   let server: UnixSocketIpcServer;
   let client: UnixSocketIpcClient;
   let socketPath: string;
-  const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
 
   beforeEach(async () => {
     socketPath = generateSocketPath();
-    mockContexts.clear();
 
-    const handler = createInteractiveMessageHandler({
-      getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
-      registerActionPrompts: (messageId, chatId, actionPrompts) => {
-        mockContexts.set(messageId, { chatId, actionPrompts });
-      },
-      unregisterActionPrompts: (messageId) => mockContexts.delete(messageId),
-      generateInteractionPrompt: (messageId, actionValue, actionText) => {
-        const context = mockContexts.get(messageId);
-        if (!context) {
-          return undefined;
-        }
-        const template = context.actionPrompts[actionValue];
-        if (!template) {
-          return undefined;
-        }
-        return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
-      },
-      cleanupExpiredContexts: () => 0,
-    });
+    const handler = createInteractiveMessageHandler();
 
     server = new UnixSocketIpcServer(handler, { socketPath });
     client = new UnixSocketIpcClient({ socketPath, timeout: 2000 });
@@ -171,36 +126,6 @@ describe('UnixSocketIpcClient', () => {
     await client.connect();
     await client.connect(); // Should not throw
     expect(client.isConnected()).toBe(true);
-  });
-
-  it('should get action prompts', async () => {
-    mockContexts.set('msg-1', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'Confirmed!', cancel: 'Cancelled!' },
-    });
-
-    const prompts = await client.getActionPrompts('msg-1');
-    expect(prompts).toEqual({ confirm: 'Confirmed!', cancel: 'Cancelled!' });
-  });
-
-  it('should return null for non-existent prompts', async () => {
-    const prompts = await client.getActionPrompts('non-existent');
-    expect(prompts).toBeNull();
-  });
-
-  it('should generate interaction prompt', async () => {
-    mockContexts.set('msg-2', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'User clicked {{actionText}}' },
-    });
-
-    const prompt = await client.generateInteractionPrompt('msg-2', 'confirm', 'Confirm');
-    expect(prompt).toBe('User clicked Confirm');
-  });
-
-  it('should return null for non-existent prompt template', async () => {
-    const prompt = await client.generateInteractionPrompt('non-existent', 'confirm');
-    expect(prompt).toBeNull();
   });
 });
 
@@ -258,13 +183,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should return available when server is running', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
+      const handler = createInteractiveMessageHandler();
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
       await server.start();
@@ -298,13 +217,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should return true when connected', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
+      const handler = createInteractiveMessageHandler();
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
       await server.start();
@@ -336,13 +249,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should connect on retry if server becomes available', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
+      const handler = createInteractiveMessageHandler();
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
 
@@ -372,13 +279,7 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
     });
 
     it('should include IPC_TIMEOUT prefix on request timeout', async () => {
-      const handler = createInteractiveMessageHandler({
-        getActionPrompts: () => undefined,
-        registerActionPrompts: () => {},
-        unregisterActionPrompts: () => false,
-        generateInteractionPrompt: () => undefined,
-        cleanupExpiredContexts: () => 0,
-      });
+      const handler = createInteractiveMessageHandler();
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
       await server.start();

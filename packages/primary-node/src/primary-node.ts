@@ -41,7 +41,6 @@ import {
   generateSocketPath,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
-  type InteractiveMessageHandlers,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -276,28 +275,10 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Issue #1572: Phase 3 — Primary Node owns interactive context lifecycle
-    // Use real InteractiveContextStore instead of stubs
-    const store = this.interactiveContextStore;
-    const contextHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: (messageId: string) => store.get(messageId),
-      registerActionPrompts: (messageId: string, _chatId: string, actionPrompts: Record<string, string>) => {
-        store.register(messageId, _chatId, actionPrompts);
-      },
-      unregisterActionPrompts: (messageId: string) => store.unregister(messageId),
-      generateInteractionPrompt: (
-        messageId: string,
-        actionValue: string,
-        actionText?: string,
-        actionType?: string,
-        formData?: Record<string, unknown>
-      ) => store.generatePrompt(messageId, actionValue, actionText, actionType, formData),
-      cleanupExpiredContexts: () => store.cleanupExpired(),
-    };
-
-    // Create the request handler with Feishu handlers container
+    // Issue #1573 (Phase 4): IPC handler only needs FeishuHandlersContainer.
+    // State management (InteractiveContextStore) is used locally for card callbacks,
+    // no longer exposed via IPC protocol.
     const requestHandler = createInteractiveMessageHandler(
-      contextHandlers,
       this.feishuHandlersContainer
     );
 

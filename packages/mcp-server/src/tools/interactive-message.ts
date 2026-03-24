@@ -4,10 +4,9 @@
  * This tool sends interactive cards with pre-defined prompt templates
  * that are automatically converted to user messages when interactions occur.
  *
- * Issue #1572: Phase 3 — State management (interactiveContexts Map and related
- * functions) moved to Primary Node's InteractiveContextStore. This module no
- * longer stores action prompts locally. Prompt registration is delegated to
- * Primary Node via IPC.
+ * Issue #1573 (Phase 4): Removed delegating stubs for state management IPC types.
+ * IPC server now only handles Feishu API operations and sendInteractive.
+ * Action prompts are registered directly by Primary Node in its sendInteractive handler.
  *
  * @module mcp-server/tools/interactive-message
  */
@@ -19,7 +18,6 @@ import {
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-  type InteractiveMessageHandlers,
 } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
@@ -51,8 +49,8 @@ async function sendCardViaIpc(
  * the corresponding prompt template will be used to generate a message that the
  * agent receives as if the user had typed it.
  *
- * Issue #1572: Phase 3 — Action prompts are now registered on Primary Node
- * via IPC, not stored locally in MCP Server.
+ * Issue #1573 (Phase 4): Action prompt registration removed from MCP Server.
+ * Primary Node handles prompt registration in its sendInteractive handler.
  *
  * @example
  * ```typescript
@@ -149,29 +147,8 @@ export async function send_interactive_message(params: {
       };
     }
 
-    // Issue #1572: Phase 3 — Register action prompts on Primary Node via IPC.
-    // If messageId is available, register prompts so Primary Node can look them up
-    // when card actions arrive (no cross-process state dependency).
-    const { messageId } = result;
-    if (messageId) {
-      try {
-        const ipcClient = getIpcClient();
-        await ipcClient.request('registerActionPrompts', {
-          messageId,
-          chatId,
-          actionPrompts,
-        });
-        logger.info(
-          { messageId, chatId, actions: Object.keys(actionPrompts) },
-          'Interactive message sent and prompts registered on Primary Node'
-        );
-      } catch (error) {
-        logger.warn(
-          { err: error, messageId, chatId },
-          'Failed to register action prompts on Primary Node (card was still sent)'
-        );
-      }
-    }
+    // Issue #1573 (Phase 4): Action prompt registration is now handled by
+    // Primary Node's sendInteractive handler. No separate IPC call needed.
 
     // Invoke message sent callback
     const callback = getMessageSentCallback();
@@ -186,7 +163,7 @@ export async function send_interactive_message(params: {
     return {
       success: true,
       message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
-      messageId,
+      messageId: result.messageId,
     };
 
   } catch (error) {
@@ -237,10 +214,8 @@ export function unregisterFeishuHandlers(): void {
  * NOT by MCP Server child processes. MCP Server processes should connect
  * as clients using getIpcClient().
  *
- * Issue #1572: Phase 3 — This IPC server now uses stub handlers for
- * interactive message operations, since the real state management lives
- * in Primary Node's InteractiveContextStore. The stubs delegate to
- * Primary Node via IPC when needed.
+ * Issue #1573 (Phase 4): Simplified — no more InteractiveMessageHandlers stubs.
+ * IPC server only handles Feishu API operations and sendInteractive.
  *
  * @param feishuHandlers - Optional handlers for Feishu API operations.
  *                         When provided, IPC clients can send messages/cards
@@ -261,67 +236,10 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     feishuHandlersContainer.handlers = feishuHandlers;
   }
 
-  // Issue #1572: Phase 3 — Use stub handlers that delegate to Primary Node via IPC.
-  // The real state management now lives in Primary Node's InteractiveContextStore.
-  // These stubs allow the IPC server to still accept these request types without
-  // storing any state locally.
-  const delegatingHandlers: InteractiveMessageHandlers = {
-    getActionPrompts: (messageId: string) => {
-      // Delegate to Primary Node via IPC for backward compatibility
-      try {
-        const ipcClient = getIpcClient();
-        ipcClient.getActionPrompts(messageId).catch(() => {
-          // Silently fail — Primary Node will handle this
-        });
-      } catch {
-        // IPC not available
-      }
-      return undefined;
-    },
-    registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
-      // Delegate to Primary Node via IPC
-      try {
-        const ipcClient = getIpcClient();
-        ipcClient.request('registerActionPrompts', { messageId, chatId, actionPrompts }).catch(() => {
-          // Silently fail — Primary Node will handle this
-        });
-      } catch {
-        // IPC not available
-      }
-    },
-    unregisterActionPrompts: (messageId: string) => {
-      try {
-        const ipcClient = getIpcClient();
-        ipcClient.request('unregisterActionPrompts', { messageId }).catch(() => {});
-      } catch {
-        // IPC not available
-      }
-      return false;
-    },
-    generateInteractionPrompt: (messageId: string, actionValue: string, actionText?: string, actionType?: string) => {
-      try {
-        const ipcClient = getIpcClient();
-        ipcClient.generateInteractionPrompt(messageId, actionValue, actionText, actionType).catch(() => {});
-      } catch {
-        // IPC not available
-      }
-      return undefined;
-    },
-    cleanupExpiredContexts: () => {
-      try {
-        const ipcClient = getIpcClient();
-        ipcClient.request('cleanupExpiredContexts', {}).catch(() => {});
-      } catch {
-        // IPC not available
-      }
-      return 0;
-    },
-  };
-
-  const handler = createInteractiveMessageHandler(
-    delegatingHandlers,
-    feishuHandlersContainer
-  );
+  // Issue #1573 (Phase 4): No more InteractiveMessageHandlers stubs.
+  // IPC server only handles Feishu API operations (sendMessage, sendCard, etc.)
+  // and sendInteractive. State management is handled locally by Primary Node.
+  const handler = createInteractiveMessageHandler(feishuHandlersContainer);
 
   ipcServer = new UnixSocketIpcServer(handler);
 

@@ -1,8 +1,11 @@
 /**
  * IPC module for cross-process communication.
  *
- * This module provides Unix Socket based IPC for sharing state between
- * the MCP process and the main bot process.
+ * This module provides Unix Socket based IPC for parameter passing between
+ * processes (Feishu API ops, sendInteractive).
+ *
+ * Issue #1573 (Phase 4): InteractiveMessageHandlers removed — state management
+ * now lives in Primary Node's InteractiveContextStore.
  *
  * @module ipc
  *
@@ -28,7 +31,6 @@ export {
   resetIpcClient,
   createInteractiveMessageHandler,
   type IpcRequestHandler,
-  type InteractiveMessageHandlers,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
   type IpcAvailabilityStatus,
