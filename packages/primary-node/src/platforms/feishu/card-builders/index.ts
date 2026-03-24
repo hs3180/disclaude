@@ -43,5 +43,12 @@ export {
   type CardConfig,
 } from './interactive-card-builder.js';
 
+export {
+  buildInteractiveCard,
+  buildActionPrompts,
+  type InteractiveOption,
+  type InteractiveMessageParams,
+} from './interactive-message-builder.js';
+
 export { extractCardTextContent } from './card-text-extractor.js';
 
