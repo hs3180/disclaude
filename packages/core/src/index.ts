@@ -297,3 +297,27 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// ACP (Agent Client Protocol) module (Issue #1435)
+// Standardized agent communication via ACP protocol
+export {
+  ClaudeAcpProvider,
+  adaptAcpNotification,
+  adaptStopReason,
+  createStreamPair,
+  AsyncMessageQueue,
+  type IAcpAgent,
+  type AcpSessionInfo,
+  type AcpProviderConfig,
+  type AcpInitializeResult,
+  type AcpNewSessionResult,
+  type AcpSessionListItem,
+  type AcpUsageStats,
+  type AcpSessionNotification,
+  type AcpSessionUpdate,
+  type AcpPromptResponse,
+  type AcpStopReason,
+  type AcpToolCall,
+  type AcpToolCallUpdate,
+  type AcpContentBlock,
+} from './acp/index.js';
