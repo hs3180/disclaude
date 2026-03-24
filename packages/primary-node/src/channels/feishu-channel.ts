@@ -496,6 +496,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the underlying Feishu API client.
+   *
+   * Used by services that need direct Feishu API access
+   * (e.g., session end trigger for group dissolution).
+   *
+   * @returns The lark.Client instance, or undefined if channel is not started
+   */
+  getClient(): lark.Client | undefined {
+    return this.client;
+  }
+
+  /**
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {

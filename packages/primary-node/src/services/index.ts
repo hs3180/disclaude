@@ -12,3 +12,9 @@ export {
   resetDebugGroupService,
   type DebugGroupInfo,
 } from './debug-group-service.js';
+
+export {
+  detectTrigger,
+  dissolveGroupChat,
+  type TriggerDetectionResult,
+} from './session-end-trigger.js';

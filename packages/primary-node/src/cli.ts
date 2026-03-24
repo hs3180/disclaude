@@ -30,6 +30,7 @@ import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js'
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
+import { detectTrigger, dissolveGroupChat } from './services/session-end-trigger.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -291,12 +292,37 @@ async function main(): Promise<void> {
     const createFeishuCallbacks = (): PilotCallbacks => ({
       sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
         if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
-        await feishuChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text,
-          threadId: parentMessageId,
-        });
+
+        // Issue #1229: Detect session-end trigger phrases in text messages
+        const detection = detectTrigger(text);
+
+        if (detection.triggered) {
+          // Send the clean text (with trigger stripped)
+          if (detection.cleanText) {
+            await feishuChannel.sendMessage({
+              chatId,
+              type: 'text',
+              text: detection.cleanText,
+              threadId: parentMessageId,
+            });
+          }
+
+          // Dissolve the group chat after sending the message
+          const client = feishuChannel.getClient();
+          if (client) {
+            await dissolveGroupChat(client, chatId, detection.reason);
+          } else {
+            logger.warn({ chatId }, 'Cannot dissolve group: Feishu client not available');
+          }
+        } else {
+          // Normal message sending (no trigger detected)
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'text',
+            text,
+            threadId: parentMessageId,
+          });
+        }
       },
       sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
         if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
