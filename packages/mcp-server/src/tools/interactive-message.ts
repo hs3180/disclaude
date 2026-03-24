@@ -35,7 +35,7 @@ async function sendCardViaIpc(
   description?: string
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.feishuSendCard(chatId, card, threadId, description);
+  return await ipcClient.sendCard(chatId, card, threadId, description);
 }
 
 /**

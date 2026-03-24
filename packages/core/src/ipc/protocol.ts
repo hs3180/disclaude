@@ -19,10 +19,10 @@ export type IpcRequestType =
   | 'unregisterActionPrompts'
   | 'generateInteractionPrompt'
   | 'cleanupExpiredContexts'
-  // Feishu API operations (Issue #1035)
-  | 'feishuSendMessage'
-  | 'feishuSendCard'
-  | 'feishuUploadFile'
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  | 'sendMessage'
+  | 'sendCard'
+  | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive';
 
@@ -46,19 +46,19 @@ export interface IpcRequestPayloads {
     formData?: Record<string, unknown>;
   };
   cleanupExpiredContexts: Record<string, never>;
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: {
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  sendMessage: {
     chatId: string;
     text: string;
     threadId?: string;
   };
-  feishuSendCard: {
+  sendCard: {
     chatId: string;
     card: Record<string, unknown>;
     threadId?: string;
     description?: string;
   };
-  feishuUploadFile: {
+  uploadFile: {
     chatId: string;
     filePath: string;
     threadId?: string;
@@ -89,10 +89,10 @@ export interface IpcResponsePayloads {
   unregisterActionPrompts: { success: boolean };
   generateInteractionPrompt: { prompt: string | null };
   cleanupExpiredContexts: { cleaned: number };
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: { success: boolean; messageId?: string };
-  feishuSendCard: { success: boolean; messageId?: string };
-  feishuUploadFile: {
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  sendMessage: { success: boolean; messageId?: string };
+  sendCard: { success: boolean; messageId?: string };
+  uploadFile: {
     success: boolean;
     fileKey?: string;
     fileType?: string;
