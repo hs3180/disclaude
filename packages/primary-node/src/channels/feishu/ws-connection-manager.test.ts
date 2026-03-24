@@ -55,6 +55,8 @@ const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
   CUSTOM_PING_INTERVAL_MS: 500,
+  WS_INSTANCE_POLL_TIMEOUT_MS: 2000,
+  WS_INSTANCE_POLL_INTERVAL_MS: 50,
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -911,6 +913,168 @@ describe('WsConnectionManager', () => {
       await manager.stop();
       await manager.stop(); // Should not throw
       expect(manager.state).toBe('stopped');
+    });
+  });
+
+  describe('WS instance polling (Issue #1504)', () => {
+    it('should obtain WS instance via polling when not immediately available', async () => {
+      const mockWs = new MockWsInstance();
+      // Initially returns null, then returns instance after 100ms
+      let callCount = 0;
+      const delayedClient = createMockWSClient(false);
+      delayedClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 3) return null; // null for first 2 calls (~100ms)
+        return mockWs; // available from 3rd call onwards
+      });
+
+      manager = createTestManager({
+        wsClient: delayedClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Initially in fallback mode (no interception yet)
+      expect(manager.getMetrics().hasWsInterception).toBe(false);
+
+      // Advance past the polling interval to let instance be found
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Should have intercepted the WS instance via polling
+      expect(manager.getMetrics().hasWsInterception).toBe(true);
+
+      // Verify Pong detection works with the intercepted instance
+      const pongEvents: number[] = [];
+      manager.on('pong', (rttMs) => pongEvents.push(rttMs));
+      mockWs.emit('message', PONG_BUFFER);
+      expect(pongEvents.length).toBe(1);
+    });
+
+    it('should stay in fallback mode when WS instance never becomes available', async () => {
+      const alwaysNullClient = createMockWSClient(false);
+      alwaysNullClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: alwaysNullClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance past the poll timeout (2000ms)
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS + 500);
+
+      // Should still be in fallback mode
+      expect(manager.getMetrics().hasWsInterception).toBe(false);
+      // Should still be connected (fallback mode is acceptable)
+      expect(manager.state).toBe('connected');
+    });
+
+    it('should not crash when stopped during polling', async () => {
+      const alwaysNullClient = createMockWSClient(false);
+      alwaysNullClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: alwaysNullClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance a bit into polling
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Stop while polling is active — should not throw
+      await manager.stop();
+      expect(manager.state).toBe('stopped');
+
+      // Advance more time — poll timer should have been cleared, no callbacks
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(manager.state).toBe('stopped');
+    });
+
+    it('should pass pre-obtained instance directly to avoid TOCTOU race', async () => {
+      const mockWs = new MockWsInstance();
+      let callCount = 0;
+      const toctouClient = createMockWSClient(false);
+      // Simulate TOCTOU: instance appears then disappears from getWSInstance()
+      toctouClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 3) return mockWs; // available once
+        return null; // disappears after that
+      });
+
+      manager = createTestManager({
+        wsClient: toctouClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance past the poll that finds the instance
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Should have intercepted successfully despite instance disappearing
+      // from getWSInstance() (preObtainedInstance bypasses the race)
+      expect(manager.getMetrics().hasWsInterception).toBe(true);
+    });
+
+    it('should return quickly from start() even when polling is needed', async () => {
+      const alwaysNullClient = createMockWSClient(false);
+      alwaysNullClient.wsConfig.getWSInstance = vi.fn().mockReturnValue(null);
+
+      manager = createTestManager({
+        wsClient: alwaysNullClient,
+        maxAttempts: 0,
+      });
+
+      // start() should return quickly (non-blocking), not wait for polling
+      const startPromise = manager.start(mockEventDispatcher as never);
+
+      // Advance a tiny amount — start() should have resolved already
+      await vi.advanceTimersByTimeAsync(10);
+      // The promise should already be resolved (start is non-blocking)
+      // We can't easily test timing with fake timers, but verify state
+      expect(manager.state).toBe('connected');
+
+      await startPromise;
+    });
+
+    it('should continue polling when interception fails transiently', async () => {
+      const mockWs = new MockWsInstance();
+      let callCount = 0;
+      const flakyClient = createMockWSClient(false);
+      // Instance available from call 2, but interception fails once
+      flakyClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount >= 2) return mockWs;
+        return null;
+      });
+
+      // Temporarily make on() throw on first call to simulate transient failure
+      const originalOn = mockWs.on.bind(mockWs);
+      let onCallCount = 0;
+      mockWs.on = vi.fn().mockImplementation((event: string, fn: (...args: unknown[]) => void) => {
+        onCallCount++;
+        if (onCallCount === 1) {
+          throw new Error('Transient interception failure');
+        }
+        return originalOn(event, fn);
+      });
+
+      manager = createTestManager({
+        wsClient: flakyClient,
+        maxAttempts: 0,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Advance past the first failed interception and the retry
+      await vi.advanceTimersByTimeAsync(300);
+
+      // Should have eventually intercepted successfully (retry after transient failure)
+      expect(manager.getMetrics().hasWsInterception).toBe(true);
     });
   });
 });
