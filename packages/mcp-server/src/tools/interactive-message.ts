@@ -4,6 +4,11 @@
  * This tool sends interactive cards with pre-defined prompt templates
  * that are automatically converted to user messages when interactions occur.
  *
+ * Issue #1572: Interactive context management (action prompt registration,
+ * lookup, cleanup) has been moved to Primary Node's InteractiveContextStore.
+ * MCP Server is now a pure client — it sends cards via IPC and delegates
+ * prompt management to Primary Node.
+ *
  * @module mcp-server/tools/interactive-message
  */
 
@@ -14,12 +19,13 @@ import {
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  type InteractiveMessageHandlers,
 } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { getMessageSentCallback } from './callback-manager.js';
-import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
+import type { SendInteractiveResult, ActionPromptMap } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
@@ -39,135 +45,14 @@ async function sendCardViaIpc(
 }
 
 /**
- * Store for interactive message contexts.
- * Maps message ID to its action prompts.
- */
-const interactiveContexts = new Map<string, InteractiveMessageContext>();
-
-/**
- * Register action prompts for a message.
- * Called after successfully sending an interactive message.
- */
-export function registerActionPrompts(
-  messageId: string,
-  chatId: string,
-  actionPrompts: ActionPromptMap
-): void {
-  interactiveContexts.set(messageId, {
-    messageId,
-    chatId,
-    actionPrompts,
-    createdAt: Date.now(),
-  });
-  logger.debug({ messageId, chatId, actions: Object.keys(actionPrompts) }, 'Action prompts registered');
-}
-
-/**
- * Get action prompts for a message.
- * Returns undefined if no prompts are registered.
- */
-export function getActionPrompts(messageId: string): ActionPromptMap | undefined {
-  const context = interactiveContexts.get(messageId);
-  return context?.actionPrompts;
-}
-
-/**
- * Remove action prompts for a message.
- */
-export function unregisterActionPrompts(messageId: string): boolean {
-  const removed = interactiveContexts.delete(messageId);
-  if (removed) {
-    logger.debug({ messageId }, 'Action prompts unregistered');
-  }
-  return removed;
-}
-
-/**
- * Generate a prompt from an interaction using the registered template.
- *
- * @param messageId - The card message ID
- * @param actionValue - The action value from the button/menu
- * @param actionText - The display text of the action (optional)
- * @param actionType - The type of action (button, select_static, etc.)
- * @param formData - Form data if the action includes form inputs
- * @returns The generated prompt or undefined if no template found
- */
-export function generateInteractionPrompt(
-  messageId: string,
-  actionValue: string,
-  actionText?: string,
-  actionType?: string,
-  formData?: Record<string, unknown>
-): string | undefined {
-  const prompts = getActionPrompts(messageId);
-  if (!prompts) {
-    return undefined;
-  }
-
-  const template = prompts[actionValue];
-  if (!template) {
-    logger.debug(
-      { messageId, actionValue, availableActions: Object.keys(prompts) },
-      'No prompt template found for action'
-    );
-    return undefined;
-  }
-
-  // Replace placeholders in the template
-  let prompt = template;
-
-  // Replace {{actionText}} placeholder
-  if (actionText) {
-    prompt = prompt.replace(/\{\{actionText\}\}/g, actionText);
-  }
-
-  // Replace {{actionValue}} placeholder
-  prompt = prompt.replace(/\{\{actionValue\}\}/g, actionValue);
-
-  // Replace {{actionType}} placeholder
-  if (actionType) {
-    prompt = prompt.replace(/\{\{actionType\}\}/g, actionType);
-  }
-
-  // Replace form data placeholders
-  if (formData) {
-    for (const [key, value] of Object.entries(formData)) {
-      const placeholder = new RegExp(`\\{\\{form\\.${key}\\}\\}`, 'g');
-      prompt = prompt.replace(placeholder, String(value));
-    }
-  }
-
-  return prompt;
-}
-
-/**
- * Cleanup expired interactive contexts (older than 24 hours).
- */
-export function cleanupExpiredContexts(): number {
-  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  const now = Date.now();
-  let cleaned = 0;
-
-  for (const [messageId, context] of interactiveContexts) {
-    if (now - context.createdAt > maxAge) {
-      interactiveContexts.delete(messageId);
-      cleaned++;
-    }
-  }
-
-  if (cleaned > 0) {
-    logger.debug({ count: cleaned }, 'Cleaned up expired interactive contexts');
-  }
-
-  return cleaned;
-}
-
-/**
  * Send an interactive message with pre-defined action prompts.
  *
  * When the user interacts with the card (clicks a button, selects from menu, etc.),
  * the corresponding prompt template will be used to generate a message that the
  * agent receives as if the user had typed it.
+ *
+ * Note: Action prompt management is handled by Primary Node's InteractiveContextStore
+ * (Issue #1572). The MCP Server no longer manages interactive contexts locally.
  *
  * @example
  * ```typescript
@@ -263,16 +148,12 @@ export async function send_interactive_message(params: {
         message: errorMsg,
       };
     }
-    const { messageId } = result;
 
-    // Register action prompts if message was sent successfully
-    if (messageId) {
-      registerActionPrompts(messageId, chatId, actionPrompts);
-      logger.info(
-        { messageId, chatId, actions: Object.keys(actionPrompts) },
-        'Interactive message sent and prompts registered'
-      );
-    }
+    // Issue #1572: Action prompt registration is now handled by Primary Node's
+    // InteractiveContextStore. MCP Server no longer manages contexts locally.
+    // The IPC server in Primary Node registers prompts automatically when
+    // sendInteractive is used. For feishuSendCard, prompt registration is not
+    // supported (no messageId returned from Feishu API).
 
     // Invoke message sent callback
     const callback = getMessageSentCallback();
@@ -287,7 +168,6 @@ export async function send_interactive_message(params: {
     return {
       success: true,
       message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
-      messageId,
     };
 
   } catch (error) {
@@ -338,12 +218,9 @@ export function unregisterFeishuHandlers(): void {
  * NOT by MCP Server child processes. MCP Server processes should connect
  * as clients using getIpcClient().
  *
- * This allows other processes (e.g., MCP Server child processes) to query
- * the interactive contexts stored in the Primary/Worker Node process.
- *
- * Issue #1116: Accept feishuHandlers to enable IPC-based Feishu API calls
- * in Primary Node standalone mode.
- * Issue #1120: Use FeishuHandlersContainer for dynamic handler registration.
+ * Issue #1572: Interactive context handlers are now no-op stubs since
+ * context management has moved to Primary Node's InteractiveContextStore.
+ * The IPC server is only used for Feishu API operations (send, card, file).
  *
  * @param feishuHandlers - Optional handlers for Feishu API operations.
  *                         When provided, IPC clients can send messages/cards
@@ -364,13 +241,21 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     feishuHandlersContainer.handlers = feishuHandlers;
   }
 
-  const handler = createInteractiveMessageHandler({
-    getActionPrompts,
-    registerActionPrompts,
-    unregisterActionPrompts,
-    generateInteractionPrompt,
-    cleanupExpiredContexts,
-  }, feishuHandlersContainer);
+  // Issue #1572: Use no-op stubs for interactive context handlers.
+  // Interactive context management has moved to Primary Node's InteractiveContextStore.
+  // These stubs exist for backward compatibility but do nothing.
+  const stubHandlers: InteractiveMessageHandlers = {
+    getActionPrompts: () => undefined,
+    registerActionPrompts: () => {},
+    unregisterActionPrompts: () => false,
+    generateInteractionPrompt: () => undefined,
+    cleanupExpiredContexts: () => 0,
+  };
+
+  const handler = createInteractiveMessageHandler(
+    stubHandlers,
+    feishuHandlersContainer
+  );
 
   ipcServer = new UnixSocketIpcServer(handler);
 
