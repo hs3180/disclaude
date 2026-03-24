@@ -235,35 +235,6 @@ export {
   type TaskResult,
 } from './queue/index.js';
 
-// Auth module (Issue #1041)
-export type {
-  OAuthProviderConfig,
-  OAuthToken,
-  PKCECodes,
-  OAuthState,
-  AuthUrlResult,
-  CallbackResult,
-  TokenCheckResult,
-  ApiRequestConfig,
-  ApiResponse,
-  AuthConfig,
-} from './auth/index.js';
-
-// Auth implementations (Issue #1041 - migrated from primary-node)
-export {
-  encrypt,
-  decrypt,
-  generateCodeVerifier,
-  generateCodeChallenge,
-  generateState,
-  isEncrypted,
-  getEncryptionKey,
-  TokenStore,
-  getTokenStore,
-  OAuthManager,
-  getOAuthManager,
-} from './auth/index.js';
-
 // Messaging module (Issue #515 Phase 2 - migrated from primary-node)
 export type {
   TextContent,
