@@ -79,6 +79,55 @@ export type {
   ProviderConstructor,
 } from './sdk/index.js';
 
+// ACP (Agent Client Protocol) module (Issue #1435)
+// ACP-based agent abstraction layer
+export type {
+  // Core ACP types (with Acp prefix to avoid conflicts)
+  ProtocolVersion as AcpProtocolVersion,
+  Implementation as AcpImplementation,
+  AcpError,
+  ErrorCode as AcpErrorCode,
+  // Session types
+  SessionId as AcpSessionId,
+  SessionInfo as AcpSessionInfo,
+  SessionCapabilities as AcpSessionCapabilities,
+  // Prompt types
+  PromptRequest as AcpPromptRequest,
+  PromptResponse as AcpPromptResponse,
+  StopReason as AcpStopReason,
+  Content as AcpContent,
+  ContentBlock as AcpContentBlock,
+  // Session notification types
+  SessionUpdate as AcpSessionUpdate,
+  SessionNotification as AcpSessionNotification,
+  Usage as AcpUsage,
+  UsageUpdate as AcpUsageUpdate,
+  // Tool call types
+  ToolCall as AcpToolCall,
+  ToolCallContent as AcpToolCallContent,
+  ToolCallLocation as AcpToolCallLocation,
+  ToolCallStatus as AcpToolCallStatus,
+  ToolCallUpdate as AcpToolCallUpdate,
+  // Initialize types
+  InitializeRequest as AcpInitializeRequest,
+  InitializeResponse as AcpInitializeResponse,
+  AgentCapabilities as AcpAgentCapabilities,
+  ClientCapabilities as AcpClientCapabilities,
+  // Model types
+  ModelId as AcpModelId,
+  ModelInfo as AcpModelInfo,
+  // Interfaces
+  IAcpAgent,
+  AcpAgentFactory,
+  AcpAgentConstructor,
+  // disclaude ACP extensions
+  AcpAgentInfo,
+  AcpProviderType,
+  AcpSessionConfig,
+  AcpConnectionConfig,
+  AcpStreamEvent,
+} from './acp/index.js';
+
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces
 export {
