@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
+  CreateChatResult,
 } from './types.js';
 
 // Shared utilities
@@ -31,6 +32,9 @@ export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
+
+// Create Chat (Issue #631)
+export { create_chat } from './create-chat.js';
 
 // Interactive Message
 export {

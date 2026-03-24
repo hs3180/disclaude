@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  create_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -100,6 +101,18 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  // Issue #631: Atomic create_chat capability
+  create_chat: {
+    description: 'Create a new group chat. Returns chatId for subsequent send_text/send_interactive calls.',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Chat topic/name (auto-generated if not provided)' },
+        members: { type: 'array', items: { type: 'string' }, description: 'Initial member open_ids' },
+      },
+    },
+    handler: create_chat,
   },
 };
 

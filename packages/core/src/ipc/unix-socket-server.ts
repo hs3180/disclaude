@@ -74,6 +74,11 @@ export interface FeishuApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  // Chat management (Issue #631)
+  createChat: (
+    topic?: string,
+    members?: string[]
+  ) => Promise<{ chatId?: string; chatName?: string }>;
 }
 
 /**
@@ -238,6 +243,27 @@ export function createInteractiveMessageHandler(
               );
             }
 
+            return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+
+        // Chat management (Issue #631)
+        }
+        case 'createChat': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { topic, members } =
+            request.payload as IpcRequestPayloads['createChat'];
+          try {
+            const result = await feishuHandlers.createChat(topic, members);
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

@@ -35,7 +35,8 @@ import {
   buildInteractiveCard,
   buildActionPrompts,
   validateInteractiveParams,
-} from './platforms/feishu/card-builders/index.js';
+} from "./platforms/feishu/card-builders/index.js";
+import { createFeishuClient, getGroupService } from './platforms/feishu/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
@@ -494,6 +495,17 @@ async function main(): Promise<void> {
           );
 
           return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
+        },
+        createChat: async (topic?: string, members?: string[]) => {
+          if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
+          const client = createFeishuClient(
+            Config.FEISHU_APP_ID,
+            Config.FEISHU_APP_SECRET
+          );
+          const groupService = getGroupService();
+          const groupInfo = await groupService.createGroup(client, { topic, members });
+          logger.info({ chatId: groupInfo.chatId, topic: groupInfo.name }, 'createChat: group created');
+          return { chatId: groupInfo.chatId, chatName: groupInfo.name };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

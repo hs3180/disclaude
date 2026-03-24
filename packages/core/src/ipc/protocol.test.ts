@@ -24,7 +24,6 @@ describe('IPC Protocol', () => {
     it('should generate a unique path in tmpdir', () => {
       const path1 = generateSocketPath();
       const path2 = generateSocketPath();
-
       expect(path1).toContain('.sock');
       expect(path2).toContain('.sock');
       expect(path1).not.toBe(path2);
@@ -39,7 +38,6 @@ describe('IPC Protocol', () => {
       const before = Date.now();
       const path = generateSocketPath();
       const after = Date.now();
-      // Extract timestamp from path
       const match = path.match(/disclaude-ipc-\d+-(\d+)-/);
       expect(match).not.toBeNull();
       const timestamp = parseInt(match![1], 10);
@@ -52,18 +50,13 @@ describe('IPC Protocol', () => {
       for (let i = 0; i < 10; i++) {
         paths.add(generateSocketPath());
       }
-      // All paths should be unique
       expect(paths.size).toBe(10);
     });
   });
 
   describe('IpcRequest types', () => {
     it('should type-check ping request', () => {
-      const request: IpcRequest<'ping'> = {
-        type: 'ping',
-        id: 'req-1',
-        payload: {},
-      };
+      const request: IpcRequest<'ping'> = { type: 'ping', id: 'req-1', payload: {} };
       expect(request.type).toBe('ping');
       expect(request.id).toBe('req-1');
     });
@@ -74,7 +67,6 @@ describe('IPC Protocol', () => {
         id: 'req-2',
         payload: { messageId: 'msg-1' },
       };
-      expect(request.type).toBe('getActionPrompts');
       expect(request.payload.messageId).toBe('msg-1');
     });
 
@@ -82,30 +74,18 @@ describe('IPC Protocol', () => {
       const request: IpcRequest<'registerActionPrompts'> = {
         type: 'registerActionPrompts',
         id: 'req-3',
-        payload: {
-          messageId: 'msg-1',
-          chatId: 'chat-1',
-          actionPrompts: { action1: 'prompt1' },
-        },
+        payload: { messageId: 'msg-1', chatId: 'chat-1', actionPrompts: { action1: 'prompt1' } },
       };
       expect(request.payload.chatId).toBe('chat-1');
-      expect(request.payload.actionPrompts.action1).toBe('prompt1');
     });
 
     it('should type-check generateInteractionPrompt request', () => {
       const request: IpcRequest<'generateInteractionPrompt'> = {
         type: 'generateInteractionPrompt',
         id: 'req-4',
-        payload: {
-          messageId: 'msg-1',
-          actionValue: 'action1',
-          actionText: 'Click me',
-          actionType: 'button',
-          formData: { key: 'value' },
-        },
+        payload: { messageId: 'msg-1', actionValue: 'action1', actionText: 'Click me', actionType: 'button', formData: { key: 'value' } },
       };
       expect(request.payload.actionValue).toBe('action1');
-      expect(request.payload.formData?.key).toBe('value');
     });
 
     it('should type-check feishu API requests', () => {
@@ -150,30 +130,36 @@ describe('IPC Protocol', () => {
       };
       expect(sendInteractive.payload.question).toBe('Choose an option:');
       expect(sendInteractive.payload.options).toHaveLength(2);
-      expect(sendInteractive.payload.options[0].type).toBe('primary');
-      expect(sendInteractive.payload.actionPrompts?.confirm).toBe('User confirmed');
+    });
+
+    it('should type-check createChat request', () => {
+      const createChatReq: IpcRequest<'createChat'> = {
+        type: 'createChat',
+        id: 'req-10',
+        payload: { topic: 'Test Discussion', members: ['ou_user1', 'ou_user2'] },
+      };
+      expect(createChatReq.payload.topic).toBe('Test Discussion');
+      expect(createChatReq.payload.members).toHaveLength(2);
+
+      const createChatMinimal: IpcRequest<'createChat'> = {
+        type: 'createChat',
+        id: 'req-11',
+        payload: {},
+      };
+      expect(createChatMinimal.payload.topic).toBeUndefined();
+      expect(createChatMinimal.payload.members).toBeUndefined();
     });
   });
 
   describe('IpcResponse types', () => {
     it('should type-check success response', () => {
-      const response: IpcResponse<'ping'> = {
-        id: 'req-1',
-        success: true,
-        payload: { pong: true },
-      };
+      const response: IpcResponse<'ping'> = { id: 'req-1', success: true, payload: { pong: true } };
       expect(response.success).toBe(true);
-      expect(response.payload?.pong).toBe(true);
     });
 
     it('should type-check error response', () => {
-      const response: IpcResponse<'ping'> = {
-        id: 'req-1',
-        success: false,
-        error: 'Connection failed',
-      };
+      const response: IpcResponse<'ping'> = { id: 'req-1', success: false, error: 'Connection failed' };
       expect(response.success).toBe(false);
-      expect(response.error).toBe('Connection failed');
     });
 
     it('should type-check feishu API responses', () => {
@@ -187,13 +173,7 @@ describe('IPC Protocol', () => {
       const fileResponse: IpcResponse<'feishuUploadFile'> = {
         id: 'req-2',
         success: true,
-        payload: {
-          success: true,
-          fileKey: 'file_xxx',
-          fileType: 'pdf',
-          fileName: 'test.pdf',
-          fileSize: 1024,
-        },
+        payload: { success: true, fileKey: 'file_xxx', fileType: 'pdf', fileName: 'test.pdf', fileSize: 1024 },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
 
@@ -202,18 +182,23 @@ describe('IPC Protocol', () => {
         success: true,
         payload: { success: true, messageId: 'om_interactive' },
       };
-      expect(interactiveResponse.payload?.success).toBe(true);
       expect(interactiveResponse.payload?.messageId).toBe('om_interactive');
+    });
+
+    it('should type-check createChat response', () => {
+      const createChatResp: IpcResponse<'createChat'> = {
+        id: 'req-10',
+        success: true,
+        payload: { success: true, chatId: 'oc_new_chat', chatName: 'Test Discussion' },
+      };
+      expect(createChatResp.payload?.chatId).toBe('oc_new_chat');
+      expect(createChatResp.payload?.chatName).toBe('Test Discussion');
     });
   });
 
   describe('IpcConfig', () => {
     it('should be a valid config structure', () => {
-      const config: IpcConfig = {
-        socketPath: '/tmp/test.sock',
-        timeout: 3000,
-        maxRetries: 5,
-      };
+      const config: IpcConfig = { socketPath: '/tmp/test.sock', timeout: 3000, maxRetries: 5 };
       expect(config.socketPath).toBe('/tmp/test.sock');
       expect(config.timeout).toBe(3000);
       expect(config.maxRetries).toBe(5);

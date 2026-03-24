@@ -523,6 +523,34 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Create a new chat group via IPC.
+   * Issue #631: Atomic create_chat capability for non-blocking discussions.
+   *
+   * @param topic - Optional chat topic/name
+   * @param members - Optional initial member open_ids
+   */
+  async createChat(
+    topic?: string,
+    members?: string[]
+  ): Promise<{ success: boolean; chatId?: string; chatName?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('createChat', { topic, members });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, topic }, 'createChat failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

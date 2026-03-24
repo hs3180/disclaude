@@ -24,7 +24,9 @@ export type IpcRequestType =
   | 'feishuSendCard'
   | 'feishuUploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
-  | 'sendInteractive';
+  | 'sendInteractive'
+  // Chat management (Issue #631: create_chat as atomic MCP tool)
+  | 'createChat';
 
 /**
  * IPC request payload types.
@@ -77,6 +79,11 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // Chat management (Issue #631: create_chat as atomic MCP tool)
+  createChat: {
+    topic?: string;
+    members?: string[];
+  };
 }
 
 /**
@@ -103,6 +110,12 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // Chat management (Issue #631)
+  createChat: {
+    success: boolean;
+    chatId?: string;
+    chatName?: string;
   };
 }
 

@@ -126,6 +126,8 @@ describe('UnixSocketIpcClient', () => {
           // Mock handler that returns a messageId
           return { messageId: `om_${params.options[0]?.value}` };
         },
+        // Issue #631
+        createChat: async () => ({ chatId: 'oc_test', chatName: 'Test Chat' }),
       },
     };
 

@@ -66,3 +66,15 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for create_chat tool.
+ * Issue #631: Atomic chat creation capability.
+ */
+export interface CreateChatResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  chatName?: string;
+  error?: string;
+}
+
