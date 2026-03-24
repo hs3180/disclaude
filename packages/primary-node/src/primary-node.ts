@@ -58,6 +58,7 @@ import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
+import { InteractiveContextStore } from './interactive-context.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -273,18 +274,21 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Create stub interactive message handlers (Primary Node doesn't need interaction prompts)
-    const stubHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: () => undefined,
-      registerActionPrompts: () => {},
-      unregisterActionPrompts: () => false,
-      generateInteractionPrompt: () => undefined,
-      cleanupExpiredContexts: () => 0,
+    // Create InteractiveContextStore-backed handlers (Issue #1568 Phase 3)
+    const contextStore = new InteractiveContextStore();
+    const contextHandlers: InteractiveMessageHandlers = {
+      getActionPrompts: (messageId) => contextStore.getByMessageId(messageId),
+      registerActionPrompts: (messageId, chatId, actionPrompts) =>
+        contextStore.register(messageId, chatId, actionPrompts),
+      unregisterActionPrompts: (messageId) => contextStore.unregister(messageId),
+      generateInteractionPrompt: (messageId, actionValue, actionText, actionType) =>
+        contextStore.generatePrompt(messageId, actionValue, actionText, actionType),
+      cleanupExpiredContexts: () => contextStore.cleanupExpired(),
     };
 
     // Create the request handler with Feishu handlers container
     const requestHandler = createInteractiveMessageHandler(
-      stubHandlers,
+      contextHandlers,
       this.feishuHandlersContainer
     );
 

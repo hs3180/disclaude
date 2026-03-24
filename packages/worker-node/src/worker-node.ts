@@ -564,19 +564,10 @@ export class WorkerNode {
           // Get the agent for this chatId and process the card action
           const ctx = this.activeFeedbackChannels.get(chatId);
           if (ctx) {
-            // Generate prompt from template if available
-            const promptFromTemplate = this.deps.generateInteractionPrompt(
-              cardMessageId,
-              actionValue,
-              actionText,
-              actionType
-            );
-
-            // Use the template prompt if available, otherwise use default message
-            const messageContent = promptFromTemplate || (() => {
-              const buttonText = actionText || actionValue;
-              return `User clicked '${buttonText}' button`;
-            })();
+            // Prompt resolution is now handled by Primary Node's InteractiveContextStore.
+            // Use the default message directly.
+            const buttonText = actionText || actionValue;
+            const messageContent = `User clicked '${buttonText}' button`;
 
             // Get the agent and process the card action as a message
             // Create callbacks for this specific chatId

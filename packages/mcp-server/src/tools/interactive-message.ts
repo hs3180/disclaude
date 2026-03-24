@@ -14,12 +14,13 @@ import {
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  type InteractiveMessageHandlers,
 } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { getMessageSentCallback } from './callback-manager.js';
-import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
+import type { SendInteractiveResult, ActionPromptMap } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
@@ -36,130 +37,6 @@ async function sendCardViaIpc(
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
   return await ipcClient.feishuSendCard(chatId, card, threadId, description);
-}
-
-/**
- * Store for interactive message contexts.
- * Maps message ID to its action prompts.
- */
-const interactiveContexts = new Map<string, InteractiveMessageContext>();
-
-/**
- * Register action prompts for a message.
- * Called after successfully sending an interactive message.
- */
-export function registerActionPrompts(
-  messageId: string,
-  chatId: string,
-  actionPrompts: ActionPromptMap
-): void {
-  interactiveContexts.set(messageId, {
-    messageId,
-    chatId,
-    actionPrompts,
-    createdAt: Date.now(),
-  });
-  logger.debug({ messageId, chatId, actions: Object.keys(actionPrompts) }, 'Action prompts registered');
-}
-
-/**
- * Get action prompts for a message.
- * Returns undefined if no prompts are registered.
- */
-export function getActionPrompts(messageId: string): ActionPromptMap | undefined {
-  const context = interactiveContexts.get(messageId);
-  return context?.actionPrompts;
-}
-
-/**
- * Remove action prompts for a message.
- */
-export function unregisterActionPrompts(messageId: string): boolean {
-  const removed = interactiveContexts.delete(messageId);
-  if (removed) {
-    logger.debug({ messageId }, 'Action prompts unregistered');
-  }
-  return removed;
-}
-
-/**
- * Generate a prompt from an interaction using the registered template.
- *
- * @param messageId - The card message ID
- * @param actionValue - The action value from the button/menu
- * @param actionText - The display text of the action (optional)
- * @param actionType - The type of action (button, select_static, etc.)
- * @param formData - Form data if the action includes form inputs
- * @returns The generated prompt or undefined if no template found
- */
-export function generateInteractionPrompt(
-  messageId: string,
-  actionValue: string,
-  actionText?: string,
-  actionType?: string,
-  formData?: Record<string, unknown>
-): string | undefined {
-  const prompts = getActionPrompts(messageId);
-  if (!prompts) {
-    return undefined;
-  }
-
-  const template = prompts[actionValue];
-  if (!template) {
-    logger.debug(
-      { messageId, actionValue, availableActions: Object.keys(prompts) },
-      'No prompt template found for action'
-    );
-    return undefined;
-  }
-
-  // Replace placeholders in the template
-  let prompt = template;
-
-  // Replace {{actionText}} placeholder
-  if (actionText) {
-    prompt = prompt.replace(/\{\{actionText\}\}/g, actionText);
-  }
-
-  // Replace {{actionValue}} placeholder
-  prompt = prompt.replace(/\{\{actionValue\}\}/g, actionValue);
-
-  // Replace {{actionType}} placeholder
-  if (actionType) {
-    prompt = prompt.replace(/\{\{actionType\}\}/g, actionType);
-  }
-
-  // Replace form data placeholders
-  if (formData) {
-    for (const [key, value] of Object.entries(formData)) {
-      const placeholder = new RegExp(`\\{\\{form\\.${key}\\}\\}`, 'g');
-      prompt = prompt.replace(placeholder, String(value));
-    }
-  }
-
-  return prompt;
-}
-
-/**
- * Cleanup expired interactive contexts (older than 24 hours).
- */
-export function cleanupExpiredContexts(): number {
-  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  const now = Date.now();
-  let cleaned = 0;
-
-  for (const [messageId, context] of interactiveContexts) {
-    if (now - context.createdAt > maxAge) {
-      interactiveContexts.delete(messageId);
-      cleaned++;
-    }
-  }
-
-  if (cleaned > 0) {
-    logger.debug({ count: cleaned }, 'Cleaned up expired interactive contexts');
-  }
-
-  return cleaned;
 }
 
 /**
@@ -265,15 +142,6 @@ export async function send_interactive_message(params: {
     }
     const { messageId } = result;
 
-    // Register action prompts if message was sent successfully
-    if (messageId) {
-      registerActionPrompts(messageId, chatId, actionPrompts);
-      logger.info(
-        { messageId, chatId, actions: Object.keys(actionPrompts) },
-        'Interactive message sent and prompts registered'
-      );
-    }
-
     // Invoke message sent callback
     const callback = getMessageSentCallback();
     if (callback) {
@@ -364,13 +232,19 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     feishuHandlersContainer.handlers = feishuHandlers;
   }
 
-  const handler = createInteractiveMessageHandler({
-    getActionPrompts,
-    registerActionPrompts,
-    unregisterActionPrompts,
-    generateInteractionPrompt,
-    cleanupExpiredContexts,
-  }, feishuHandlersContainer);
+  // No-op stubs for InteractiveMessageHandlers since standalone dispatch cases
+  // have been removed (Issue #1573). The sendInteractive case still uses
+  // registerActionPrompts internally, but only Primary Node's InteractiveContextStore
+  // handles real registration. These stubs are never called in MCP Server.
+  const noopHandlers: InteractiveMessageHandlers = {
+    getActionPrompts: () => undefined,
+    registerActionPrompts: () => {},
+    unregisterActionPrompts: () => false,
+    generateInteractionPrompt: () => undefined,
+    cleanupExpiredContexts: () => 0,
+  };
+
+  const handler = createInteractiveMessageHandler(noopHandlers, feishuHandlersContainer);
 
   ipcServer = new UnixSocketIpcServer(handler);
 

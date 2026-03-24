@@ -200,5 +200,8 @@ export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
+// Interactive Context Store (Issue #1568: IPC layer responsibility refactoring)
+export { InteractiveContextStore, type InteractiveContext } from './interactive-context.js';
+
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';

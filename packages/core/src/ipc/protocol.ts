@@ -14,11 +14,6 @@ import { join } from 'path';
  */
 export type IpcRequestType =
   | 'ping'
-  | 'getActionPrompts'
-  | 'registerActionPrompts'
-  | 'unregisterActionPrompts'
-  | 'generateInteractionPrompt'
-  | 'cleanupExpiredContexts'
   // Feishu API operations (Issue #1035)
   | 'feishuSendMessage'
   | 'feishuSendCard'
@@ -31,21 +26,6 @@ export type IpcRequestType =
  */
 export interface IpcRequestPayloads {
   ping: Record<string, never>;
-  getActionPrompts: { messageId: string };
-  registerActionPrompts: {
-    messageId: string;
-    chatId: string;
-    actionPrompts: Record<string, string>;
-  };
-  unregisterActionPrompts: { messageId: string };
-  generateInteractionPrompt: {
-    messageId: string;
-    actionValue: string;
-    actionText?: string;
-    actionType?: string;
-    formData?: Record<string, unknown>;
-  };
-  cleanupExpiredContexts: Record<string, never>;
   // Feishu API operations (Issue #1035)
   feishuSendMessage: {
     chatId: string;
@@ -84,11 +64,6 @@ export interface IpcRequestPayloads {
  */
 export interface IpcResponsePayloads {
   ping: { pong: true };
-  getActionPrompts: { prompts: Record<string, string> | null };
-  registerActionPrompts: { success: true };
-  unregisterActionPrompts: { success: boolean };
-  generateInteractionPrompt: { prompt: string | null };
-  cleanupExpiredContexts: { cleaned: number };
   // Feishu API operations (Issue #1035)
   feishuSendMessage: { success: boolean; messageId?: string };
   feishuSendCard: { success: boolean; messageId?: string };

@@ -188,36 +188,6 @@ describe('UnixSocketIpcClient', () => {
     expect(client.isConnected()).toBe(true);
   });
 
-  it('should get action prompts', async () => {
-    mockContexts.set('msg-1', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'Confirmed!', cancel: 'Cancelled!' },
-    });
-
-    const prompts = await client.getActionPrompts('msg-1');
-    expect(prompts).toEqual({ confirm: 'Confirmed!', cancel: 'Cancelled!' });
-  });
-
-  it('should return null for non-existent prompts', async () => {
-    const prompts = await client.getActionPrompts('non-existent');
-    expect(prompts).toBeNull();
-  });
-
-  it('should generate interaction prompt', async () => {
-    mockContexts.set('msg-2', {
-      chatId: 'chat-1',
-      actionPrompts: { confirm: 'User clicked {{actionText}}' },
-    });
-
-    const prompt = await client.generateInteractionPrompt('msg-2', 'confirm', 'Confirm');
-    expect(prompt).toBe('User clicked Confirm');
-  });
-
-  it('should return null for non-existent prompt template', async () => {
-    const prompt = await client.generateInteractionPrompt('non-existent', 'confirm');
-    expect(prompt).toBeNull();
-  });
-
   it('should send interactive card via sendInteractive IPC', async () => {
     const result = await client.sendInteractive('chat-1', {
       question: 'Choose an option:',
