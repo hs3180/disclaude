@@ -303,6 +303,22 @@ export {
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
+// Dynamic channel registration (Issue #1422)
+export {
+  ChannelLoader,
+  addChannel,
+  removeChannel,
+  setChannelEnabled,
+  getChannel as getDynamicChannel,
+  listChannels as listDynamicChannels,
+  resolveChannelsDir,
+  resolveChannelDir,
+  resolveChannelConfigPath,
+  validateChannelId,
+  parseChannelConfig,
+  serializeChannelConfig,
+} from './channels/index.js';
+
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 
