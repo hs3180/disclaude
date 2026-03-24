@@ -100,6 +100,17 @@ export {
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.
 
+// Channel lifecycle management (Issue #1594 Phase 2)
+export {
+  ChannelLifecycleManager,
+  createChannelCallbacks,
+  createDefaultMessageHandler,
+  type ChannelSetupContext,
+  type CallbackOptions,
+  type MessageHandlerOptions,
+  type WiredChannelDescriptor,
+} from './channel-lifecycle-manager.js';
+
 export {
   WebSocketServerService,
   type WebSocketServerServiceConfig,
