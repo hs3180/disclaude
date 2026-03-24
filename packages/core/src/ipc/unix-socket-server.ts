@@ -39,6 +39,7 @@ export interface InteractiveMessageHandlers {
   unregisterActionPrompts: (messageId: string) => boolean;
   generateInteractionPrompt: (
     messageId: string,
+    chatId: string,
     actionValue: string,
     actionText?: string,
     actionType?: string,
@@ -123,10 +124,11 @@ export function createInteractiveMessageHandler(
         }
 
         case 'generateInteractionPrompt': {
-          const { messageId, actionValue, actionText, actionType, formData } =
+          const { messageId, chatId, actionValue, actionText, actionType, formData } =
             request.payload as IpcRequestPayloads['generateInteractionPrompt'];
           const prompt = handlers.generateInteractionPrompt(
             messageId,
+            chatId,
             actionValue,
             actionText,
             actionType,
