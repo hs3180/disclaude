@@ -180,6 +180,66 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the project context (CLAUDE.md) guidance section.
+ *
+ * Issue #1506: When handling development tasks, the agent should check for
+ * a CLAUDE.md file in the development project's directory (not the workspace
+ * root) after finding/downloading the project. If found, the agent should
+ * read and follow its instructions for project-specific conventions.
+ *
+ * This is different from the rejected PR #1513 approach which injected
+ * CLAUDE.md content at agent startup from the workspace root. Instead,
+ * this guidance instructs the agent to dynamically discover and use
+ * CLAUDE.md from the project's own directory after the project is located.
+ *
+ * @returns Formatted project context guidance section
+ */
+export function buildProjectContextGuidance(): string {
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+When handling **development tasks** (coding, debugging, refactoring, reviewing PRs, fixing bugs, implementing features, etc.), follow this workflow for project context:
+
+### Step 1: Identify the Development Project
+
+After finding, cloning, or downloading the target development project, note its root directory path.
+
+### Step 2: Check for CLAUDE.md
+
+Look for a \`CLAUDE.md\` file in the **project's root directory** (not the workspace root or your home directory).
+
+\`\`\`
+{project_root}/CLAUDE.md
+\`\`\`
+
+### Step 3: Read and Apply
+
+If \`CLAUDE.md\` exists:
+1. **Read it fully** using the Read tool
+2. **Follow its instructions** for:
+   - Project structure and architecture
+   - Coding conventions and style guidelines
+   - Build, test, and lint commands
+   - Development workflow and git conventions
+   - Any project-specific requirements or constraints
+3. **Apply the context** to all subsequent development decisions — code changes should conform to the project's conventions
+
+If \`CLAUDE.md\` does **not** exist:
+- Proceed with the development task using general best practices
+- Do not search parent directories or other locations for CLAUDE.md
+
+### Important Notes
+
+- **Source**: Always use the CLAUDE.md from the **development project's own directory**, not from the workspace root
+- **Timing**: Check for CLAUDE.md **after** finding/downloading the project, not at the start of the conversation
+- **Scope**: CLAUDE.md instructions apply to code changes within that specific project
+- **No fallback**: If the project has no CLAUDE.md, simply continue without it`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

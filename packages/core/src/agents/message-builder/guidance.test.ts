@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildProjectContextGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -108,5 +109,49 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should include project context (CLAUDE.md) guidance section', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Project Context (CLAUDE.md)');
+  });
+
+  it('should instruct agent to check for CLAUDE.md after finding the project', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('finding, cloning, or downloading');
+    expect(result).toContain('project\'s root directory');
+  });
+
+  it('should specify the correct source: project directory, not workspace root', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('not the workspace root');
+  });
+
+  it('should include the three-step workflow', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Step 1: Identify the Development Project');
+    expect(result).toContain('Step 2: Check for CLAUDE.md');
+    expect(result).toContain('Step 3: Read and Apply');
+  });
+
+  it('should describe what CLAUDE.md may contain', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Project structure and architecture');
+    expect(result).toContain('Coding conventions');
+    expect(result).toContain('Build, test, and lint commands');
+  });
+
+  it('should handle the case when CLAUDE.md does not exist', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('does **not** exist');
+    expect(result).toContain('general best practices');
+  });
+
+  it('should emphasize correct timing (after finding project, not at startup)', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('**after** finding/downloading the project');
+    expect(result).toContain('not at the start of the conversation');
   });
 });
