@@ -102,7 +102,7 @@ export function validateChannelId(channelId: string): void {
  */
 export function parseChannelConfig(configPath: string): ChannelPluginManifest {
   const content = fs.readFileSync(configPath, 'utf-8');
-  const data = yaml.load(content) as Record<string, unknown>;
+  const data = yaml.load(content, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
 
   if (!data || typeof data !== 'object') {
     throw new Error(`Invalid channel config: ${configPath} does not contain a valid YAML object`);
@@ -350,12 +350,13 @@ export function listChannels(baseDir?: string): ChannelListResult {
   const channelsDir = resolveChannelsDir(baseDir);
 
   if (!fs.existsSync(channelsDir)) {
-    return { channels: [], total: 0, enabled: 0, disabled: 0 };
+    return { channels: [], total: 0, enabled: 0, disabled: 0, invalid: 0 };
   }
 
   const entries: DynamicChannelEntry[] = [];
   let enabled = 0;
   let disabled = 0;
+  let invalid = 0;
 
   const items = fs.readdirSync(channelsDir, { withFileTypes: true });
 
@@ -391,7 +392,7 @@ export function listChannels(baseDir?: string): ChannelListResult {
           valid: false,
           error: `Channel ID "${manifest.id}" in channel.yaml does not match directory name "${item.name}"`,
         });
-        disabled++;
+        invalid++;
         continue;
       }
 
@@ -415,7 +416,7 @@ export function listChannels(baseDir?: string): ChannelListResult {
         valid: false,
         error: error instanceof Error ? error.message : String(error),
       });
-      disabled++;
+      invalid++;
     }
   }
 
@@ -424,5 +425,6 @@ export function listChannels(baseDir?: string): ChannelListResult {
     total: entries.length,
     enabled,
     disabled,
+    invalid,
   };
 }
