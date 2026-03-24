@@ -29,7 +29,7 @@ async function sendMessageViaIpc(
   threadId?: string
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.feishuSendMessage(chatId, text, threadId);
+  return await ipcClient.sendMessage(chatId, text, threadId);
 }
 
 /**

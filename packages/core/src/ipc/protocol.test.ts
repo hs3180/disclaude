@@ -68,30 +68,30 @@ describe('IPC Protocol', () => {
       expect(request.id).toBe('req-1');
     });
 
-    it('should type-check feishu API requests', () => {
-      const sendMessage: IpcRequest<'feishuSendMessage'> = {
-        type: 'feishuSendMessage',
+    it('should type-check platform API requests', () => {
+      const sendMessage: IpcRequest<'sendMessage'> = {
+        type: 'sendMessage',
         id: 'req-5',
         payload: { chatId: 'chat-1', text: 'Hello', threadId: 'thread-1' },
       };
       expect(sendMessage.payload.threadId).toBe('thread-1');
 
-      const sendCard: IpcRequest<'feishuSendCard'> = {
-        type: 'feishuSendCard',
+      const sendCard: IpcRequest<'sendCard'> = {
+        type: 'sendCard',
         id: 'req-6',
         payload: { chatId: 'chat-1', card: { type: 'text' }, description: 'Test card' },
       };
       expect(sendCard.payload.description).toBe('Test card');
 
-      const uploadFile: IpcRequest<'feishuUploadFile'> = {
-        type: 'feishuUploadFile',
+      const uploadFile: IpcRequest<'uploadFile'> = {
+        type: 'uploadFile',
         id: 'req-7',
         payload: { chatId: 'chat-1', filePath: '/path/to/file.pdf' },
       };
       expect(uploadFile.payload.filePath).toBe('/path/to/file.pdf');
 
-      const getBotInfo: IpcRequest<'feishuGetBotInfo'> = {
-        type: 'feishuGetBotInfo',
+      const getBotInfo: IpcRequest<'getBotInfo'> = {
+        type: 'getBotInfo',
         id: 'req-8',
         payload: {},
       };
@@ -143,15 +143,15 @@ describe('IPC Protocol', () => {
       expect(response.error).toBe('Connection failed');
     });
 
-    it('should type-check feishu API responses', () => {
-      const msgResponse: IpcResponse<'feishuSendMessage'> = {
+    it('should type-check platform API responses', () => {
+      const msgResponse: IpcResponse<'sendMessage'> = {
         id: 'req-1',
         success: true,
         payload: { success: true, messageId: 'om_xxx' },
       };
       expect(msgResponse.payload?.messageId).toBe('om_xxx');
 
-      const fileResponse: IpcResponse<'feishuUploadFile'> = {
+      const fileResponse: IpcResponse<'uploadFile'> = {
         id: 'req-2',
         success: true,
         payload: {

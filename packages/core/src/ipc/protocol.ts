@@ -12,17 +12,17 @@ import { join } from 'path';
 /**
  * IPC request types.
  *
- * Issue #1573 (Phase 4): State management types removed — IPC only handles
- * parameter passing (ping, Feishu API ops, sendInteractive).
- * State management now lives in Primary Node's InteractiveContextStore.
+ * Issue #1574 (Phase 5): Platform-agnostic naming — removed `feishu*` prefixes.
+ * IPC types are now platform-independent, consistent with MCP tool layer naming.
+ * State management (removed in Phase 4) lived in Primary Node's InteractiveContextStore.
  */
 export type IpcRequestType =
   | 'ping'
-  // Feishu API operations (Issue #1035)
-  | 'feishuSendMessage'
-  | 'feishuSendCard'
-  | 'feishuUploadFile'
-  | 'feishuGetBotInfo'
+  // Platform API operations (Issue #1035, renamed in Issue #1574)
+  | 'sendMessage'
+  | 'sendCard'
+  | 'uploadFile'
+  | 'getBotInfo'
   // Raw parameter forwarding (Issue #1570: Phase 1)
   | 'sendInteractive';
 
@@ -31,24 +31,24 @@ export type IpcRequestType =
  */
 export interface IpcRequestPayloads {
   ping: Record<string, never>;
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: {
+  // Platform API operations (Issue #1035, renamed in Issue #1574)
+  sendMessage: {
     chatId: string;
     text: string;
     threadId?: string;
   };
-  feishuSendCard: {
+  sendCard: {
     chatId: string;
     card: Record<string, unknown>;
     threadId?: string;
     description?: string;
   };
-  feishuUploadFile: {
+  uploadFile: {
     chatId: string;
     filePath: string;
     threadId?: string;
   };
-  feishuGetBotInfo: Record<string, never>;
+  getBotInfo: Record<string, never>;
   // Raw parameter forwarding (Issue #1570: Phase 1)
   sendInteractive: {
     chatId: string;
@@ -70,17 +70,17 @@ export interface IpcRequestPayloads {
  */
 export interface IpcResponsePayloads {
   ping: { pong: true };
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: { success: boolean; messageId?: string };
-  feishuSendCard: { success: boolean; messageId?: string };
-  feishuUploadFile: {
+  // Platform API operations (Issue #1035, renamed in Issue #1574)
+  sendMessage: { success: boolean; messageId?: string };
+  sendCard: { success: boolean; messageId?: string };
+  uploadFile: {
     success: boolean;
     fileKey?: string;
     fileType?: string;
     fileName?: string;
     fileSize?: number;
   };
-  feishuGetBotInfo: {
+  getBotInfo: {
     openId: string;
     name?: string;
     avatarUrl?: string;
