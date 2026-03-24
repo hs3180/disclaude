@@ -60,8 +60,8 @@ export interface ScheduleFileTask extends ScheduledTask {
  * @returns The value with matched outer quotes removed, or the original value
  */
 function stripQuotes(value: string): string {
-  const first = value[0];
-  const last = value[value.length - 1];
+  const [first, ...rest] = value;
+  const last = rest[rest.length - 1];
   if ((first === '"' || first === "'") && first === last && value.length >= 2) {
     return value.slice(1, -1);
   }
