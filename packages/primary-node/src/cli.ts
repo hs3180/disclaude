@@ -497,16 +497,9 @@ async function main(): Promise<void> {
           // Real messageId propagation requires doSendMessage() changes (future phase).
           const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
 
-          // Issue #1572: Register action prompts in Primary Node's InteractiveContextStore.
-          // Card callbacks will look up prompts from this store locally (no cross-IPC query needed).
-          primaryNode.getInteractiveContextStore().register(
-            syntheticMessageId, chatId, resolvedActionPrompts
-          );
-
-          logger.debug(
-            { chatId, syntheticMessageId, actionCount: Object.keys(resolvedActionPrompts).length },
-            'sendInteractive: card sent and action prompts registered in Primary Node'
-          );
+          // Issue #1572: Action prompt registration is handled by unix-socket-server.ts
+          // (unified path in createInteractiveMessageHandler). The server registers
+          // prompts from the returned result, avoiding duplicate registration here.
 
           return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
         },
