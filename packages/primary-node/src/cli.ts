@@ -449,6 +449,10 @@ async function main(): Promise<void> {
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
         },
+        // Issue #1571: Phase 2 — Primary Node owns full card building lifecycle
+        sendInteractive: async (params) => {
+          return await feishuChannel.buildInteractiveCard(params);
+        },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
       logger.info('Feishu IPC handlers registered');

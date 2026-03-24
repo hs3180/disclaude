@@ -25,6 +25,9 @@ import {
   type ChannelCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
+  buildQuestionCard,
+  buildActionPrompts,
+  type AskUserOption,
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
 import {
@@ -534,6 +537,67 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getInteractionManager(): InteractionManager {
     return this.interactionManager;
+  }
+
+  /**
+   * Build and send an interactive card with action prompts.
+   *
+   * Issue #1571: Phase 2 — Primary Node owns the full card building lifecycle.
+   * This method receives raw parameters, builds the Feishu card JSON,
+   * sends it via the channel, and registers action prompts for later lookup.
+   *
+   * @param params - Raw interactive card parameters
+   * @returns Result with success status and synthetic messageId for prompt lookup
+   */
+  async buildInteractiveCard(params: {
+    chatId: string;
+    question: string;
+    options: Array<{
+      text: string;
+      value?: string;
+      style?: 'primary' | 'default' | 'danger';
+      action?: string;
+    }>;
+    title?: string;
+    context?: string;
+    threadId?: string;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    const { chatId, question, options, title, context, threadId } = params;
+
+    // Build card and action prompts
+    const card = buildQuestionCard(question, options as AskUserOption[], title);
+    const actionPrompts = buildActionPrompts(options as AskUserOption[], context);
+
+    // Send card via channel (respects offline queue, etc.)
+    await this.sendMessage({
+      chatId,
+      type: 'card',
+      card,
+      threadId,
+    });
+
+    // Generate synthetic messageId for action prompt registration
+    // Note: Feishu API's message.create response includes message_id,
+    // but sendMessage() does not return it. A synthetic key is used instead.
+    const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
+
+    // Register action prompts in InteractionManager for card action handling
+    if (Object.keys(actionPrompts).length > 0) {
+      this.interactionManager.register({
+        id: syntheticMessageId,
+        chatId,
+        messageId: syntheticMessageId,
+        expectedActions: Object.keys(actionPrompts),
+        metadata: { actionPrompts },
+      });
+    }
+
+    logger.info(
+      { chatId, actionCount: Object.keys(actionPrompts).length, messageId: syntheticMessageId },
+      'Interactive card built and sent (Primary Node lifecycle)'
+    );
+
+    return { success: true, messageId: syntheticMessageId };
   }
 
   /**

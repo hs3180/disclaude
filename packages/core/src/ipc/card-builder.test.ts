@@ -30,7 +30,8 @@ describe('card-builder', () => {
       const options: AskUserOption[] = [{ text: 'OK', value: 'ok' }];
       const card = buildQuestionCard('Question?', options, 'Custom Title');
 
-      expect(card.header.title.content).toBe('Custom Title');
+      expect((card.header as Record<string, unknown>).title).toBeDefined();
+      expect(((card.header as Record<string, unknown>).title as Record<string, unknown>).content).toBe('Custom Title');
     });
 
     it('should build buttons from options', () => {
@@ -41,7 +42,8 @@ describe('card-builder', () => {
       ];
 
       const card = buildQuestionCard('Pick one', options);
-      const action = card.elements[1] as { tag: string; actions: Array<Record<string, unknown>> };
+      const elements = card.elements as Array<Record<string, unknown>>;
+      const action = elements[1] as { tag: string; actions: Array<Record<string, unknown>> };
       expect(action.tag).toBe('action');
       expect(action.actions).toHaveLength(3);
 
@@ -61,7 +63,8 @@ describe('card-builder', () => {
       ];
 
       const card = buildQuestionCard('Pick', options);
-      const action = card.elements[1] as { tag: string; actions: Array<Record<string, unknown>> };
+      const elements = card.elements as Array<Record<string, unknown>>;
+      const action = elements[1] as { tag: string; actions: Array<Record<string, unknown>> };
 
       expect(action.actions[0].value).toBe('option_0');
       expect(action.actions[1].value).toBe('option_1');
@@ -71,7 +74,8 @@ describe('card-builder', () => {
       const options: AskUserOption[] = [{ text: 'OK', value: 'ok' }];
       const card = buildQuestionCard('Hello **world**?', options);
 
-      const markdown = card.elements[0] as { tag: string; content: string };
+      const elements = card.elements as Array<Record<string, unknown>>;
+      const markdown = elements[0] as { tag: string; content: string };
       expect(markdown.tag).toBe('markdown');
       expect(markdown.content).toBe('Hello **world**?');
     });

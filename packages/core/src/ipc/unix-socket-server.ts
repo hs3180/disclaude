@@ -18,7 +18,6 @@ import {
   type IpcRequestPayloads,
   type IpcResponse,
 } from './protocol.js';
-import { buildQuestionCard, buildActionPrompts, type AskUserOption } from './card-builder.js';
 
 const logger = createLogger('IpcServer');
 
@@ -65,6 +64,29 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  /**
+   * Build and send an interactive card with action prompts.
+   *
+   * Issue #1571: Phase 2 — Primary Node owns the full card building lifecycle.
+   * The Primary Node receives raw parameters, builds the card, sends it,
+   * and registers action prompts — all within a single method.
+   *
+   * @param params - Raw interactive card parameters
+   * @returns Result with success status and optional messageId
+   */
+  sendInteractive: (params: {
+    chatId: string;
+    question: string;
+    options: Array<{
+      text: string;
+      value?: string;
+      style?: 'primary' | 'default' | 'danger';
+      action?: string;
+    }>;
+    title?: string;
+    context?: string;
+    threadId?: string;
+  }) => Promise<{ success: boolean; messageId?: string }>;
 }
 
 /**
@@ -215,7 +237,9 @@ export function createInteractiveMessageHandler(
           }
         }
 
-        // Issue #1570: Phase 1 — sendInteractive (raw params, card built server-side)
+        // Issue #1571: Phase 2 — sendInteractive delegated to Primary Node
+        // Primary Node owns the full card building lifecycle:
+        // build card → send → register action prompts
         case 'sendInteractive': {
           const feishuHandlers = feishuHandlersContainer?.handlers;
           if (!feishuHandlers) {
@@ -225,33 +249,27 @@ export function createInteractiveMessageHandler(
               error: 'Feishu API handlers not available',
             };
           }
-          const { chatId, question, options, title, context, threadId } =
-            request.payload as IpcRequestPayloads['sendInteractive'];
 
           try {
-            // Build card and action prompts on server side (Primary Node)
-            const card = buildQuestionCard(question, options as AskUserOption[], title);
-            const actionPrompts = buildActionPrompts(options as AskUserOption[], context);
-
-            // Send card via Feishu handler
-            await feishuHandlers.sendCard(chatId, card, undefined, threadId);
-
-            // Register action prompts using a generated key
-            // Note: messageId is not available from sendCard (returns void).
-            // A synthetic key is used; Phase 2 will improve this when
-            // Primary Node takes over the full card lifecycle.
-            const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
-            handlers.registerActionPrompts(syntheticMessageId, chatId, actionPrompts);
+            const payload = request.payload as IpcRequestPayloads['sendInteractive'];
+            const result = await feishuHandlers.sendInteractive({
+              chatId: payload.chatId,
+              question: payload.question,
+              options: payload.options,
+              title: payload.title,
+              context: payload.context,
+              threadId: payload.threadId,
+            });
 
             logger.info(
-              { chatId, actionCount: Object.keys(actionPrompts).length, syntheticMessageId },
-              'Interactive message sent (card built server-side)'
+              { chatId: payload.chatId, messageId: result.messageId },
+              'Interactive message sent (delegated to Primary Node)'
             );
 
             return {
               id: request.id,
               success: true,
-              payload: { success: true, messageId: syntheticMessageId },
+              payload: result,
             };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

@@ -1,12 +1,13 @@
 /**
- * Card building utilities for IPC layer.
+ * Card building utilities for interactive cards.
  *
- * Moved from mcp-server/tools/ask-user.ts as part of Issue #1570
+ * Originally moved from mcp-server/tools/ask-user.ts as part of Issue #1570
  * (Phase 1: MCP Tool 轻量化 — 移除卡片构建逻辑).
  *
- * These functions are used by the IPC server handler to build
- * interactive cards on the Primary Node side, rather than
- * having MCP tools build cards on the Worker Node side.
+ * Since Issue #1571 (Phase 2), these functions are consumed by the Primary Node's
+ * FeishuChannel.buildInteractiveCard() method, which owns the full card building
+ * lifecycle. The IPC server no longer calls these functions directly — it delegates
+ * to the Primary Node via FeishuApiHandlers.sendInteractive().
  *
  * @module core/ipc/card-builder
  */
