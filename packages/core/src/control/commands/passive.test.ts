@@ -8,7 +8,7 @@ import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 
 /** 创建测试用的 control command */
-function createCommand(args?: string, chatId = 'test-chat-id'): ControlCommand {
+function createCommand(args?: string | string[], chatId = 'test-chat-id'): ControlCommand {
   return {
     type: 'passive',
     chatId,
@@ -63,6 +63,33 @@ describe('handlePassive', () => {
 
     it('should disable passive mode with "off" argument', () => {
       const command = createCommand('off');
+      const context = createContext();
+      const { passiveMode } = context;
+      if (!passiveMode) {throw new Error('passiveMode is required');}
+
+      const result = handlePassive(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已关闭');
+      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', false);
+    });
+
+    // Issue #1562: Feishu message handler passes args as string[], not string
+    it('should enable passive mode when args is passed as array (Feishu format)', () => {
+      const command = createCommand(['on']);
+      const context = createContext();
+      const { passiveMode } = context;
+      if (!passiveMode) {throw new Error('passiveMode is required');}
+
+      const result = handlePassive(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已开启');
+      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', true);
+    });
+
+    it('should disable passive mode when args is passed as array (Feishu format)', () => {
+      const command = createCommand(['off']);
       const context = createContext();
       const { passiveMode } = context;
       if (!passiveMode) {throw new Error('passiveMode is required');}
