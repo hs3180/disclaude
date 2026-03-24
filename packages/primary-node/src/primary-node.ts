@@ -57,6 +57,13 @@ import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
+import {
+  registerActionPrompts,
+  getActionPrompts,
+  unregisterActionPrompts,
+  generateInteractionPrompt,
+  cleanupExpiredContexts,
+} from './interactive-contexts.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -269,18 +276,18 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Create stub interactive message handlers (Primary Node doesn't need interaction prompts)
-    const stubHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: () => undefined,
-      registerActionPrompts: () => {},
-      unregisterActionPrompts: () => false,
-      generateInteractionPrompt: () => undefined,
-      cleanupExpiredContexts: () => 0,
+    // Create interactive message handlers with real context management (Issue #1568 Phase 3)
+    const interactiveHandlers: InteractiveMessageHandlers = {
+      getActionPrompts,
+      registerActionPrompts,
+      unregisterActionPrompts,
+      generateInteractionPrompt,
+      cleanupExpiredContexts,
     };
 
     // Create the request handler with Feishu handlers container
     const requestHandler = createInteractiveMessageHandler(
-      stubHandlers,
+      interactiveHandlers,
       this.feishuHandlersContainer
     );
 

@@ -412,24 +412,72 @@ export class UnixSocketIpcClient {
     }
   }
 
+  /**
+   * Register action prompts for a message via IPC.
+   * Issue #1568 Phase 3: MCP Server uses this to register action prompts
+   * in the Primary Node after sending an interactive card.
+   */
+  async registerActionPrompts(
+    messageId: string,
+    chatId: string,
+    actionPrompts: Record<string, string>
+  ): Promise<boolean> {
+    try {
+      const response = await this.request('registerActionPrompts', {
+        messageId,
+        chatId,
+        actionPrompts,
+      });
+      return response.success;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Unregister action prompts for a message via IPC.
+   * Issue #1568 Phase 3: MCP Server uses this to clean up action prompts.
+   */
+  async unregisterActionPrompts(messageId: string): Promise<boolean> {
+    try {
+      const response = await this.request('unregisterActionPrompts', { messageId });
+      return response.success;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Cleanup expired interactive contexts via IPC.
+   * Issue #1568 Phase 3: MCP Server can trigger cleanup in Primary Node.
+   */
+  async cleanupExpiredContexts(): Promise<number> {
+    try {
+      const response = await this.request('cleanupExpiredContexts', {});
+      return response.cleaned;
+    } catch {
+      return 0;
+    }
+  }
+
   // ============================================================================
-  // Feishu API Operations (Issue #1035)
+  // Channel API Operations (Issue #1568: renamed from feishu* prefix)
   // ============================================================================
 
   /**
    * Send a text message via IPC.
    * Issue #1088: Return detailed error information for better troubleshooting.
    */
-  async feishuSendMessage(
+  async sendMessage(
     chatId: string,
     text: string,
     threadId?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('feishuSendMessage', { chatId, text, threadId });
+      return await this.request('sendMessage', { chatId, text, threadId });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err: error, chatId }, 'feishuSendMessage failed');
+      logger.error({ err: error, chatId }, 'sendMessage failed');
 
       // Determine error type for better error handling
       let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
@@ -447,17 +495,17 @@ export class UnixSocketIpcClient {
    * Send a card message via IPC.
    * Issue #1088: Return detailed error information for better troubleshooting.
    */
-  async feishuSendCard(
+  async sendCard(
     chatId: string,
     card: Record<string, unknown>,
     threadId?: string,
     description?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('feishuSendCard', { chatId, card, threadId, description });
+      return await this.request('sendCard', { chatId, card, threadId, description });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err: error, chatId }, 'feishuSendCard failed');
+      logger.error({ err: error, chatId }, 'sendCard failed');
 
       // Determine error type for better error handling
       let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
@@ -474,28 +522,16 @@ export class UnixSocketIpcClient {
   /**
    * Upload a file via IPC.
    */
-  async feishuUploadFile(
+  async uploadFile(
     chatId: string,
     filePath: string,
     threadId?: string
   ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
     try {
-      return await this.request('feishuUploadFile', { chatId, filePath, threadId });
+      return await this.request('uploadFile', { chatId, filePath, threadId });
     } catch (error) {
-      logger.error({ err: error, chatId, filePath }, 'feishuUploadFile failed');
+      logger.error({ err: error, chatId, filePath }, 'uploadFile failed');
       return { success: false };
-    }
-  }
-
-  /**
-   * Get bot info via IPC.
-   */
-  async feishuGetBotInfo(): Promise<{ openId: string; name?: string; avatarUrl?: string } | null> {
-    try {
-      return await this.request('feishuGetBotInfo', {});
-    } catch (error) {
-      logger.error({ err: error }, 'feishuGetBotInfo failed');
-      return null;
     }
   }
 
