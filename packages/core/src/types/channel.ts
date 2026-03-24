@@ -306,3 +306,40 @@ export interface ChannelConfig {
 export type ChannelFactory<TConfig extends ChannelConfig = ChannelConfig> = (
   config: TConfig
 ) => IChannel;
+
+/**
+ * Channel descriptor for dynamic channel registration.
+ *
+ * A descriptor encapsulates everything needed to create a channel instance
+ * without hard-coded imports. Each built-in or plugin channel registers
+ * a descriptor with the ChannelRegistry.
+ *
+ * @template TConfig - Channel-specific configuration type
+ *
+ * @example
+ * ```typescript
+ * const restDescriptor: ChannelDescriptor<RestChannelConfig> = {
+ *   type: 'rest',
+ *   name: 'REST API',
+ *   factory: (config) => new RestChannel(config),
+ *   defaultCapabilities: {
+ *     supportsCard: true,
+ *     supportsThread: false,
+ *     supportsFile: false,
+ *     supportsMarkdown: true,
+ *     supportsMention: false,
+ *     supportsUpdate: false,
+ *   },
+ * };
+ * ```
+ */
+export interface ChannelDescriptor<TConfig extends ChannelConfig = ChannelConfig> {
+  /** Unique channel type identifier (e.g. 'feishu', 'wechat', 'rest') */
+  type: string;
+  /** Human-readable display name */
+  name: string;
+  /** Factory function to create channel instance */
+  factory: ChannelFactory<TConfig>;
+  /** Default capabilities for this channel type */
+  defaultCapabilities: ChannelCapabilities;
+}

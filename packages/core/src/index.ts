@@ -312,6 +312,12 @@ export {
   serializeChannelConfig,
 } from './channels/index.js';
 
+// Channel type registry (Issue #1553)
+export {
+  ChannelRegistry,
+  ChannelRegistryError,
+} from './channels/index.js';
+
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 

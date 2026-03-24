@@ -2,7 +2,8 @@
  * Channels module.
  *
  * Provides base classes and utilities for implementing communication channels.
- * Includes dynamic channel registration via directory-based discovery.
+ * Includes dynamic channel registration via directory-based discovery
+ * and in-memory channel type registry for factory-based instantiation.
  */
 
 export { BaseChannel } from './base-channel.js';
@@ -25,3 +26,9 @@ export {
   parseChannelConfig,
   serializeChannelConfig,
 } from './channel-directory.js';
+
+// Channel type registry (Issue #1553)
+export {
+  ChannelRegistry,
+  ChannelRegistryError,
+} from './channel-registry.js';

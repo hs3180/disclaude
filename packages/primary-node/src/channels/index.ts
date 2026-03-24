@@ -49,3 +49,10 @@ export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 
 // WeChat Channel (Issue #1473 - MVP: Auth + Send Message)
 export { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
+
+// Channel type descriptors (Issue #1553)
+export {
+  REST_CHANNEL_DESCRIPTOR,
+  FEISHU_CHANNEL_DESCRIPTOR,
+  BUILTIN_CHANNEL_DESCRIPTORS,
+} from './channel-descriptors.js';
