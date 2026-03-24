@@ -27,28 +27,6 @@ const logger = createLogger('IpcServer');
 export type IpcRequestHandler = (request: IpcRequest) => Promise<IpcResponse>;
 
 /**
- * Handler functions for interactive message operations.
- */
-export interface InteractiveMessageHandlers {
-  getActionPrompts: (messageId: string) => Record<string, string> | undefined;
-  registerActionPrompts: (
-    messageId: string,
-    chatId: string,
-    actionPrompts: Record<string, string>
-  ) => void;
-  unregisterActionPrompts: (messageId: string) => boolean;
-  generateInteractionPrompt: (
-    messageId: string,
-    chatId: string,
-    actionValue: string,
-    actionText?: string,
-    actionType?: string,
-    formData?: Record<string, unknown>
-  ) => string | undefined;
-  cleanupExpiredContexts: () => number;
-}
-
-/**
  * Handler functions for Feishu API operations (Issue #1035).
  */
 export interface FeishuApiHandlers {
@@ -86,65 +64,23 @@ export interface FeishuHandlersContainer {
 }
 
 /**
- * Create an IPC request handler from interactive message handlers.
+ * Create an IPC request handler for channel API operations.
+ *
  * Issue #1120: Uses FeishuHandlersContainer for dynamic handler registration.
+ * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers — state management
+ * dispatch cases removed; only registerActionPrompts callback remains for
+ * internal use by the sendInteractive handler.
  */
 export function createInteractiveMessageHandler(
-  handlers: InteractiveMessageHandlers,
+  registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
   feishuHandlersContainer?: FeishuHandlersContainer
 ): IpcRequestHandler {
-   
+
   return async (request: IpcRequest): Promise<IpcResponse> => {
     try {
       switch (request.type) {
         case 'ping':
           return { id: request.id, success: true, payload: { pong: true } };
-
-        case 'getActionPrompts': {
-          const { messageId } = request.payload as IpcRequestPayloads['getActionPrompts'];
-          const prompts = handlers.getActionPrompts(messageId);
-          return {
-            id: request.id,
-            success: true,
-            payload: { prompts: prompts ?? null },
-          };
-        }
-
-        case 'registerActionPrompts': {
-          const { messageId, chatId, actionPrompts } =
-            request.payload as IpcRequestPayloads['registerActionPrompts'];
-          handlers.registerActionPrompts(messageId, chatId, actionPrompts);
-          return { id: request.id, success: true, payload: { success: true } };
-        }
-
-        case 'unregisterActionPrompts': {
-          const { messageId } = request.payload as IpcRequestPayloads['unregisterActionPrompts'];
-          const success = handlers.unregisterActionPrompts(messageId);
-          return { id: request.id, success: true, payload: { success } };
-        }
-
-        case 'generateInteractionPrompt': {
-          const { messageId, chatId, actionValue, actionText, actionType, formData } =
-            request.payload as IpcRequestPayloads['generateInteractionPrompt'];
-          const prompt = handlers.generateInteractionPrompt(
-            messageId,
-            chatId,
-            actionValue,
-            actionText,
-            actionType,
-            formData
-          );
-          return {
-            id: request.id,
-            success: true,
-            payload: { prompt: prompt ?? null },
-          };
-        }
-
-        case 'cleanupExpiredContexts': {
-          const cleaned = handlers.cleanupExpiredContexts();
-          return { id: request.id, success: true, payload: { cleaned } };
-        }
 
         // Feishu API operations (Issue #1035)
         // Issue #1120: Use container for dynamic handler registration
@@ -233,10 +169,11 @@ export function createInteractiveMessageHandler(
             // Register action prompts so card callbacks can find them
             // Issue #1570: Primary Node owns the full interactive card lifecycle
             // Issue #1572: Use resolved actionPrompts from result (may include auto-generated defaults)
+            // Issue #1573: Use direct callback instead of InteractiveMessageHandlers
             const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
               ?? actionPrompts;
             if (resolvedPrompts && result.messageId) {
-              handlers.registerActionPrompts(result.messageId, chatId, resolvedPrompts);
+              registerActionPrompts(result.messageId, chatId, resolvedPrompts);
               logger.debug(
                 { messageId: result.messageId, chatId, actionCount: Object.keys(resolvedPrompts).length },
                 'sendInteractive: action prompts registered'
