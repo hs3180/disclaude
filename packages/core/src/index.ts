@@ -79,26 +79,20 @@ export type {
   ProviderConstructor,
 } from './sdk/index.js';
 
-// Agent Infrastructure (Issue #1040)
+// Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces
 export {
   // Core agent types
   type Disposable,
   type UserInput as AgentUserInput,
   type ChatAgent,
-  type SkillAgent,
-  type Subagent,
   type AgentProvider,
   type BaseAgentConfig,
   type ChatAgentConfig,
-  type SkillAgentConfig,
-  type SubagentConfig,
   type AgentConfig,
   type AgentFactoryInterface,
   // Type guards
   isChatAgent,
-  isSkillAgent,
-  isSubagent,
   isDisposable,
   // Runtime context
   type AgentRuntimeContext,
@@ -159,10 +153,6 @@ export {
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
-
-// Skill Agent
-export { type SkillAgentExecuteOptions } from './agents/skill-agent.js';
-export { SkillAgent as SkillAgentBase } from './agents/skill-agent.js';
 
 // Skills module (Issue #430)
 export {

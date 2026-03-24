@@ -1,21 +1,19 @@
 /**
  * Unit tests for Agent type definitions and type guards
+ *
+ * Issue #1501: Simplified to ChatAgent-only architecture.
+ * SkillAgent and Subagent type guards have been removed.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { z } from 'zod';
 import {
   isChatAgent,
-  isSkillAgent,
-  isSubagent,
   isDisposable,
   setRuntimeContext,
   getRuntimeContext,
   hasRuntimeContext,
   clearRuntimeContext,
   type ChatAgent,
-  type SkillAgent,
-  type Subagent,
   type Disposable,
   type AgentRuntimeContext,
 } from './types.js';
@@ -53,143 +51,13 @@ describe('Type Guards', () => {
     });
 
     it('should return false for wrong type', () => {
-      const skillAgent = { type: 'skill', name: 'test' };
-      expect(isChatAgent(skillAgent)).toBe(false);
+      const otherType = { type: 'skill', name: 'test' };
+      expect(isChatAgent(otherType)).toBe(false);
     });
 
     it('should return false for object without type', () => {
       expect(isChatAgent({})).toBe(false);
       expect(isChatAgent({ name: 'test' })).toBe(false);
-    });
-  });
-
-  describe('isSkillAgent', () => {
-    it('should return true for valid SkillAgent', () => {
-      const skillAgent: SkillAgent = {
-        type: 'skill',
-        name: 'test-skill',
-        async *execute() {},
-        dispose() {},
-      };
-
-      expect(isSkillAgent(skillAgent)).toBe(true);
-    });
-
-    it('should return false for null', () => {
-      expect(isSkillAgent(null)).toBe(false);
-    });
-
-    it('should return false for undefined', () => {
-      expect(isSkillAgent(undefined)).toBe(false);
-    });
-
-    it('should return false for wrong type', () => {
-      const chatAgent = { type: 'chat', name: 'test' };
-      expect(isSkillAgent(chatAgent)).toBe(false);
-    });
-
-    it('should return false for subagent type', () => {
-      const subagent = { type: 'subagent', name: 'test' };
-      expect(isSkillAgent(subagent)).toBe(false);
-    });
-  });
-
-  describe('isSubagent', () => {
-    it('should return true for valid Subagent', () => {
-      const subagent: Subagent = {
-        type: 'subagent',
-        name: 'test-subagent',
-        async *execute() {},
-        dispose() {},
-        asTool() {
-          return {
-            name: 'test',
-            description: 'test',
-            parameters: z.object({}),
-            handler() { return Promise.resolve('result'); },
-          };
-        },
-        getMcpServer() { return undefined; },
-      };
-
-      expect(isSubagent(subagent)).toBe(true);
-    });
-
-    it('should return true for Subagent with McpServer', () => {
-      const subagent: Subagent = {
-        type: 'subagent',
-        name: 'test-subagent',
-        async *execute() {},
-        dispose() {},
-        asTool() {
-          return {
-            name: 'test',
-            description: 'test',
-            parameters: z.object({}),
-            handler() { return Promise.resolve('result'); },
-          };
-        },
-        getMcpServer() {
-          return {
-            type: 'inline',
-            name: 'test-mcp',
-            version: '1.0.0',
-          };
-        },
-      };
-
-      expect(isSubagent(subagent)).toBe(true);
-    });
-
-    it('should return false for null', () => {
-      expect(isSubagent(null)).toBe(false);
-    });
-
-    it('should return false for undefined', () => {
-      expect(isSubagent(undefined)).toBe(false);
-    });
-
-    it('should return false for SkillAgent (missing asTool)', () => {
-      const skillAgent = {
-        type: 'subagent',
-        name: 'test',
-        dispose: () => {},
-      };
-
-      expect(isSubagent(skillAgent)).toBe(false);
-    });
-
-    it('should return false for object with wrong type', () => {
-      const wrongType = {
-        type: 'skill',
-        name: 'test',
-        asTool: () => ({}),
-        getMcpServer: () => undefined,
-      };
-
-      expect(isSubagent(wrongType)).toBe(false);
-    });
-
-    it('should return false when asTool is not a function', () => {
-      const invalidSubagent = {
-        type: 'subagent',
-        name: 'test',
-        asTool: 'not a function',
-        getMcpServer: () => undefined,
-      };
-
-      expect(isSubagent(invalidSubagent)).toBe(false);
-    });
-
-    it('should return false when getMcpServer is not a function', () => {
-      const invalidSubagent = {
-        type: 'subagent',
-        name: 'test',
-        asTool: () => ({}),
-        getMcpServer: 'not a function',
-      };
-
-      expect(isSubagent(invalidSubagent)).toBe(false);
     });
   });
 
