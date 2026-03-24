@@ -313,6 +313,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private readonly deadConnectionTimeoutMs: number;
   private readonly healthCheckIntervalMs: number;
 
+  // WS instance polling (Issue #1504)
+  private pollTimerId?: ReturnType<typeof setTimeout>;
+
   // Reconnect state
   private reconnectAttempt: number = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -429,6 +432,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
     this.stopHealthCheck();
     this.stopCustomPingLoop();
+    this.clearPollTimer();
     this.clearReconnectTimer();
     this.closeClient();
     this.detachWsListener();
@@ -496,14 +500,19 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    * - TypeScript `private` is only a compile-time check; at runtime the field is accessible
    *
    * @param wsClient - The WSClient instance (typed as `any` to access private fields)
+   * @param preObtainedInstance - Optional pre-obtained WS instance to avoid TOCTOU race
+   *   (Issue #1504). When provided, this instance is used directly instead of re-querying
+   *   `getWSInstance()`, eliminating the window where the SDK could reset the instance
+   *   between poll and interception.
    * @returns `true` if interception succeeded
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private interceptWsFromClient(wsClient: any): boolean {
+  private interceptWsFromClient(wsClient: any, preObtainedInstance?: any): boolean {
     try {
       // Access SDK's internal wsConfig to get the raw `ws` WebSocket instance
       // SDK code: this.wsConfig.setWSInstance(wsInstance) in connect()
-      const wsInstance = wsClient.wsConfig?.getWSInstance?.();
+      // Use preObtainedInstance if provided to avoid TOCTOU race (Issue #1504)
+      const wsInstance = preObtainedInstance ?? wsClient.wsConfig?.getWSInstance?.();
       if (!wsInstance) {
         logger.debug('SDK wsConfig.getWSInstance() returned null — connection may not be ready');
         return false;
@@ -583,6 +592,106 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         logger.debug({ err: error }, 'Error detaching WebSocket listener');
       }
       this.interceptedWs = undefined;
+    }
+  }
+
+  /**
+   * Background poll for WS instance availability after `start()` (Issue #1504).
+   *
+   * WSClient.start() is fire-and-forget — it resolves before the SDK finishes
+   * establishing the internal WebSocket connection (~300ms). This method polls
+   * `getWSInstance()` at short intervals until a non-null instance is available,
+   * then passes it **directly** to `interceptWsFromClient()` via the
+   * `preObtainedInstance` parameter (TOCTOU avoidance).
+   *
+   * Key design decisions:
+   * - **Non-blocking**: `connectFresh()` returns immediately in fallback mode;
+   *   Pong detection upgrades to active asynchronously once the instance appears.
+   * - **TOCTOU avoidance**: The polled instance is passed directly to
+   *   `interceptWsFromClient()` instead of re-querying `getWSInstance()`.
+   * - **Resilient**: If interception fails for a transient reason, polling
+   *   continues instead of giving up.
+   * - **Clean shutdown**: The poll timer is tracked via `pollTimerId` and
+   *   cleared in `stop()` to prevent post-stop callbacks.
+   */
+  private pollForWsInstance(): void {
+    const startTime = Date.now();
+
+    const poll = (): void => {
+      // Guard: don't poll if manager has been stopped
+      if (this._state === 'stopped') {
+        return;
+      }
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const wsConfig = (this.wsClient as any)?.wsConfig;
+        if (!wsConfig || typeof wsConfig.getWSInstance !== 'function') {
+          logger.debug('wsConfig.getWSInstance not available — stopping WS instance poll');
+          return;
+        }
+
+        const instance = wsConfig.getWSInstance();
+
+        if (instance) {
+          // Pass the instance directly to avoid TOCTOU race (Issue #1504)
+          const success = this.interceptWsFromClient(this.wsClient, instance);
+          if (success) {
+            logger.debug(
+              { waitTimeMs: Date.now() - startTime },
+              'WS instance obtained via polling — Pong detection active',
+            );
+            return;
+          }
+
+          // Instance available but interception failed (transient issue).
+          // Continue polling instead of giving up (Issue #1504 review feedback).
+          logger.debug(
+            { waitTimeMs: Date.now() - startTime },
+            'SDK WebSocket instance available but interception failed, will retry',
+          );
+        }
+
+        // Check timeout
+        if (Date.now() - startTime >= WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS) {
+          logger.warn(
+            { waitTimeMs: Date.now() - startTime },
+            'WS instance poll timed out — staying in fallback mode',
+          );
+          return;
+        }
+
+        // Schedule next poll
+        this.pollTimerId = setTimeout(poll, WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS);
+        if (this.pollTimerId.unref) {
+          this.pollTimerId.unref();
+        }
+      } catch (error) {
+        logger.warn({ err: error }, 'Error during WS instance polling');
+      }
+    };
+
+    // Start polling after a short initial delay
+    this.pollTimerId = setTimeout(poll, WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS);
+    if (this.pollTimerId.unref) {
+      this.pollTimerId.unref();
+    }
+
+    logger.debug(
+      { intervalMs: WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS, timeoutMs: WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS },
+      'Started background WS instance polling',
+    );
+  }
+
+  /**
+   * Clear the WS instance poll timer.
+   *
+   * Must be called from `stop()` to prevent post-stop callbacks.
+   */
+  private clearPollTimer(): void {
+    if (this.pollTimerId) {
+      clearTimeout(this.pollTimerId);
+      this.pollTimerId = undefined;
     }
   }
 
@@ -735,7 +844,12 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       }
 
       // Access SDK's internal WebSocket instance for Pong detection
-      this.interceptWsFromClient(this.wsClient);
+      // WSClient.start() is fire-and-forget (Issue #1504): it resolves before
+      // the SDK finishes connecting (~300ms), so getWSInstance() may return null.
+      // Try immediately (zero-cost), then poll in background if needed.
+      if (!this.interceptWsFromClient(this.wsClient)) {
+        this.pollForWsInstance();
+      }
 
       // Start custom ping loop for faster dead connection detection (Issue #1437)
       this.startCustomPingLoop();
