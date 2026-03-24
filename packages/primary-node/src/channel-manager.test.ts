@@ -272,4 +272,38 @@ describe('ChannelManager', () => {
       expect(manager.size()).toBe(0);
     });
   });
+
+  describe('unregister()', () => {
+    it('should unregister a registered channel', () => {
+      const channel = createMockChannel('feishu');
+      manager.register(channel);
+
+      expect(manager.size()).toBe(1);
+      expect(manager.has('feishu')).toBe(true);
+
+      const result = manager.unregister('feishu');
+
+      expect(result).toBe(true);
+      expect(manager.size()).toBe(0);
+      expect(manager.has('feishu')).toBe(false);
+    });
+
+    it('should return false for non-existent channel', () => {
+      const result = manager.unregister('non-existent');
+      expect(result).toBe(false);
+    });
+
+    it('should not affect other channels', () => {
+      const channel1 = createMockChannel('feishu');
+      const channel2 = createMockChannel('rest');
+      manager.register(channel1);
+      manager.register(channel2);
+
+      manager.unregister('feishu');
+
+      expect(manager.size()).toBe(1);
+      expect(manager.has('rest')).toBe(true);
+      expect(manager.get('rest')).toBe(channel2);
+    });
+  });
 });
