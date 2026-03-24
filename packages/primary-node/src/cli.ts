@@ -8,6 +8,8 @@
  * This starts the Primary Node with a REST channel for API access.
  * All configuration (port, host, etc.) is read from the config file.
  *
+ * Issue #1594: Refactored to use ChannelManager for unified channel lifecycle.
+ *
  * @module primary-node/cli
  */
 
@@ -23,6 +25,7 @@ import {
   createInboundAttachment,
   createControlHandler,
   type ControlHandlerContext,
+  type MessageHandler,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
@@ -151,6 +154,9 @@ async function main(): Promise<void> {
     enableLocalExec: true,
   });
 
+  // Get ChannelManager from PrimaryNode (Issue #1594: unified channel lifecycle)
+  const channelManager = primaryNode.getChannelManager();
+
   // Create and register REST channel (if configured)
   let restChannel: RestChannel | undefined;
   if (hasRestConfig) {
@@ -160,6 +166,7 @@ async function main(): Promise<void> {
       fileStorageDir,
     };
     restChannel = new RestChannel(restConfig);
+    primaryNode.registerChannel(restChannel);
   }
 
   // Get agent configuration from loaded config (validates API key is available)
@@ -200,6 +207,7 @@ async function main(): Promise<void> {
   const controlHandler = createControlHandler(controlHandlerContext);
 
   // Set up REST channel handlers (if configured)
+  // Issue #1594: Use ChannelManager.setupHandlers() for unified handler wiring
   if (restChannel) {
     // Create PilotCallbacks for REST channel
     const createRestCallbacks = (_chatId: string): PilotCallbacks => ({
@@ -235,8 +243,8 @@ async function main(): Promise<void> {
       },
     });
 
-    // Set up message handler to process messages through agent
-    restChannel.onMessage(async (message: IncomingMessage) => {
+    // Create message handler for REST channel
+    const restMessageHandler: MessageHandler = async (message: IncomingMessage) => {
       const { chatId, content, messageId, userId, metadata } = message;
       logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from REST channel');
 
@@ -248,7 +256,6 @@ async function main(): Promise<void> {
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
 
       try {
-        // Use processMessage for streaming conversations (like Feishu)
         agent.processMessage(chatId, content, messageId, senderOpenId, undefined, chatHistoryContext);
       } catch (error) {
         logger.error({ err: error, chatId, messageId }, 'Failed to process message');
@@ -262,12 +269,10 @@ async function main(): Promise<void> {
           type: 'done',
         });
       }
-    });
+    };
 
-    // Set up control handler for REST commands
-    restChannel.onControl(controlHandler);
-
-    primaryNode.registerChannel(restChannel);
+    // Wire handlers via ChannelManager (Issue #1594)
+    channelManager.setupHandlers(restChannel, restMessageHandler, controlHandler);
   }
 
   // Check if Feishu is configured and start Feishu Channel
@@ -281,6 +286,7 @@ async function main(): Promise<void> {
     };
 
     feishuChannel = new FeishuChannel(feishuChannelConfig);
+    primaryNode.registerChannel(feishuChannel);
 
     // Integrate passive mode into unified control handler context (Issue #1464)
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
@@ -323,8 +329,8 @@ async function main(): Promise<void> {
       },
     });
 
-    // Set up message handler for Feishu
-    feishuChannel.onMessage(async (message: IncomingMessage) => {
+    // Create message handler for Feishu channel
+    const feishuMessageHandler: MessageHandler = async (message: IncomingMessage) => {
       const { chatId, content, messageId, userId, metadata, attachments } = message;
       logger.info({ chatId, messageId, contentLength: content.length, hasAttachments: !!attachments }, 'Processing message from Feishu channel');
 
@@ -346,7 +352,6 @@ async function main(): Promise<void> {
       );
 
       try {
-        // Use processMessage for streaming conversations
         agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
       } catch (error) {
         logger.error({ err: error, chatId, messageId }, 'Failed to process message');
@@ -358,15 +363,14 @@ async function main(): Promise<void> {
           text: `❌ Error: ${errorMsg}`,
         });
       }
-    });
+    };
 
-    // Set up control handler for Feishu commands
-    feishuChannel.onControl(controlHandler);
-
-    primaryNode.registerChannel(feishuChannel);
+    // Wire handlers via ChannelManager (Issue #1594)
+    channelManager.setupHandlers(feishuChannel, feishuMessageHandler, controlHandler);
   }
 
   // Handle graceful shutdown
+  // Issue #1594: Use ChannelManager.stopAll() for unified channel lifecycle
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {return;}
@@ -375,12 +379,7 @@ async function main(): Promise<void> {
 
     try {
       agentPool.disposeAll();
-      if (restChannel) {
-        await restChannel.stop();
-      }
-      if (feishuChannel) {
-        await feishuChannel.stop();
-      }
+      await channelManager.stopAll();
       await primaryNode.stop();
       logger.info('Primary Node stopped');
       process.exit(0);
@@ -397,16 +396,15 @@ async function main(): Promise<void> {
     // Start PrimaryNode
     await primaryNode.start();
 
-    // Start REST channel if configured
+    // Start all registered channels via ChannelManager (Issue #1594)
+    await channelManager.startAll();
+
+    // Log channel-specific startup info
     if (restChannel) {
-      await restChannel.start();
       logger.info({ restPort, host }, 'REST Channel started');
       console.log(`REST Channel started on http://${host}:${restPort}`);
     }
-
-    // Start Feishu channel if configured
     if (feishuChannel) {
-      await feishuChannel.start();
       logger.info('Feishu Channel started');
 
       // Register Feishu handlers for IPC (Issue #1042)

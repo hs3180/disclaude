@@ -169,7 +169,36 @@ describe('ChannelManager', () => {
 
       manager.register(channel1);
 
-      await expect(manager.startAll()).rejects.toThrow('Start failed');
+      await expect(manager.startAll()).rejects.toThrow('1 channel(s) failed to start');
+    });
+
+    it('should start all channels even if one fails', async () => {
+      const channel1 = createMockChannel('feishu');
+      const channel2 = createMockChannel('rest');
+      (channel1.start as any).mockRejectedValue(new Error('Start failed'));
+
+      manager.register(channel1);
+      manager.register(channel2);
+
+      await expect(manager.startAll()).rejects.toThrow();
+
+      // Both channels should have been attempted
+      expect(channel1.start).toHaveBeenCalled();
+      expect(channel2.start).toHaveBeenCalled();
+    });
+
+    it('should stop already-started channels on failure', async () => {
+      const channel1 = createMockChannel('feishu');
+      const channel2 = createMockChannel('rest');
+      (channel2.start as any).mockRejectedValue(new Error('Start failed'));
+
+      manager.register(channel1);
+      manager.register(channel2);
+
+      await expect(manager.startAll()).rejects.toThrow();
+
+      // channel1 started successfully, so it should be stopped during rollback
+      expect(channel1.stop).toHaveBeenCalled();
     });
   });
 
@@ -195,11 +224,16 @@ describe('ChannelManager', () => {
       manager.register(channel1);
       manager.register(channel2);
 
-      // Should not throw
+      // Should not throw — shutdown must complete
       await expect(manager.stopAll()).resolves.toBeUndefined();
 
-      // Other channel should still be stopped
+      // Both channels should have been attempted
+      expect(channel1.stop).toHaveBeenCalled();
       expect(channel2.stop).toHaveBeenCalled();
+    });
+
+    it('should handle empty channels gracefully', async () => {
+      await expect(manager.stopAll()).resolves.toBeUndefined();
     });
   });
 
@@ -270,6 +304,40 @@ describe('ChannelManager', () => {
       manager.clear();
 
       expect(manager.size()).toBe(0);
+    });
+  });
+
+  describe('unregister()', () => {
+    it('should unregister a registered channel', () => {
+      const channel = createMockChannel('feishu');
+      manager.register(channel);
+
+      expect(manager.size()).toBe(1);
+      expect(manager.has('feishu')).toBe(true);
+
+      const result = manager.unregister('feishu');
+
+      expect(result).toBe(true);
+      expect(manager.size()).toBe(0);
+      expect(manager.has('feishu')).toBe(false);
+    });
+
+    it('should return false for non-existent channel', () => {
+      const result = manager.unregister('non-existent');
+      expect(result).toBe(false);
+    });
+
+    it('should not affect other channels', () => {
+      const channel1 = createMockChannel('feishu');
+      const channel2 = createMockChannel('rest');
+      manager.register(channel1);
+      manager.register(channel2);
+
+      manager.unregister('feishu');
+
+      expect(manager.size()).toBe(1);
+      expect(manager.has('rest')).toBe(true);
+      expect(manager.get('rest')).toBe(channel2);
     });
   });
 });
