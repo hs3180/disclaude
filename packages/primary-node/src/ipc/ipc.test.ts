@@ -109,10 +109,27 @@ describe('UnixSocketIpcClient', () => {
   let client: UnixSocketIpcClient;
   let socketPath: string;
   const mockContexts = new Map<string, { chatId: string; actionPrompts: Record<string, string> }>();
+  let feishuHandlersContainer: { handlers: import('@disclaude/core').FeishuApiHandlers | undefined };
 
   beforeEach(async () => {
     socketPath = generateSocketPath();
     mockContexts.clear();
+
+    feishuHandlersContainer = {
+      handlers: {
+        sendMessage: async () => {},
+        sendCard: async () => {},
+        // eslint-disable-next-line require-await
+        uploadFile: async () => ({ fileKey: '', fileType: 'file', fileName: 'f', fileSize: 0 }),
+        // eslint-disable-next-line require-await
+        getBotInfo: async () => ({ openId: 'ou_test' }),
+        // eslint-disable-next-line require-await
+        sendInteractive: async (_chatId, params) => {
+          // Mock handler that returns a messageId
+          return { messageId: `om_${params.options[0]?.value}` };
+        },
+      },
+    };
 
     const handler = createInteractiveMessageHandler({
       getActionPrompts: (messageId) => mockContexts.get(messageId)?.actionPrompts,
@@ -132,7 +149,7 @@ describe('UnixSocketIpcClient', () => {
         return template.replace(/\{\{actionText\}\}/g, actionText ?? '');
       },
       cleanupExpiredContexts: () => 0,
-    });
+    }, feishuHandlersContainer);
 
     server = new UnixSocketIpcServer(handler, { socketPath });
     client = new UnixSocketIpcClient({ socketPath, timeout: 2000 });
@@ -201,6 +218,22 @@ describe('UnixSocketIpcClient', () => {
   it('should return null for non-existent prompt template', async () => {
     const prompt = await client.generateInteractionPrompt('non-existent', 'confirm');
     expect(prompt).toBeNull();
+  });
+
+  it('should send interactive card via sendInteractive IPC', async () => {
+    const result = await client.sendInteractive('chat-1', {
+      question: 'Choose an option:',
+      options: [
+        { text: 'Confirm', value: 'confirm', type: 'primary' },
+        { text: 'Cancel', value: 'cancel' },
+      ],
+      title: 'Action Required',
+      context: 'Some context',
+      actionPrompts: { confirm: 'User confirmed', cancel: 'User cancelled' },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.messageId).toBe('om_confirm');
   });
 });
 

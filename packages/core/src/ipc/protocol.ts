@@ -23,7 +23,9 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuGetBotInfo'
+  // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
+  | 'sendInteractive';
 
 /**
  * IPC request payload types.
@@ -63,6 +65,20 @@ export interface IpcRequestPayloads {
     threadId?: string;
   };
   feishuGetBotInfo: Record<string, never>;
+  // Raw-param interactive card (Issue #1570)
+  sendInteractive: {
+    chatId: string;
+    question: string;
+    options: Array<{
+      text: string;
+      value: string;
+      type?: 'primary' | 'default' | 'danger';
+    }>;
+    title?: string;
+    context?: string;
+    threadId?: string;
+    actionPrompts?: Record<string, string>;
+  };
 }
 
 /**
@@ -89,6 +105,11 @@ export interface IpcResponsePayloads {
     openId: string;
     name?: string;
     avatarUrl?: string;
+  };
+  // Raw-param interactive card (Issue #1570)
+  sendInteractive: {
+    success: boolean;
+    messageId?: string;
   };
 }
 
