@@ -500,6 +500,41 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Send an interactive card with raw parameters via IPC.
+   * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
+   *
+   * @param chatId - Target chat ID
+   * @param params - Raw card parameters (question, options, title, context)
+   */
+  async sendInteractive(
+    chatId: string,
+    params: {
+      question: string;
+      options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+      title?: string;
+      context?: string;
+      threadId?: string;
+      actionPrompts?: Record<string, string>;
+    }
+  ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('sendInteractive', { chatId, ...params });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'sendInteractive failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

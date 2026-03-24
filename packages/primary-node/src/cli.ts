@@ -449,6 +449,62 @@ async function main(): Promise<void> {
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
         },
+        // Issue #1570: Build interactive card from raw parameters in Primary Node
+        sendInteractive: async (chatId: string, params: {
+          question: string;
+          options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+          title?: string;
+          context?: string;
+          threadId?: string;
+          actionPrompts?: Record<string, string>;
+        }) => {
+          const { question, options, title, context, threadId } = params;
+          const cardTitle = title ?? '交互消息';
+
+          const elements: unknown[] = [];
+
+          if (context) {
+            elements.push({ tag: 'markdown', content: context });
+          }
+
+          elements.push({ tag: 'markdown', content: question });
+
+          elements.push({ tag: 'hr' });
+
+          const actionButtons = options.map((opt) => ({
+            tag: 'button' as const,
+            text: { tag: 'plain_text' as const, content: opt.text },
+            value: opt.value,
+            type: opt.type ?? 'default',
+          }));
+
+          elements.push({
+            tag: 'action',
+            actions: actionButtons,
+          });
+
+          const card: Record<string, unknown> = {
+            config: { wide_screen_mode: true },
+            header: {
+              title: { tag: 'plain_text', content: cardTitle },
+              template: 'blue',
+            },
+            elements,
+          };
+
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'card',
+            card,
+            threadId,
+          });
+
+          // Issue #1570: Return synthetic messageId for action prompt registration.
+          // Real messageId propagation requires doSendMessage() changes (future phase).
+          const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
+
+          return { messageId: syntheticMessageId };
+        },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
       logger.info('Feishu IPC handlers registered');
