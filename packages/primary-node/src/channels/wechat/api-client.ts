@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,14 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 import { createLogger } from '@disclaude/core';
+import type {
+  WeChatGetUpdatesRequest,
+  WeChatGetUpdatesResponse,
+} from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -208,6 +213,85 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Uses the same long-poll timeout as QR status polling (35s).
+   * On timeout (AbortError), returns an empty result — callers should retry.
+   *
+   * @param params - Poll parameters
+   * @returns List of new messages and next cursor
+   */
+  async getUpdates(params?: {
+    /** Cursor for pagination (omit for first request) */
+    cursor?: string;
+    /** AbortSignal for cancellation */
+    signal?: AbortSignal;
+  }): Promise<WeChatGetUpdatesResponse> {
+    const body: WeChatGetUpdatesRequest = {
+      cursor: params?.cursor,
+      timeout: Math.floor(LONG_POLL_TIMEOUT_MS / 1000),
+    };
+
+    const bodyStr = JSON.stringify(body);
+    const headers = this.buildAuthHeaders(bodyStr);
+    const url = `${this.baseUrl}/ilink/bot/getupdates`;
+
+    logger.trace({ cursor: params?.cursor }, 'Polling for updates');
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), LONG_POLL_TIMEOUT_MS);
+
+      // Link external signal (e.g. from MessageListener shutdown)
+      if (params?.signal) {
+        if (params.signal.aborted) {
+          clearTimeout(timer);
+          return { msg_list: [] };
+        }
+        params.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: bodyStr,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'getUpdates request failed');
+        throw new Error(`WeChat getUpdates error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatGetUpdatesResponse;
+
+      // Check for WeChat iLink error format (ret !== 0)
+      if (data.ret !== undefined && data.ret !== 0) {
+        const errMsg = data.err_msg || `Error code ${data.ret}`;
+        logger.error({ ret: data.ret, errMsg }, 'getUpdates returned error');
+        throw new Error(`WeChat getUpdates error [${data.ret}]: ${errMsg}`);
+      }
+
+      const msgCount = data.msg_list?.length ?? 0;
+      logger.debug({ msgCount, cursor: data.cursor }, 'Received updates');
+      return data;
+    } catch (error) {
+      // Timeout during long polling is normal — return empty result
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out (normal)');
+        return { msg_list: [] };
+      }
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
