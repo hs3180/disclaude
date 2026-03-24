@@ -162,6 +162,26 @@ export const WS_HEALTH = {
    * Offline message queue configuration.
    * Messages sent during reconnection are queued and flushed after reconnect.
    */
+  /**
+   * Background polling configuration for WS instance availability (Issue #1504).
+   *
+   * WSClient.start() is fire-and-forget — it resolves before the SDK finishes
+   * establishing the internal WebSocket connection (~300ms). After start(),
+   * we poll getWSInstance() at short intervals until a non-null instance is
+   * available, then pass it directly to interceptWsFromClient() to attach
+   * the Pong listener.
+   *
+   * The polling runs in the background (non-blocking) — connectFresh() returns
+   * immediately in fallback mode and upgrades to active Pong detection once
+   * the instance becomes available.
+   */
+  INSTANCE_POLL: {
+    /** Maximum time to wait for WS instance before giving up (ms) */
+    TIMEOUT_MS: 10 * 1000, // 10 seconds
+    /** Interval between polling attempts (ms) */
+    INTERVAL_MS: 50, // 50ms
+  },
+
   OFFLINE_QUEUE: {
     /** Maximum number of messages to buffer while offline */
     MAX_SIZE: 100,
