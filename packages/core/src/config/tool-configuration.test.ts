@@ -41,8 +41,6 @@ describe('Tool Configuration', () => {
       'NotebookEdit',
 
       // User Interaction
-      // Note: AskUserQuestion is intentionally disabled for all agents
-      // to prevent interactive prompts in automated workflows
       'TodoWrite',
     ];
 
