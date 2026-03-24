@@ -563,6 +563,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Get the Feishu API client for service-level operations.
+   * Issue #1546: Allows IPC handlers to access the Lark SDK client
+   * for group management operations.
+   */
+  getClient(): lark.Client {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized. Call start() first.');
+    }
+    return this.client;
+  }
+
   // ─── WebSocket health monitoring (Issue #1351) ────────────────────────
 
   /**

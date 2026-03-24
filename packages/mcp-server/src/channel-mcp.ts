@@ -15,7 +15,9 @@ import {
   send_card,
   send_interactive,
   send_file,
-  setMessageSentCallback
+  setMessageSentCallback,
+  feishu_create_chat,
+  feishu_dissolve_chat,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -327,6 +329,71 @@ Templates can include these placeholders:
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // ============================================================================
+  // Issue #1546: Feishu group chat operations for temporary session management
+  // - feishu_create_chat: Create a new Feishu group chat
+  // - feishu_dissolve_chat: Dissolve an existing Feishu group chat
+  // ============================================================================
+  {
+    name: 'feishu_create_chat',
+    description: `Create a new Feishu group chat.
+
+Creates a group chat via IPC → Primary Node → Lark SDK → Feishu API.
+Useful for temporary session management (e.g., PR reviews, discussions).
+
+## Parameters
+- **name**: Group name (required)
+- **description**: Group description (optional)
+- **members**: Array of member open_id strings to add (optional)
+
+## Example
+\`\`\`json
+{"name": "PR #123 Review", "members": ["ou_user1", "ou_user2"]}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().describe('Group name'),
+      description: z.string().optional().describe('Group description'),
+      members: z.array(z.string()).optional().describe('Array of member open_id strings to add initially'),
+    }),
+    handler: async ({ name, description, members }: {
+      name: string;
+      description?: string;
+      members?: string[];
+    }) => {
+      try {
+        const result = await feishu_create_chat({ name, description, members });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Create chat failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'feishu_dissolve_chat',
+    description: `Dissolve (delete) an existing Feishu group chat.
+
+Dissolves a group chat via IPC → Primary Node → Lark SDK → Feishu API.
+Use this to clean up temporary groups after they are no longer needed.
+
+## Parameters
+- **chatId**: The chat ID of the group to dissolve (required)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID of the group to dissolve'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      try {
+        const result = await feishu_dissolve_chat({ chatId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Dissolve chat failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

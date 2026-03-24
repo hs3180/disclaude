@@ -53,3 +53,6 @@ export {
 
 // Ask User
 export { ask_user } from './ask-user.js';
+
+// Feishu Chat Operations (Issue #1546)
+export { feishu_create_chat, feishu_dissolve_chat } from './feishu-chat.js';

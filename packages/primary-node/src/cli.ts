@@ -30,6 +30,8 @@ import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js'
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
+import { GroupService } from './platforms/feishu/group-service.js';
+import { dissolveChat } from './platforms/feishu/chat-ops.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -448,6 +450,19 @@ async function main(): Promise<void> {
         // eslint-disable-next-line require-await
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
+        },
+        // Group operations (Issue #1546)
+        createGroup: async (name: string, _description?: string, userIds?: string[]) => {
+          const client = feishuChannel.getClient();
+          const groupService = new GroupService();
+          const groupInfo = await groupService.createGroup(client, { topic: name, members: userIds });
+          return groupInfo.chatId;
+        },
+        dissolveGroup: async (chatId: string) => {
+          const client = feishuChannel.getClient();
+          const groupService = new GroupService();
+          await dissolveChat(client, chatId);
+          groupService.unregisterGroup(chatId);
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

@@ -63,6 +63,9 @@ export {
 // Tools - Ask User
 export { ask_user } from './tools/ask-user.js';
 
+// Tools - Feishu Chat Operations (Issue #1546)
+export { feishu_create_chat, feishu_dissolve_chat } from './tools/feishu-chat.js';
+
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 

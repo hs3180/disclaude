@@ -64,6 +64,9 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  // Group operations (Issue #1546) - optional for backward compatibility
+  createGroup?: (name: string, description?: string, userIds?: string[]) => Promise<string>;
+  dissolveGroup?: (chatId: string) => Promise<void>;
 }
 
 /**
@@ -211,6 +214,61 @@ export function createInteractiveMessageHandler(
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu group operations (Issue #1546)
+        case 'feishuCreateGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          if (!feishuHandlers.createGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createGroup handler not registered',
+            };
+          }
+          const { name, description, userIds } =
+            request.payload as IpcRequestPayloads['feishuCreateGroup'];
+          try {
+            const chatId = await feishuHandlers.createGroup(name, description, userIds);
+            return { id: request.id, success: true, payload: { success: true, chatId } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, payload: { success: false, error: errorMessage }, error: errorMessage };
+          }
+        }
+
+        case 'feishuDissolveGroup': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          if (!feishuHandlers.dissolveGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'dissolveGroup handler not registered',
+            };
+          }
+          const { chatId } =
+            request.payload as IpcRequestPayloads['feishuDissolveGroup'];
+          try {
+            await feishuHandlers.dissolveGroup(chatId);
+            return { id: request.id, success: true, payload: { success: true } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, payload: { success: false, error: errorMessage }, error: errorMessage };
           }
         }
 

@@ -23,7 +23,10 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuGetBotInfo'
+  // Feishu group operations (Issue #1546)
+  | 'feishuCreateGroup'
+  | 'feishuDissolveGroup';
 
 /**
  * IPC request payload types.
@@ -63,6 +66,15 @@ export interface IpcRequestPayloads {
     threadId?: string;
   };
   feishuGetBotInfo: Record<string, never>;
+  // Feishu group operations (Issue #1546)
+  feishuCreateGroup: {
+    name: string;
+    description?: string;
+    userIds?: string[];
+  };
+  feishuDissolveGroup: {
+    chatId: string;
+  };
 }
 
 /**
@@ -89,6 +101,16 @@ export interface IpcResponsePayloads {
     openId: string;
     name?: string;
     avatarUrl?: string;
+  };
+  // Feishu group operations (Issue #1546)
+  feishuCreateGroup: {
+    success: boolean;
+    chatId?: string;
+    error?: string;
+  };
+  feishuDissolveGroup: {
+    success: boolean;
+    error?: string;
   };
 }
 

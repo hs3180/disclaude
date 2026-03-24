@@ -137,6 +137,33 @@ describe('IPC Protocol', () => {
       };
       expect(getBotInfo.payload).toEqual({});
     });
+
+    it('should type-check feishu group operation requests (Issue #1546)', () => {
+      const createGroup: IpcRequest<'feishuCreateGroup'> = {
+        type: 'feishuCreateGroup',
+        id: 'req-10',
+        payload: { name: 'PR Review', description: 'Review discussion', userIds: ['ou_user1'] },
+      };
+      expect(createGroup.payload.name).toBe('PR Review');
+      expect(createGroup.payload.description).toBe('Review discussion');
+      expect(createGroup.payload.userIds).toEqual(['ou_user1']);
+
+      const createGroupMinimal: IpcRequest<'feishuCreateGroup'> = {
+        type: 'feishuCreateGroup',
+        id: 'req-11',
+        payload: { name: 'Temp Group' },
+      };
+      expect(createGroupMinimal.payload.name).toBe('Temp Group');
+      expect(createGroupMinimal.payload.description).toBeUndefined();
+      expect(createGroupMinimal.payload.userIds).toBeUndefined();
+
+      const dissolveGroup: IpcRequest<'feishuDissolveGroup'> = {
+        type: 'feishuDissolveGroup',
+        id: 'req-12',
+        payload: { chatId: 'oc_xxx' },
+      };
+      expect(dissolveGroup.payload.chatId).toBe('oc_xxx');
+    });
   });
 
   describe('IpcResponse types', () => {
@@ -180,6 +207,32 @@ describe('IPC Protocol', () => {
         },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
+    });
+
+    it('should type-check feishu group operation responses (Issue #1546)', () => {
+      const createGroupResponse: IpcResponse<'feishuCreateGroup'> = {
+        id: 'req-10',
+        success: true,
+        payload: { success: true, chatId: 'oc_xxx' },
+      };
+      expect(createGroupResponse.payload?.success).toBe(true);
+      expect(createGroupResponse.payload?.chatId).toBe('oc_xxx');
+
+      const dissolveGroupResponse: IpcResponse<'feishuDissolveGroup'> = {
+        id: 'req-11',
+        success: true,
+        payload: { success: true },
+      };
+      expect(dissolveGroupResponse.payload?.success).toBe(true);
+
+      const createGroupError: IpcResponse<'feishuCreateGroup'> = {
+        id: 'req-12',
+        success: false,
+        payload: { success: false, error: 'Permission denied' },
+        error: 'Permission denied',
+      };
+      expect(createGroupError.payload?.success).toBe(false);
+      expect(createGroupError.payload?.error).toBe('Permission denied');
     });
   });
 

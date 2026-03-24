@@ -499,6 +499,60 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Feishu Group Operations (Issue #1546)
+  // ============================================================================
+
+  /**
+   * Create a group chat via IPC.
+   * Issue #1546: Enables MCP tools to create Feishu groups for temporary sessions.
+   */
+  async feishuCreateGroup(
+    name: string,
+    description?: string,
+    userIds?: string[]
+  ): Promise<{ success: boolean; chatId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('feishuCreateGroup', { name, description, userIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, name }, 'feishuCreateGroup failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Dissolve a group chat via IPC.
+   * Issue #1546: Enables MCP tools to dissolve Feishu groups for temporary sessions.
+   */
+  async feishuDissolveGroup(
+    chatId: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('feishuDissolveGroup', { chatId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'feishuDissolveGroup failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
