@@ -18,6 +18,7 @@ import {
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import type { InteractiveOption } from './tools/interactive-message.js';
 
 // Re-export
 export type { MessageSentCallback } from './tools/types.js';
@@ -72,23 +73,39 @@ For interactive cards with button click handlers, use send_interactive instead.`
   },
   send_interactive: {
     description: `Send an interactive card with clickable buttons to a chat.
-When users click buttons, the corresponding prompt template will be sent to the agent.
+Primary Node builds the card from raw parameters (question, options).
+When users click buttons, the corresponding prompt will be sent to the agent.
 
 IMPORTANT: Use this when your card contains buttons that need to trigger actions.
 For display-only cards, use send_card instead.`,
     parameters: {
       type: 'object',
       properties: {
-        card: { type: 'object', description: 'Card JSON structure' },
+        question: { type: 'string', description: 'The question or main content to display' },
+        options: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', description: 'Button display text' },
+              value: { type: 'string', description: 'Button action value' },
+              type: { type: 'string', enum: ['primary', 'default', 'danger'], description: 'Button style' },
+            },
+            required: ['text', 'value'],
+          },
+          description: 'Button options for user interaction',
+        },
+        chatId: { type: 'string', description: 'Target chat ID' },
+        title: { type: 'string', description: 'Card title (defaults to 交互消息)' },
+        context: { type: 'string', description: 'Optional context shown above the question' },
         actionPrompts: {
           type: 'object',
           additionalProperties: { type: 'string' },
-          description: 'Map of button values to prompt templates. When a button is clicked, the corresponding prompt is sent to the agent.',
+          description: 'Optional custom action prompts (overrides auto-generated defaults)',
         },
-        chatId: { type: 'string', description: 'Target chat ID' },
         parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
       },
-      required: ['card', 'actionPrompts', 'chatId'],
+      required: ['question', 'options', 'chatId'],
     },
     handler: send_interactive,
   },
@@ -212,94 +229,82 @@ For interactive cards with button click handlers, use send_interactive instead.
     name: 'send_interactive',
     description: `Send an interactive card with clickable buttons to a chat.
 
-When users click buttons, the corresponding prompt template will be sent to the agent.
+Primary Node builds the card from raw parameters (question, options) and manages
+the full card lifecycle. When users click buttons, the corresponding prompt will
+be sent to the agent.
 
 **IMPORTANT**: Use this when your card contains buttons that need to trigger actions.
 For display-only cards, use send_card instead.
 
 ## Parameters
-- **card**: The card JSON structure (object)
-- **actionPrompts**: Map of button values to prompt templates
+- **question**: The question or main content to display (string)
+- **options**: Array of button options with text, value, and optional type
 - **chatId**: Target chat ID
+- **title**: Optional card title (defaults to "交互消息")
+- **context**: Optional context shown above the question
+- **actionPrompts**: Optional custom action prompts (overrides auto-generated defaults)
 - **parentMessageId**: Optional, for thread reply
 
 ## Type Constraints (IMPORTANT)
-- **card**: MUST be an object with config/header/elements, NOT an array or string
-- **actionPrompts**: MUST be an object { [buttonValue: string]: string }, NOT an array or string
+- **question**: MUST be a non-empty string
+- **options**: MUST be a non-empty array of { text, value } objects
 - **chatId**: MUST be a non-empty string
-
-## Action Prompt Placeholders
-Templates can include these placeholders:
-- \`{{actionText}}\` - Display text of the clicked button
-- \`{{actionValue}}\` - Value of the action
-- \`{{actionType}}\` - Type of action (button, select_static, etc.)
-- \`{{form.fieldName}}\` - Form field values
+- **options[].type**: If provided, must be "primary", "default", or "danger"
 
 ## Example
 \`\`\`json
 {
-  "card": {
-    "config": { "wide_screen_mode": true },
-    "header": { "title": { "tag": "plain_text", "content": "Confirm Action" } },
-    "elements": [
-      {
-        "tag": "action",
-        "actions": [
-          { "tag": "button", "text": { "tag": "plain_text", "content": "OK" }, "value": "ok" },
-          { "tag": "button", "text": { "tag": "plain_text", "content": "Cancel" }, "value": "cancel" }
-        ]
-      }
-    ]
-  },
-  "actionPrompts": {
-    "ok": "[User Action] User clicked OK. Please continue.",
-    "cancel": "[User Action] User clicked Cancel. Task aborted."
-  },
-  "chatId": "oc_xxx"
+  "question": "Which option do you prefer?",
+  "options": [
+    { "text": "✅ Approve", "value": "approve", "type": "primary" },
+    { "text": "❌ Reject", "value": "reject", "type": "danger" }
+  ],
+  "chatId": "oc_xxx",
+  "title": "Code Review",
+  "context": "PR #123 needs your approval"
 }
-\`\`\`
-
-**Reference:** https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-markdown-tags`,
+\`\`\``,
     parameters: z.object({
-      card: z.object({}).passthrough().describe('Card JSON structure'),
-      actionPrompts: z.record(z.string(), z.string()).describe(
-        'Map of button values to prompt templates. When a button is clicked, the corresponding prompt is sent to the agent.'
-      ),
+      question: z.string().describe('The question or main content to display'),
+      options: z.array(z.object({
+        text: z.string().describe('Button display text'),
+        value: z.string().describe('Button action value'),
+        type: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
+      })).describe('Button options for user interaction'),
       chatId: z.string().describe('Target chat ID'),
+      title: z.string().optional().describe('Card title (defaults to 交互消息)'),
+      context: z.string().optional().describe('Optional context shown above the question'),
+      actionPrompts: z.record(z.string(), z.string()).optional().describe(
+        'Optional custom action prompts. When a button is clicked, the corresponding prompt is sent to the agent.'
+      ),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
     }),
-    handler: async ({ card, actionPrompts, chatId, parentMessageId }: {
-      card: Record<string, unknown>;
-      actionPrompts: Record<string, string>;
+    handler: async ({ question, options, chatId, title, context, actionPrompts, parentMessageId }: {
+      question: string;
+      options: InteractiveOption[];
       chatId: string;
+      title?: string;
+      context?: string;
+      actionPrompts?: Record<string, string>;
       parentMessageId?: string;
     }) => {
-      // Issue #1355: Pre-validation to prevent message sending on invalid params
-      // Validate card type
-      if (!card || typeof card !== 'object' || Array.isArray(card)) {
-        return toolSuccess(`⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`);
+      // Validate question
+      if (!question || typeof question !== 'string') {
+        return toolSuccess('⚠️ Invalid question: must be a non-empty string');
       }
 
-      // Validate card structure
-      if (!isValidFeishuCard(card)) {
-        return toolSuccess(`⚠️ Invalid card structure: ${getCardValidationError(card)}`);
+      // Validate options
+      if (!options || !Array.isArray(options) || options.length === 0) {
+        return toolSuccess('⚠️ Invalid options: must be a non-empty array');
       }
 
-      // Validate actionPrompts type
-      if (!actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)) {
-        return toolSuccess(`⚠️ Invalid actionPrompts: must be an object, got ${Array.isArray(actionPrompts) ? 'array' : typeof actionPrompts}`);
-      }
-
-      // Validate actionPrompts non-empty
-      const promptKeys = Object.keys(actionPrompts);
-      if (promptKeys.length === 0) {
-        return toolSuccess('⚠️ Invalid actionPrompts: must have at least one action');
-      }
-
-      // Validate actionPrompts value types
-      for (const [key, value] of Object.entries(actionPrompts)) {
-        if (typeof value !== 'string') {
-          return toolSuccess(`⚠️ Invalid actionPrompts: value for "${key}" must be string, got ${typeof value}`);
+      for (let i = 0; i < options.length; i++) {
+        const opt = options[i];
+        if (!opt.text || typeof opt.text !== 'string') {
+          return toolSuccess(`⚠️ Invalid options[${i}].text: must be a non-empty string`);
+        }
+        if (!opt.value || typeof opt.value !== 'string') {
+          return toolSuccess(`⚠️ Invalid options[${i}].value: must be a non-empty string`);
         }
       }
 
@@ -309,7 +314,9 @@ Templates can include these placeholders:
       }
 
       try {
-        const result = await send_interactive({ card, actionPrompts, chatId, parentMessageId });
+        const result = await send_interactive({
+          question, options, chatId, title, context, actionPrompts, parentMessageId,
+        });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);

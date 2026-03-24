@@ -360,66 +360,52 @@ Example:
           },
         };
       } else if (toolName === 'send_interactive') {
-        const { card, actionPrompts } = toolArgs;
+        const { question, options } = toolArgs;
         const chatId = toolArgs.chatId as string | undefined;
 
-        // Pre-validation: card must be an object
-        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+        // Pre-validation: question must be a non-empty string
+        if (!question || typeof question !== 'string') {
           return {
             jsonrpc: '2.0',
             id,
             result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}` }],
+              content: [{ type: 'text' as const, text: '⚠️ Invalid question: must be a non-empty string' }],
               isError: true,
             },
           };
         }
 
-        // Pre-validation: card structure
-        if (!isValidFeishuCard(card as Record<string, unknown>)) {
+        // Pre-validation: options must be a non-empty array
+        if (!options || !Array.isArray(options) || options.length === 0) {
           return {
             jsonrpc: '2.0',
             id,
             result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card structure: ${getCardValidationError(card)}` }],
+              content: [{ type: 'text' as const, text: '⚠️ Invalid options: must be a non-empty array' }],
               isError: true,
             },
           };
         }
 
-        // Pre-validation: actionPrompts must be an object (not array/string)
-        if (!actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: must be an object, got ${Array.isArray(actionPrompts) ? 'array' : typeof actionPrompts}` }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: actionPrompts non-empty
-        const promptKeys = Object.keys(actionPrompts);
-        if (promptKeys.length === 0) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid actionPrompts: must have at least one action' }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: actionPrompts values must be strings
-        for (const [key, value] of Object.entries(actionPrompts)) {
-          if (typeof value !== 'string') {
+        // Pre-validation: each option must have text and value
+        for (let i = 0; i < options.length; i++) {
+          const opt = options[i] as Record<string, unknown>;
+          if (!opt.text || typeof opt.text !== 'string') {
             return {
               jsonrpc: '2.0',
               id,
               result: {
-                content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: value for "${key}" must be string, got ${typeof value}` }],
+                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].text: must be a non-empty string` }],
+                isError: true,
+              },
+            };
+          }
+          if (!opt.value || typeof opt.value !== 'string') {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].value: must be a non-empty string` }],
                 isError: true,
               },
             };
@@ -439,9 +425,12 @@ Example:
         }
 
         const result = await send_interactive_message({
-          card: card as Record<string, unknown>,
-          actionPrompts: actionPrompts as Record<string, string>,
+          question: question as string,
+          options: options as Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>,
           chatId,
+          title: toolArgs.title as string | undefined,
+          context: toolArgs.context as string | undefined,
+          actionPrompts: toolArgs.actionPrompts as Record<string, string> | undefined,
           parentMessageId: toolArgs.parentMessageId as string | undefined,
         });
         return {

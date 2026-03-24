@@ -1,8 +1,9 @@
 /**
  * Interactive message tool implementation.
  *
- * This tool sends interactive cards with pre-defined prompt templates
- * that are automatically converted to user messages when interactions occur.
+ * This tool sends interactive cards with clickable buttons.
+ * Raw parameters (question, options) are forwarded via IPC to Primary Node,
+ * which owns the full card building lifecycle (Issue #1571).
  *
  * @module mcp-server/tools/interactive-message
  */
@@ -15,27 +16,22 @@ import {
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
 } from '@disclaude/core';
-import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
-import { getFeishuCredentials } from './credentials.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveMessageContext } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
 /**
- * Send card message via IPC to PrimaryNode's LarkClientService.
- * Issue #1035: Routes Feishu API calls through unified client.
- * Issue #1088: Improved error handling with detailed error information.
+ * Interactive message option for send_interactive.
  */
-async function sendCardViaIpc(
-  chatId: string,
-  card: Record<string, unknown>,
-  threadId?: string,
-  description?: string
-): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
-  const ipcClient = getIpcClient();
-  return await ipcClient.feishuSendCard(chatId, card, threadId, description);
+export interface InteractiveOption {
+  /** Button display text */
+  text: string;
+  /** Action value (used as action prompt key) */
+  value: string;
+  /** Button style */
+  type?: 'primary' | 'default' | 'danger';
 }
 
 /**
@@ -163,82 +159,80 @@ export function cleanupExpiredContexts(): number {
 }
 
 /**
- * Send an interactive message with pre-defined action prompts.
+ * Send an interactive message with clickable buttons.
  *
- * When the user interacts with the card (clicks a button, selects from menu, etc.),
- * the corresponding prompt template will be used to generate a message that the
- * agent receives as if the user had typed it.
+ * Raw parameters (question, options) are forwarded via IPC to Primary Node,
+ * which builds the card, sends it, and manages action prompts.
+ *
+ * Issue #1571: MCP Tool only passes raw params — Primary Node owns the full
+ * card building and prompt management lifecycle.
  *
  * @example
  * ```typescript
  * await send_interactive_message({
- *   card: {
- *     config: { wide_screen_mode: true },
- *     header: { title: { tag: "plain_text", content: "Confirm Action" } },
- *     elements: [
- *       {
- *         tag: "action",
- *         actions: [
- *           { tag: "button", text: { tag: "plain_text", content: "Confirm" }, value: "confirm" },
- *           { tag: "button", text: { tag: "plain_text", content: "Cancel" }, value: "cancel" }
- *         ]
- *       }
- *     ]
- *   },
+ *   question: "Which option do you prefer?",
+ *   options: [
+ *     { text: "✅ Approve", value: "approve", type: "primary" },
+ *     { text: "❌ Reject", value: "reject", type: "danger" },
+ *   ],
+ *   chatId: "oc_xxx",
+ *   title: "Code Review",
+ *   context: "PR #123 needs your approval",
  *   actionPrompts: {
- *     confirm: "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
- *     cancel: "[用户操作] 用户点击了「取消」按钮。任务已取消。"
+ *     approve: "[用户操作] 用户点击了「✅ Approve」按钮。请继续执行。",
+ *     reject: "[用户操作] 用户点击了「❌ Reject」按钮。任务已取消。",
  *   },
- *   chatId: "oc_xxx"
  * });
  * ```
  */
 export async function send_interactive_message(params: {
-  /** The interactive card JSON structure */
-  card: Record<string, unknown>;
-  /** Map of action values to prompt templates */
-  actionPrompts: ActionPromptMap;
+  /** The question or main content to display */
+  question: string;
+  /** Button options for user interaction */
+  options: InteractiveOption[];
   /** Target chat ID */
   chatId: string;
+  /** Card title (defaults to '交互消息') */
+  title?: string;
+  /** Optional context shown above the question */
+  context?: string;
   /** Optional parent message ID for thread reply */
   parentMessageId?: string;
+  /** Optional custom action prompts (overrides default generated prompts) */
+  actionPrompts?: ActionPromptMap;
 }): Promise<SendInteractiveResult> {
-  const { card, actionPrompts, chatId, parentMessageId } = params;
+  const { question, options, chatId, title, context, parentMessageId, actionPrompts } = params;
 
   logger.info({
     chatId,
-    actionCount: Object.keys(actionPrompts).length,
+    optionCount: options?.length,
+    hasTitle: !!title,
+    hasContext: !!context,
+    hasCustomPrompts: !!actionPrompts,
     hasParent: !!parentMessageId,
   }, 'send_interactive_message called');
 
   try {
     // Validate required parameters
-    if (!card) {
-      throw new Error('card is required');
+    if (!question || typeof question !== 'string') {
+      throw new Error('question is required and must be a non-empty string');
     }
-    if (!actionPrompts || Object.keys(actionPrompts).length === 0) {
-      throw new Error('actionPrompts is required and must have at least one action');
+    if (!options || !Array.isArray(options) || options.length === 0) {
+      throw new Error('options is required and must be a non-empty array');
     }
     if (!chatId) {
       throw new Error('chatId is required');
     }
 
-    // Validate card structure
-    if (!isValidFeishuCard(card)) {
-      return {
-        success: false,
-        error: `Invalid card structure: ${getCardValidationError(card)}`,
-        message: `❌ Card validation failed. ${getCardValidationError(card)}`,
-      };
-    }
-
-    // Get Feishu credentials
-    const { appId, appSecret } = getFeishuCredentials();
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      logger.error({ chatId }, errorMsg);
-      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
+    // Validate options structure
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i];
+      if (!opt.text || typeof opt.text !== 'string') {
+        throw new Error(`options[${i}].text is required and must be a non-empty string`);
+      }
+      if (!opt.value || typeof opt.value !== 'string') {
+        throw new Error(`options[${i}].value is required and must be a non-empty string`);
+      }
     }
 
     // Check IPC availability - IPC is required for sending messages (Issue #1355: async connection probe)
@@ -252,27 +246,32 @@ export async function send_interactive_message(params: {
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
-    const result = await sendCardViaIpc(chatId, card, parentMessageId);
+    // Issue #1571: Forward raw params via sendInteractive IPC.
+    // Primary Node builds the card, sends it, and manages action prompts.
+    const ipcClient = getIpcClient();
+    const result = await ipcClient.sendInteractive(chatId, {
+      question,
+      options,
+      title,
+      context,
+      threadId: parentMessageId,
+      actionPrompts,
+    });
+
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC sendInteractive failed');
       return {
         success: false,
         error: result.error ?? 'Failed to send interactive message via IPC',
         message: errorMsg,
       };
     }
-    const { messageId } = result;
 
-    // Register action prompts if message was sent successfully
-    if (messageId) {
-      registerActionPrompts(messageId, chatId, actionPrompts);
-      logger.info(
-        { messageId, chatId, actions: Object.keys(actionPrompts) },
-        'Interactive message sent and prompts registered'
-      );
-    }
+    logger.info(
+      { chatId, messageId: result.messageId, optionCount: options.length },
+      'Interactive message sent via sendInteractive IPC'
+    );
 
     // Invoke message sent callback
     const callback = getMessageSentCallback();
@@ -286,8 +285,8 @@ export async function send_interactive_message(params: {
 
     return {
       success: true,
-      message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
-      messageId,
+      message: `✅ Interactive message sent with ${options.length} option(s)`,
+      messageId: result.messageId,
     };
 
   } catch (error) {

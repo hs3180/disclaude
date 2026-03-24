@@ -57,6 +57,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
+export type { InteractiveOption } from './tools/interactive-message.js';
 
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';

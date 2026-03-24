@@ -87,29 +87,50 @@ async function handleMessage(message: unknown) {
               },
               {
                 name: 'send_interactive',
-                description: 'Send an interactive card with buttons/actions to a chat.',
+                description: 'Send an interactive card with buttons to a chat. Primary Node builds the card from raw parameters.',
                 inputSchema: {
                   type: 'object',
                   properties: {
-                    card: {
-                      type: 'object',
-                      description: 'The card content object.',
+                    question: {
+                      type: 'string',
+                      description: 'The question or main content to display.',
                     },
-                    actionPrompts: {
-                      type: 'object',
-                      additionalProperties: { type: 'string' },
-                      description: 'Maps button values to user messages.',
+                    options: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          text: { type: 'string', description: 'Button display text' },
+                          value: { type: 'string', description: 'Button action value' },
+                          type: { type: 'string', enum: ['primary', 'default', 'danger'], description: 'Button style' },
+                        },
+                        required: ['text', 'value'],
+                      },
+                      description: 'Button options for user interaction.',
                     },
                     chatId: {
                       type: 'string',
                       description: 'Target chat ID',
+                    },
+                    title: {
+                      type: 'string',
+                      description: 'Card title (defaults to 交互消息)',
+                    },
+                    context: {
+                      type: 'string',
+                      description: 'Optional context shown above the question',
+                    },
+                    actionPrompts: {
+                      type: 'object',
+                      additionalProperties: { type: 'string' },
+                      description: 'Optional custom action prompts (overrides auto-generated defaults).',
                     },
                     parentMessageId: {
                       type: 'string',
                       description: 'Optional parent message ID for thread replies.',
                     },
                   },
-                  required: ['card', 'actionPrompts', 'chatId'],
+                  required: ['question', 'options', 'chatId'],
                 },
               },
               {
@@ -176,7 +197,15 @@ async function handleMessage(message: unknown) {
         }
 
         if (name === 'send_interactive') {
-          const args = toolArgs as { card: Record<string, unknown>; actionPrompts: Record<string, string>; chatId: string; parentMessageId?: string };
+          const args = toolArgs as {
+            question: string;
+            options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+            chatId: string;
+            title?: string;
+            context?: string;
+            actionPrompts?: Record<string, string>;
+            parentMessageId?: string;
+          };
           const result = await send_interactive_message(args);
 
           return {
