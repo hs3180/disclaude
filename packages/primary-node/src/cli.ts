@@ -28,6 +28,7 @@ import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
+import { buildInteractiveCard } from './platforms/feishu/card-builders/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
@@ -445,7 +446,7 @@ async function main(): Promise<void> {
             fileSize: 0,
           };
         },
-        // Issue #1570: Build interactive card from raw parameters in Primary Node
+        // Issue #1571: Build interactive card from raw parameters using extracted builder
         sendInteractive: async (chatId: string, params: {
           question: string;
           options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
@@ -455,38 +456,9 @@ async function main(): Promise<void> {
           actionPrompts?: Record<string, string>;
         }) => {
           const { question, options, title, context, threadId } = params;
-          const cardTitle = title ?? '交互消息';
 
-          const elements: unknown[] = [];
-
-          if (context) {
-            elements.push({ tag: 'markdown', content: context });
-          }
-
-          elements.push({ tag: 'markdown', content: question });
-
-          elements.push({ tag: 'hr' });
-
-          const actionButtons = options.map((opt) => ({
-            tag: 'button' as const,
-            text: { tag: 'plain_text' as const, content: opt.text },
-            value: opt.value,
-            type: opt.type ?? 'default',
-          }));
-
-          elements.push({
-            tag: 'action',
-            actions: actionButtons,
-          });
-
-          const card: Record<string, unknown> = {
-            config: { wide_screen_mode: true },
-            header: {
-              title: { tag: 'plain_text', content: cardTitle },
-              template: 'blue',
-            },
-            elements,
-          };
+          // Build card using extracted builder (Primary Node owns the full card lifecycle)
+          const card = buildInteractiveCard({ question, options, title, context });
 
           await feishuChannel.sendMessage({
             chatId,
