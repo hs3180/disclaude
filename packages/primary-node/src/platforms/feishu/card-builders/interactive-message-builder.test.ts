@@ -6,6 +6,8 @@ import { describe, it, expect } from 'vitest';
 import {
   buildInteractiveCard,
   buildActionPrompts,
+  validateInteractiveParams,
+  type InteractiveCard,
 } from './interactive-message-builder.js';
 
 describe('Interactive Message Builder', () => {
@@ -26,7 +28,7 @@ describe('Interactive Message Builder', () => {
       expect(card).toHaveProperty('elements');
 
       // Default title
-      expect((card.header as { title: { content: string } }).title.content).toBe('交互消息');
+      expect(card.header.title.content).toBe('交互消息');
     });
 
     it('should use custom title', () => {
@@ -36,7 +38,7 @@ describe('Interactive Message Builder', () => {
         title: 'Custom Title',
       });
 
-      expect((card.header as { title: { content: string } }).title.content).toBe('Custom Title');
+      expect(card.header.title.content).toBe('Custom Title');
     });
 
     it('should include context section when provided', () => {
@@ -46,9 +48,10 @@ describe('Interactive Message Builder', () => {
         context: 'Background information here',
       });
 
-      const elements = card.elements as unknown[];
-      expect(elements[0]).toEqual({ tag: 'markdown', content: 'Background information here' });
-      expect(elements[1]).toEqual({ tag: 'markdown', content: 'Proceed?' });
+      const markdownElements = card.elements.filter((e) => e.tag === 'markdown');
+      expect(markdownElements).toHaveLength(2);
+      expect(markdownElements[0]).toEqual({ tag: 'markdown', content: 'Background information here' });
+      expect(markdownElements[1]).toEqual({ tag: 'markdown', content: 'Proceed?' });
     });
 
     it('should omit context section when not provided', () => {
@@ -57,8 +60,9 @@ describe('Interactive Message Builder', () => {
         options: defaultOptions,
       });
 
-      const elements = card.elements as unknown[];
-      expect(elements[0]).toEqual({ tag: 'markdown', content: 'Proceed?' });
+      const markdownElements = card.elements.filter((e) => e.tag === 'markdown');
+      expect(markdownElements).toHaveLength(1);
+      expect(markdownElements[0]).toEqual({ tag: 'markdown', content: 'Proceed?' });
     });
 
     it('should build correct element structure', () => {
@@ -70,18 +74,18 @@ describe('Interactive Message Builder', () => {
         ],
       });
 
-      const elements = card.elements as unknown[];
-
       // Question
-      expect(elements[0]).toEqual({ tag: 'markdown', content: 'Choose one:' });
+      expect(card.elements[0]).toEqual({ tag: 'markdown', content: 'Choose one:' });
 
       // Divider
-      expect(elements[1]).toEqual({ tag: 'hr' });
+      expect(card.elements[1]).toEqual({ tag: 'hr' });
 
       // Action group
-      const actionGroup = elements[2] as { tag: string; actions: unknown[] };
-      expect(actionGroup.tag).toBe('action');
-      expect(actionGroup.actions).toHaveLength(2);
+      const actionGroup = card.elements.find((e) => e.tag === 'action');
+      expect(actionGroup).toBeDefined();
+      if (actionGroup && actionGroup.tag === 'action') {
+        expect(actionGroup.actions).toHaveLength(2);
+      }
     });
 
     it('should use plain string values for buttons', () => {
@@ -90,10 +94,12 @@ describe('Interactive Message Builder', () => {
         options: [{ text: 'Click', value: 'click' }],
       });
 
-      const elements = card.elements as unknown[];
-      const actionGroup = elements[2] as { actions: Array<{ value: unknown }> };
-      // Value should be plain string, not wrapped in object
-      expect(actionGroup.actions[0].value).toBe('click');
+      const actionGroup = card.elements.find((e) => e.tag === 'action');
+      expect(actionGroup).toBeDefined();
+      if (actionGroup && actionGroup.tag === 'action') {
+        // Value should be plain string, not wrapped in object
+        expect(actionGroup.actions[0].value).toBe('click');
+      }
     });
 
     it('should default button type to "default" when not specified', () => {
@@ -102,9 +108,11 @@ describe('Interactive Message Builder', () => {
         options: [{ text: 'Click', value: 'click' }],
       });
 
-      const elements = card.elements as unknown[];
-      const actionGroup = elements[2] as { actions: Array<{ type: string }> };
-      expect(actionGroup.actions[0].type).toBe('default');
+      const actionGroup = card.elements.find((e) => e.tag === 'action');
+      expect(actionGroup).toBeDefined();
+      if (actionGroup && actionGroup.tag === 'action') {
+        expect(actionGroup.actions[0].type).toBe('default');
+      }
     });
 
     it('should preserve button types', () => {
@@ -117,11 +125,13 @@ describe('Interactive Message Builder', () => {
         ],
       });
 
-      const elements = card.elements as unknown[];
-      const actionGroup = elements[2] as { actions: Array<{ type: string }> };
-      expect(actionGroup.actions[0].type).toBe('primary');
-      expect(actionGroup.actions[1].type).toBe('danger');
-      expect(actionGroup.actions[2].type).toBe('default');
+      const actionGroup = card.elements.find((e) => e.tag === 'action');
+      expect(actionGroup).toBeDefined();
+      if (actionGroup && actionGroup.tag === 'action') {
+        expect(actionGroup.actions[0].type).toBe('primary');
+        expect(actionGroup.actions[1].type).toBe('danger');
+        expect(actionGroup.actions[2].type).toBe('default');
+      }
     });
 
     it('should produce valid Feishu card structure', () => {
@@ -138,6 +148,21 @@ describe('Interactive Message Builder', () => {
         template: 'blue',
       });
       expect(Array.isArray(card.elements)).toBe(true);
+    });
+
+    it('should return strongly-typed InteractiveCard', () => {
+      const card = buildInteractiveCard({
+        question: 'Test',
+        options: [{ text: 'OK', value: 'ok' }],
+      });
+
+      // Verify TypeScript type is correct (no unknown types)
+      const typedCard: InteractiveCard = card;
+      expect(typedCard).toBeDefined();
+      expect(typeof typedCard.config.wide_screen_mode).toBe('boolean');
+      expect(typeof typedCard.header.title.content).toBe('string');
+      expect(typeof typedCard.header.template).toBe('string');
+      expect(Array.isArray(typedCard.elements)).toBe(true);
     });
   });
 
@@ -185,6 +210,95 @@ describe('Interactive Message Builder', () => {
 
       expect(Object.keys(prompts)).toHaveLength(1);
       expect(prompts.ok).toBe('[用户操作] 用户选择了「OK」');
+    });
+  });
+
+  describe('validateInteractiveParams', () => {
+    it('should return error for null params', () => {
+      expect(validateInteractiveParams(null)).toBe('params must be a non-null object');
+    });
+
+    it('should return error for non-object params', () => {
+      expect(validateInteractiveParams('string')).toBe('params must be a non-null object');
+    });
+
+    it('should return error for missing question', () => {
+      expect(validateInteractiveParams({ options: [{ text: 'A', value: 'a' }] }))
+        .toBe('params.question must be a non-empty string');
+    });
+
+    it('should return error for empty question', () => {
+      expect(validateInteractiveParams({ question: '  ', options: [{ text: 'A', value: 'a' }] }))
+        .toBe('params.question must be a non-empty string');
+    });
+
+    it('should return error for missing options', () => {
+      expect(validateInteractiveParams({ question: 'Q?' }))
+        .toBe('params.options must be a non-empty array');
+    });
+
+    it('should return error for empty options array', () => {
+      expect(validateInteractiveParams({ question: 'Q?', options: [] }))
+        .toBe('params.options must be a non-empty array');
+    });
+
+    it('should return error for option with empty text', () => {
+      expect(validateInteractiveParams({ question: 'Q?', options: [{ text: '', value: 'a' }] }))
+        .toBe('params.options[0].text must be a non-empty string');
+    });
+
+    it('should return error for option with empty value', () => {
+      expect(validateInteractiveParams({ question: 'Q?', options: [{ text: 'A', value: '' }] }))
+        .toBe('params.options[0].value must be a non-empty string');
+    });
+
+    it('should return error for invalid button type', () => {
+      expect(validateInteractiveParams({ question: 'Q?', options: [{ text: 'A', value: 'a', type: 'invalid' }] }))
+        .toBe('params.options[0].type must be one of: primary, default, danger');
+    });
+
+    it('should return null for valid params', () => {
+      const result = validateInteractiveParams({
+        question: 'Choose?',
+        options: [{ text: 'OK', value: 'ok', type: 'primary' }],
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should accept valid params without optional fields', () => {
+      const result = validateInteractiveParams({
+        question: 'Choose?',
+        options: [{ text: 'OK', value: 'ok' }],
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should accept valid params with all optional fields', () => {
+      const result = validateInteractiveParams({
+        question: 'Choose?',
+        options: [{ text: 'OK', value: 'ok' }],
+        title: 'Title',
+        context: 'Context',
+      });
+      expect(result).toBeNull();
+    });
+
+    it('should reject non-string title', () => {
+      const result = validateInteractiveParams({
+        question: 'Q?',
+        options: [{ text: 'A', value: 'a' }],
+        title: 123,
+      });
+      expect(result).toBe('params.title must be a string if provided');
+    });
+
+    it('should reject non-string context', () => {
+      const result = validateInteractiveParams({
+        question: 'Q?',
+        options: [{ text: 'A', value: 'a' }],
+        context: {},
+      });
+      expect(result).toBe('params.context must be a string if provided');
     });
   });
 });

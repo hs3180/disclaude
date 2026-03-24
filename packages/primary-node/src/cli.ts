@@ -28,7 +28,11 @@ import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
-import { buildInteractiveCard } from './platforms/feishu/card-builders/index.js';
+import {
+  buildInteractiveCard,
+  buildActionPrompts,
+  validateInteractiveParams,
+} from './platforms/feishu/card-builders/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
@@ -455,7 +459,14 @@ async function main(): Promise<void> {
           threadId?: string;
           actionPrompts?: Record<string, string>;
         }) => {
-          const { question, options, title, context, threadId } = params;
+          const { question, options, title, context, threadId, actionPrompts } = params;
+
+          // Validate params at IPC boundary (data comes from external MCP Server process)
+          const validationError = validateInteractiveParams(params);
+          if (validationError) {
+            logger.warn({ chatId, error: validationError }, 'sendInteractive: invalid params');
+            throw new Error(`Invalid interactive params: ${validationError}`);
+          }
 
           // Build card using extracted builder (Primary Node owns the full card lifecycle)
           const card = buildInteractiveCard({ question, options, title, context });
@@ -467,11 +478,24 @@ async function main(): Promise<void> {
             threadId,
           });
 
+          // Build action prompts: use caller-provided prompts or generate defaults
+          const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
+            ? actionPrompts
+            : buildActionPrompts(options);
+
           // Issue #1570: Return synthetic messageId for action prompt registration.
           // Real messageId propagation requires doSendMessage() changes (future phase).
           const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
 
-          return { messageId: syntheticMessageId };
+          // TODO(Phase 3 #1572): Move action prompt registration to Primary Node.
+          // Currently MCP Server handles registration using the returned messageId + actionPrompts.
+          // The synthetic messageId means registration will work but won't match the real Feishu message.
+          logger.debug(
+            { chatId, syntheticMessageId, actionCount: Object.keys(resolvedActionPrompts).length },
+            'sendInteractive: card sent (synthetic messageId — action prompts should be registered by caller)'
+          );
+
+          return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
