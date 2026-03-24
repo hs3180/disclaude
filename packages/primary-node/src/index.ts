@@ -198,36 +198,6 @@ export {
 // Agent pool (Issue #1040)
 export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-pool.js';
 
-// Auth module (Issue #1041 - migrated to @disclaude/core)
-export type {
-  OAuthProviderConfig,
-  OAuthToken,
-  PKCECodes,
-  OAuthState,
-  AuthUrlResult,
-  CallbackResult,
-  TokenCheckResult,
-  ApiRequestConfig,
-  ApiResponse,
-  AuthConfig,
-} from '@disclaude/core';
-
-export {
-  encrypt,
-  decrypt,
-  generateCodeVerifier,
-  generateCodeChallenge,
-  generateState,
-  TokenStore,
-  getTokenStore,
-  OAuthManager,
-  getOAuthManager,
-} from '@disclaude/core';
-
-export {
-  createAuthCard,
-} from './auth/auth-mcp.js';
-
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
