@@ -61,6 +61,9 @@ function mapIpcRequestToWsAction(type: string): string | null {
       return 'uploadFile';
     case 'feishuGetBotInfo':
       return 'getBotInfo';
+    // Issue #1570: Phase 1 — Platform-agnostic interactive message
+    case 'sendInteractive':
+      return 'sendInteractive';
     default:
       return null;
   }

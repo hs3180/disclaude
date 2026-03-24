@@ -421,6 +421,9 @@ async function main(): Promise<void> {
           threadId?: string,
           description?: string
         ) => {
+          // Issue #1570: Return type updated to include messageId.
+          // Note: messageId propagation requires doSendMessage() changes
+          // (tracked for future phases). Current behavior returns empty result.
           await feishuChannel.sendMessage({
             chatId,
             type: 'card',
@@ -428,6 +431,7 @@ async function main(): Promise<void> {
             threadId,
             description,
           });
+          return {};
         },
         uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
           // File upload via sendMessage with type: 'file'

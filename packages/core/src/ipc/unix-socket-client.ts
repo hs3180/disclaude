@@ -499,6 +499,55 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Platform-agnostic Operations (Issue #1570: Phase 1)
+  // ============================================================================
+
+  /**
+   * Send an interactive message (question with options) via IPC.
+   *
+   * Card building and action prompt registration happen on the Primary Node side.
+   * The MCP Tool layer only passes raw parameters.
+   *
+   * Issue #1570: Phase 1 — MCP Tool 轻量化
+   */
+  async sendInteractive(
+    chatId: string,
+    question: string,
+    options: Array<{
+      text: string;
+      value?: string;
+      style?: 'primary' | 'default' | 'danger';
+      action?: string;
+    }>,
+    title?: string,
+    context?: string,
+    threadId?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('sendInteractive', {
+        chatId,
+        question,
+        options,
+        title,
+        context,
+        threadId,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'sendInteractive failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

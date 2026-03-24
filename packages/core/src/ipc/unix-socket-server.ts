@@ -49,6 +49,7 @@ export interface InteractiveMessageHandlers {
 
 /**
  * Handler functions for Feishu API operations (Issue #1035).
+ * Issue #1570: sendCard now returns messageId for action prompt registration.
  */
 export interface FeishuApiHandlers {
   sendMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
@@ -57,7 +58,7 @@ export interface FeishuApiHandlers {
     card: Record<string, unknown>,
     threadId?: string,
     description?: string
-  ) => Promise<void>;
+  ) => Promise<{ messageId?: string }>;
   uploadFile: (
     chatId: string,
     filePath: string,
@@ -168,8 +169,9 @@ export function createInteractiveMessageHandler(
           const { chatId, card, threadId, description } =
             request.payload as IpcRequestPayloads['feishuSendCard'];
           try {
-            await feishuHandlers.sendCard(chatId, card, threadId, description);
-            return { id: request.id, success: true, payload: { success: true } };
+            // Issue #1570: Capture messageId from sendCard for action prompt registration
+            const result = await feishuHandlers.sendCard(chatId, card, threadId, description);
+            return { id: request.id, success: true, payload: { success: true, messageId: result.messageId } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
@@ -208,6 +210,78 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Platform-agnostic operations (Issue #1570: Phase 1)
+        // sendInteractive: Build card and action prompts on Primary Node side,
+        // send card, register prompts, return messageId.
+        case 'sendInteractive': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const payload = request.payload as IpcRequestPayloads['sendInteractive'];
+          try {
+            const { chatId, question, options, title, context, threadId } = payload;
+
+            // Build card from raw params (moved from ask-user.ts)
+            const buttons = options.map((opt, index) => ({
+              tag: 'button' as const,
+              text: { tag: 'plain_text' as const, content: opt.text },
+              value: opt.value || `option_${index}`,
+              type: opt.style === 'danger' ? 'danger' :
+                    opt.style === 'primary' ? 'primary' : 'default',
+            }));
+
+            const card: Record<string, unknown> = {
+              config: { wide_screen_mode: true },
+              header: {
+                title: { tag: 'plain_text', content: title || '🤖 Agent 提问' },
+                template: 'blue',
+              },
+              elements: [
+                { tag: 'markdown', content: question },
+                { tag: 'action', actions: buttons },
+              ],
+            };
+
+            // Build action prompts from options (moved from ask-user.ts)
+            const actionPrompts: Record<string, string> = {};
+            for (let i = 0; i < options.length; i++) {
+              const opt = options[i];
+              const value = opt.value || `option_${i}`;
+              const contextPart = context ? `\n\n**上下文**: ${context}` : '';
+              const actionPart = opt.action
+                ? `\n\n**请执行**: ${opt.action}`
+                : '';
+              actionPrompts[value] = `[用户操作] 用户选择了「${opt.text}」选项。${contextPart}${actionPart}`;
+            }
+
+            // Send card and get messageId
+            const sendResult = await feishuHandlers.sendCard(chatId, card, threadId);
+
+            // Register action prompts if messageId is available
+            if (sendResult.messageId) {
+              handlers.registerActionPrompts(sendResult.messageId, chatId, actionPrompts);
+              logger.debug(
+                { messageId: sendResult.messageId, chatId, actions: Object.keys(actionPrompts) },
+                'Interactive message sent and prompts registered (Primary Node)'
+              );
+            }
+
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, messageId: sendResult.messageId },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
