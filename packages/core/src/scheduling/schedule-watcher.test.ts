@@ -221,6 +221,45 @@ describe('ScheduleFileScanner', () => {
       expect(task!.model).toBe('glm-4.7');
     });
 
+    it('should parse unquoted model value (Issue #1338)', async () => {
+      const content = [
+        '---',
+        'name: "Unquoted Model Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_unquoted"',
+        'model: glm-4.7',
+        '---',
+        '',
+        'Task with unquoted model value.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-model.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('glm-4.7');
+    });
+
+    it('should not strip mismatched nested quotes from model value (Issue #1338)', async () => {
+      const content = [
+        '---',
+        'name: "Nested Quote Task"',
+        'cron: "0 0 * * *"',
+        'chatId: "oc_nested"',
+        "model: \"'glm'\"",
+        '---',
+        '',
+        'Task with nested quotes.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/nested-quote.md`);
+      expect(task).not.toBeNull();
+      // Matched outer double quotes should be stripped, leaving inner single quotes intact
+      expect(task!.model).toBe("'glm'");
+    });
+
     it('should parse unquoted string values', async () => {
       const content = [
         '---',
