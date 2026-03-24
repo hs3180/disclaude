@@ -95,6 +95,7 @@ export type {
   ChannelConfig,
   ChannelFactory,
   ChannelCapabilities,
+  ChannelDescriptor,
 } from './channel.js';
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';

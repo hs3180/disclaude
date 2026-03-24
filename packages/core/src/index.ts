@@ -274,6 +274,12 @@ export {
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
+// Channel Registry (Issue #1553)
+export {
+  ChannelRegistry,
+  ChannelRegistryError,
+} from './channels/index.js';
+
 // Dynamic channel registration (Issue #1422)
 export {
   ChannelLoader,
