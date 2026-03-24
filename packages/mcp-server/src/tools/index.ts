@@ -12,8 +12,6 @@ export type {
   ActionPromptMap,
   InteractiveMessageContext,
   SendInteractiveResult,
-  AskUserOptions,
-  AskUserResult,
 } from './types.js';
 
 // Shared utilities
@@ -50,6 +48,3 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
-
-// Ask User
-export { ask_user } from './ask-user.js';

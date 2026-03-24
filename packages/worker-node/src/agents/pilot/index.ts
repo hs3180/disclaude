@@ -379,7 +379,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
+      disallowedTools: ['EnterPlanMode'],
       mcpServers,
     });
 
@@ -582,7 +582,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
+      disallowedTools: ['EnterPlanMode'],
       mcpServers,
     });
 

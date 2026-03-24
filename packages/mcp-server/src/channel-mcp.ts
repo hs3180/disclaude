@@ -36,7 +36,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
-export { ask_user } from './tools/ask-user.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
