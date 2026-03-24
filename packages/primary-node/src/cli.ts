@@ -26,8 +26,10 @@ import {
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
+import { getDefaultChannelRegistry } from './channels/channel-descriptors.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
+import { WeChatChannel, type WeChatChannelConfig } from './channels/wechat/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 
@@ -116,21 +118,30 @@ async function main(): Promise<void> {
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
-  const restChannelConfig = rawConfig.channels?.rest as {
+  const channelsConfig = rawConfig.channels ?? {};
+  const restChannelConfig = channelsConfig.rest as {
     port?: number;
     host?: string;
     fileStorageDir?: string;
   } | undefined;
+  const wechatChannelConfig = channelsConfig.wechat as {
+    enabled?: boolean;
+    baseUrl?: string;
+    token?: string;
+    routeTag?: string;
+  } | undefined;
 
-  // Check if Feishu is configured
+  // Check if channels are configured
   const hasFeishuConfig = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
   const hasRestConfig = restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir;
+  const hasWechatConfig = wechatChannelConfig && wechatChannelConfig.enabled !== false;
 
   // At least one channel must be configured
-  if (!hasFeishuConfig && !hasRestConfig) {
+  if (!hasFeishuConfig && !hasRestConfig && !hasWechatConfig) {
     console.error('Error: At least one channel must be configured.');
     console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
     console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
+    console.error('  - For WeChat: set channels.wechat.enabled: true');
     process.exit(1);
   }
 
@@ -138,7 +149,7 @@ async function main(): Promise<void> {
   const host = restChannelConfig?.host || '0.0.0.0';
   const fileStorageDir = restChannelConfig?.fileStorageDir || './data/rest-files';
 
-  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig }, 'Starting Primary Node');
+  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig, hasWechatConfig }, 'Starting Primary Node');
 
   // Create PrimaryNode
   const primaryNode = new PrimaryNode({
@@ -146,7 +157,10 @@ async function main(): Promise<void> {
     enableLocalExec: true,
   });
 
-  // Create and register REST channel (if configured)
+  // Create channel registry and register built-in channel types (Issue #1554)
+  const registry = getDefaultChannelRegistry();
+
+  // Create REST channel via registry (if configured)
   let restChannel: RestChannel | undefined;
   if (hasRestConfig) {
     const restConfig: RestChannelConfig = {
@@ -154,7 +168,7 @@ async function main(): Promise<void> {
       host,
       fileStorageDir,
     };
-    restChannel = new RestChannel(restConfig);
+    restChannel = registry.create('rest', restConfig) as RestChannel;
   }
 
   // Get agent configuration from loaded config (validates API key is available)
@@ -265,7 +279,7 @@ async function main(): Promise<void> {
     primaryNode.registerChannel(restChannel);
   }
 
-  // Check if Feishu is configured and start Feishu Channel
+  // Check if Feishu is configured and start Feishu Channel (via registry)
   let feishuChannel: FeishuChannel | undefined;
   if (Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET) {
     logger.info('Starting Feishu Channel');
@@ -275,7 +289,7 @@ async function main(): Promise<void> {
       appSecret: Config.FEISHU_APP_SECRET,
     };
 
-    feishuChannel = new FeishuChannel(feishuChannelConfig);
+    feishuChannel = registry.create('feishu', feishuChannelConfig) as FeishuChannel;
 
     // Integrate passive mode into unified control handler context (Issue #1464)
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
@@ -361,6 +375,72 @@ async function main(): Promise<void> {
     primaryNode.registerChannel(feishuChannel);
   }
 
+  // Create WeChat channel via registry (if configured in channels.wechat)
+  let wechatChannel: WeChatChannel | undefined;
+  if (hasWechatConfig) {
+    logger.info('Starting WeChat Channel');
+
+    const wechatConfig: WeChatChannelConfig = {
+      baseUrl: wechatChannelConfig?.baseUrl,
+      token: wechatChannelConfig?.token,
+      routeTag: wechatChannelConfig?.routeTag,
+    };
+
+    wechatChannel = registry.create('wechat', wechatConfig) as WeChatChannel;
+
+    // Create PilotCallbacks for WeChat channel
+    const createWechatCallbacks = (): PilotCallbacks => ({
+      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
+        if (!wechatChannel) { throw new Error('WeChat channel not initialized'); }
+        await wechatChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text,
+          threadId: parentMessageId,
+        });
+      },
+      // WeChat MVP only supports text messages
+      sendCard: async (_chatId: string, _card: Record<string, unknown>) => {
+        logger.warn('Card messages not supported in WeChat MVP');
+      },
+      // eslint-disable-next-line require-await
+      sendFile: async (_chatId: string, _filePath: string) => {
+        logger.warn('File sending not supported in WeChat MVP');
+      },
+      // eslint-disable-next-line require-await
+      onDone: async (chatId: string, _parentMessageId?: string) => {
+        logger.info({ chatId }, 'Task completed');
+      },
+    });
+
+    // Set up message handler for WeChat
+    wechatChannel.onMessage(async (message: IncomingMessage) => {
+      const { chatId, content, messageId, userId } = message;
+      logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from WeChat channel');
+
+      const callbacks = createWechatCallbacks();
+      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
+
+      try {
+        agent.processMessage(chatId, content, messageId, userId, undefined, undefined);
+      } catch (error) {
+        logger.error({ err: error, chatId, messageId }, 'Failed to process message');
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (!wechatChannel) { throw new Error('WeChat channel not initialized'); }
+        await wechatChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ Error: ${errorMsg}`,
+        });
+      }
+    });
+
+    // Set up control handler for WeChat commands
+    wechatChannel.onControl(controlHandler);
+
+    primaryNode.registerChannel(wechatChannel);
+  }
+
   // Handle graceful shutdown
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
@@ -375,6 +455,9 @@ async function main(): Promise<void> {
       }
       if (feishuChannel) {
         await feishuChannel.stop();
+      }
+      if (wechatChannel) {
+        await wechatChannel.stop();
       }
       await primaryNode.stop();
       logger.info('Primary Node stopped');
@@ -454,7 +537,13 @@ async function main(): Promise<void> {
       logger.info('Feishu IPC handlers registered');
     }
 
-    logger.info({ hasRest: !!restChannel, hasFeishu: !!feishuChannel }, 'Primary Node started successfully');
+    // Start WeChat channel if configured
+    if (wechatChannel) {
+      await wechatChannel.start();
+      logger.info('WeChat Channel started');
+    }
+
+    logger.info({ hasRest: !!restChannel, hasFeishu: !!feishuChannel, hasWechat: !!wechatChannel }, 'Primary Node started successfully');
     if (restChannel) {
       console.log(`Primary Node started on http://${host}:${restPort}`);
     } else {
