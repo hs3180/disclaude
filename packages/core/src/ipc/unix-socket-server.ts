@@ -64,6 +64,17 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  sendInteractive: (
+    chatId: string,
+    params: {
+      question: string;
+      options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+      title?: string;
+      context?: string;
+      threadId?: string;
+      actionPrompts?: Record<string, string>;
+    }
+  ) => Promise<{ messageId?: string }>;
 }
 
 /**
@@ -208,6 +219,34 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Raw-param interactive card (Issue #1570)
+        case 'sendInteractive': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, question, options, title, context, threadId, actionPrompts } =
+            request.payload as IpcRequestPayloads['sendInteractive'];
+          try {
+            const result = await feishuHandlers.sendInteractive(chatId, {
+              question,
+              options,
+              title,
+              context,
+              threadId,
+              actionPrompts,
+            });
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
