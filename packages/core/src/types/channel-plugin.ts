@@ -75,7 +75,7 @@ export interface DynamicChannelEntry {
  * Options for channel loader.
  */
 export interface ChannelLoaderOptions {
-  /** Base directory containing `.disclaude/channels/` (default: config file directory) */
+  /** Base directory containing `.disclaude/channels/` (default: process.cwd()) */
   baseDir?: string;
 
   /** Whether to skip disabled channels (default: true) */
@@ -120,6 +120,9 @@ export interface ChannelListResult {
 
   /** Number of disabled channels */
   disabled: number;
+
+  /** Number of channels with invalid configuration */
+  invalid: number;
 }
 
 /**

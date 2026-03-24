@@ -389,6 +389,7 @@ describe('ChannelDirectory', () => {
       expect(result.total).toBe(0);
       expect(result.enabled).toBe(0);
       expect(result.disabled).toBe(0);
+      expect(result.invalid).toBe(0);
     });
 
     it('should list all channels', () => {
@@ -400,6 +401,7 @@ describe('ChannelDirectory', () => {
       expect(result.total).toBe(3);
       expect(result.enabled).toBe(2);
       expect(result.disabled).toBe(1);
+      expect(result.invalid).toBe(0);
 
       const ids = result.channels.map(c => c.manifest.id).sort();
       expect(ids).toEqual(['feishu', 'rest', 'wechat']);
@@ -451,6 +453,9 @@ describe('ChannelDirectory', () => {
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(2);
+      expect(result.enabled).toBe(1);
+      expect(result.disabled).toBe(0);
+      expect(result.invalid).toBe(1);
 
       const validEntry = result.channels.find(c => c.manifest.id === 'valid');
       const corruptedEntry = result.channels.find(c => c.manifest.id === 'corrupted');
@@ -476,6 +481,7 @@ describe('ChannelDirectory', () => {
 
       const result = listChannels(tmpDir);
       expect(result.total).toBe(2);
+      expect(result.invalid).toBe(1);
 
       const mismatchEntry = result.channels.find(c => c.manifest.id === 'wrong-id');
       expect(mismatchEntry).toBeDefined();
