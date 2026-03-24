@@ -18,7 +18,9 @@ export const handlePassive: CommandHandler = (
   }
 
   const { chatId } = command;
-  const args = command.data?.args as string | undefined;
+  // Args may be passed as string[] (from Feishu message handler) or string (from REST API)
+  const rawArgs = command.data?.args;
+  const args: string | undefined = Array.isArray(rawArgs) ? rawArgs[0] : rawArgs as string | undefined;
 
   if (args === 'on') {
     passiveMode.setEnabled(chatId, true);
