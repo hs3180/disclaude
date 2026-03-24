@@ -445,10 +445,6 @@ async function main(): Promise<void> {
             fileSize: 0,
           };
         },
-        // eslint-disable-next-line require-await
-        getBotInfo: async () => {
-          return feishuChannel.getBotInfo();
-        },
         // Issue #1570: Build interactive card from raw parameters in Primary Node
         sendInteractive: async (chatId: string, params: {
           question: string;
