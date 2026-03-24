@@ -30,6 +30,9 @@ import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js'
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
+import {
+  buildInteractiveCard,
+} from './platforms/feishu/card-builders/interactive-message-builder.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -448,6 +451,36 @@ async function main(): Promise<void> {
         // eslint-disable-next-line require-await
         getBotInfo: async () => {
           return feishuChannel.getBotInfo();
+        },
+        // Issue #1571 Phase 2: Build and send interactive card from raw params
+        sendInteractive: async (params) => {
+          const { chatId, question, options, title, template, content, threadId, actionPrompts: customPrompts } = params;
+
+          // Build the card using Primary Node's card builder
+          const { card, actionPrompts: builtPrompts } = buildInteractiveCard({
+            question,
+            options,
+            title,
+            template: template as 'blue' | 'wathet' | 'turquoise' | 'green' | 'yellow' | 'orange' | 'red' | 'carmine' | 'violet' | 'purple' | 'indigo' | 'grey' | undefined,
+            content,
+          });
+
+          // Use custom action prompts if provided, otherwise use built-in ones
+          const finalPrompts = customPrompts ?? builtPrompts;
+
+          // Send the card via Feishu channel
+          await feishuChannel.sendMessage({
+            chatId,
+            type: 'card',
+            card: card as unknown as Record<string, unknown>,
+            threadId,
+          });
+
+          return {
+            success: true,
+            card: card as unknown as Record<string, unknown>,
+            actionPrompts: finalPrompts,
+          };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

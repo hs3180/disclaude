@@ -45,3 +45,11 @@ export {
 
 export { extractCardTextContent } from './card-text-extractor.js';
 
+export {
+  buildInteractiveCard,
+  buildActionPrompts,
+  type InteractiveOption,
+  type InteractiveCardParams,
+  type InteractiveCardResult,
+} from './interactive-message-builder.js';
+

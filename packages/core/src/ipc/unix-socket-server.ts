@@ -64,6 +64,20 @@ export interface FeishuApiHandlers {
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
   getBotInfo: () => Promise<{ openId: string; name?: string; avatarUrl?: string }>;
+  /**
+   * Build and send an interactive card from raw parameters.
+   * Issue #1571 Phase 2: Primary Node owns the card building lifecycle.
+   */
+  sendInteractive: (params: {
+    chatId: string;
+    question: string;
+    options: Array<{ text: string; value: string; style?: 'default' | 'primary' | 'danger'; prompt?: string }>;
+    title?: string;
+    template?: string;
+    content?: string;
+    threadId?: string;
+    actionPrompts?: Record<string, string>;
+  }) => Promise<{ success: boolean; messageId?: string; card?: Record<string, unknown>; actionPrompts?: Record<string, string> }>;
 }
 
 /**
@@ -208,6 +222,27 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Primary Node card building (Issue #1571 Phase 2)
+        case 'sendInteractive': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const sendInteractivePayload =
+            request.payload as IpcRequestPayloads['sendInteractive'];
+          try {
+            const result = await feishuHandlers.sendInteractive(sendInteractivePayload);
+            return { id: request.id, success: true, payload: result };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

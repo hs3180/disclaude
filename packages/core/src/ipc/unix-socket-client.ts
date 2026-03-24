@@ -500,6 +500,54 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Build and send an interactive card via IPC.
+   * Issue #1571 Phase 2: Primary Node owns the card building lifecycle.
+   *
+   * Unlike feishuSendCard (which forwards a pre-built card), this method
+   * sends raw parameters and lets Primary Node build the card.
+   */
+  async sendInteractive(
+    chatId: string,
+    question: string,
+    options: Array<{ text: string; value: string; style?: 'default' | 'primary' | 'danger'; prompt?: string }>,
+    extra?: {
+      title?: string;
+      template?: string;
+      content?: string;
+      threadId?: string;
+      actionPrompts?: Record<string, string>;
+    }
+  ): Promise<{
+    success: boolean;
+    messageId?: string;
+    card?: Record<string, unknown>;
+    actionPrompts?: Record<string, string>;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  }> {
+    try {
+      return await this.request('sendInteractive', {
+        chatId,
+        question,
+        options,
+        ...extra,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'sendInteractive failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

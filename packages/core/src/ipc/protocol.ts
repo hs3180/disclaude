@@ -23,7 +23,9 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuGetBotInfo'
+  // Primary Node card building (Issue #1571 Phase 2)
+  | 'sendInteractive';
 
 /**
  * IPC request payload types.
@@ -63,6 +65,22 @@ export interface IpcRequestPayloads {
     threadId?: string;
   };
   feishuGetBotInfo: Record<string, never>;
+  // Primary Node card building (Issue #1571 Phase 2)
+  sendInteractive: {
+    chatId: string;
+    question: string;
+    options: Array<{
+      text: string;
+      value: string;
+      style?: 'default' | 'primary' | 'danger';
+      prompt?: string;
+    }>;
+    title?: string;
+    template?: string;
+    content?: string;
+    threadId?: string;
+    actionPrompts?: Record<string, string>;
+  };
 }
 
 /**
@@ -89,6 +107,13 @@ export interface IpcResponsePayloads {
     openId: string;
     name?: string;
     avatarUrl?: string;
+  };
+  // Primary Node card building (Issue #1571 Phase 2)
+  sendInteractive: {
+    success: boolean;
+    messageId?: string;
+    card?: Record<string, unknown>;
+    actionPrompts?: Record<string, string>;
   };
 }
 
