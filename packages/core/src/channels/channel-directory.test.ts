@@ -286,6 +286,33 @@ describe('ChannelDirectory', () => {
 
       expect(fs.existsSync(path.resolve(tmpDir, '.disclaude', 'channels'))).toBe(true);
     });
+
+    it('should clean up directory on write failure', () => {
+      const channelDir = resolveChannelDir('cleanup-test', tmpDir);
+      const channelsDir = resolveChannelsDir(tmpDir);
+      fs.mkdirSync(channelsDir, { recursive: true });
+      // Pre-create the directory to make mkdir succeed
+      fs.mkdirSync(channelDir, { recursive: true });
+
+      // Make the directory read-only so writeFileSync fails
+      fs.chmodSync(channelDir, 0o444);
+
+      try {
+        expect(() => addChannel('cleanup-test', './test', {}, tmpDir)).toThrow();
+      } finally {
+        // Restore permissions for cleanup
+        fs.chmodSync(channelDir, 0o755);
+      }
+
+      // After write failure, the directory should be cleaned up
+      // so addChannel can be retried
+      expect(fs.existsSync(channelDir)).toBe(false);
+
+      // Verify retry succeeds
+      addChannel('cleanup-test', './test', {}, tmpDir);
+      expect(fs.existsSync(channelDir)).toBe(true);
+      expect(fs.existsSync(resolveChannelConfigPath('cleanup-test', tmpDir))).toBe(true);
+    });
   });
 
   describe('removeChannel', () => {

@@ -214,10 +214,17 @@ export function addChannel(
   };
 
   // Write channel.yaml atomically (write to temp, then rename)
+  // If write/rename fails, clean up the orphan directory to avoid stuck state
   const yamlContent = serializeChannelConfig(manifest);
   const tempPath = path.join(channelDir, 'channel.yaml.tmp');
-  fs.writeFileSync(tempPath, yamlContent, 'utf-8');
-  fs.renameSync(tempPath, configPath);
+  try {
+    fs.writeFileSync(tempPath, yamlContent, 'utf-8');
+    fs.renameSync(tempPath, configPath);
+  } catch (writeErr: unknown) {
+    // Best-effort cleanup: remove orphan directory so addChannel can be retried
+    try { fs.rmSync(channelDir, { recursive: true, force: true }); } catch {}
+    throw writeErr;
+  }
 
   logger.info({ channelId, module, directory: channelDir }, 'Channel added');
 }
