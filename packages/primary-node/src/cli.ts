@@ -445,10 +445,6 @@ async function main(): Promise<void> {
             fileSize: 0,
           };
         },
-        // eslint-disable-next-line require-await
-        getBotInfo: async () => {
-          return feishuChannel.getBotInfo();
-        },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);
       logger.info('Feishu IPC handlers registered');

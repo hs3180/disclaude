@@ -129,13 +129,6 @@ describe('IPC Protocol', () => {
         payload: { chatId: 'chat-1', filePath: '/path/to/file.pdf' },
       };
       expect(uploadFile.payload.filePath).toBe('/path/to/file.pdf');
-
-      const getBotInfo: IpcRequest<'feishuGetBotInfo'> = {
-        type: 'feishuGetBotInfo',
-        id: 'req-8',
-        payload: {},
-      };
-      expect(getBotInfo.payload).toEqual({});
     });
   });
 

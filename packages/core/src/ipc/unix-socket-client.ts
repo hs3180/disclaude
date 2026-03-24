@@ -488,18 +488,6 @@ export class UnixSocketIpcClient {
   }
 
   /**
-   * Get bot info via IPC.
-   */
-  async feishuGetBotInfo(): Promise<{ openId: string; name?: string; avatarUrl?: string } | null> {
-    try {
-      return await this.request('feishuGetBotInfo', {});
-    } catch (error) {
-      logger.error({ err: error }, 'feishuGetBotInfo failed');
-      return null;
-    }
-  }
-
-  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

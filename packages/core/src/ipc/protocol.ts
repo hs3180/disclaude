@@ -22,8 +22,7 @@ export type IpcRequestType =
   // Feishu API operations (Issue #1035)
   | 'feishuSendMessage'
   | 'feishuSendCard'
-  | 'feishuUploadFile'
-  | 'feishuGetBotInfo';
+  | 'feishuUploadFile';
 
 /**
  * IPC request payload types.
@@ -62,7 +61,6 @@ export interface IpcRequestPayloads {
     filePath: string;
     threadId?: string;
   };
-  feishuGetBotInfo: Record<string, never>;
 }
 
 /**
@@ -84,11 +82,6 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
-  };
-  feishuGetBotInfo: {
-    openId: string;
-    name?: string;
-    avatarUrl?: string;
   };
 }
 
