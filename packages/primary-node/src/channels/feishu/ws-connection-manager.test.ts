@@ -926,7 +926,7 @@ describe('WsConnectionManager', () => {
       const delayedClient = createMockWSClient(false);
       delayedClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
         callCount++;
-        if (callCount < 3) return null; // null for first 2 calls (~100ms)
+        if (callCount < 3) { return null; } // null for first 2 calls (~100ms)
         return mockWs; // available from 3rd call onwards
       });
 
@@ -1003,7 +1003,7 @@ describe('WsConnectionManager', () => {
       // Simulate TOCTOU: instance appears then disappears from getWSInstance()
       toctouClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
         callCount++;
-        if (callCount === 3) return mockWs; // available once
+        if (callCount === 3) { return mockWs; } // available once
         return null; // disappears after that
       });
 
@@ -1050,7 +1050,7 @@ describe('WsConnectionManager', () => {
       // Instance available from call 2, but interception fails once
       flakyClient.wsConfig.getWSInstance = vi.fn().mockImplementation(() => {
         callCount++;
-        if (callCount >= 2) return mockWs;
+        if (callCount >= 2) { return mockWs; }
         return null;
       });
 
