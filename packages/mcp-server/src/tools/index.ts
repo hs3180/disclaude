@@ -10,7 +10,6 @@ export type {
   SendFileResult,
   MessageSentCallback,
   ActionPromptMap,
-  InteractiveMessageContext,
   SendInteractiveResult,
 } from './types.js';
 
