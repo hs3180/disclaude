@@ -488,18 +488,6 @@ export class UnixSocketIpcClient {
   }
 
   /**
-   * Get bot info via IPC.
-   */
-  async feishuGetBotInfo(): Promise<{ openId: string; name?: string; avatarUrl?: string } | null> {
-    try {
-      return await this.request('feishuGetBotInfo', {});
-    } catch (error) {
-      logger.error({ err: error }, 'feishuGetBotInfo failed');
-      return null;
-    }
-  }
-
-  /**
    * Send an interactive card with raw parameters via IPC.
    * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
    *

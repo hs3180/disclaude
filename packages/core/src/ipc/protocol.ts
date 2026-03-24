@@ -23,7 +23,6 @@ export type IpcRequestType =
   | 'feishuSendMessage'
   | 'feishuSendCard'
   | 'feishuUploadFile'
-  | 'feishuGetBotInfo'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive';
 
@@ -64,7 +63,6 @@ export interface IpcRequestPayloads {
     filePath: string;
     threadId?: string;
   };
-  feishuGetBotInfo: Record<string, never>;
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
     chatId: string;
@@ -100,11 +98,6 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
-  };
-  feishuGetBotInfo: {
-    openId: string;
-    name?: string;
-    avatarUrl?: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {

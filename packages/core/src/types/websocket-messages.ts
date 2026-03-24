@@ -143,7 +143,7 @@ export interface CardContextMessage {
  * Feishu API action types supported by the WS routing.
  * Issue #1036: WebSocket request routing (WorkerNode → PrimaryNode)
  */
-export type FeishuApiAction = 'sendMessage' | 'sendCard' | 'uploadFile' | 'getBotInfo';
+export type FeishuApiAction = 'sendMessage' | 'sendCard' | 'uploadFile';
 
 /**
  * Message sent from Worker Node to Primary Node for Feishu API requests.

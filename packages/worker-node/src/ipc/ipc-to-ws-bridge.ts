@@ -59,8 +59,6 @@ function mapIpcRequestToWsAction(type: string): string | null {
       return 'sendCard';
     case 'feishuUploadFile':
       return 'uploadFile';
-    case 'feishuGetBotInfo':
-      return 'getBotInfo';
     default:
       return null;
   }

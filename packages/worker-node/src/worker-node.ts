@@ -862,12 +862,12 @@ export class WorkerNode {
    * Send a Feishu API request to the Primary Node.
    * This allows Worker Node to make Feishu API calls through the Primary Node's LarkClientService.
    *
-   * @param action - The action to perform (sendMessage, sendCard, uploadFile, getBotInfo)
+   * @param action - The action to perform (sendMessage, sendCard, uploadFile)
    * @param params - Action parameters
    * @returns Promise that resolves with the response data
    */
   sendFeishuApiRequest(
-    action: 'sendMessage' | 'sendCard' | 'uploadFile' | 'getBotInfo',
+    action: 'sendMessage' | 'sendCard' | 'uploadFile',
     params: {
       chatId?: string;
       text?: string;
@@ -955,11 +955,4 @@ export class WorkerNode {
     return await this.sendFeishuApiRequest('uploadFile', { chatId, filePath, threadId });
   }
 
-  /**
-   * Get bot information through the Primary Node.
-   * Convenience wrapper for sendFeishuApiRequest.
-   */
-  async getFeishuBotInfo(): Promise<unknown> {
-    return await this.sendFeishuApiRequest('getBotInfo', {});
-  }
 }
