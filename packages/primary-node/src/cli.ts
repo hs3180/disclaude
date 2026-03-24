@@ -9,6 +9,7 @@
  * All configuration (port, host, etc.) is read from the config file.
  *
  * Issue #1594: Refactored to use ChannelManager for unified channel lifecycle.
+ * Issue #1555: Unified channel handler injection via createChannelMessageHandler.
  *
  * @module primary-node/cli
  */
@@ -18,16 +19,11 @@ import {
   setLoadedConfig,
   createLogger,
   Config,
-  type IncomingMessage,
   type FeishuApiHandlers,
   type DisclaudeConfigWithChannels,
-  type FileRef,
-  createInboundAttachment,
   createControlHandler,
   type ControlHandlerContext,
-  type MessageHandler,
 } from '@disclaude/core';
-import type { PilotCallbacks } from '@disclaude/worker-node';
 import { PrimaryNode } from './primary-node.js';
 import { RestChannel, type RestChannelConfig } from './channels/rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './channels/feishu-channel.js';
@@ -38,6 +34,7 @@ import {
 } from './platforms/feishu/card-builders/index.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
+import { createChannelMessageHandler } from './utils/channel-handlers.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -207,72 +204,13 @@ async function main(): Promise<void> {
   const controlHandler = createControlHandler(controlHandlerContext);
 
   // Set up REST channel handlers (if configured)
-  // Issue #1594: Use ChannelManager.setupHandlers() for unified handler wiring
+  // Issue #1555: Use unified createChannelMessageHandler instead of inline callbacks
   if (restChannel) {
-    // Create PilotCallbacks for REST channel
-    const createRestCallbacks = (_chatId: string): PilotCallbacks => ({
-      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
-        await restChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text,
-          threadId: parentMessageId,
-        });
-      },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
-        await restChannel.sendMessage({
-          chatId,
-          type: 'card',
-          card,
-          description,
-          threadId: parentMessageId,
-        });
-      },
-      // eslint-disable-next-line require-await
-      sendFile: async (chatId: string, filePath: string) => {
-        logger.warn({ chatId, filePath }, 'File sending not implemented for REST channel');
-      },
-      onDone: async (chatId: string, parentMessageId?: string) => {
-        logger.info({ chatId }, 'Task completed');
-        // Signal completion for sync mode
-        await restChannel.sendMessage({
-          chatId,
-          type: 'done',
-          threadId: parentMessageId,
-        });
-      },
-    });
-
-    // Create message handler for REST channel
-    const restMessageHandler: MessageHandler = async (message: IncomingMessage) => {
-      const { chatId, content, messageId, userId, metadata } = message;
-      logger.info({ chatId, messageId, contentLength: content.length }, 'Processing message from REST channel');
-
-      const callbacks = createRestCallbacks(chatId);
-      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
-
-      // Extract context
-      const senderOpenId = userId;
-      const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
-
-      try {
-        agent.processMessage(chatId, content, messageId, senderOpenId, undefined, chatHistoryContext);
-      } catch (error) {
-        logger.error({ err: error, chatId, messageId }, 'Failed to process message');
-        await restChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
-        });
-        await restChannel.sendMessage({
-          chatId,
-          type: 'done',
-        });
-      }
-    };
-
-    // Wire handlers via ChannelManager (Issue #1594)
-    channelManager.setupHandlers(restChannel, restMessageHandler, controlHandler);
+    channelManager.setupHandlers(
+      restChannel,
+      createChannelMessageHandler(restChannel, agentPool, { sendDoneOnError: true }),
+      controlHandler,
+    );
   }
 
   // Check if Feishu is configured and start Feishu Channel
@@ -291,6 +229,7 @@ async function main(): Promise<void> {
     // Integrate passive mode into unified control handler context (Issue #1464)
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
     // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
+    // Use const ref for TypeScript narrowing in closures.
     const feishuChannelRef = feishuChannel;
     controlHandlerContext.passiveMode = {
       isEnabled: (chatId: string) => !feishuChannelRef.isPassiveModeDisabled(chatId),
@@ -298,75 +237,12 @@ async function main(): Promise<void> {
         feishuChannelRef.setPassiveModeDisabled(chatId, !enabled),
     };
 
-    // Create PilotCallbacks for Feishu channel
-    const createFeishuCallbacks = (): PilotCallbacks => ({
-      sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
-        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
-        await feishuChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text,
-          threadId: parentMessageId,
-        });
-      },
-      sendCard: async (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => {
-        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
-        await feishuChannel.sendMessage({
-          chatId,
-          type: 'card',
-          card,
-          description,
-          threadId: parentMessageId,
-        });
-      },
-      // eslint-disable-next-line require-await
-      sendFile: async (chatId: string, filePath: string) => {
-        logger.warn({ chatId, filePath }, 'File sending not fully implemented');
-      },
-      // eslint-disable-next-line require-await
-      onDone: async (chatId: string, _parentMessageId?: string) => {
-        logger.info({ chatId }, 'Task completed');
-      },
-    });
-
-    // Create message handler for Feishu channel
-    const feishuMessageHandler: MessageHandler = async (message: IncomingMessage) => {
-      const { chatId, content, messageId, userId, metadata, attachments } = message;
-      logger.info({ chatId, messageId, contentLength: content.length, hasAttachments: !!attachments }, 'Processing message from Feishu channel');
-
-      const callbacks = createFeishuCallbacks();
-      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
-
-      // Extract context
-      const senderOpenId = userId;
-      const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
-
-      // Convert MessageAttachment[] to FileRef[] for agent processing
-      const fileRefs: FileRef[] | undefined = attachments?.map((att) =>
-        createInboundAttachment(att.fileName, chatId, message.messageType as 'image' | 'file' | 'media', {
-          localPath: att.filePath,
-          mimeType: att.mimeType,
-          size: att.size,
-          messageId: message.messageId,
-        })
-      );
-
-      try {
-        agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
-      } catch (error) {
-        logger.error({ err: error, chatId, messageId }, 'Failed to process message');
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        if (!feishuChannel) { throw new Error('Feishu channel not initialized'); }
-        await feishuChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text: `❌ Error: ${errorMsg}`,
-        });
-      }
-    };
-
-    // Wire handlers via ChannelManager (Issue #1594)
-    channelManager.setupHandlers(feishuChannel, feishuMessageHandler, controlHandler);
+    // Issue #1555: Use unified createChannelMessageHandler
+    channelManager.setupHandlers(
+      feishuChannel,
+      createChannelMessageHandler(feishuChannel, agentPool),
+      controlHandler,
+    );
   }
 
   // Handle graceful shutdown
