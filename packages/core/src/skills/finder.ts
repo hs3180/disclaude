@@ -9,7 +9,7 @@
  * Design Principles:
  * - Simple and minimal - no complex parsing
  * - Just find and return file paths
- * - Let SkillAgent read the markdown content
+ * - Let the caller read and process the markdown content
  *
  * @example
  * ```typescript
