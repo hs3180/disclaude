@@ -40,8 +40,10 @@ const mockFs = {
     const parts = np.split('/').filter(Boolean);
     let cur = '';
     for (const part of parts) {
-      cur += '/' + part;
-      if (!vfs.has(cur)) vfs.set(cur, null);
+      cur += `/${part}`;
+      if (!vfs.has(cur)) {
+        vfs.set(cur, null);
+      }
     }
   }),
 
@@ -58,7 +60,7 @@ const mockFs = {
     }
     const val = vfs.get(np);
     if (val === null) {
-      const err: NodeJS.ErrnoException = new Error(`EISDIR: illegal operation on a directory, read`) as any;
+      const err: NodeJS.ErrnoException = new Error('EISDIR: illegal operation on a directory, read') as any;
       err.code = 'EISDIR';
       throw err;
     }
@@ -72,7 +74,7 @@ const mockFs = {
       err.code = 'ENOENT';
       throw err;
     }
-    const prefix = np + '/';
+    const prefix = `${np}/`;
     const seen = new Map<string, boolean>();
     for (const key of vfs.keys()) {
       if (key.startsWith(prefix)) {
@@ -97,15 +99,17 @@ const mockFs = {
   rmSync: vi.fn((p: string, opts?: { recursive?: boolean; force?: boolean }): void => {
     const np = norm(p);
     if (!vfs.has(np)) {
-      if (opts?.force) return;
+      if (opts?.force) { return; }
       const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, rm '${p}'`) as any;
       err.code = 'ENOENT';
       throw err;
     }
     if (opts?.recursive) {
-      const prefix = np + '/';
+      const prefix = `${np}/`;
       for (const key of [...vfs.keys()]) {
-        if (key === np || key.startsWith(prefix)) vfs.delete(key);
+        if (key === np || key.startsWith(prefix)) {
+          vfs.delete(key);
+        }
       }
     } else {
       vfs.delete(np);
@@ -116,15 +120,15 @@ const mockFs = {
     const onp = norm(oldP);
     const nnp = norm(newP);
     if (!vfs.has(onp)) {
-      const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, rename`) as any;
+      const err: NodeJS.ErrnoException = new Error('ENOENT: no such file or directory, rename') as any;
       err.code = 'ENOENT';
       throw err;
     }
     vfs.set(nnp, vfs.get(onp)!);
     vfs.delete(onp);
     if (vfs.get(nnp) === null) {
-      const oldPrefix = onp + '/';
-      const newPrefix = nnp + '/';
+      const oldPrefix = `${onp}/`;
+      const newPrefix = `${nnp}/`;
       for (const key of [...vfs.keys()]) {
         if (key.startsWith(oldPrefix)) {
           vfs.set(newPrefix + key.slice(oldPrefix.length), vfs.get(key)!);
