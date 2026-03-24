@@ -633,6 +633,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
         const instance = wsConfig.getWSInstance();
 
+        let interceptionFailed = false;
+
         if (instance) {
           // Pass the instance directly to avoid TOCTOU race (Issue #1504)
           const success = this.interceptWsFromClient(this.wsClient, instance);
@@ -646,6 +648,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
           // Instance available but interception failed (transient issue).
           // Continue polling instead of giving up (Issue #1504 review feedback).
+          interceptionFailed = true;
           logger.debug(
             { waitTimeMs: Date.now() - startTime },
             'SDK WebSocket instance available but interception failed, will retry',
@@ -653,32 +656,48 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         }
 
         // Check timeout
-        if (Date.now() - startTime >= WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS) {
-          logger.warn(
-            { waitTimeMs: Date.now() - startTime },
-            'WS instance poll timed out — staying in fallback mode',
-          );
+        if (Date.now() - startTime >= WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS) {
+          if (interceptionFailed) {
+            logger.warn(
+              { waitTimeMs: Date.now() - startTime },
+              'WS instance available but interception kept failing — staying in fallback mode',
+            );
+          } else {
+            logger.warn(
+              { waitTimeMs: Date.now() - startTime },
+              'WS instance poll timed out — staying in fallback mode',
+            );
+          }
           return;
         }
 
         // Schedule next poll
-        this.pollTimerId = setTimeout(poll, WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS);
+        this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
         if (this.pollTimerId.unref) {
           this.pollTimerId.unref();
         }
       } catch (error) {
         logger.warn({ err: error }, 'Error during WS instance polling');
+        // Continue polling if manager is still active and timeout not reached
+        // Note: cast needed because TS narrows _state after the 'stopped' guard above
+        const currentState = this._state as WsConnectionState;
+        if (currentState !== 'stopped' && Date.now() - startTime < WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS) {
+          this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
+          if (this.pollTimerId.unref) {
+            this.pollTimerId.unref();
+          }
+        }
       }
     };
 
     // Start polling after a short initial delay
-    this.pollTimerId = setTimeout(poll, WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS);
+    this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
     if (this.pollTimerId.unref) {
       this.pollTimerId.unref();
     }
 
     logger.debug(
-      { intervalMs: WS_HEALTH.WS_INSTANCE_POLL_INTERVAL_MS, timeoutMs: WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS },
+      { intervalMs: WS_HEALTH.INSTANCE_POLL.INTERVAL_MS, timeoutMs: WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS },
       'Started background WS instance polling',
     );
   }

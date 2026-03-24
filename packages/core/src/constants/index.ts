@@ -175,8 +175,12 @@ export const WS_HEALTH = {
    * immediately in fallback mode and upgrades to active Pong detection once
    * the instance becomes available.
    */
-  WS_INSTANCE_POLL_TIMEOUT_MS: 10 * 1000, // 10 seconds
-  WS_INSTANCE_POLL_INTERVAL_MS: 50, // 50ms
+  INSTANCE_POLL: {
+    /** Maximum time to wait for WS instance before giving up (ms) */
+    TIMEOUT_MS: 10 * 1000, // 10 seconds
+    /** Interval between polling attempts (ms) */
+    INTERVAL_MS: 50, // 50ms
+  },
 
   OFFLINE_QUEUE: {
     /** Maximum number of messages to buffer while offline */

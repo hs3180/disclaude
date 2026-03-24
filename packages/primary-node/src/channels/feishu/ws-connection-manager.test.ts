@@ -55,8 +55,10 @@ const MOCK_WS_HEALTH = vi.hoisted(() => ({
   DEAD_CONNECTION_TIMEOUT_MS: 3000,
   HEALTH_CHECK_INTERVAL_MS: 1000,
   CUSTOM_PING_INTERVAL_MS: 500,
-  WS_INSTANCE_POLL_TIMEOUT_MS: 2000,
-  WS_INSTANCE_POLL_INTERVAL_MS: 50,
+  INSTANCE_POLL: {
+    TIMEOUT_MS: 2000,
+    INTERVAL_MS: 50,
+  },
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -963,7 +965,7 @@ describe('WsConnectionManager', () => {
       await manager.start(mockEventDispatcher as never);
 
       // Advance past the poll timeout (2000ms)
-      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.WS_INSTANCE_POLL_TIMEOUT_MS + 500);
+      await vi.advanceTimersByTimeAsync(MOCK_WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS + 500);
 
       // Should still be in fallback mode
       expect(manager.getMetrics().hasWsInterception).toBe(false);
