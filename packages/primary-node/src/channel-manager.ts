@@ -98,6 +98,18 @@ export class ChannelManager {
   }
 
   /**
+   * Unregister a channel by ID.
+   * Issue #1594: Added for PrimaryNode integration.
+   */
+  unregister(channelId: string): boolean {
+    const removed = this.channels.delete(channelId);
+    if (removed) {
+      logger.info({ channelId }, 'Channel unregistered');
+    }
+    return removed;
+  }
+
+  /**
    * Get the number of registered channels.
    */
   size(): number {
@@ -142,30 +154,63 @@ export class ChannelManager {
 
   /**
    * Start all registered channels.
+   * Uses Promise.allSettled to ensure one channel's failure doesn't prevent others from starting.
+   * If any channel fails to start, attempts to stop already-started channels before throwing.
    */
   async startAll(): Promise<void> {
-    for (const [channelId, channel] of this.channels) {
-      try {
-        await channel.start();
-        logger.info({ channelId }, 'Channel started');
-      } catch (error) {
-        logger.error({ channelId, error }, 'Failed to start channel');
-        throw error;
-      }
+    const results = await Promise.allSettled(
+      Array.from(this.channels.values()).map(async (channel) => {
+        try {
+          await channel.start();
+          logger.info({ channelId: channel.id }, 'Channel started');
+        } catch (error) {
+          logger.error({ channelId: channel.id, error }, 'Failed to start channel');
+          throw error;
+        }
+      })
+    );
+
+    // Check for any failures
+    const failures = results.filter((r) => r.status === 'rejected');
+    if (failures.length > 0) {
+      const failureCount = failures.length;
+      // Attempt to stop any channels that did start
+      logger.warn({ failureCount, total: this.channels.size }, 'Some channels failed to start, stopping already-started channels');
+      await this.stopAll();
+
+      throw new Error(`${failureCount} channel(s) failed to start`);
     }
   }
 
   /**
    * Stop all registered channels.
+   * Uses Promise.allSettled to ensure one channel's failure doesn't prevent others from stopping.
+   * Critical for graceful shutdown — all channels must be stopped regardless of individual failures.
    */
   async stopAll(): Promise<void> {
-    for (const [channelId, channel] of this.channels) {
-      try {
-        await channel.stop();
-        logger.info({ channelId }, 'Channel stopped');
-      } catch (error) {
-        logger.error({ channelId, error }, 'Failed to stop channel');
-      }
+    if (this.channels.size === 0) {
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      Array.from(this.channels.values()).map(async (channel) => {
+        try {
+          await channel.stop();
+          logger.info({ channelId: channel.id }, 'Channel stopped');
+        } catch (error) {
+          logger.error({ channelId: channel.id, error }, 'Failed to stop channel');
+          throw error;
+        }
+      })
+    );
+
+    // Log failures but don't throw — shutdown must complete
+    const failures = results.filter((r) => r.status === 'rejected');
+    if (failures.length > 0) {
+      logger.warn(
+        { failureCount: failures.length, total: this.channels.size },
+        'Some channels failed to stop during shutdown'
+      );
     }
   }
 

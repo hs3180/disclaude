@@ -97,9 +97,8 @@ export {
   type ConnectedExecNode as ManagedExecNode,
 } from './exec-node-manager.js';
 
-export {
-  ChannelManager,
-} from './channel-manager.js';
+// Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
+// Access it via primaryNode.getChannelManager() instead of direct import.
 
 export {
   WebSocketServerService,
