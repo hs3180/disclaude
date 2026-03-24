@@ -40,6 +40,7 @@ export interface IpcRequestPayloads {
   unregisterActionPrompts: { messageId: string };
   generateInteractionPrompt: {
     messageId: string;
+    chatId: string;
     actionValue: string;
     actionText?: string;
     actionType?: string;

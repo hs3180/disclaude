@@ -248,7 +248,7 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     getActionPrompts: () => undefined,
     registerActionPrompts: () => {},
     unregisterActionPrompts: () => false,
-    generateInteractionPrompt: () => undefined,
+    generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
     cleanupExpiredContexts: () => 0,
   };
 

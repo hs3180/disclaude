@@ -167,15 +167,14 @@ export class InteractiveContextStore {
     // Replace placeholders in the template
     let prompt = template;
 
-    if (actionText) {
-      prompt = prompt.replace(/\{\{actionText\}\}/g, actionText);
-    }
+    // Replace {{actionText}} with provided text, or empty string if not provided
+    // to avoid leaving raw template placeholders in the generated prompt
+    prompt = prompt.replace(/\{\{actionText\}\}/g, actionText ?? '');
 
     prompt = prompt.replace(/\{\{actionValue\}\}/g, actionValue);
 
-    if (actionType) {
-      prompt = prompt.replace(/\{\{actionType\}\}/g, actionType);
-    }
+    // Replace {{actionType}} with provided type, or empty string if not provided
+    prompt = prompt.replace(/\{\{actionType\}\}/g, actionType ?? '');
 
     if (formData) {
       for (const [key, value] of Object.entries(formData)) {
