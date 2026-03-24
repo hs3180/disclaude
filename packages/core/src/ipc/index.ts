@@ -35,3 +35,10 @@ export {
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
 } from './unix-socket-client.js';
+
+// Card building utilities (Issue #1570: Phase 1)
+export {
+  buildQuestionCard,
+  buildActionPrompts,
+  type AskUserOption,
+} from './card-builder.js';

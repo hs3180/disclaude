@@ -137,6 +137,29 @@ describe('IPC Protocol', () => {
       };
       expect(getBotInfo.payload).toEqual({});
     });
+
+    it('should type-check sendInteractive request', () => {
+      const sendInteractive: IpcRequest<'sendInteractive'> = {
+        type: 'sendInteractive',
+        id: 'req-9',
+        payload: {
+          chatId: 'chat-1',
+          question: 'What do you prefer?',
+          options: [
+            { text: 'Option A', value: 'a', style: 'primary' },
+            { text: 'Option B', value: 'b' },
+          ],
+          title: 'Pick one',
+          context: 'Survey context',
+          threadId: 'thread-1',
+        },
+      };
+      expect(sendInteractive.payload.chatId).toBe('chat-1');
+      expect(sendInteractive.payload.question).toBe('What do you prefer?');
+      expect(sendInteractive.payload.options).toHaveLength(2);
+      expect(sendInteractive.payload.options[0].style).toBe('primary');
+      expect(sendInteractive.payload.context).toBe('Survey context');
+    });
   });
 
   describe('IpcResponse types', () => {
@@ -180,6 +203,14 @@ describe('IPC Protocol', () => {
         },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
+
+      const interactiveResponse: IpcResponse<'sendInteractive'> = {
+        id: 'req-3',
+        success: true,
+        payload: { success: true, messageId: 'interactive_chat1_1234' },
+      };
+      expect(interactiveResponse.payload?.success).toBe(true);
+      expect(interactiveResponse.payload?.messageId).toBe('interactive_chat1_1234');
     });
   });
 

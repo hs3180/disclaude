@@ -18,6 +18,7 @@ import {
   type IpcRequestPayloads,
   type IpcResponse,
 } from './protocol.js';
+import { buildQuestionCard, buildActionPrompts, type AskUserOption } from './card-builder.js';
 
 const logger = createLogger('IpcServer');
 
@@ -208,6 +209,50 @@ export function createInteractiveMessageHandler(
           try {
             const botInfo = await feishuHandlers.getBotInfo();
             return { id: request.id, success: true, payload: botInfo };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Issue #1570: Phase 1 — sendInteractive (raw params, card built server-side)
+        case 'sendInteractive': {
+          const feishuHandlers = feishuHandlersContainer?.handlers;
+          if (!feishuHandlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Feishu API handlers not available',
+            };
+          }
+          const { chatId, question, options, title, context, threadId } =
+            request.payload as IpcRequestPayloads['sendInteractive'];
+
+          try {
+            // Build card and action prompts on server side (Primary Node)
+            const card = buildQuestionCard(question, options as AskUserOption[], title);
+            const actionPrompts = buildActionPrompts(options as AskUserOption[], context);
+
+            // Send card via Feishu handler
+            await feishuHandlers.sendCard(chatId, card, undefined, threadId);
+
+            // Register action prompts using a generated key
+            // Note: messageId is not available from sendCard (returns void).
+            // A synthetic key is used; Phase 2 will improve this when
+            // Primary Node takes over the full card lifecycle.
+            const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
+            handlers.registerActionPrompts(syntheticMessageId, chatId, actionPrompts);
+
+            logger.info(
+              { chatId, actionCount: Object.keys(actionPrompts).length, syntheticMessageId },
+              'Interactive message sent (card built server-side)'
+            );
+
+            return {
+              id: request.id,
+              success: true,
+              payload: { success: true, messageId: syntheticMessageId },
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

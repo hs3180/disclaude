@@ -500,6 +500,47 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Send interactive message with raw params via IPC.
+   *
+   * Issue #1570: Phase 1 — MCP Tool 轻量化.
+   * Passes raw question/options to Primary Node which builds the card
+   * and sends it, rather than building the card on the Worker Node.
+   *
+   * @returns Result with success status and optional messageId
+   */
+  async sendInteractive(
+    chatId: string,
+    question: string,
+    options: Array<{ text: string; value?: string; style?: 'primary' | 'default' | 'danger'; action?: string }>,
+    title?: string,
+    context?: string,
+    threadId?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('sendInteractive', {
+        chatId,
+        question,
+        options,
+        title,
+        context,
+        threadId,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'sendInteractive failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {

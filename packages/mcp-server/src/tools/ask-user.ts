@@ -2,78 +2,22 @@
  * Ask User tool implementation.
  *
  * This tool provides a simplified interface for agents to ask users questions
- * with predefined options. It builds on top of send_interactive_message.
+ * with predefined options. It forwards raw parameters to the Primary Node
+ * via IPC, where the card is built and sent.
+ *
+ * Issue #1570: Phase 1 — MCP Tool 轻量化.
+ * Card building logic moved from this file to @disclaude/core/ipc/card-builder.
+ * This tool now only validates parameters and forwards them via IPC.
  *
  * @module mcp-server/tools/ask-user
  */
 
-import { createLogger } from '@disclaude/core';
-import { send_interactive_message } from './interactive-message.js';
+import { createLogger, getIpcClient } from '@disclaude/core';
+import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { invokeMessageSentCallback } from './callback-manager.js';
 import type { AskUserResult, AskUserOptions } from './types.js';
 
 const logger = createLogger('AskUser');
-
-/**
- * Build a Feishu card structure for a question with options.
- */
-function buildQuestionCard(
-  question: string,
-  options: AskUserOptions[],
-  title?: string
-): Record<string, unknown> {
-  const buttons = options.map((opt, index) => ({
-    tag: 'button',
-    text: { tag: 'plain_text', content: opt.text },
-    value: opt.value || `option_${index}`,
-    type: opt.style === 'danger' ? 'danger' :
-          opt.style === 'primary' ? 'primary' : 'default',
-  }));
-
-  return {
-    config: { wide_screen_mode: true },
-    header: {
-      title: { tag: 'plain_text', content: title || '🤖 Agent 提问' },
-      template: 'blue',
-    },
-    elements: [
-      {
-        tag: 'markdown',
-        content: question,
-      },
-      {
-        tag: 'action',
-        actions: buttons,
-      },
-    ],
-  };
-}
-
-/**
- * Build action prompts from options.
- *
- * Each prompt includes context about what action to take when the user
- * selects that option. This enables the agent to continue execution
- * based on the user's choice.
- */
-function buildActionPrompts(
-  options: AskUserOptions[],
-  context?: string
-): Record<string, string> {
-  const prompts: Record<string, string> = {};
-
-  for (let i = 0; i < options.length; i++) {
-    const opt = options[i];
-    const value = opt.value || `option_${i}`;
-    const contextPart = context ? `\n\n**上下文**: ${context}` : '';
-    const actionPart = opt.action
-      ? `\n\n**请执行**: ${opt.action}`
-      : '';
-
-    prompts[value] = `[用户操作] 用户选择了「${opt.text}」选项。${contextPart}${actionPart}`;
-  }
-
-  return prompts;
-}
 
 /**
  * Ask the user a question with predefined options.
@@ -81,6 +25,9 @@ function buildActionPrompts(
  * This tool provides a Human-in-the-Loop capability for agents.
  * When the user selects an option, the agent receives a message
  * with the selection and can continue execution accordingly.
+ *
+ * Card building and action prompt generation happen on the Primary Node
+ * side (via IPC), keeping this MCP tool lightweight.
  *
  * @example
  * ```typescript
@@ -179,43 +126,53 @@ export async function ask_user(params: {
       }
     }
 
-    // Build card and action prompts
-    const card = buildQuestionCard(question, options, title);
-    const actionPrompts = buildActionPrompts(options, context);
-
-    logger.debug({
-      chatId,
-      cardStructure: JSON.stringify(card).slice(0, 200),
-      promptKeys: Object.keys(actionPrompts),
-    }, 'Built card and prompts');
-
-    // Send the interactive message
-    const result = await send_interactive_message({
-      card,
-      actionPrompts,
-      chatId,
-      parentMessageId,
-    });
-
-    if (result.success) {
-      logger.info({
-        chatId,
-        messageId: result.messageId,
-        optionCount: options.length,
-      }, 'Question sent successfully');
-
-      return {
-        success: true,
-        message: `✅ 问题已发送，等待用户选择 (${options.length} 个选项)`,
-        messageId: result.messageId,
-      };
-    } else {
+    // Check IPC availability (Issue #1355: async connection probe)
+    if (!(await isIpcAvailable())) {
+      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+      logger.error({ chatId }, errorMsg);
       return {
         success: false,
-        error: result.error,
-        message: result.message || '❌ 发送问题失败',
+        error: errorMsg,
+        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
       };
     }
+
+    // Forward raw params to Primary Node via IPC
+    // Card building happens on the server side (Issue #1570: Phase 1)
+    const ipcClient = getIpcClient();
+    const result = await ipcClient.sendInteractive(
+      chatId,
+      question,
+      options,
+      title,
+      context,
+      parentMessageId,
+    );
+
+    if (!result.success) {
+      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC sendInteractive failed');
+      return {
+        success: false,
+        error: result.error ?? 'Failed to send interactive message via IPC',
+        message: errorMsg,
+      };
+    }
+
+    // Invoke message sent callback
+    invokeMessageSentCallback(chatId);
+
+    logger.info({
+      chatId,
+      messageId: result.messageId,
+      optionCount: options.length,
+    }, 'Question sent successfully via IPC');
+
+    return {
+      success: true,
+      message: `✅ 问题已发送，等待用户选择 (${options.length} 个选项)`,
+      messageId: result.messageId,
+    };
 
   } catch (error) {
     logger.error({ err: error, chatId }, 'ask_user failed');
