@@ -499,7 +499,11 @@ async function main(): Promise<void> {
             threadId,
           });
 
-          return {};
+          // Issue #1570: Return synthetic messageId for action prompt registration.
+          // Real messageId propagation requires doSendMessage() changes (future phase).
+          const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
+
+          return { messageId: syntheticMessageId };
         },
       };
       primaryNode.registerFeishuHandlers(feishuHandlers);

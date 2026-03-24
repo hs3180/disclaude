@@ -246,6 +246,17 @@ export function createInteractiveMessageHandler(
               threadId,
               actionPrompts,
             });
+
+            // Register action prompts so card callbacks can find them
+            // Issue #1570: Primary Node owns the full interactive card lifecycle
+            if (actionPrompts && result.messageId) {
+              handlers.registerActionPrompts(result.messageId, chatId, actionPrompts);
+              logger.debug(
+                { messageId: result.messageId, chatId, actionCount: Object.keys(actionPrompts).length },
+                'sendInteractive: action prompts registered'
+              );
+            }
+
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
