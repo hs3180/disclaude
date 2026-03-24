@@ -47,7 +47,7 @@ const mockFs = {
     }
   }),
 
-  writeFileSync: vi.fn((p: string, content: string): void => {
+  writeFileSync: vi.fn((p: string, content: string, _encoding?: string): void => {
     vfs.set(norm(p), String(content));
   }),
 
@@ -58,7 +58,7 @@ const mockFs = {
       err.code = 'ENOENT';
       throw err;
     }
-    const val = vfs.get(np);
+    const val = vfs.get(np)!;
     if (val === null) {
       const err: NodeJS.ErrnoException = new Error('EISDIR: illegal operation on a directory, read') as any;
       err.code = 'EISDIR';
