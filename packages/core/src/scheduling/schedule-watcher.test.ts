@@ -175,6 +175,91 @@ describe('ScheduleFileScanner', () => {
       expect(task!.createdAt).toBe('2026-01-15T10:00:00Z');
     });
 
+    it('should parse model field when specified (Issue #1338)', async () => {
+      const content = [
+        '---',
+        'name: "Coding Task"',
+        'cron: "0 */2 * * *"',
+        'chatId: "oc_coding"',
+        'model: "claude-sonnet-4-20250514"',
+        '---',
+        '',
+        'Execute coding tasks with a coding-optimized model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/coding-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('claude-sonnet-4-20250514');
+    });
+
+    it('should default model to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-model.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBeUndefined();
+    });
+
+    it('should parse quoted model value (stripping quotes)', async () => {
+      const content = [
+        '---',
+        'name: "Fast Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_fast"',
+        'model: "glm-4.7"',
+        '---',
+        '',
+        'Fast routine task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/fast-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('glm-4.7');
+    });
+
+    it('should parse unquoted model value (Issue #1338)', async () => {
+      const content = [
+        '---',
+        'name: "Unquoted Model Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_unquoted"',
+        'model: glm-4.7',
+        '---',
+        '',
+        'Task with unquoted model value.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-model.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('glm-4.7');
+    });
+
+    it('should not strip mismatched nested quotes from model value (Issue #1338)', async () => {
+      const content = [
+        '---',
+        'name: "Nested Quote Task"',
+        'cron: "0 0 * * *"',
+        'chatId: "oc_nested"',
+        "model: \"'glm'\"",
+        '---',
+        '',
+        'Task with nested quotes.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/nested-quote.md`);
+      expect(task).not.toBeNull();
+      // Matched outer double quotes should be stripped, leaving inner single quotes intact
+      expect(task!.model).toBe("'glm'");
+    });
+
     it('should parse unquoted string values', async () => {
       const content = [
         '---',
@@ -324,6 +409,41 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('cooldownPeriod: 3600000');
       expect(writtenContent).toContain('createdBy: ou_user');
       expect(writtenContent).toContain('createdAt: "2026-03-01"');
+    });
+
+    it('should write model field when present (Issue #1338)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-coding',
+        name: 'Coding Task',
+        cron: '0 */2 * * *',
+        prompt: 'Code review task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        model: 'claude-sonnet-4-20250514',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('model: "claude-sonnet-4-20250514"');
+    });
+
+    it('should not write model field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-default',
+        name: 'Default Task',
+        cron: '0 0 * * *',
+        prompt: 'Task without model override',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('model:');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {
