@@ -81,6 +81,8 @@ type InteractiveCardElement =
  * Strongly-typed Feishu card structure for interactive messages.
  */
 export interface InteractiveCard {
+  /** Allow index access for compatibility with Record<string, unknown> */
+  [key: string]: unknown;
   config: { wide_screen_mode: boolean };
   header: {
     title: PlainTextElement;
