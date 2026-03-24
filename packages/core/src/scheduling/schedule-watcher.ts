@@ -52,6 +52,23 @@ export interface ScheduleFileTask extends ScheduledTask {
 // ============================================================================
 
 /**
+ * Strip matched leading/trailing quotes from a value.
+ * Only strips if the first and last characters are a matching quote pair.
+ * This prevents incorrect stripping of nested quotes (e.g., "'glm'" → "'glm'" instead of "glm'").
+ *
+ * @param value - The value to strip quotes from
+ * @returns The value with matched outer quotes removed, or the original value
+ */
+function stripQuotes(value: string): string {
+  const first = value[0];
+  const last = value[value.length - 1];
+  if ((first === '"' || first === "'") && first === last && value.length >= 2) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
  * Parse YAML frontmatter from schedule content.
  */
 function parseScheduleFrontmatter(content: string): {
@@ -83,7 +100,8 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdBy':
       case 'createdAt':
       case 'lastExecutedAt':
-        frontmatter[key] = value.replace(/^["']|["']$/g, '');
+      case 'model':
+        frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
       case 'blocking':
@@ -91,9 +109,6 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
-        break;
-      case 'model':
-        frontmatter[key] = value.replace(/^["']|["']$/g, '');
         break;
     }
   }
@@ -204,6 +219,13 @@ export class ScheduleFileScanner {
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
+
+      // Issue #1338: Warn if model is specified but looks suspicious (e.g., empty)
+      if (task.model && task.model.trim().length === 0) {
+        logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
+      } else if (task.model) {
+        logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
+      }
 
       logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');
       return task;
