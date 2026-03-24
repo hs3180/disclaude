@@ -797,7 +797,10 @@ export class MessageHandler {
           data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
         });
 
-        if (response.success) {
+        // Issue #1562: Relay both success messages and error messages from control handler.
+        // Previously, success:false responses with error messages were silently dropped,
+        // causing commands like /passive to appear unrecognized.
+        if (response.success || response.message) {
           if (response.message) {
             await this.callbacks.sendMessage({
               chatId: chat_id,
