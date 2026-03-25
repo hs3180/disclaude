@@ -149,10 +149,21 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildCompactionAwarenessGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Context Compactor (Issue #1336: framework-level auto compacting)
+export {
+  ContextCompactor,
+  createContextCompactor,
+  type CompactionConfig as CompactionConfigType,
+  type CompactionStrategy as CompactionStrategyType,
+  type ResolvedCompactionConfig,
+  type CompactionResult,
+} from './agents/context-compactor.js';
 
 // Skills module (Issue #430)
 export {

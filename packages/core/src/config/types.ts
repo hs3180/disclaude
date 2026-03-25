@@ -259,6 +259,49 @@ export interface MessagingConfig {
 }
 
 /**
+ * Compaction strategy for context compression.
+ * @see Issue #1336
+ */
+export type CompactionStrategy = 'auto' | 'sliding-window' | 'disabled';
+
+/**
+ * Context compaction configuration (Issue #1336).
+ * Controls how agent history is compacted to manage context length.
+ *
+ * Different SDKs have inconsistent auto-compaction behavior.
+ * This provides framework-level control independent of SDK behavior.
+ */
+export interface CompactionConfig {
+  /**
+   * Context usage ratio threshold to trigger compaction (0.0 - 1.0).
+   * When context exceeds `threshold * maxContextLength`, compaction activates.
+   * @default 0.85
+   */
+  threshold?: number;
+
+  /**
+   * Compaction strategy.
+   * - 'auto': Keep recent messages, summarize older ones
+   * - 'sliding-window': Keep only recent N messages (no summary)
+   * - 'disabled': No compaction, use raw truncation
+   * @default 'auto'
+   */
+  strategy?: CompactionStrategy;
+
+  /**
+   * Number of recent message blocks to preserve intact.
+   * @default 10
+   */
+  preserveRecentCount?: number;
+
+  /**
+   * Whether to include a compaction summary header.
+   * @default true
+   */
+  includeSummary?: boolean;
+}
+
+/**
  * Session restoration configuration (Issue #1213).
  * Controls how chat history is loaded when agent starts or resets.
  */
@@ -269,6 +312,8 @@ export interface SessionRestoreConfig {
   maxContextLength?: number;
   /** Session timeout configuration (Issue #1313) */
   sessionTimeout?: SessionTimeoutConfig;
+  /** Context compaction configuration (Issue #1336) */
+  compaction?: CompactionConfig;
 }
 
 /**

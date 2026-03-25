@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildCompactionAwarenessGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,29 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildCompactionAwarenessGuidance', () => {
+  it('should return empty string when not compacted', () => {
+    expect(buildCompactionAwarenessGuidance(false)).toBe('');
+    expect(buildCompactionAwarenessGuidance(undefined)).toBe('');
+  });
+
+  it('should return guidance when compacted', () => {
+    const result = buildCompactionAwarenessGuidance(true);
+    expect(result).toContain('Context Compaction Notice');
+    expect(result).toContain('compacted');
+  });
+
+  it('should mention summary and recent messages', () => {
+    const result = buildCompactionAwarenessGuidance(true);
+    expect(result).toContain('summary');
+    expect(result).toContain('recent');
+  });
+
+  it('should suggest asking user for context if needed', () => {
+    const result = buildCompactionAwarenessGuidance(true);
+    expect(result).toContain('ask the user to provide context');
   });
 });

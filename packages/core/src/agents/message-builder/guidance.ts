@@ -213,3 +213,32 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the context compaction awareness guidance section.
+ *
+ * Issue #1336: Informs the agent that earlier messages may have been
+ * compacted/summarized by the framework to manage context length.
+ * This helps the agent understand why it may not have full history.
+ *
+ * @param wasCompacted - Whether the history was actually compacted
+ * @returns Formatted compaction awareness section, or empty string if not compacted
+ */
+export function buildCompactionAwarenessGuidance(wasCompacted?: boolean): string {
+  if (!wasCompacted) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Context Compaction Notice
+
+**Note**: Earlier conversation history has been compacted to manage context length.
+You may see a summary of older messages above the recent conversation.
+
+- The summary preserves key topics and time ranges from earlier messages
+- Recent messages are preserved in full
+- If you need details about an earlier topic, ask the user to provide context`;
+}

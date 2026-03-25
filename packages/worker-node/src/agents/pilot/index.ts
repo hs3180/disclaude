@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, ContextCompactor, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
@@ -72,6 +72,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Context compactor (Issue #1336)
+  private readonly contextCompactor: ContextCompactor;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -101,6 +104,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Initialize context compactor (Issue #1336)
+    this.contextCompactor = new ContextCompactor(Config.getCompactionConfig());
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -175,13 +181,20 @@ export class Pilot extends BaseAgent implements ChatAgent {
       const history = await this.callbacks.getChatHistory(this.boundChatId);
 
       if (history && history.trim()) {
-        // Truncate if too long
-        this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
-          ? history.slice(-sessionConfig.maxContextLength)
-          : history;
+        // Apply context compaction (Issue #1336) instead of simple truncation
+        const compactionResult = this.contextCompactor.compact(history, sessionConfig.maxContextLength);
+        this.persistedHistoryContext = compactionResult.content;
 
         this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
+          {
+            chatId: this.boundChatId,
+            historyLength: this.persistedHistoryContext.length,
+            originalLength: compactionResult.originalLength,
+            compacted: compactionResult.compacted,
+            reductionPercent: compactionResult.compacted
+              ? Math.round((1 - compactionResult.compactedLength / compactionResult.originalLength) * 100)
+              : 0,
+          },
           'Persisted chat history loaded successfully'
         );
       } else {

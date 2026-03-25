@@ -86,6 +86,27 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
+ * Context compaction configuration (Issue #1336).
+ * Framework-level context compression independent of SDK auto-compacting.
+ */
+export const COMPACTION = {
+  /** Default context usage ratio threshold to trigger compaction */
+  DEFAULT_THRESHOLD: 0.85,
+
+  /** Default number of recent message blocks to preserve intact */
+  DEFAULT_PRESERVE_RECENT_COUNT: 10,
+
+  /** Default compaction strategy */
+  DEFAULT_STRATEGY: 'auto' as const,
+
+  /** Maximum number of key topics to extract for summary */
+  MAX_SUMMARY_TOPICS: 5,
+
+  /** Maximum number of issue references to extract for summary */
+  MAX_SUMMARY_ISSUES: 8,
+} as const;
+
+/**
  * WebSocket health monitoring constants (Issue #1351, #1437)
  *
  * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.

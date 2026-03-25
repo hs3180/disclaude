@@ -23,6 +23,8 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  CompactionConfig,
+  CompactionStrategy,
 } from './types.js';
 
 // Re-export sub-modules
@@ -432,6 +434,28 @@ export class Config {
       idleMinutes: timeoutConfig.idleMinutes ?? 30,
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+    };
+  }
+
+  /**
+   * Get context compaction configuration.
+   * Controls how agent history is compacted to manage context length.
+   * @see Issue #1336
+   *
+   * @returns Compaction configuration with defaults
+   */
+  static getCompactionConfig(): {
+    threshold: number;
+    strategy: CompactionStrategy;
+    preserveRecentCount: number;
+    includeSummary: boolean;
+  } {
+    const config = fileConfigOnly.sessionRestore?.compaction;
+    return {
+      threshold: config?.threshold ?? 0.85,
+      strategy: config?.strategy ?? 'auto',
+      preserveRecentCount: config?.preserveRecentCount ?? 10,
+      includeSummary: config?.includeSummary ?? true,
     };
   }
 }
