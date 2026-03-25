@@ -32,7 +32,6 @@ export type {
   PilotCallbacks,
   ChatAgent,
   ChatAgentFactory,
-  GenerateInteractionPromptCallback,
   SchedulerInterface,
   ScheduleFileWatcherInterface,
   ScheduleManagerInterface,
