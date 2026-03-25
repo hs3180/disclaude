@@ -286,9 +286,44 @@ allowed-tools: [Bash]
 gh issue create --repo OWNER/REPO --title "Auto-generated issue"
 ```
 
+## ⚠️ Self-Review Limitation
+
+**GitHub API does not allow a user (or bot) to submit a review (`--approve` or `--request-changes`) on their own pull request.** Attempting to do so will fail with:
+
+```
+failed to create review: GraphQL: Review Can not request changes on your own pull request
+```
+
+### Pre-check Before Reviewing
+
+**Always** check the PR author before attempting a review. If the author matches the current authenticated identity, fall back to `gh pr comment`:
+
+```bash
+# 1. Get PR author
+AUTHOR=$(gh pr view {number} --repo OWNER/REPO --json author --jq '.author.login')
+
+# 2. Get current authenticated user
+CURRENT_USER=$(gh api user --jq '.login')
+
+# 3. Compare and choose the right action
+if [ "$AUTHOR" = "$CURRENT_USER" ]; then
+  echo "⚠️ Cannot review own PR — falling back to comment"
+  gh pr comment {number} --repo OWNER/REPO --body "Review comment..."
+else
+  gh pr review {number} --repo OWNER/REPO --approve --body "LGTM!"
+fi
+```
+
+### Rules
+
+1. **Never** use `--approve` or `--request-changes` on your own PR
+2. **Always** fall back to `gh pr comment` when the author matches the authenticated user
+3. **Check** before every review operation — the agent may not know which PRs it authored
+
 ## DO NOT
 
 - Do NOT ask users to configure GitHub App in disclaude.config.yaml
 - Do NOT store private keys in the repository
 - Do NOT expose authentication tokens in logs
 - Do NOT perform operations without verifying authentication first
+- Do NOT attempt `--approve` or `--request-changes` on your own PRs — use `gh pr comment` instead

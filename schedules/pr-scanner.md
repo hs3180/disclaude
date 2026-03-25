@@ -44,6 +44,18 @@ gh pr list --repo hs3180/disclaude --state open \
 - 已有 `pr-scanner:processed` label 的 PR
 - 已被 review/approve 的 PR（暂不处理）
 
+⚠️ **自我审查保护**: GitHub API 不允许 bot 审查自己的 PR。过滤时需要排除当前 bot 创建的 PR：
+
+```bash
+# 获取当前认证用户
+CURRENT_USER=$(gh api user --jq '.login')
+
+# 在过滤 PR 列表时排除 bot 自己创建的 PR
+# 在 jq 过滤中添加: select(.author.login != "$CURRENT_USER")
+```
+
+如果某个 PR 是 bot 自己创建的，应自动跳过（或使用 `gh pr comment` 代替 review）。
+
 ### 4. 选择第一个未处理的 PR
 
 取过滤后的第一个 PR 作为处理对象。
@@ -100,7 +112,7 @@ gh pr view {number} --repo hs3180/disclaude \
 ```json
 {
   "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
+  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请先检查 PR 作者是否为当前 bot 用户（`gh api user --jq '.login'` vs `gh pr view {number} --json author --jq '.author.login'`）。如果是 bot 自己的 PR，使用 `gh pr comment` 添加评论（因为 GitHub 不允许 self-review）。否则询问用户需要修改的具体内容，然后使用 `gh pr review {number} --request-changes`。",
   "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
   "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
 }

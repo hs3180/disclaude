@@ -162,6 +162,19 @@ gh pr review 123 --repo OWNER/REPO --approve --body "Reviewed and approved!"
 gh pr merge 123 --repo OWNER/REPO --squash
 ```
 
+> **⚠️ Self-Review Limitation**: GitHub API does not allow a user or bot to submit a review (`--approve` or `--request-changes`) on their own PR. Always check the PR author before reviewing:
+>
+> ```bash
+> AUTHOR=$(gh pr view 123 --repo OWNER/REPO --json author --jq '.author.login')
+> CURRENT_USER=$(gh api user --jq '.login')
+> if [ "$AUTHOR" = "$CURRENT_USER" ]; then
+>   # Fall back to comment — cannot review own PR
+>   gh pr comment 123 --repo OWNER/REPO --body "Review comment..."
+> else
+>   gh pr review 123 --repo OWNER/REPO --approve --body "LGTM!"
+> fi
+> ```
+
 ## Troubleshooting
 
 ### Authentication Failed
