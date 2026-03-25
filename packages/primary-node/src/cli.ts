@@ -333,7 +333,10 @@ function resolveChannelConfigs(
   }
 
   // Warn on unrecognized channel config keys (Issue #1594 review P2)
-  const knownChannelKeys = new Set(['rest', 'wechat']);
+  // Note: WeChat is intentionally NOT in knownChannelKeys — it only supports
+  // dynamic registration (Issue #1638), not config-driven creation.
+  // If a user adds channels.wechat, they will get a warning.
+  const knownChannelKeys = new Set(['rest']);
   const channelKeys = Object.keys(rawConfig.channels || {});
   for (const key of channelKeys) {
     if (!knownChannelKeys.has(key)) {
