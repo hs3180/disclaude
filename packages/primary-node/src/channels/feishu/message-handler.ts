@@ -17,6 +17,7 @@ import {
   CHAT_HISTORY,
   createLogger,
   stripLeadingMentions,
+  ensureFileExtension,
   type FeishuEventData,
   type FeishuMessageEvent,
   type FeishuCardActionEvent,
@@ -597,6 +598,16 @@ export class MessageHandler {
         });
         await response.writeFile(localPath);
 
+        // Issue #1637: Ensure file has correct extension based on magic bytes
+        const fileBuffer = await fs.readFile(localPath);
+        const correctedPath = ensureFileExtension(localPath, fileBuffer);
+        if (correctedPath !== localPath) {
+          await fs.rename(localPath, correctedPath);
+          localPath = correctedPath;
+          // Update fileName to match the corrected name
+          fileName = path.basename(correctedPath);
+        }
+
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
@@ -706,6 +717,16 @@ export class MessageHandler {
             params: { type: message_type },
           });
           await response.writeFile(localPath);
+
+          // Issue #1637: Ensure file has correct extension based on magic bytes
+          const fileBuffer = await fs.readFile(localPath);
+          const correctedPath = ensureFileExtension(localPath, fileBuffer);
+          if (correctedPath !== localPath) {
+            await fs.rename(localPath, correctedPath);
+            localPath = correctedPath;
+            // Update fileName to match the corrected name
+            fileName = path.basename(correctedPath);
+          }
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
         } catch (downloadError) {
