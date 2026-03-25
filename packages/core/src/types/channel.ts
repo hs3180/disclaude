@@ -111,22 +111,17 @@ export type ControlCommandType =
   | 'status'
   | 'help'
   | 'list-nodes'
-  | 'switch-node'
   // Group management commands (Issue #486)
   | 'create-group'
   | 'add-group-member'
   | 'remove-group-member'
-  | 'list-group-members'
   | 'list-group'
   | 'dissolve-group'
   // Debug group commands (Issue #487)
-  | 'set-debug'
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive'
-  // Task control commands (Issue #468)
-  | 'task';
+  | 'passive';
 
 /**
  * Control command from user to agent.
@@ -140,9 +135,6 @@ export interface ControlCommand {
 
   /** Additional command data */
   data?: Record<string, unknown>;
-
-  /** Target node ID for switch-node command */
-  targetNodeId?: string;
 }
 
 /**
