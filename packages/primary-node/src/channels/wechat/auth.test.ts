@@ -7,7 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { WeChatAuth, type AuthResult } from './auth.js';
+import { WeChatAuth } from './auth.js';
 
 // Mock the QRCode module
 vi.mock('qrcode', () => ({

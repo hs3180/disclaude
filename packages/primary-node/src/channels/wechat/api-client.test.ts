@@ -4,8 +4,6 @@
  * @see Issue #1473 - WeChat Channel MVP
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatApiClient } from './api-client.js';
 
@@ -360,7 +358,7 @@ describe('WeChatApiClient', () => {
     it('should abort request after timeout', async () => {
       const abortError = new Error('Aborted');
       abortError.name = 'AbortError';
-      mockFetch.mockImplementation((_url, opts) => {
+      mockFetch.mockImplementation((_url, _opts) => {
         // The AbortController signal should be passed through
         return new Promise((_, reject) => {
           setTimeout(() => reject(abortError), 10);
