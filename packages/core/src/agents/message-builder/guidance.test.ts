@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,48 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment section header', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain the cross-process state sharing mechanism', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('cross-process state sharing');
+    expect(result).toContain('SDK subprocess');
+  });
+
+  it('should describe how to read and write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Reading');
+    expect(result).toContain('Writing');
+    expect(result).toContain('process.env');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should list known runtime env variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('github-jwt-auth');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Security');
+    expect(result).toContain('Never expose token values');
+    expect(result).toContain('.gitignore');
+  });
+
+  it('should include token refresh guidance', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Token refresh');
+    expect(result).toContain('401');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
   });
 });

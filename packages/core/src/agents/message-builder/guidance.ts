@@ -213,3 +213,42 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory
+ * singletons from the main process are inaccessible. A file-based
+ * `.runtime-env` mechanism provides cross-process state sharing.
+ * This guidance makes the agent aware of available runtime env vars
+ * and how to read/write them.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment (.runtime-env)
+
+You share a filesystem-based key-value store with the main process via \`{workspace}/.runtime-env\`. This file enables cross-process state sharing (e.g., authentication tokens) since you run in an SDK subprocess.
+
+### How It Works
+
+- **Reading**: Runtime env vars are pre-loaded into your \`process.env\` at startup. You can also directly read the file: \`cat workspace/.runtime-env\`.
+- **Writing**: Use the Write tool to append \`KEY=VALUE\` lines to \`workspace/.runtime-env\`. Lines starting with \`#\` are comments.
+
+### Known Variables
+
+| Variable | Writer | Purpose |
+|----------|--------|---------|
+| \`GH_TOKEN\` | \`github-jwt-auth\` skill | GitHub App installation access token |
+| \`GH_TOKEN_EXPIRES_AT\` | \`github-jwt-auth\` skill | Token expiration timestamp (ISO 8601) |
+
+### Important Notes
+
+- **Security**: Never expose token values in responses. The file is in \`.gitignore\`.
+- **Token refresh**: If a GitHub API call fails with 401, check \`GH_TOKEN_EXPIRES_AT\` — the token may have expired. Use the \`github-jwt-auth\` skill to refresh.
+- **Format**: One \`KEY=VALUE\` per line. Values containing spaces should not be quoted.`;
+}
