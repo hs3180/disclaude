@@ -117,6 +117,18 @@ export class ChannelManager {
   }
 
   /**
+   * Get the first registered channel in insertion order.
+   *
+   * Useful for components that need a default channel for sending messages
+   * (e.g., scheduler). Returns undefined if no channels are registered.
+   *
+   * Issue #1594: Replaces hardcoded `getAll()[0]` destructuring.
+   */
+  getFirstChannel(): IChannel | undefined {
+    return this.channels.values().next().value;
+  }
+
+  /**
    * Broadcast a message to all registered channels.
    * Uses Promise.allSettled to ensure one channel's failure doesn't affect others.
    */
