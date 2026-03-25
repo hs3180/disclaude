@@ -147,9 +147,6 @@ async function main(): Promise<void> {
     createScheduleAgent: () => {
       throw new Error('ScheduleAgent not available in standalone worker mode');
     },
-    generateInteractionPrompt: () => {
-      throw new Error('generateInteractionPrompt not available in standalone worker mode');
-    },
     logger,
   };
 
