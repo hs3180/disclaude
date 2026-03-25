@@ -9,8 +9,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatChannel } from './wechat-channel.js';
-import type { WeChatChannelConfig } from './types.js';
-
 // Mock the API client
 const mockSendText = vi.fn().mockResolvedValue(undefined);
 const mockSetToken = vi.fn();
