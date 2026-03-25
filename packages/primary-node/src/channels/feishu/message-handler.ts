@@ -43,6 +43,7 @@ export interface MessageCallbacks {
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
   /**
    * Route card action to Worker Node if applicable.
+   * Issue #1629: Accepts optional resolvedPrompt from InteractiveContextStore.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -57,6 +58,7 @@ export interface MessageCallbacks {
       text?: string;
       trigger?: string;
     };
+    resolvedPrompt?: string;
   }) => Promise<boolean>;
   /**
    * Resolve action prompt for a card action.
@@ -969,6 +971,18 @@ export class MessageHandler {
 
     // Try to route card action to Worker Node first
     if (this.callbacks.routeCardAction) {
+      // Issue #1629: Resolve prompt before routing so Worker Node receives
+      // the resolved prompt template from InteractiveContextStore.
+      let resolvedPrompt: string | undefined;
+      if (this.callbacks.resolveActionPrompt) {
+        resolvedPrompt = this.callbacks.resolveActionPrompt(
+          message_id,
+          chat_id,
+          action.value,
+          action.text,
+        );
+      }
+
       const routed = await this.callbacks.routeCardAction({
         chatId: chat_id,
         cardMessageId: message_id,
@@ -982,6 +996,7 @@ export class MessageHandler {
           text: action.text,
           trigger: action.trigger,
         },
+        resolvedPrompt,
       });
 
       if (routed) {

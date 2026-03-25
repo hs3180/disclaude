@@ -564,9 +564,11 @@ export class WorkerNode {
           // Get the agent for this chatId and process the card action
           const ctx = this.activeFeedbackChannels.get(chatId);
           if (ctx) {
-            // Build a default message from the card action
+            // Issue #1629: Use resolvedPrompt from Primary Node if available.
+            // Falls back to default message when no prompt template was registered.
             const buttonText = actionText || actionValue;
-            const messageContent = `User clicked '${buttonText}' button`;
+            const messageContent = cardActionMsg.resolvedPrompt
+              || `User clicked '${buttonText}' button`;
 
             // Get the agent and process the card action as a message
             // Create callbacks for this specific chatId

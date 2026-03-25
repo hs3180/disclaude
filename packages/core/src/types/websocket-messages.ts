@@ -121,6 +121,17 @@ export interface CardActionMessage {
     text?: string;
     trigger?: string;
   };
+  /**
+   * Resolved action prompt from InteractiveContextStore.
+   *
+   * When Primary Node routes a card action to a remote Worker Node,
+   * it resolves the prompt template from InteractiveContextStore before
+   * forwarding. This allows Worker Node to use the correct prompt
+   * without needing access to the store.
+   *
+   * Issue #1629: Remote Worker Node card action resolved prompt routing.
+   */
+  resolvedPrompt?: string;
 }
 
 /**
