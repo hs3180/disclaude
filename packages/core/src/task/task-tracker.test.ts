@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile, readdir, stat, access, writeFile, readFile as fsReadFile } from 'fs/promises';
+import { mkdtemp, rm, readFile, readdir } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -154,7 +154,7 @@ describe('TaskTracker', () => {
 
       const content = await readFile(tracker.getTaskFilePath('msg-long'), 'utf-8');
       // Title should be truncated with ...
-      expect(content).toContain('A'.repeat(50) + '...');
+      expect(content).toContain(`${'A'.repeat(50)  }...`);
     });
 
     it('should not truncate short text in title', async () => {

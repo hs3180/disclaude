@@ -16,7 +16,6 @@ import {
   getIpcSocketPath,
   getIpcClient,
   resetIpcClient,
-  type FeishuApiHandlers,
   type FeishuHandlersContainer,
 } from './index.js';
 
@@ -80,7 +79,7 @@ describe('UnixSocketIpcClient - client methods with real server', () => {
   const registeredPrompts = new Map<string, { chatId: string; prompts: Record<string, string> }>();
 
   function createServerAndClient(maxRetries = 3) {
-    const mockSendInteractive = vi.fn().mockImplementation(async (_chatId: string, params: any) => {
+    const mockSendInteractive = vi.fn().mockImplementation((_chatId: string, params: any) => {
       return { messageId: `om_${params.options[0]?.value}` };
     });
     const container: FeishuHandlersContainer = {
@@ -156,7 +155,7 @@ describe('UnixSocketIpcClient - client methods with real server', () => {
     await client.disconnect();
     // Create a new client pointing to a non-existent socket
     const badClient = new UnixSocketIpcClient({
-      socketPath: '/tmp/nonexistent-' + Date.now() + '.sock',
+      socketPath: `/tmp/nonexistent-${  Date.now()  }.sock`,
       timeout: 100,
       maxRetries: 1,
     });
@@ -301,7 +300,7 @@ describe('UnixSocketIpcClient - client methods with real server', () => {
 
     it('should return socket_not_found when socket does not exist', async () => {
       const badClient = new UnixSocketIpcClient({
-        socketPath: '/tmp/nonexistent-' + Date.now() + '.sock',
+        socketPath: `/tmp/nonexistent-${  Date.now()  }.sock`,
         timeout: 100,
         maxRetries: 1,
       });
