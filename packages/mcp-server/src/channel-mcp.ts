@@ -15,6 +15,8 @@ import {
   send_card,
   send_interactive,
   send_file,
+  create_chat,
+  dissolve_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -26,6 +28,8 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { create_chat } from './tools/create-chat.js';
+export { dissolve_chat } from './tools/dissolve-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -313,6 +317,60 @@ For display-only cards, use send_card instead.
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
+    },
+  },
+  // Issue #1546: Group management tools (platform-agnostic)
+  {
+    name: 'create_chat',
+    description: `Create a new group chat.
+
+The bot creates a new group and returns the chatId for subsequent messaging.
+The bot becomes the group owner and can dissolve the group later.
+
+## Parameters
+- **name**: Group name (optional, auto-generated if not provided)
+- **description**: Group description (optional)
+- **memberIds**: Initial member IDs (optional, platform decides ID format)
+
+## Example
+\`\`\`json
+{"name": "PR #123 Review", "memberIds": ["ou_xxx", "ou_yyy"]}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().optional().describe('Group name (optional, auto-generated if not provided)'),
+      description: z.string().optional().describe('Group description (optional)'),
+      memberIds: z.array(z.string()).optional().describe('Initial member IDs (platform decides ID format)'),
+    }),
+    handler: async ({ name, description, memberIds }: {
+      name?: string;
+      description?: string;
+      memberIds?: string[];
+    }) => {
+      // create_chat handles all errors internally and returns { success, message }
+      const result = await create_chat({ name, description, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'dissolve_chat',
+    description: `Dissolve (delete) a group chat.
+
+Permanently deletes a group chat created by the bot. The bot must be the group owner.
+
+## Parameters
+- **chatId**: The chat ID to dissolve
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to dissolve'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      // dissolve_chat handles all errors internally and returns { success, message }
+      const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
     },
   },
 ];

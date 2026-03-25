@@ -28,6 +28,8 @@ export {
   resetIpcClient,
   createInteractiveMessageHandler,
   type IpcRequestHandler,
+  type ChannelApiHandlers,
+  type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
   type IpcAvailabilityStatus,
