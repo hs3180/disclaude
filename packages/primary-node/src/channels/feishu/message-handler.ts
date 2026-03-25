@@ -43,6 +43,8 @@ export interface MessageCallbacks {
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
   /**
    * Route card action to Worker Node if applicable.
+   * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
+   * so remote Worker Nodes receive the contextual prompt.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -51,6 +53,8 @@ export interface MessageCallbacks {
     actionValue: string;
     actionText?: string;
     userId?: string;
+    /** Resolved prompt from InteractiveContextStore (Issue #1629) */
+    resolvedPrompt?: string;
     action?: {
       type: string;
       value: string;
@@ -967,6 +971,25 @@ export class MessageHandler {
       }
     }
 
+    // Issue #1629: Resolve action prompt BEFORE routing so that remote
+    // Worker Nodes receive the contextual prompt via resolvedPrompt field.
+    // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
+    // Falls back to default text if no prompt template is registered.
+    let messageContent: string;
+    let resolvedPrompt: string | undefined;
+    if (this.callbacks.resolveActionPrompt) {
+      const promptFromTemplate = this.callbacks.resolveActionPrompt(
+        message_id,
+        chat_id,
+        action.value,
+        action.text,
+      );
+      resolvedPrompt = promptFromTemplate || undefined;
+      messageContent = promptFromTemplate || `用户点击了按钮「${buttonText}」`;
+    } else {
+      messageContent = `用户点击了按钮「${buttonText}」`;
+    }
+
     // Try to route card action to Worker Node first
     if (this.callbacks.routeCardAction) {
       const routed = await this.callbacks.routeCardAction({
@@ -976,6 +999,7 @@ export class MessageHandler {
         actionValue: action.value,
         actionText: action.text,
         userId: user?.sender_id?.open_id,
+        resolvedPrompt,
         action: {
           type: action.type,
           value: action.value,
@@ -992,20 +1016,6 @@ export class MessageHandler {
 
     // Emit card action as a message to the agent
     try {
-      // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
-      // Falls back to default text if no prompt template is registered.
-      let messageContent: string;
-      if (this.callbacks.resolveActionPrompt) {
-        const promptFromTemplate = this.callbacks.resolveActionPrompt(
-          message_id,
-          chat_id,
-          action.value,
-          action.text,
-        );
-        messageContent = promptFromTemplate || `用户点击了按钮「${buttonText}」`;
-      } else {
-        messageContent = `用户点击了按钮「${buttonText}」`;
-      }
 
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
