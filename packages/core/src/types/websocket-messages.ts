@@ -30,10 +30,8 @@ export interface PromptMessage {
  */
 export interface CommandMessage {
   type: 'command';
-  command: 'reset' | 'restart' | 'list-nodes' | 'switch-node';
+  command: 'reset' | 'restart' | 'list-nodes';
   chatId: string;
-  /** Target exec node ID for switch-node command */
-  targetNodeId?: string;
   /** Whether to keep context when resetting (Issue #1213) */
   keepContext?: boolean;
 }
