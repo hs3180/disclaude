@@ -27,7 +27,7 @@ import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
-import { REST_WIRED_DESCRIPTOR, FEISHU_WIRED_DESCRIPTOR } from './channels/wired-descriptors.js';
+import { REST_WIRED_DESCRIPTOR, FEISHU_WIRED_DESCRIPTOR, WECHAT_WIRED_DESCRIPTOR } from './channels/wired-descriptors.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -120,15 +120,25 @@ async function main(): Promise<void> {
     fileStorageDir?: string;
   } | undefined;
 
+  // WeChat channel config (Issue #1554)
+  const wechatChannelConfig = rawConfig.channels?.wechat as {
+    enabled?: boolean;
+    baseUrl?: string;
+    token?: string;
+    routeTag?: string;
+  } | undefined;
+
   // Check if channels are configured
   const hasFeishuConfig = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
   const hasRestConfig = restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir;
+  const hasWechatConfig = wechatChannelConfig?.enabled !== false && !!wechatChannelConfig;
 
   // At least one channel must be configured
-  if (!hasFeishuConfig && !hasRestConfig) {
+  if (!hasFeishuConfig && !hasRestConfig && !hasWechatConfig) {
     console.error('Error: At least one channel must be configured.');
     console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
     console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
+    console.error('  - For WeChat: set channels.wechat with baseUrl');
     process.exit(1);
   }
 
@@ -136,7 +146,7 @@ async function main(): Promise<void> {
   const host = restChannelConfig?.host || '0.0.0.0';
   const fileStorageDir = restChannelConfig?.fileStorageDir || './data/rest-files';
 
-  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig }, 'Starting Primary Node');
+  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig, hasWechatConfig }, 'Starting Primary Node');
 
   // Create PrimaryNode
   const primaryNode = new PrimaryNode({
@@ -211,6 +221,15 @@ async function main(): Promise<void> {
     });
   }
 
+  // WeChat Channel (Issue #1554)
+  if (hasWechatConfig) {
+    await lifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, {
+      baseUrl: wechatChannelConfig!.baseUrl,
+      token: wechatChannelConfig!.token,
+      routeTag: wechatChannelConfig!.routeTag,
+    });
+  }
+
   // Handle graceful shutdown
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
@@ -248,10 +267,15 @@ async function main(): Promise<void> {
     if (hasFeishuConfig) {
       logger.info('Feishu Channel started');
     }
+    if (hasWechatConfig) {
+      logger.info('WeChat Channel started');
+    }
 
-    logger.info({ hasRest: hasRestConfig, hasFeishu: hasFeishuConfig }, 'Primary Node started successfully');
+    logger.info({ hasRest: hasRestConfig, hasFeishu: hasFeishuConfig, hasWechat: hasWechatConfig }, 'Primary Node started successfully');
     if (hasRestConfig) {
       console.log(`Primary Node started on http://${host}:${restPort}`);
+    } else if (hasWechatConfig) {
+      console.log('Primary Node started (WeChat mode)');
     } else {
       console.log('Primary Node started (Feishu only mode)');
     }

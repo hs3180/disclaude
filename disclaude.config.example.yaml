@@ -165,6 +165,24 @@ channels:
     # Default: true (if credentials are configured)
     enabled: true
 
+  # WeChat Channel
+  # Tencent ilink Bot integration (MVP: outbound text messages only)
+  # If no token is provided, QR code authentication is triggered on startup.
+  wechat:
+    # Enable/disable WeChat channel
+    # Default: true (if configured)
+    enabled: true
+
+    # API base URL (default: https://ilinkai.weixin.qq.com)
+    # baseUrl: "https://ilinkai.weixin.qq.com"
+
+    # Bot token obtained after QR code login
+    # If omitted, QR code authentication runs on startup
+    # token: ""
+
+    # Route tag for message routing (optional)
+    # routeTag: ""
+
 # -----------------------------------------------------------------------------
 # Transport Configuration
 # -----------------------------------------------------------------------------
