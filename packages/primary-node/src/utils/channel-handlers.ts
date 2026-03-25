@@ -18,6 +18,7 @@ import {
   type IChannel,
   type IncomingMessage,
   type FileRef,
+  type ChannelApiHandlers,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
@@ -181,5 +182,85 @@ export function createDefaultMessageHandler(
         await channel.sendMessage({ chatId, type: 'done' });
       }
     }
+  };
+}
+
+// ============================================================================
+// createChannelApiHandlers
+// ============================================================================
+
+/**
+ * Options for creating channel API handlers.
+ */
+export interface ChannelApiHandlersOptions {
+  /**
+   * Logger instance for warnings.
+   */
+  logger: Logger;
+  /**
+   * Channel display name for logging.
+   */
+  channelName: string;
+}
+
+/**
+ * Create common ChannelApiHandlers from a channel instance.
+ *
+ * Extracts the shared IPC handler pattern (sendMessage, sendCard, uploadFile)
+ * that was previously duplicated in each channel descriptor's setup() method.
+ * Callers can spread the result and add channel-specific handlers
+ * (sendInteractive, createChat, dissolveChat, etc.) on top.
+ *
+ * This unifies the IPC handler creation with the same `channel.sendMessage()`
+ * delegation pattern used by `createChannelCallbacksFactory`.
+ *
+ * @param channel - The channel instance to send messages through
+ * @param options - Options for handler creation
+ * @returns Partial ChannelApiHandlers with sendMessage, sendCard, uploadFile
+ *
+ * @example
+ * ```typescript
+ * const baseHandlers = createChannelApiHandlers(feishuChannel, { logger, channelName: 'Feishu' });
+ * const fullHandlers: ChannelApiHandlers = {
+ *   ...baseHandlers,
+ *   sendInteractive: async (chatId, params) => { ... },
+ *   createChat: (name) => feishuChannel.createChat(name),
+ * };
+ * context.primaryNode.registerFeishuHandlers(fullHandlers);
+ * ```
+ */
+export function createChannelApiHandlers(
+  channel: IChannel,
+  options: ChannelApiHandlersOptions
+): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> {
+  const { logger, channelName } = options;
+
+  return {
+    sendMessage: async (chatId: string, text: string, threadId?: string) => {
+      await channel.sendMessage({ chatId, type: 'text', text, threadId });
+    },
+
+    sendCard: async (
+      chatId: string,
+      card: Record<string, unknown>,
+      threadId?: string,
+      description?: string
+    ) => {
+      await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
+    },
+
+    uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
+      logger.warn(
+        { chatId, filePath, channel: channelName },
+        'uploadFile: using channel.sendMessage — file metadata may be incomplete'
+      );
+      await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
+      return {
+        fileKey: '',
+        fileType: 'file',
+        fileName: filePath.split('/').pop() || 'file',
+        fileSize: 0,
+      };
+    },
   };
 }
