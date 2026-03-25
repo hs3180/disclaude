@@ -4,7 +4,7 @@
  * Tests the descriptor-based channel wiring for REST, Feishu, and WeChat channels.
  *
  * @see Issue #1594 - Channel Lifecycle Manager
- * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,6 +14,7 @@ import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
+  BUILTIN_WIRED_DESCRIPTORS,
 } from './wired-descriptors.js';
 import type {
   ChannelSetupContext,
@@ -170,7 +171,7 @@ describe('WiredChannelDescriptors', () => {
     });
   });
 
-  describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {
+  describe('WECHAT_WIRED_DESCRIPTOR (Issue #1638)', () => {
     it('should have correct type and name', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.type).toBe('wechat');
       expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
@@ -325,6 +326,27 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('BUILTIN_WIRED_DESCRIPTORS (Issue #1638)', () => {
+    it('should NOT include WeChat (dynamic registration only)', () => {
+      const builtinTypes = BUILTIN_WIRED_DESCRIPTORS.map((d) => d.type);
+      expect(builtinTypes).not.toContain('wechat');
+      expect(builtinTypes).toEqual(['rest', 'feishu']);
+    });
+
+    it('should include REST and Feishu', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS).toContain(REST_WIRED_DESCRIPTOR);
+      expect(BUILTIN_WIRED_DESCRIPTORS).toContain(FEISHU_WIRED_DESCRIPTOR);
+    });
+
+    it('should allow WeChat registration via WECHAT_WIRED_DESCRIPTOR directly', () => {
+      // WeChat descriptor exists and is fully functional for dynamic registration
+      expect(WECHAT_WIRED_DESCRIPTOR.type).toBe('wechat');
+      expect(WECHAT_WIRED_DESCRIPTOR.factory).toBeDefined();
+      expect(WECHAT_WIRED_DESCRIPTOR.createCallbacks).toBeDefined();
+      expect(WECHAT_WIRED_DESCRIPTOR.createMessageHandler).toBeDefined();
     });
   });
 });

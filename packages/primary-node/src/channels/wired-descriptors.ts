@@ -242,7 +242,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * - No message listening / long polling (outbound-only bot)
  *
  * @see Issue #1473 - WeChat Channel MVP
- * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1554 - WeChat Channel Dynamic Registration (closed; superseded by #1638)
  * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig> = {
