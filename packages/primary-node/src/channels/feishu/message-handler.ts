@@ -31,6 +31,7 @@ import { InteractionManager } from '../../platforms/feishu/interaction-manager.j
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import { ensureFileExtension } from '../../utils/file-extension.js';
 
 const logger = createLogger('MessageHandler');
 
@@ -597,6 +598,9 @@ export class MessageHandler {
         });
         await response.writeFile(localPath);
 
+        // Issue #1637: Ensure downloaded files have the correct extension
+        localPath = await ensureFileExtension(localPath, response.headers);
+
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
@@ -706,6 +710,9 @@ export class MessageHandler {
             params: { type: message_type },
           });
           await response.writeFile(localPath);
+
+          // Issue #1637: Ensure downloaded files have the correct extension
+          localPath = await ensureFileExtension(localPath, response.headers);
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
         } catch (downloadError) {
