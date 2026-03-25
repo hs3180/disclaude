@@ -52,6 +52,8 @@ tasks/
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep
+!workspace/temporary-sessions/
+!workspace/temporary-sessions/.gitkeep
 ecosystem.config.cjs
 
 # Integration test environment (contains secrets)

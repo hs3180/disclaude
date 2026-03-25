@@ -15,21 +15,68 @@ chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 - **仓库**: hs3180/disclaude
 - **扫描间隔**: 每 15 分钟
 - **讨论超时**: 60 分钟
+- **会话目录**: `workspace/temporary-sessions/`
+
+## 会话文件格式
+
+每个 PR 创建一个 JSON 会话文件（`workspace/temporary-sessions/pr-{number}.json`）：
+
+```json
+{
+  "status": "pending",
+  "chatId": null,
+  "messageId": null,
+  "createdAt": "2026-03-25T10:00:00Z",
+  "expiresAt": "2026-03-25T11:00:00Z",
+  "createGroup": {
+    "name": "PR #{number} 讨论: {title}",
+    "members": []
+  },
+  "message": "🔔 PR 审核请求\n...",
+  "options": [
+    { "value": "merge", "text": "✅ 合并" },
+    { "value": "request_changes", "text": "🔄 请求修改" },
+    { "value": "close", "text": "❌ 关闭" },
+    { "value": "later", "text": "⏳ 稍后" }
+  ],
+  "context": {
+    "prNumber": {number},
+    "repository": "hs3180/disclaude"
+  },
+  "response": null
+}
+```
+
+### 会话状态
+
+| 状态 | 含义 |
+|------|------|
+| `pending` | 会话已创建，等待群聊创建 |
+| `active` | 群聊已创建，等待用户响应 |
+| `expired` | 超时或已处理完成 |
 
 ## 执行步骤
 
 ### 1. 检查是否有正在处理的 PR
 
-**重要**: 由于 schedule 是无状态的，需要通过 GitHub Label 判断当前状态。
+通过会话文件检查当前状态（同时检查 GitHub Label 作为兼容）：
 
 ```bash
-# 检查是否有带 pr-scanner:pending label 的 PR
+# 检查是否有 active 状态的会话文件
+ls workspace/temporary-sessions/pr-*.json 2>/dev/null | while read f; do
+  status=$(cat "$f" | jq -r '.status // "unknown"')
+  if [ "$status" = "active" ] || [ "$status" = "pending" ]; then
+    echo "ACTIVE: $f"
+  fi
+done
+
+# 兼容：检查 GitHub Label（旧版状态管理）
 gh pr list --repo hs3180/disclaude --state open \
   --label "pr-scanner:pending" \
   --json number,title
 ```
 
-如果返回结果不为空，说明有 PR 正在等待用户反馈，**退出本次执行**。
+如果存在 active/pending 会话文件 **或** GitHub Label 检查有结果，说明有 PR 正在等待用户反馈，**退出本次执行**。
 
 ### 2. 获取 open PR 列表
 
@@ -42,7 +89,18 @@ gh pr list --repo hs3180/disclaude --state open \
 
 排除以下 PR：
 - 已有 `pr-scanner:processed` label 的 PR
+- 已有对应会话文件且状态为 `expired` 的 PR（已处理过）
 - 已被 review/approve 的 PR（暂不处理）
+
+```bash
+# 检查 PR 是否已有会话文件
+for pr in {过滤后的PR列表}; do
+  if [ -f "workspace/temporary-sessions/pr-${pr}.json" ]; then
+    # 跳过已有会话文件的 PR
+    continue
+  fi
+done
+```
 
 ### 4. 选择第一个未处理的 PR
 
@@ -55,34 +113,50 @@ gh pr view {number} --repo hs3180/disclaude \
   --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
 ```
 
-### 6. 创建群聊讨论 PR ⚡ 核心改动
+### 6. 创建会话文件
 
-使用 `start_group_discussion` 工具为该 PR 创建专门的讨论群聊：
+为该 PR 创建 JSON 会话文件（status: pending）：
 
-```json
+```bash
+cat > workspace/temporary-sessions/pr-{number}.json << 'SESSION_EOF'
 {
-  "topic": "PR #{number} 讨论: {title}",
-  "members": [],
-  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})\n\n请在群聊中讨论后决定处理方式。",
-  "timeout": 60
+  "status": "pending",
+  "chatId": null,
+  "messageId": null,
+  "createdAt": "{当前ISO时间}",
+  "expiresAt": "{当前时间+60分钟}",
+  "createGroup": {
+    "name": "PR #{number} 讨论: {title}",
+    "members": []
+  },
+  "message": "🔔 PR 审核请求\nPR #{number}: {title}",
+  "options": [
+    { "value": "merge", "text": "✅ 合并" },
+    { "value": "request_changes", "text": "🔄 请求修改" },
+    { "value": "close", "text": "❌ 关闭" },
+    { "value": "later", "text": "⏳ 稍后" }
+  ],
+  "context": {
+    "prNumber": {number},
+    "repository": "hs3180/disclaude"
+  },
+  "response": null
 }
+SESSION_EOF
 ```
 
-**注意**：
-- `members` 留空，表示只邀请当前用户
-- 群聊名称格式：`PR #{number} 讨论: {PR标题}`
-- 讨论超时：60 分钟
+### 7. 创建群聊讨论 PR
 
-### 7. 在群聊中发送交互式卡片
-
-群聊创建后，使用 `send_message` 发送操作选项卡片：
+使用 `send_interactive` 工具为该 PR 发送交互式卡片（在固定 chatId 中）：
 
 **卡片内容**（format: "card"）：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "🔔 PR 审核请求: #{number}", "tag": "plain_text"}, "template": "blue"},
   "elements": [
+    {"tag": "markdown", "content": "**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})"},
+    {"tag": "hr"},
     {"tag": "action", "actions": [
       {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
       {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
@@ -90,7 +164,7 @@ gh pr view {number} --repo hs3180/disclaude \
       {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
     ]},
     {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
+      {"tag": "plain_text", "content": "会话将在 60 分钟后自动过期"}
     ]}
   ]
 }
@@ -99,49 +173,65 @@ gh pr view {number} --repo hs3180/disclaude \
 **actionPrompts**：
 ```json
 {
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 读取会话文件 workspace/temporary-sessions/pr-{number}.json\n2. 检查 CI 状态是否通过\n3. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n4. 报告执行结果\n5. 更新会话文件：设置 status 为 expired，response 为 {\"action\": \"merge\", \"result\": \"...\"}\n6. 添加 processed label 并移除 pending label",
+  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请执行以下步骤：\n1. 读取会话文件 workspace/temporary-sessions/pr-{number}.json\n2. 询问用户需要修改的具体内容\n3. 使用 `gh pr comment` 添加评论\n4. 更新会话文件：设置 status 为 expired，response 为 {\"action\": \"request_changes\", \"comment\": \"...\"}\n5. 移除 pending label",
+  "close": "[用户操作] 用户关闭 PR #{number}。请执行以下步骤：\n1. 读取会话文件 workspace/temporary-sessions/pr-{number}.json\n2. 执行 `gh pr close {number} --repo hs3180/disclaude`\n3. 报告结果\n4. 更新会话文件：设置 status 为 expired，response 为 {\"action\": \"close\"}\n5. 移除 pending label",
+  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请执行以下步骤：\n1. 读取会话文件 workspace/temporary-sessions/pr-{number}.json\n2. 删除会话文件\n3. 移除 pending label\n4. 下次扫描时会重新处理"
 }
 ```
 
-### 8. 添加 pending label
+### 8. 更新会话状态并添加 Label
+
+群聊创建 + 卡片发送成功后，更新会话文件状态为 active：
 
 ```bash
+# 更新会话状态为 active
+cat workspace/temporary-sessions/pr-{number}.json | \
+  jq '.status = "active" | .chatId = "{实际chatId}"' > /tmp/pr-session-update.json && \
+  mv /tmp/pr-session-update.json workspace/temporary-sessions/pr-{number}.json
+```
+
+```bash
+# 添加 GitHub Label（兼容旧版状态管理）
 gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 ```
 
 ## 状态管理
 
-### Label 定义
+### 双重状态跟踪
 
-| Label | 含义 |
-|-------|------|
-| `pr-scanner:processed` | 已通过 scanner 处理完成 |
-| `pr-scanner:pending` | 正在等待用户反馈 |
+| 机制 | 用途 | 优势 |
+|------|------|------|
+| **JSON 会话文件** | 主要状态管理 | 持久化、含元数据、支持超时 |
+| **GitHub Label** | 兼容/可视化 | GitHub UI 可见、跨实例共享 |
 
-### 状态转换
+### 会话状态转换
 
 ```
-新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 执行动作 → 添加 processed label → 移除 pending label
+创建会话文件 (pending)
+  → 群聊创建+卡片发送成功 (active)
+    → 用户响应/超时 (expired)
+      → 清理会话文件
 ```
 
 ## 错误处理
 
 - 如果 `gh` 命令失败，记录错误并发送错误通知
-- 如果创建群聊失败，回退到在固定 chatId 中发送消息
-- 如果添加 label 失败，记录错误但不影响流程
+- 如果会话文件创建失败，回退到纯 GitHub Label 模式
+- 如果发送卡片失败，删除会话文件并记录错误
+- 如果更新会话状态失败，保留 pending 状态（下次扫描会跳过）
 
 ## 注意事项
 
 1. **群聊讨论**: 为每个 PR 创建独立群聊，便于深入讨论
 2. **串行处理**: 一次只处理一个 PR，避免并发问题
-3. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
-4. **用户驱动**: 等待群聊讨论结论后才执行动作，不自动合并或关闭
+3. **双重状态**: JSON 会话文件为主，GitHub Label 为辅
+4. **用户驱动**: 等待用户响应后才执行动作，不自动合并或关闭
+5. **自动过期**: 会话超过 60 分钟后由 session-lifecycle schedule 自动处理
 
 ## 依赖
 
 - gh CLI
+- jq（JSON 文件操作）
 - GitHub Labels: `pr-scanner:processed`, `pr-scanner:pending`
-- MCP Tool: `start_group_discussion` (Issue #1155)
+- Session Lifecycle Schedule: `schedules/session-lifecycle.md`
