@@ -4,10 +4,10 @@
  * This tool sends interactive cards with pre-defined prompt templates
  * that are automatically converted to user messages when interactions occur.
  *
- * Issue #1572: Interactive context management (action prompt registration,
- * lookup, cleanup) has been moved to Primary Node's InteractiveContextStore.
- * MCP Server is now a pure client — it sends cards via IPC and delegates
- * prompt management to Primary Node.
+ * Issue #1571 (Phase 2): MCP Server passes raw parameters (question, options)
+ * via sendInteractive IPC. Primary Node owns the full card building lifecycle.
+ * Issue #1572: Interactive context management has been moved to Primary Node's
+ * InteractiveContextStore. MCP Server is now a pure forwarding client.
  *
  * @module mcp-server/tools/interactive-message
  */
@@ -21,109 +21,111 @@ import {
   type FeishuHandlersContainer,
   type InteractiveMessageHandlers,
 } from '@disclaude/core';
-import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
-import { getFeishuCredentials } from './credentials.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
 /**
- * Send card message via IPC to PrimaryNode's LarkClientService.
- * Issue #1035: Routes Feishu API calls through unified client.
- * Issue #1088: Improved error handling with detailed error information.
- */
-async function sendCardViaIpc(
-  chatId: string,
-  card: Record<string, unknown>,
-  threadId?: string,
-  description?: string
-): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
-  const ipcClient = getIpcClient();
-  return await ipcClient.feishuSendCard(chatId, card, threadId, description);
-}
-
-/**
- * Send an interactive message with pre-defined action prompts.
+ * Send an interactive message by forwarding raw parameters to Primary Node.
  *
- * When the user interacts with the card (clicks a button, selects from menu, etc.),
- * the corresponding prompt template will be used to generate a message that the
- * agent receives as if the user had typed it.
+ * Issue #1571: MCP Server no longer builds cards. It passes raw parameters
+ * (question, options) via sendInteractive IPC. Primary Node builds the card,
+ * sends it, and registers action prompts.
  *
- * Note: Action prompt management is handled by Primary Node's InteractiveContextStore
- * (Issue #1572). The MCP Server no longer manages interactive contexts locally.
+ * Issue #1572: Action prompt management is handled by Primary Node's
+ * InteractiveContextStore. MCP Server is a pure forwarding client.
  *
  * @example
  * ```typescript
  * await send_interactive_message({
- *   card: {
- *     config: { wide_screen_mode: true },
- *     header: { title: { tag: "plain_text", content: "Confirm Action" } },
- *     elements: [
- *       {
- *         tag: "action",
- *         actions: [
- *           { tag: "button", text: { tag: "plain_text", content: "Confirm" }, value: "confirm" },
- *           { tag: "button", text: { tag: "plain_text", content: "Cancel" }, value: "cancel" }
- *         ]
- *       }
- *     ]
- *   },
- *   actionPrompts: {
- *     confirm: "[用户操作] 用户点击了「确认」按钮。请继续执行任务。",
- *     cancel: "[用户操作] 用户点击了「取消」按钮。任务已取消。"
- *   },
+ *   question: "Which option do you prefer?",
+ *   options: [
+ *     { text: "✅ Approve", value: "approve", type: "primary" },
+ *     { text: "❌ Reject", value: "reject", type: "danger" },
+ *   ],
+ *   title: "Code Review",
  *   chatId: "oc_xxx"
  * });
  * ```
  */
 export async function send_interactive_message(params: {
-  /** The interactive card JSON structure */
-  card: Record<string, unknown>;
-  /** Map of action values to prompt templates */
-  actionPrompts: ActionPromptMap;
+  /** The question or main content to display */
+  question: string;
+  /** Button options for user interaction */
+  options: Array<{
+    text: string;
+    value: string;
+    type?: 'primary' | 'default' | 'danger';
+  }>;
+  /** Card title (optional) */
+  title?: string;
+  /** Optional context shown above the question */
+  context?: string;
   /** Target chat ID */
   chatId: string;
   /** Optional parent message ID for thread reply */
   parentMessageId?: string;
+  /** Optional custom action prompts (overrides auto-generated defaults) */
+  actionPrompts?: ActionPromptMap;
 }): Promise<SendInteractiveResult> {
-  const { card, actionPrompts, chatId, parentMessageId } = params;
+  const { question, options, chatId, parentMessageId } = params;
 
   logger.info({
     chatId,
-    actionCount: Object.keys(actionPrompts).length,
+    optionCount: options?.length ?? 0,
     hasParent: !!parentMessageId,
   }, 'send_interactive_message called');
 
   try {
     // Validate required parameters
-    if (!card) {
-      throw new Error('card is required');
-    }
-    if (!actionPrompts || Object.keys(actionPrompts).length === 0) {
-      throw new Error('actionPrompts is required and must have at least one action');
-    }
-    if (!chatId) {
-      throw new Error('chatId is required');
-    }
-
-    // Validate card structure
-    if (!isValidFeishuCard(card)) {
+    if (!question || typeof question !== 'string' || question.trim().length === 0) {
       return {
         success: false,
-        error: `Invalid card structure: ${getCardValidationError(card)}`,
-        message: `❌ Card validation failed. ${getCardValidationError(card)}`,
+        error: 'question is required and must be a non-empty string',
+        message: '❌ question 参数不能为空',
+      };
+    }
+    if (!Array.isArray(options) || options.length === 0) {
+      return {
+        success: false,
+        error: 'options is required and must be a non-empty array',
+        message: '❌ options 参数必须为非空数组',
+      };
+    }
+    if (!chatId || typeof chatId !== 'string') {
+      return {
+        success: false,
+        error: 'chatId is required',
+        message: '❌ chatId 参数不能为空',
       };
     }
 
-    // Get Feishu credentials
-    const { appId, appSecret } = getFeishuCredentials();
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      logger.error({ chatId }, errorMsg);
-      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
+    // Validate options structure
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i];
+      if (typeof opt.text !== 'string' || opt.text.trim().length === 0) {
+        return {
+          success: false,
+          error: `options[${i}].text must be a non-empty string`,
+          message: `❌ options[${i}].text 不能为空`,
+        };
+      }
+      if (typeof opt.value !== 'string' || opt.value.trim().length === 0) {
+        return {
+          success: false,
+          error: `options[${i}].value must be a non-empty string`,
+          message: `❌ options[${i}].value 不能为空`,
+        };
+      }
+      if (opt.type !== undefined && !['primary', 'default', 'danger'].includes(opt.type)) {
+        return {
+          success: false,
+          error: `options[${i}].type must be one of: primary, default, danger`,
+          message: `❌ options[${i}].type 必须为 primary, default, danger 之一`,
+        };
+      }
     }
 
     // Check IPC availability - IPC is required for sending messages (Issue #1355: async connection probe)
@@ -137,23 +139,28 @@ export async function send_interactive_message(params: {
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for interactive message');
-    const result = await sendCardViaIpc(chatId, card, parentMessageId);
+    // Issue #1571: Forward raw params via sendInteractive IPC.
+    // Primary Node builds the card, sends it, and registers action prompts.
+    logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive IPC');
+    const ipcClient = getIpcClient();
+    const result = await ipcClient.sendInteractive(chatId, {
+      question,
+      options,
+      title: params.title,
+      context: params.context,
+      threadId: parentMessageId,
+      actionPrompts: params.actionPrompts,
+    });
+
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC interactive message failed');
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'sendInteractive IPC failed');
       return {
         success: false,
         error: result.error ?? 'Failed to send interactive message via IPC',
         message: errorMsg,
       };
     }
-
-    // Issue #1572: Action prompt registration is now handled by Primary Node's
-    // InteractiveContextStore. MCP Server no longer manages contexts locally.
-    // The IPC server in Primary Node registers prompts automatically when
-    // sendInteractive is used. For feishuSendCard, prompt registration is not
-    // supported (no messageId returned from Feishu API).
 
     // Invoke message sent callback
     const callback = getMessageSentCallback();
@@ -167,7 +174,7 @@ export async function send_interactive_message(params: {
 
     return {
       success: true,
-      message: `✅ Interactive message sent with ${Object.keys(actionPrompts).length} action(s)`,
+      message: `✅ Interactive message sent with ${options.length} action(s)`,
     };
 
   } catch (error) {
