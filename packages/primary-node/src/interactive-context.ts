@@ -142,7 +142,6 @@ export class InteractiveContextStore {
     }
 
     let mostRecentPrompts: ActionPromptMap | undefined;
-    let hasValidEntries = false;
 
     // Search from most recent to oldest
     for (let i = messageIds.length - 1; i >= 0; i--) {
@@ -150,8 +149,6 @@ export class InteractiveContextStore {
       if (!context) {
         continue;
       }
-
-      hasValidEntries = true;
 
       // Track the most recent valid context for fallback
       if (!mostRecentPrompts) {
