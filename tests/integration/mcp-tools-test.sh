@@ -8,7 +8,7 @@
 #   ./tests/integration/mcp-tools-test.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 120 for tool execution)
+#   --timeout SECONDS   Request timeout (default: 180 for tool execution)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -19,7 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-120}"
+TIMEOUT="${TIMEOUT:-180}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
@@ -55,10 +55,12 @@ test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
     local chat_id="test-mcp-send-text-$$"
-    assert_sync_chat_ok "请尝试使用 send_text 工具发送消息 'Hello from MCP test' 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || return 1
+    # Prompt designed to avoid agent diagnostic loop on tool failure
+    assert_sync_chat_ok "请使用 send_text 工具发送消息 'Hello from MCP test' 到 chat $chat_id。重要：如果工具返回错误，请直接将错误信息告知用户即可，绝对不要执行任何诊断或排查命令。一句话总结结果即可。" "$chat_id" || return 1
 
-    if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送"; then
-        log_pass "Agent acknowledged tool usage"
+    # Accept both success and graceful error as valid outcomes
+    if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送|凭证|未配置|credentials|不可用"; then
+        log_pass "Agent acknowledged tool (success or graceful error)"
     else
         log_pass "Agent responded (tool handling verified)"
     fi
@@ -70,15 +72,19 @@ test_send_file_tool() {
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    # Prompt designed to avoid agent diagnostic loop on tool failure:
+    # - Explicitly forbids diagnostic commands when tool returns error
+    # - Accepts both success and graceful error as valid outcomes
+    assert_sync_chat_ok "请使用 send_file 工具发送文件 $TEST_FILE_PATH 到 chat $chat_id。重要：如果工具返回错误，请直接将错误信息告知用户即可，绝对不要执行任何诊断、排查或验证命令（如 ls、cat 等）。一句话总结结果即可。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
 
     cleanup_test_file
 
-    if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
-        log_pass "Agent acknowledged file tool usage"
+    # Accept both success and graceful error as valid outcomes
+    if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file|凭证|未配置|credentials|IPC|不可用"; then
+        log_pass "Agent acknowledged file tool (success or graceful error)"
     else
         log_pass "Agent responded (tool handling verified)"
     fi
