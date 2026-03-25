@@ -19,7 +19,6 @@ import {
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-  type InteractiveMessageHandlers,
 } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
@@ -241,19 +240,11 @@ export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promis
     feishuHandlersContainer.handlers = feishuHandlers;
   }
 
-  // Issue #1572: Use no-op stubs for interactive context handlers.
-  // Interactive context management has moved to Primary Node's InteractiveContextStore.
-  // These stubs exist for backward compatibility but do nothing.
-  const stubHandlers: InteractiveMessageHandlers = {
-    getActionPrompts: () => undefined,
-    registerActionPrompts: () => {},
-    unregisterActionPrompts: () => false,
-    generateInteractionPrompt: (_messageId: string, _chatId: string) => undefined,
-    cleanupExpiredContexts: () => 0,
-  };
-
+  // Issue #1573: Phase 4 — No-op registerActionPrompts callback.
+  // In MCP Server mode, interactive context management is handled by Primary Node.
+  // The IPC server here is only used for Feishu API operations.
   const handler = createInteractiveMessageHandler(
-    stubHandlers,
+    () => {}, // no-op: MCP Server doesn't manage interactive contexts
     feishuHandlersContainer
   );
 

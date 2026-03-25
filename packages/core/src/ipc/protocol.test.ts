@@ -68,47 +68,6 @@ describe('IPC Protocol', () => {
       expect(request.id).toBe('req-1');
     });
 
-    it('should type-check getActionPrompts request', () => {
-      const request: IpcRequest<'getActionPrompts'> = {
-        type: 'getActionPrompts',
-        id: 'req-2',
-        payload: { messageId: 'msg-1' },
-      };
-      expect(request.type).toBe('getActionPrompts');
-      expect(request.payload.messageId).toBe('msg-1');
-    });
-
-    it('should type-check registerActionPrompts request', () => {
-      const request: IpcRequest<'registerActionPrompts'> = {
-        type: 'registerActionPrompts',
-        id: 'req-3',
-        payload: {
-          messageId: 'msg-1',
-          chatId: 'chat-1',
-          actionPrompts: { action1: 'prompt1' },
-        },
-      };
-      expect(request.payload.chatId).toBe('chat-1');
-      expect(request.payload.actionPrompts.action1).toBe('prompt1');
-    });
-
-    it('should type-check generateInteractionPrompt request', () => {
-      const request: IpcRequest<'generateInteractionPrompt'> = {
-        type: 'generateInteractionPrompt',
-        id: 'req-4',
-        payload: {
-          messageId: 'msg-1',
-          chatId: 'chat-1',
-          actionValue: 'action1',
-          actionText: 'Click me',
-          actionType: 'button',
-          formData: { key: 'value' },
-        },
-      };
-      expect(request.payload.actionValue).toBe('action1');
-      expect(request.payload.formData?.key).toBe('value');
-    });
-
     it('should type-check feishu API requests', () => {
       const sendMessage: IpcRequest<'feishuSendMessage'> = {
         type: 'feishuSendMessage',

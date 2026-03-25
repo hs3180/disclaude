@@ -41,7 +41,6 @@ import {
   generateSocketPath,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
-  type InteractiveMessageHandlers,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -288,29 +287,17 @@ export class PrimaryNode extends EventEmitter {
       return;
     }
 
-    // Issue #1572: Use real InteractiveContextStore handlers (Phase 3 of #1568).
-    // Previously these were stubs; now Primary Node owns the full interactive context lifecycle.
+    // Issue #1572: Use real InteractiveContextStore for prompt registration (Phase 3 of #1568).
+    // Issue #1573: Phase 4 — simplified to a single registerActionPrompts callback.
+    // State management dispatch cases removed from IPC; only the callback for
+    // sendInteractive's internal prompt registration remains.
     const contextStore = this.interactiveContextStore;
-    const realHandlers: InteractiveMessageHandlers = {
-      getActionPrompts: (messageId: string) => contextStore.getActionPrompts(messageId),
-      registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
-        contextStore.register(messageId, chatId, actionPrompts);
-      },
-      unregisterActionPrompts: (messageId: string) => contextStore.unregister(messageId),
-      generateInteractionPrompt: (
-        messageId: string,
-        chatId: string,
-        actionValue: string,
-        actionText?: string,
-        actionType?: string,
-        formData?: Record<string, unknown>
-      ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText, actionType, formData),
-      cleanupExpiredContexts: () => contextStore.cleanupExpired(),
-    };
 
     // Create the request handler with Feishu handlers container
     const requestHandler = createInteractiveMessageHandler(
-      realHandlers,
+      (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
+        contextStore.register(messageId, chatId, actionPrompts);
+      },
       this.feishuHandlersContainer
     );
 
