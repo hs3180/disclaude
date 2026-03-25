@@ -53,6 +53,7 @@ When invoked, you will receive context in the system message:
    - Task description
    - Requirements
    - Expected results with verification/testing steps
+   - **Project Directory** (if the task involves working on a specific project/repo, include its absolute path so the Executor can load project-specific context like CLAUDE.md)
 5. Notify user that Task.md has been created
 
 **NOTE**: After Task.md is created, a background file watcher will automatically detect it and trigger the Dialogue phase (Evaluator → Executor → Reporter). No manual trigger is needed.
@@ -84,6 +85,7 @@ tasks/{messageId}/task.md
 **Created**: {Timestamp}
 **Chat**: {chatId}
 **User**: {userId}
+**Project Directory**: {absolute path to project root, if the task involves working on a specific project}
 
 ## Description
 
