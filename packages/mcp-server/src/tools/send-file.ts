@@ -22,7 +22,7 @@ async function uploadFileViaIpc(
   filePath: string
 ): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
   const ipcClient = getIpcClient();
-  const result = await ipcClient.feishuUploadFile(chatId, filePath);
+  const result = await ipcClient.uploadFile(chatId, filePath);
   if (!result.success) {
     throw new Error('Failed to upload file via IPC');
   }
