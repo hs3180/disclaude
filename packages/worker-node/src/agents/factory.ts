@@ -101,6 +101,12 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * System prompt append content for personality injection.
+   * Issue #1315: SOUL.md content to be appended to the agent's system prompt.
+   * When set, overrides the global soul configuration for this specific agent.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -186,6 +192,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        systemPromptAppend: options.systemPromptAppend,
       };
 
       return new Pilot(config);
@@ -230,6 +237,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      systemPromptAppend: options.systemPromptAppend,
     };
 
     return new Pilot(config);
@@ -268,6 +276,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      systemPromptAppend: options.systemPromptAppend,
     };
 
     return new Pilot(config);

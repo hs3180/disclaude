@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'soul':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -216,6 +217,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        soul: frontmatter['soul'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };

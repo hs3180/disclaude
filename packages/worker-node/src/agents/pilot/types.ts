@@ -100,6 +100,18 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * System prompt append content for personality injection.
+   *
+   * Issue #1315: SOUL.md content to be appended to the agent's system prompt.
+   * When set, this content is passed to the SDK via systemPrompt.append,
+   * allowing per-agent personality customization.
+   *
+   * This overrides the global soul configuration (from disclaude.config.yaml)
+   * for this specific Pilot instance.
+   */
+  systemPromptAppend?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

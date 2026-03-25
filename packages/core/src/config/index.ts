@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -395,6 +396,16 @@ export class Config {
    */
   static isAgentTeamsEnabled(): boolean {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
+  }
+
+  /**
+   * Get SOUL.md configuration.
+   * Issue #1315: Returns the soul configuration for Agent personality injection.
+   *
+   * @returns Soul configuration or undefined
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    return fileConfigOnly.soul;
   }
 
   /**

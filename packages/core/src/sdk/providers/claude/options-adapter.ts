@@ -61,6 +61,17 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #1315: System prompt append (SOUL.md content)
+  // When set, use the Claude SDK's systemPrompt option to append content
+  // to the default 'claude_code' preset system prompt.
+  if (options.systemPromptAppend) {
+    sdkOptions.systemPrompt = {
+      type: 'preset',
+      preset: 'claude_code',
+      append: options.systemPromptAppend,
+    };
+  }
+
   return sdkOptions;
 }
 

@@ -192,6 +192,12 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt append content.
+   * Issue #1315: SOUL.md content to be appended to the agent's system prompt.
+   * When set, the Claude SDK will use the 'claude_code' preset with this content appended.
+   */
+  systemPromptAppend?: string;
 }
 
 // ============================================================================

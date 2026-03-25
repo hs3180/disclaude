@@ -41,4 +41,15 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional per-task SOUL.md path for personality injection.
+   * When set, the schedule executor loads this file and injects its content
+   * into the agent's system prompt, overriding the global soul configuration.
+   * Supports tilde (~) expansion for home directory paths.
+   *
+   * Defined in schedule markdown frontmatter (e.g., `soul: "~/.disclaude/souls/code-reviewer.md"`).
+   *
+   * Issue #1315: SOUL.md - Agent personality/behavior definition system.
+   */
+  soul?: string;
 }

@@ -81,12 +81,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
+  // Issue #1315: Per-agent soul content override
+  private readonly perAgentSoulAppend?: string;
+
   constructor(config: PilotConfig) {
     super(config);
 
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+
+    // Issue #1315: Store per-agent soul content for system prompt injection
+    this.perAgentSoulAppend = config.systemPromptAppend;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -378,9 +384,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1315: Pass per-agent soul content for system prompt injection
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.perAgentSoulAppend,
     });
 
     // Get capabilities for message building
@@ -581,9 +589,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1315: Pass per-agent soul content for system prompt injection
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.perAgentSoulAppend,
     });
 
     this.logger.info(

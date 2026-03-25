@@ -303,3 +303,10 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md module (Issue #1315)
+export {
+  SoulLoader,
+  MAX_SOUL_SIZE,
+  type SoulLoadResult,
+} from './soul/index.js';

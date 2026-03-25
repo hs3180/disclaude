@@ -27,6 +27,7 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import { SoulLoader } from '../soul/loader.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -43,6 +44,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * System prompt append content.
+   * Issue #1315: SOUL.md content to be appended to the agent's system prompt.
+   * When set, overrides the global soul configuration for this specific agent.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -106,6 +113,13 @@ export abstract class BaseAgent implements Disposable {
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
+  /**
+   * Cached global SOUL.md content.
+   * Issue #1315: Loaded once per process and shared across all agents.
+   * Null means "not yet loaded", undefined means "no soul configured".
+   */
+  private static globalSoulContent: string | null | undefined = undefined;
+
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
@@ -140,6 +154,69 @@ export abstract class BaseAgent implements Disposable {
    * Must be implemented by subclasses.
    */
   protected abstract getAgentName(): string;
+
+  /**
+   * Get cached global SOUL.md content.
+   *
+   * Issue #1315: Uses a synchronous cached value to avoid async loading
+   * in createSdkOptions(). The content is loaded once per process on first access.
+   *
+   * This is a best-effort approach: if the soul file hasn't been loaded yet
+   * (cold start), it returns undefined. The soul will be available for subsequent
+   * calls. Use `warmGlobalSoulCache()` during startup to preload.
+   *
+   * @returns Soul content string, undefined if not configured, or null if loading failed
+   */
+  private static getGlobalSoulContent(): string | undefined | null {
+    if (BaseAgent.globalSoulContent !== undefined) {
+      return BaseAgent.globalSoulContent;
+    }
+    // Not yet loaded - schedule async load
+    BaseAgent.warmGlobalSoulCache().catch(() => {});
+    return undefined;
+  }
+
+  /**
+   * Preload global SOUL.md content into the cache.
+   *
+   * Issue #1315: Should be called during application startup to ensure
+   * soul content is available for the first agent creation.
+   *
+   * @returns Promise that resolves when the soul content is cached
+   */
+  static async warmGlobalSoulCache(): Promise<void> {
+    if (BaseAgent.globalSoulContent !== undefined) {
+      return; // Already loaded
+    }
+
+    try {
+      const soulConfig = Config.getSoulConfig();
+      if (!soulConfig?.path) {
+        BaseAgent.globalSoulContent = undefined;
+        return;
+      }
+
+      const loader = new SoulLoader(soulConfig.path);
+      const result = await loader.load();
+      BaseAgent.globalSoulContent = result?.content ?? null;
+
+      if (result) {
+        const logger = createLogger('BaseAgent');
+        logger.info({ path: result.path, size: result.size }, 'Global SOUL.md loaded');
+      }
+    } catch (error) {
+      BaseAgent.globalSoulContent = null;
+      const logger = createLogger('BaseAgent');
+      logger.error({ err: error }, 'Failed to load global SOUL.md');
+    }
+  }
+
+  /**
+   * Reset global soul cache (for testing).
+   */
+  static resetGlobalSoulCache(): void {
+    BaseAgent.globalSoulContent = undefined;
+  }
 
   /**
    * Create SDK options for agent execution.
@@ -190,6 +267,17 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // Issue #1315: Inject global SOUL.md content if configured and no explicit override
+    // Per-agent soul (from extra.systemPromptAppend) takes precedence over global soul
+    if (!extra.systemPromptAppend) {
+      const globalSoul = BaseAgent.getGlobalSoulContent();
+      if (globalSoul) {
+        options.systemPromptAppend = globalSoul;
+      }
+    } else {
+      options.systemPromptAppend = extra.systemPromptAppend;
     }
 
     return options;
