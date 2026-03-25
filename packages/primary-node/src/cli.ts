@@ -28,6 +28,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { REST_WIRED_DESCRIPTOR, FEISHU_WIRED_DESCRIPTOR } from './channels/wired-descriptors.js';
+import { GroupService } from './platforms/feishu/group-service.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -162,8 +163,11 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1228: GroupService provides per-chat soul path resolution
+  const groupService = new GroupService();
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    soulPathResolver: groupService,
   });
 
   // Create unified control handler context

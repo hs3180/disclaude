@@ -194,7 +194,7 @@ export {
 } from './primary-node.js';
 
 // Agent pool (Issue #1040)
-export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-pool.js';
+export { PrimaryAgentPool, type PrimaryAgentPoolOptions, type SoulPathResolver } from './primary-agent-pool.js';
 
 // Channel Lifecycle Manager (Issue #1594 Phase 2)
 export {

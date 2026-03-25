@@ -445,4 +445,115 @@ describe('GroupService', () => {
       expect(topicGroups.map(g => g.chatId).sort()).toEqual(['oc_topic1', 'oc_topic2']);
     });
   });
+
+  describe('soulPath management (Issue #1228)', () => {
+    it('should set soulPath on a group', () => {
+      service.registerGroup({
+        chatId: 'oc_soul_test',
+        name: 'Soul Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      const result = service.setSoulPath('oc_soul_test', '/path/to/soul.md');
+      expect(result).toBe(true);
+      expect(service.getGroup('oc_soul_test')?.soulPath).toBe('/path/to/soul.md');
+    });
+
+    it('should get soulPath from a group', () => {
+      service.registerGroup({
+        chatId: 'oc_soul_get',
+        name: 'Soul Get Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+        soulPath: '/existing/soul.md',
+      });
+
+      expect(service.getSoulPath('oc_soul_get')).toBe('/existing/soul.md');
+    });
+
+    it('should return undefined for group without soulPath', () => {
+      service.registerGroup({
+        chatId: 'oc_no_soul',
+        name: 'No Soul Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      expect(service.getSoulPath('oc_no_soul')).toBeUndefined();
+    });
+
+    it('should return undefined for non-existent group', () => {
+      expect(service.getSoulPath('oc_nonexistent')).toBeUndefined();
+    });
+
+    it('should return false when setting soulPath on non-existent group', () => {
+      const result = service.setSoulPath('oc_nonexistent', '/path/to/soul.md');
+      expect(result).toBe(false);
+    });
+
+    it('should persist soulPath to file', () => {
+      service.registerGroup({
+        chatId: 'oc_soul_persist',
+        name: 'Soul Persist Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.setSoulPath('oc_soul_persist', '/persisted/soul.md');
+
+      // Create a new service instance to verify persistence
+      const newService = new GroupService({ filePath: testFilePath });
+      expect(newService.getSoulPath('oc_soul_persist')).toBe('/persisted/soul.md');
+    });
+
+    it('should update soulPath when set multiple times', () => {
+      service.registerGroup({
+        chatId: 'oc_soul_update',
+        name: 'Soul Update Group',
+        createdAt: Date.now(),
+        initialMembers: [],
+      });
+
+      service.setSoulPath('oc_soul_update', '/first/soul.md');
+      service.setSoulPath('oc_soul_update', '/second/soul.md');
+
+      expect(service.getSoulPath('oc_soul_update')).toBe('/second/soul.md');
+    });
+  });
+
+  describe('createGroup with soulPath (Issue #1228)', () => {
+    const mockClient = {} as any;
+
+    beforeEach(() => {
+      vi.resetAllMocks();
+    });
+
+    it('should include soulPath when provided', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockResolvedValue('oc_soul_created');
+
+      const result = await service.createGroup(mockClient, {
+        topic: 'Discussion Group',
+        soulPath: '/path/to/discussion/soul.md',
+      });
+
+      expect(result.soulPath).toBe('/path/to/discussion/soul.md');
+      expect(service.getSoulPath('oc_soul_created')).toBe('/path/to/discussion/soul.md');
+    });
+
+    it('should not include soulPath when not provided', async () => {
+      const service = new GroupService({ filePath: testFilePath });
+      const mockCreateDiscussionChat = vi.mocked(chatOps.createDiscussionChat);
+      mockCreateDiscussionChat.mockResolvedValue('oc_no_soul_created');
+
+      const result = await service.createGroup(mockClient, {
+        topic: 'Regular Group',
+      });
+
+      expect(result.soulPath).toBeUndefined();
+      expect(service.getSoulPath('oc_no_soul_created')).toBeUndefined();
+    });
+  });
 });

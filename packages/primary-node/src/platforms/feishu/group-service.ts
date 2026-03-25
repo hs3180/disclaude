@@ -39,6 +39,15 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * Path to a SOUL.md personality file for the ChatAgent serving this group.
+   * When set, PrimaryAgentPool loads the file via SoulLoader and injects
+   * the content as systemPromptAppend when creating the Pilot instance.
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   * @see Issue #1315 - SOUL.md system
+   */
+  soulPath?: string;
 }
 
 /**
@@ -53,6 +62,13 @@ export interface CreateGroupOptions {
   members?: string[];
   /** Creator open_id (optional, used for auto-adding and tracking) */
   creatorId?: string;
+  /**
+   * Path to a SOUL.md file for personality injection.
+   * When set, stored in GroupInfo for later loading by PrimaryAgentPool.
+   *
+   * @see Issue #1228
+   */
+  soulPath?: string;
 }
 
 /**
@@ -240,6 +256,44 @@ export class GroupService {
   }
 
   /**
+   * Set the SOUL.md path for a group.
+   *
+   * When set, the PrimaryAgentPool will load this SOUL file and inject
+   * its content as systemPromptAppend when creating the Pilot for this chat.
+   *
+   * @param chatId - Group chat ID
+   * @param soulPath - Absolute path to a SOUL.md file
+   * @returns Whether the operation succeeded
+   *
+   * @see Issue #1228 - 讨论焦点保持
+   */
+  setSoulPath(chatId: string, soulPath: string): boolean {
+    const group = this.registry.groups[chatId];
+    if (!group) {
+      logger.warn({ chatId }, 'Cannot set soulPath: group not found');
+      return false;
+    }
+
+    group.soulPath = soulPath;
+    this.save();
+
+    logger.info({ chatId, soulPath }, 'Group soulPath updated');
+    return true;
+  }
+
+  /**
+   * Get the SOUL.md path for a group.
+   *
+   * @param chatId - Group chat ID
+   * @returns Soul path if set, undefined otherwise
+   *
+   * @see Issue #1228
+   */
+  getSoulPath(chatId: string): string | undefined {
+    return this.registry.groups[chatId]?.soulPath;
+  }
+
+  /**
    * Create a new group chat and register it.
    *
    * This method combines the create and register operations into a single call,
@@ -254,7 +308,7 @@ export class GroupService {
    * @see Issue #692 - GroupService 支持创建群聊
    */
   async createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
-    const { topic, members, creatorId } = options;
+    const { topic, members, creatorId, soulPath } = options;
 
     // Create the chat via Feishu API
     const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
@@ -271,6 +325,7 @@ export class GroupService {
       createdAt: Date.now(),
       createdBy: creatorId,
       initialMembers: actualMembers,
+      ...(soulPath ? { soulPath } : {}),
     };
 
     // Register the group
