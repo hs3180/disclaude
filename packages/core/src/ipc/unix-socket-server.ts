@@ -27,9 +27,12 @@ const logger = createLogger('IpcServer');
 export type IpcRequestHandler = (request: IpcRequest) => Promise<IpcResponse>;
 
 /**
- * Handler functions for Feishu API operations (Issue #1035).
+ * Platform-agnostic Channel API handlers interface (Issue #1546).
+ *
+ * Defines the common operations that all channel implementations must support.
+ * Platform-specific implementations (Feishu, Slack, etc.) extend this interface.
  */
-export interface FeishuApiHandlers {
+export interface ChannelApiHandlers {
   sendMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
   sendCard: (
     chatId: string,
@@ -53,27 +56,52 @@ export interface FeishuApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  /** Create a group chat (optional platform capability) */
+  createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
+  /** Dissolve a group chat (optional platform capability) */
+  dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
 }
 
 /**
- * Mutable container for Feishu API handlers.
- * Issue #1120: Allows dynamic registration of handlers after IPC server starts.
+ * Handler functions for Feishu API operations (Issue #1035).
+ * Extends ChannelApiHandlers with Feishu-specific methods.
+ *
+ * @deprecated Use ChannelApiHandlers directly for new code.
+ * FeishuApiHandlers is kept for backward compatibility but currently
+ * adds no Feishu-specific methods. It will be removed in a future version.
  */
-export interface FeishuHandlersContainer {
-  handlers: FeishuApiHandlers | undefined;
+export interface FeishuApiHandlers extends ChannelApiHandlers {
+  // Feishu-specific methods can be added here in the future.
+  // getBotInfo is intentionally NOT included — it's dead code
+  // (handled by platform SDK layer independently).
 }
+
+/**
+ * Mutable container for channel API handlers.
+ * Issue #1120: Allows dynamic registration of handlers after IPC server starts.
+ * Issue #1546: Renamed from FeishuHandlersContainer to use platform-agnostic naming.
+ */
+export interface ChannelHandlersContainer {
+  handlers: ChannelApiHandlers | undefined;
+}
+
+/**
+ * @deprecated Use ChannelHandlersContainer instead.
+ */
+export type FeishuHandlersContainer = ChannelHandlersContainer;
 
 /**
  * Create an IPC request handler for channel API operations.
  *
- * Issue #1120: Uses FeishuHandlersContainer for dynamic handler registration.
+ * Issue #1120: Uses ChannelHandlersContainer for dynamic handler registration.
  * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers — state management
  * dispatch cases removed; only registerActionPrompts callback remains for
  * internal use by the sendInteractive handler.
+ * Issue #1546: Added createChat / dissolveChat dispatch cases.
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
-  feishuHandlersContainer?: FeishuHandlersContainer
+  channelHandlersContainer?: ChannelHandlersContainer
 ): IpcRequestHandler {
 
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -85,18 +113,18 @@ export function createInteractiveMessageHandler(
         // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
         // Issue #1120: Use container for dynamic handler registration
         case 'sendMessage': {
-          const feishuHandlers = feishuHandlersContainer?.handlers;
-          if (!feishuHandlers) {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Channel API handlers not available',
             };
           }
           const { chatId, text, threadId } =
             request.payload as IpcRequestPayloads['sendMessage'];
           try {
-            await feishuHandlers.sendMessage(chatId, text, threadId);
+            await handlers.sendMessage(chatId, text, threadId);
             return { id: request.id, success: true, payload: { success: true } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -105,18 +133,18 @@ export function createInteractiveMessageHandler(
         }
 
         case 'sendCard': {
-          const feishuHandlers = feishuHandlersContainer?.handlers;
-          if (!feishuHandlers) {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Channel API handlers not available',
             };
           }
           const { chatId, card, threadId, description } =
             request.payload as IpcRequestPayloads['sendCard'];
           try {
-            await feishuHandlers.sendCard(chatId, card, threadId, description);
+            await handlers.sendCard(chatId, card, threadId, description);
             return { id: request.id, success: true, payload: { success: true } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -125,18 +153,18 @@ export function createInteractiveMessageHandler(
         }
 
         case 'uploadFile': {
-          const feishuHandlers = feishuHandlersContainer?.handlers;
-          if (!feishuHandlers) {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Channel API handlers not available',
             };
           }
           const { chatId, filePath, threadId } =
             request.payload as IpcRequestPayloads['uploadFile'];
           try {
-            const result = await feishuHandlers.uploadFile(chatId, filePath, threadId);
+            const result = await handlers.uploadFile(chatId, filePath, threadId);
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -146,18 +174,18 @@ export function createInteractiveMessageHandler(
 
         // Raw-param interactive card (Issue #1570)
         case 'sendInteractive': {
-          const feishuHandlers = feishuHandlersContainer?.handlers;
-          if (!feishuHandlers) {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
             return {
               id: request.id,
               success: false,
-              error: 'Feishu API handlers not available',
+              error: 'Channel API handlers not available',
             };
           }
           const { chatId, question, options, title, context, threadId, actionPrompts } =
             request.payload as IpcRequestPayloads['sendInteractive'];
           try {
-            const result = await feishuHandlers.sendInteractive(chatId, {
+            const result = await handlers.sendInteractive(chatId, {
               question,
               options,
               title,
@@ -181,6 +209,61 @@ export function createInteractiveMessageHandler(
             }
 
             return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
+        case 'createChat': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.createChat) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createChat not supported by this channel',
+            };
+          }
+          const { name, description, memberIds } =
+            request.payload as IpcRequestPayloads['createChat'];
+          try {
+            const result = await handlers.createChat(name, description, memberIds);
+            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'dissolveChat': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.dissolveChat) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'dissolveChat not supported by this channel',
+            };
+          }
+          const { chatId } =
+            request.payload as IpcRequestPayloads['dissolveChat'];
+          try {
+            const result = await handlers.dissolveChat(chatId);
+            return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
