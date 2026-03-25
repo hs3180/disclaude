@@ -69,3 +69,24 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for create_chat tool.
+ */
+export interface CreateChatResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  name?: string;
+  error?: string;
+}
+
+/**
+ * Result type for dissolve_chat tool.
+ */
+export interface DissolveChatResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+

@@ -486,6 +486,66 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Group management operations (Issue #1546: create_chat / dissolve_chat)
+  // ============================================================================
+
+  /**
+   * Create a group chat via IPC.
+   * Issue #1546: Platform-agnostic group creation.
+   *
+   * @param name - Group name (optional, platform may auto-generate)
+   * @param description - Group description (optional)
+   * @param memberIds - Initial member IDs (optional, platform decides ID format)
+   */
+  async createChat(
+    name?: string,
+    description?: string,
+    memberIds?: string[]
+  ): Promise<{ success: boolean; chatId?: string; name?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('createChat', { name, description, memberIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error }, 'createChat failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Dissolve a group chat via IPC.
+   * Issue #1546: Platform-agnostic group dissolution.
+   *
+   * @param chatId - Chat ID to dissolve
+   */
+  async dissolveChat(
+    chatId: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('dissolveChat', { chatId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'dissolveChat failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
