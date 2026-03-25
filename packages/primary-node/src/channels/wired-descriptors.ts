@@ -5,7 +5,9 @@
  * for its channel type, including PilotCallbacks creation, message handling,
  * and post-registration setup (passive mode, IPC handlers).
  *
- * These descriptors replace the ~220 lines of channel-specific code in cli.ts.
+ * Issue #1555 Phase 2: Shared handler utilities extracted to utils/channel-handlers.ts
+ * for reuse across all channel types. This file now only contains
+ * channel-specific configuration and Feishu post-registration setup.
  *
  * @module channels/wired-descriptors
  */
@@ -17,145 +19,21 @@ import {
   type FileRef,
   type FeishuApiHandlers,
 } from '@disclaude/core';
-import type { PilotCallbacks } from '@disclaude/worker-node';
-import type { Logger } from 'pino';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import type {
   ChannelSetupContext,
-  WiredContext,
   WiredChannelDescriptor,
 } from '../channel-lifecycle-manager.js';
+import {
+  createChannelCallbacksFactory,
+  createDefaultMessageHandler,
+} from '../utils/channel-handlers.js';
 import {
   buildInteractiveCard,
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
-
-// ============================================================================
-// Shared Helpers
-// ============================================================================
-
-/**
- * Create a PilotCallbacks factory for a channel.
- *
- * Wraps channel.sendMessage() into the PilotCallbacks interface.
- * The returned factory captures the channel via closure.
- *
- * @param channel - The channel instance to send messages through
- * @param logger - Logger instance for warnings
- * @param options - Options for channel-specific behavior
- */
-function createChannelCallbacksFactory(
-  channel: IChannel,
-  logger: Logger,
-  options?: { sendDoneSignal?: boolean }
-): (chatId: string) => PilotCallbacks {
-  return (_chatId: string): PilotCallbacks => ({
-    sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
-      await channel.sendMessage({
-        chatId,
-        type: 'text',
-        text,
-        threadId: parentMessageId,
-      });
-    },
-    sendCard: async (
-      chatId: string,
-      card: Record<string, unknown>,
-      description?: string,
-      parentMessageId?: string
-    ) => {
-      await channel.sendMessage({
-        chatId,
-        type: 'card',
-        card,
-        description,
-        threadId: parentMessageId,
-      });
-    },
-    // eslint-disable-next-line require-await
-    sendFile: async (chatId: string, filePath: string) => {
-      logger.warn({ chatId, filePath }, 'File sending not fully implemented');
-    },
-    onDone: options?.sendDoneSignal
-      ? async (chatId: string, parentMessageId?: string) => {
-          logger.info({ chatId }, 'Task completed');
-          await channel.sendMessage({
-            chatId,
-            type: 'done',
-            threadId: parentMessageId,
-          });
-        }
-      : // eslint-disable-next-line require-await
-        async (chatId: string) => {
-          logger.info({ chatId }, 'Task completed');
-        },
-  });
-}
-
-/**
- * Options for creating a default message handler.
- */
-interface MessageHandlerOptions {
-  /** Display name for logging */
-  channelName: string;
-  /** Whether to send a 'done' signal on error (REST sync mode) */
-  sendDoneSignal?: boolean;
-  /**
-   * Extract file attachments from the message.
-   * If provided, attachments are converted to FileRef[] for agent processing.
-   */
-  extractAttachments?: (message: IncomingMessage) => FileRef[] | undefined;
-}
-
-/**
- * Create a default message handler using the shared processing pattern.
- *
- * Pattern: extract data → get/create agent → optional attachment conversion → process → error handling
- *
- * @param channel - The channel instance (for error response)
- * @param context - Wired context with agentPool and callbacks factory
- * @param options - Channel-specific options
- */
-function createDefaultMessageHandler(
-  channel: IChannel,
-  context: WiredContext,
-  options: MessageHandlerOptions
-): (message: IncomingMessage) => Promise<void> {
-  return async (message: IncomingMessage) => {
-    const { chatId, content, messageId, userId, metadata } = message;
-    context.logger.info(
-      { chatId, messageId, contentLength: content.length, hasAttachments: !!message.attachments },
-      `Processing message from ${options.channelName}`
-    );
-
-    const callbacks = context.callbacks(chatId);
-    const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks);
-
-    // Extract context
-    const senderOpenId = userId;
-    const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
-
-    // Convert attachments if the channel supports them
-    const fileRefs = options.extractAttachments?.(message);
-
-    try {
-      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
-    } catch (error) {
-      context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      await channel.sendMessage({
-        chatId,
-        type: 'text',
-        text: `❌ Error: ${errorMsg}`,
-      });
-      if (options.sendDoneSignal) {
-        await channel.sendMessage({ chatId, type: 'done' });
-      }
-    }
-  };
-}
 
 // ============================================================================
 // REST Wired Descriptor
