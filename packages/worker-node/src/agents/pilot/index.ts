@@ -581,9 +581,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1641 Scenario 3: Inject DISCLAUDE_CHAT_ID as env var so the agent
+    // can always access the correct chatId even after context compaction.
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      env: { DISCLAUDE_CHAT_ID: this.boundChatId },
     });
 
     this.logger.info(

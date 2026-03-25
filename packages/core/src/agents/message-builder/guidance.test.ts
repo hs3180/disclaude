@@ -12,6 +12,8 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildChatIdPersistenceGuidance,
+  buildWorkingDirectoryGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +110,51 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildChatIdPersistenceGuidance', () => {
+  it('should include DISCLAUDE_CHAT_ID environment variable reference', () => {
+    const result = buildChatIdPersistenceGuidance();
+    expect(result).toContain('DISCLAUDE_CHAT_ID');
+    expect(result).toContain('Chat ID Persistence');
+  });
+
+  it('should instruct agent to use env var over conversation history', () => {
+    const result = buildChatIdPersistenceGuidance();
+    expect(result).toContain('environment variable');
+    expect(result).toContain('Context compaction');
+    expect(result).toContain('send_*');
+  });
+
+  it('should include the echo command for retrieving chatId', () => {
+    const result = buildChatIdPersistenceGuidance();
+    expect(result).toContain('echo $DISCLAUDE_CHAT_ID');
+  });
+
+  it('should warn about stale chatIds from compacted summaries', () => {
+    const result = buildChatIdPersistenceGuidance();
+    expect(result).toContain('stale');
+    expect(result).toContain('compacted');
+  });
+});
+
+describe('buildWorkingDirectoryGuidance', () => {
+  it('should include working directory warning', () => {
+    const result = buildWorkingDirectoryGuidance();
+    expect(result).toContain('Working Directory');
+    expect(result).toContain('NOT a git repository');
+  });
+
+  it('should include git rev-parse check command', () => {
+    const result = buildWorkingDirectoryGuidance();
+    expect(result).toContain('git rev-parse --show-toplevel');
+  });
+
+  it('should instruct agent to navigate before running git/gh commands', () => {
+    const result = buildWorkingDirectoryGuidance();
+    expect(result).toContain('git');
+    expect(result).toContain('gh');
+    expect(result).toContain('cd');
   });
 });

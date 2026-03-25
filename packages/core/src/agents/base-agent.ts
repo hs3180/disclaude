@@ -43,6 +43,8 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** Additional environment variables to pass to the SDK subprocess */
+  env?: Record<string, string>;
 }
 
 /**
@@ -172,10 +174,12 @@ export abstract class BaseAgent implements Disposable {
     }
 
     // Set environment: config env + runtime env file (Issue #1361)
+    // + caller-provided env vars (Issue #1641 Scenario 3: DISCLAUDE_CHAT_ID)
     const loggingConfig = this.getLoggingConfig();
     const globalEnv = {
       ...this.getGlobalEnv(),
       ...loadRuntimeEnv(this.getWorkspaceDir()),
+      ...extra.env,
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';

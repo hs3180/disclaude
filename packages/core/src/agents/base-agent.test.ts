@@ -172,6 +172,32 @@ describe('BaseAgent', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
+
+    it('should merge extra env vars into SDK environment (Issue #1641)', () => {
+      const options = agent.testCreateSdkOptions({
+        env: { DISCLAUDE_CHAT_ID: 'oc_abc123def456' },
+      });
+
+      expect(options.env).toBeDefined();
+      expect(options.env?.DISCLAUDE_CHAT_ID).toBe('oc_abc123def456');
+    });
+
+    it('should allow extra env vars to coexist with runtime env', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ MY_GLOBAL_VAR: 'global_value' }),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const options = agent.testCreateSdkOptions({
+        env: { DISCLAUDE_CHAT_ID: 'oc_test123' },
+      });
+
+      expect(options.env?.MY_GLOBAL_VAR).toBe('global_value');
+      expect(options.env?.DISCLAUDE_CHAT_ID).toBe('oc_test123');
+    });
   });
 
   describe('formatMessage', () => {

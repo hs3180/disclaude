@@ -213,3 +213,69 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the chatId persistence guidance section.
+ *
+ * Issue #1641 Scenario 3: After context compaction, the agent may lose
+ * the correct chatId from earlier messages. This guidance instructs the
+ * agent to use the DISCLAUDE_CHAT_ID environment variable as the
+ * authoritative source of truth for the current chatId.
+ *
+ * @returns Formatted chatId persistence guidance section
+ */
+export function buildChatIdPersistenceGuidance(): string {
+  return `
+
+---
+
+## Chat ID Persistence
+
+**IMPORTANT: Always use the environment variable for chatId, not from conversation history.**
+
+The current chatId is available as the environment variable \`DISCLAUDE_CHAT_ID\`.
+When calling any \`send_*\` MCP tools (send_text, send_card, send_interactive, send_file),
+you MUST use this environment variable value instead of any chatId from earlier messages.
+
+**Why?** Context compaction may summarize earlier messages and produce stale or incorrect
+chatIds. The environment variable always contains the current, correct chatId.
+
+\`\`\`bash
+# Get the authoritative chatId
+echo $DISCLAUDE_CHAT_ID
+\`\`\`
+
+**Rules:**
+- Always verify the chatId matches \`$DISCLAUDE_CHAT_ID\` before calling send_* tools
+- If a chatId from conversation history differs from \`$DISCLAUDE_CHAT_ID\`, use the env var
+- This is especially important after long conversations where context may have been compacted`;
+}
+
+/**
+ * Build the working directory guidance section.
+ *
+ * Issue #1641 Scenario 4: The agent's cwd is the workspace directory,
+ * which is not a git repository. When running git/gh commands, the agent
+ * must first cd to the correct repository directory.
+ *
+ * @returns Formatted working directory guidance section
+ */
+export function buildWorkingDirectoryGuidance(): string {
+  return `
+
+---
+
+## Working Directory for Git/GitHub Commands
+
+**IMPORTANT: Your working directory is NOT a git repository.**
+
+Your working directory is a workspace for file operations. Before running any \`git\` or \`gh\` commands, you MUST first navigate to the correct repository directory.
+
+**Before running git/gh commands:**
+\`\`\`bash
+# Verify you're in a git repository
+git rev-parse --show-toplevel 2>/dev/null || echo "NOT a git repo"
+\`\`\`
+
+If not in a git repo, use \`cd\` to navigate to the correct repository before running git/gh commands.`;
+}
