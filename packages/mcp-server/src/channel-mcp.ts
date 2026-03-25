@@ -17,6 +17,7 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  start_discussion,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -30,6 +31,7 @@ export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
+export { start_discussion } from './tools/start-discussion.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -370,6 +372,53 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
     handler: async ({ chatId }: { chatId: string }) => {
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #631: Non-blocking discussion (compose create_chat + send_text)
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking discussion in a group chat.
+
+Creates (or reuses) a group chat and sends a context prompt to it.
+The context primes the ChatAgent so it can present the topic to users.
+Returns immediately — the actual discussion happens asynchronously.
+
+Use this when you need to discuss something with users without blocking your current work.
+
+## Parameters
+- **context**: The context/prompt to send to the ChatAgent (required)
+- **chatId**: Existing chat ID to reuse (optional, mutually exclusive with members)
+- **members**: Member IDs for creating a new chat (optional)
+- **topic**: Discussion topic, used as group name when creating (optional)
+
+## Behavior
+1. If chatId is provided, reuses that chat; otherwise creates a new group.
+2. Sends the context as a text message to the chat.
+3. Returns immediately with the chatId.
+
+## Example
+\`\`\`json
+{"context": "Let's discuss the deployment strategy for v2.0", "topic": "Deployment Discussion", "members": ["ou_xxx"]}
+\`\`\``,
+    parameters: z.object({
+      context: z.string().describe('The context/prompt to send to the ChatAgent'),
+      chatId: z.string().optional().describe('Existing chat ID to reuse'),
+      members: z.array(z.string()).optional().describe('Member IDs for creating a new chat'),
+      topic: z.string().optional().describe('Discussion topic, used as group name when creating'),
+    }),
+    handler: async ({ context, chatId, members, topic }: {
+      context: string;
+      chatId?: string;
+      members?: string[];
+      topic?: string;
+    }) => {
+      // Validate required parameter
+      if (!context || typeof context !== 'string') {
+        return toolSuccess('⚠️ Invalid context: must be a non-empty string');
+      }
+      // start_discussion handles all errors internally and returns { success, message }
+      const result = await start_discussion({ context, chatId, members, topic });
       return toolSuccess(result.message);
     },
   },

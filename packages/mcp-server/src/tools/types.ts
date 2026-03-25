@@ -90,3 +90,13 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for start_discussion tool.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
