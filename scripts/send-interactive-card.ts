@@ -4,6 +4,9 @@
  *
  * Usage:
  *   npx tsx scripts/send-interactive-card.ts
+ *
+ * Updated (Issue #1614): Replaced raw `sendCard` + `registerActionPrompts`
+ * two-step flow with a single typed `sendInteractive` IPC call.
  */
 
 import { getIpcClient } from '../packages/core/src/ipc/unix-socket-client.js';
@@ -11,42 +14,6 @@ import { getIpcClient } from '../packages/core/src/ipc/unix-socket-client.js';
 async function main() {
   const chatId = 'test-use-case-2-text-53258';
   const parentMessageId = '5e27aaf9-8448-4ae3-93c8-9cc4c244e932';
-
-  // Build the interactive card
-  const card = {
-    config: { wide_screen_mode: true },
-    header: {
-      title: { tag: 'plain_text', content: '接下来您可以...' },
-      template: 'blue',
-    },
-    elements: [
-      {
-        tag: 'markdown',
-        content: '✅ 已完成一句话总结',
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '详细解释AI' },
-            type: 'primary',
-            value: 'explain_ai',
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: 'AI的应用领域' },
-            value: 'ai_applications',
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: 'AI发展历史' },
-            value: 'ai_history',
-          },
-        ],
-      },
-    ],
-  };
 
   // Action prompts mapping
   const actionPrompts = {
@@ -66,39 +33,24 @@ async function main() {
       process.exit(1);
     }
 
-    console.log('IPC available, sending card...');
+    console.log('IPC available, sending interactive card...');
 
-    // First send the card
-    const cardResult = await ipcClient.sendCard(
+    // Use sendInteractive to send the card and register action prompts in one call
+    const result = await ipcClient.request('sendInteractive', {
       chatId,
-      card,
-      parentMessageId,
-      'Interactive card with action buttons'
-    );
+      question: '已完成一句话总结',
+      options: [
+        { text: '详细解释AI', value: 'explain_ai', type: 'primary' },
+        { text: 'AI的应用领域', value: 'ai_applications' },
+        { text: 'AI发展历史', value: 'ai_history' },
+      ],
+      title: '接下来您可以...',
+      threadId: parentMessageId,
+      actionPrompts,
+    });
 
-    if (!cardResult.success) {
-      console.error('Failed to send card:', cardResult.error);
-      process.exit(1);
-    }
-
-    console.log('Card sent successfully! Message ID:', cardResult.messageId);
-
-    // Register action prompts if we got a message ID
-    if (cardResult.messageId) {
-      console.log('Registering action prompts...');
-      const registerResult = await ipcClient.request('registerActionPrompts', {
-        messageId: cardResult.messageId,
-        chatId,
-        actionPrompts,
-      });
-
-      if (registerResult.success) {
-        console.log('Action prompts registered successfully!');
-      } else {
-        console.error('Failed to register action prompts');
-      }
-    }
-
+    console.log('Interactive card sent successfully!');
+    console.log('Message ID:', result.messageId);
     console.log('Done!');
   } catch (error) {
     console.error('Error:', error);
