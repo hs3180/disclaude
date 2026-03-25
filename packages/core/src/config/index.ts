@@ -39,6 +39,56 @@ const fileConfigOnly = validateConfig(fileConfig) ? getConfigFromFile(fileConfig
 const configLoaded = fileConfig._fromFile;
 
 /**
+ * Apply global environment variables from config file to process.env.
+ *
+ * Injects env vars defined in disclaude.config.yaml's `env:` section into
+ * the main process's process.env. This ensures Skills, MCP servers, and
+ * other main-process components can access configured environment variables.
+ *
+ * System environment variables take precedence — config values will NOT
+ * override existing process.env entries.
+ *
+ * Must be called AFTER setLoadedConfig() so that the preloaded config
+ * (set via --config CLI flag) is available and takes precedence over
+ * the default config loaded at module import time.
+ *
+ * @see Issue #1618
+ */
+export function applyGlobalEnv(): void {
+  // Prefer preloaded config (set via --config CLI flag) over the default
+  // config loaded at module import time. This ensures applyGlobalEnv()
+  // reads from the correct config file when --config is used.
+  const preloaded = getPreloadedConfig();
+  const env = (preloaded && validateConfig(preloaded))
+    ? (getConfigFromFile(preloaded).env || {})
+    : Config.getGlobalEnv();
+
+  let applied = 0;
+  let skipped = 0;
+
+  for (const [key, value] of Object.entries(env)) {
+    if (process.env[key] === undefined) {
+      process.env[key] = String(value);
+      applied++;
+    } else {
+      skipped++;
+    }
+  }
+
+  if (applied > 0) {
+    logger.info(
+      { applied, skipped, keys: Object.keys(env) },
+      'Applied global env vars to process.env',
+    );
+  } else if (skipped > 0) {
+    logger.debug(
+      { skipped, keys: Object.keys(env) },
+      'Skipped global env vars (already set in process.env)',
+    );
+  }
+}
+
+/**
  * Application configuration class with static properties.
  *
  * All configuration is read from disclaude.config.yaml file.
