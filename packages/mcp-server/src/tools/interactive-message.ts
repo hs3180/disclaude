@@ -23,7 +23,7 @@ import {
 } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
-import type { SendInteractiveResult, ActionPromptMap } from './types.js';
+import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
 
 const logger = createLogger('InteractiveMessage');
 
@@ -54,11 +54,7 @@ export async function send_interactive_message(params: {
   /** The question or main content to display */
   question: string;
   /** Button options for user interaction */
-  options: Array<{
-    text: string;
-    value: string;
-    type?: 'primary' | 'default' | 'danger';
-  }>;
+  options: InteractiveOption[];
   /** Card title (optional) */
   title?: string;
   /** Optional context shown above the question */
