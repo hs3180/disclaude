@@ -141,8 +141,7 @@ function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      (agent as { processMessage: (chatId: string, content: string, messageId: string, userId: string | undefined, fileRefs?: FileRef[] | undefined, chatHistoryContext?: string | undefined) => void })
-        .processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);
