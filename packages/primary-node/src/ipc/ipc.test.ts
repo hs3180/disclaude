@@ -105,6 +105,15 @@ describe('UnixSocketIpcClient', () => {
           // Mock handler that returns a messageId
           return { messageId: `om_${params.options[0]?.value}` };
         },
+        // Issue #1546: Group management mock handlers
+        // eslint-disable-next-line require-await
+        createChat: async (name) => {
+          return { chatId: 'oc_new_group', name: name ?? 'auto-generated' };
+        },
+        // eslint-disable-next-line require-await
+        dissolveChat: async () => {
+          return { success: true };
+        },
       },
     };
 
@@ -168,6 +177,28 @@ describe('UnixSocketIpcClient', () => {
 
     expect(result.success).toBe(true);
     expect(result.messageId).toBe('om_confirm');
+  });
+
+  it('should create a group chat via createChat IPC (Issue #1546)', async () => {
+    const result = await client.createChat('Test Group', 'A test group', ['ou_1', 'ou_2']);
+
+    expect(result.success).toBe(true);
+    expect(result.chatId).toBe('oc_new_group');
+    expect(result.name).toBe('Test Group');
+  });
+
+  it('should create a group with auto-generated name (Issue #1546)', async () => {
+    const result = await client.createChat();
+
+    expect(result.success).toBe(true);
+    expect(result.chatId).toBe('oc_new_group');
+    expect(result.name).toBe('auto-generated');
+  });
+
+  it('should dissolve a group chat via dissolveChat IPC (Issue #1546)', async () => {
+    const result = await client.dissolveChat('oc_target');
+
+    expect(result.success).toBe(true);
   });
 });
 
