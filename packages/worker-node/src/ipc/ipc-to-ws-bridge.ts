@@ -53,11 +53,11 @@ function generateRequestId(): string {
  */
 function mapIpcRequestToWsAction(type: string): string | null {
   switch (type) {
-    case 'feishuSendMessage':
+    case 'sendMessage':
       return 'sendMessage';
-    case 'feishuSendCard':
+    case 'sendCard':
       return 'sendCard';
-    case 'feishuUploadFile':
+    case 'uploadFile':
       return 'uploadFile';
     default:
       return null;

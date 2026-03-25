@@ -69,7 +69,7 @@ async function main() {
     console.log('IPC available, sending card...');
 
     // First send the card
-    const cardResult = await ipcClient.feishuSendCard(
+    const cardResult = await ipcClient.sendCard(
       chatId,
       card,
       parentMessageId,

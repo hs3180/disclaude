@@ -14,10 +14,10 @@ import { join } from 'path';
  */
 export type IpcRequestType =
   | 'ping'
-  // Feishu API operations (Issue #1035)
-  | 'feishuSendMessage'
-  | 'feishuSendCard'
-  | 'feishuUploadFile'
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  | 'sendMessage'
+  | 'sendCard'
+  | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive';
 
@@ -26,19 +26,19 @@ export type IpcRequestType =
  */
 export interface IpcRequestPayloads {
   ping: Record<string, never>;
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: {
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  sendMessage: {
     chatId: string;
     text: string;
     threadId?: string;
   };
-  feishuSendCard: {
+  sendCard: {
     chatId: string;
     card: Record<string, unknown>;
     threadId?: string;
     description?: string;
   };
-  feishuUploadFile: {
+  uploadFile: {
     chatId: string;
     filePath: string;
     threadId?: string;
@@ -64,10 +64,10 @@ export interface IpcRequestPayloads {
  */
 export interface IpcResponsePayloads {
   ping: { pong: true };
-  // Feishu API operations (Issue #1035)
-  feishuSendMessage: { success: boolean; messageId?: string };
-  feishuSendCard: { success: boolean; messageId?: string };
-  feishuUploadFile: {
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  sendMessage: { success: boolean; messageId?: string };
+  sendCard: { success: boolean; messageId?: string };
+  uploadFile: {
     success: boolean;
     fileKey?: string;
     fileType?: string;
