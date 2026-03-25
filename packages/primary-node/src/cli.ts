@@ -17,6 +17,7 @@
 import {
   loadConfigFile,
   setLoadedConfig,
+  applyGlobalEnv,
   createLogger,
   Config,
   type DisclaudeConfigWithChannels,
@@ -111,6 +112,10 @@ async function main(): Promise<void> {
     setLoadedConfig(config);
     logger.info({ path: config._source }, 'Configuration loaded successfully');
   }
+
+  // Apply config env vars to process.env so main-process components can access them
+  // Must be called AFTER setLoadedConfig() to ensure config is available
+  applyGlobalEnv();
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
