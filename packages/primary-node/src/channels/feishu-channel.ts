@@ -369,10 +369,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     // Issue #1619: If threadId is provided, use reply API instead of create
     if (message.threadId) {
-      return this.sendAsThreadReply(message);
+      return await this.sendAsThreadReply(message);
     }
 
-    return this.sendAsNewMessage(message);
+    return await this.sendAsNewMessage(message);
   }
 
   /**

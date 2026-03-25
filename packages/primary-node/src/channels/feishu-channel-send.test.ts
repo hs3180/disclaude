@@ -31,6 +31,10 @@ const mockWsConnectionManager = vi.hoisted(() => ({
   recordMessageReceived: vi.fn(),
 }));
 
+// TODO(#1619): Replace vi.mock() with nock VCR per Issue #918.
+// The test architecture injects a mock client directly, making nock integration
+// non-trivial. This should be rewritten in a follow-up.
+// eslint-disable-next-line no-restricted-syntax
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   Client: vi.fn(),
   EventDispatcher: vi.fn(() => ({
