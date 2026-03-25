@@ -35,9 +35,8 @@ async function main() {
 
     console.log('IPC available, sending interactive card...');
 
-    // Use sendInteractive to send the card and register action prompts in one call
-    const result = await ipcClient.request('sendInteractive', {
-      chatId,
+    // Use typed sendInteractive convenience method for better error handling
+    const result = await ipcClient.sendInteractive(chatId, {
       question: '已完成一句话总结',
       options: [
         { text: '详细解释AI', value: 'explain_ai', type: 'primary' },
@@ -48,6 +47,11 @@ async function main() {
       threadId: parentMessageId,
       actionPrompts,
     });
+
+    if (!result.success) {
+      console.error('Failed to send interactive card:', result.error);
+      process.exit(1);
+    }
 
     console.log('Interactive card sent successfully!');
     console.log('Message ID:', result.messageId);
