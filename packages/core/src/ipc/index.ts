@@ -21,7 +21,6 @@ export {
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type IpcRequestHandler,
-  type InteractiveMessageHandlers,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
 } from './unix-socket-server.js';
