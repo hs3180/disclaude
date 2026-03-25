@@ -220,7 +220,9 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 
 // ============================================================================
 // WeChat Wired Descriptor
-// ============================================================================
+//
+
+// ============================================================================$
 
 /**
  * WeChat Channel wired descriptor.
@@ -260,3 +262,24 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       sendDoneSignal: false,
     }),
 };
+// Built-in Wired Descriptors Registry
+// ============================================================================
+
+/**
+ * All built-in wired channel descriptors.
+ *
+ * Register these with ChannelLifecycleManager to enable config-driven
+ * channel creation via `createAndWireByType()`.
+ *
+ * Issue #1594 Phase 3: Adding a new channel only requires:
+ * 1. Create WiredChannelDescriptor in this file
+ * 2. Add it to this array
+ *
+ * Note: WeChat is NOT included here (Issue #1638: dynamic registration only).
+ * cli.ts remains untouched — it iterates over this array automatically.
+ */
+export const BUILTIN_WIRED_DESCRIPTORS: WiredChannelDescriptor[] = [
+  REST_WIRED_DESCRIPTOR,
+  FEISHU_WIRED_DESCRIPTOR,
+];
+

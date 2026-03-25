@@ -2,6 +2,7 @@
  * Tests for ChannelLifecycleManager and WiredChannelDescriptor.
  *
  * Issue #1594 Phase 2: Tests the descriptor-based channel wiring system.
+ * Issue #1594 Phase 3: Tests config-driven type-based channel creation.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -253,6 +254,104 @@ describe('ChannelLifecycleManager', () => {
     it('should return the underlying ChannelManager', () => {
       const manager = new ChannelLifecycleManager(channelManager, context);
       expect(manager.getChannelManager()).toBe(channelManager);
+    });
+  });
+
+  // Issue #1594 Phase 3: Descriptor registry and type-based creation
+  describe('registerWiredDescriptor', () => {
+    it('should register a descriptor for type-based lookup', () => {
+      const descriptor = createTestDescriptor({ type: 'rest' });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(descriptor);
+
+      expect(manager.hasWiredDescriptor('rest')).toBe(true);
+      expect(manager.getWiredDescriptor('rest')).toBe(descriptor);
+    });
+
+    it('should throw on duplicate registration', () => {
+      const descriptor = createTestDescriptor({ type: 'rest' });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(descriptor);
+
+      expect(() => manager.registerWiredDescriptor(descriptor)).toThrow(
+        /already registered/
+      );
+    });
+
+    it('should return registered types', () => {
+      const restDescriptor = createTestDescriptor({ type: 'rest' });
+      const feishuDescriptor = createTestDescriptor({ type: 'feishu' });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(restDescriptor);
+      manager.registerWiredDescriptor(feishuDescriptor);
+
+      const types = manager.getRegisteredTypes();
+      expect(types).toContain('rest');
+      expect(types).toContain('feishu');
+      expect(types).toHaveLength(2);
+    });
+  });
+
+  describe('createAndWireByType', () => {
+    it('should create and wire a channel by type string', async () => {
+      const mockChannel = createMockChannel('rest', 'REST Channel');
+      const descriptor = createTestDescriptor({
+        type: 'rest',
+        factory: () => mockChannel,
+      });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(descriptor);
+      const channel = await manager.createAndWireByType('rest', { port: 3000 } as any);
+
+      expect(channel).toBe(mockChannel);
+      expect(channelManager.has('rest')).toBe(true);
+    });
+
+    it('should throw for unknown channel type', async () => {
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      await expect(
+        manager.createAndWireByType('unknown', {})
+      ).rejects.toThrow(/Unknown channel type "unknown"/);
+    });
+
+    it('should include available types in error message', async () => {
+      const restDescriptor = createTestDescriptor({ type: 'rest' });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(restDescriptor);
+
+      await expect(
+        manager.createAndWireByType('feishu', {})
+      ).rejects.toThrow(/rest/);
+    });
+
+    it('should support creating multiple channels by type', async () => {
+      const restChannel = createMockChannel('rest', 'REST');
+      const feishuChannel = createMockChannel('feishu', 'Feishu');
+      const restDescriptor = createTestDescriptor({
+        type: 'rest',
+        factory: () => restChannel,
+      });
+      const feishuDescriptor = createTestDescriptor({
+        type: 'feishu',
+        factory: () => feishuChannel,
+      });
+      const manager = new ChannelLifecycleManager(channelManager, context);
+
+      manager.registerWiredDescriptor(restDescriptor);
+      manager.registerWiredDescriptor(feishuDescriptor);
+
+      await manager.createAndWireByType('rest', { port: 3000 } as any);
+      await manager.createAndWireByType('feishu', { appId: 'xxx' } as any);
+
+      expect(channelManager.size()).toBe(2);
+      expect(channelManager.has('rest')).toBe(true);
+      expect(channelManager.has('feishu')).toBe(true);
     });
   });
 });

@@ -8,8 +8,9 @@
  * This starts the Primary Node with a REST channel for API access.
  * All configuration (port, host, etc.) is read from the config file.
  *
- * Issue #1594 Phase 2: Channel setup uses ChannelLifecycleManager with
- * WiredChannelDescriptors, reducing channel-specific code from ~220 lines to ~15 lines.
+ * Issue #1594 Phase 3: Channel setup is fully config-driven via
+ * ChannelLifecycleManager.createAndWireByType(). Adding a new channel
+ * only requires a WiredChannelDescriptor + config entry — zero changes to cli.ts.
  *
  * @module primary-node/cli
  */
@@ -27,7 +28,7 @@ import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
-import { REST_WIRED_DESCRIPTOR, FEISHU_WIRED_DESCRIPTOR, WECHAT_WIRED_DESCRIPTOR } from './channels/wired-descriptors.js';
+import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -114,39 +115,24 @@ async function main(): Promise<void> {
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
-  const restChannelConfig = rawConfig.channels?.rest as {
-    port?: number;
-    host?: string;
-    fileStorageDir?: string;
-  } | undefined;
-
-  // WeChat channel config (Issue #1554)
-  const wechatChannelConfig = rawConfig.channels?.wechat as {
-    enabled?: boolean;
-    baseUrl?: string;
-    token?: string;
-    routeTag?: string;
-  } | undefined;
 
   // Check if channels are configured
-  const hasFeishuConfig = Config.FEISHU_APP_ID && Config.FEISHU_APP_SECRET;
-  const hasRestConfig = restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir;
-  const hasWechatConfig = wechatChannelConfig?.enabled !== false && !!wechatChannelConfig;
-
-  // At least one channel must be configured
-  if (!hasFeishuConfig && !hasRestConfig && !hasWechatConfig) {
+  const channelEntries = resolveChannelConfigs(rawConfig, Config);
+  if (channelEntries.length === 0) {
     console.error('Error: At least one channel must be configured.');
     console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
     console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
-    console.error('  - For WeChat: set channels.wechat with baseUrl');
     process.exit(1);
   }
 
-  const restPort = restChannelConfig?.port || 3000;
-  const host = restChannelConfig?.host || '0.0.0.0';
-  const fileStorageDir = restChannelConfig?.fileStorageDir || './data/rest-files';
+  // Derive IPC host from REST channel config if available
+  const restEntry = channelEntries.find((e) => e.type === 'rest');
+  const host = (restEntry?.config as { host?: string } | undefined)?.host || '0.0.0.0';
 
-  logger.info({ restPort, host, fileStorageDir, hasRestConfig, hasFeishuConfig, hasWechatConfig }, 'Starting Primary Node');
+  logger.info(
+    { channels: channelEntries.map((e) => e.type) },
+    'Starting Primary Node'
+  );
 
   // Create PrimaryNode
   const primaryNode = new PrimaryNode({
@@ -194,7 +180,7 @@ async function main(): Promise<void> {
   // Create unified control handler for all channels
   const controlHandler = createControlHandler(controlHandlerContext);
 
-  // Create ChannelLifecycleManager (Issue #1594 Phase 2)
+  // Create ChannelLifecycleManager (Issue #1594 Phase 3)
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
     agentPool,
     controlHandler,
@@ -203,31 +189,17 @@ async function main(): Promise<void> {
     primaryNode,
   });
 
-  // Create and wire channels using descriptors (Issue #1594 Phase 2)
-  // Each descriptor encapsulates callbacks, message handler, and setup logic.
-  // This replaces ~220 lines of channel-specific code with descriptor-based wiring.
-  if (hasRestConfig) {
-    await lifecycleManager.createAndWire(REST_WIRED_DESCRIPTOR, {
-      port: restPort,
-      host,
-      fileStorageDir,
-    });
+  // Register all built-in channel descriptors (Issue #1594 Phase 3)
+  // This enables config-driven creation via createAndWireByType().
+  // Adding a new channel only requires adding a descriptor to BUILTIN_WIRED_DESCRIPTORS.
+  for (const descriptor of BUILTIN_WIRED_DESCRIPTORS) {
+    lifecycleManager.registerWiredDescriptor(descriptor);
   }
 
-  if (hasFeishuConfig) {
-    await lifecycleManager.createAndWire(FEISHU_WIRED_DESCRIPTOR, {
-      appId: Config.FEISHU_APP_ID,
-      appSecret: Config.FEISHU_APP_SECRET,
-    });
-  }
-
-  // WeChat Channel (Issue #1554)
-  if (hasWechatConfig) {
-    await lifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, {
-      baseUrl: wechatChannelConfig!.baseUrl,
-      token: wechatChannelConfig!.token,
-      routeTag: wechatChannelConfig!.routeTag,
-    });
+  // Create and wire channels from resolved config (Issue #1594 Phase 3)
+  // Config-driven: cli.ts no longer hard-codes channel type checks.
+  for (const { type, config } of channelEntries) {
+    await lifecycleManager.createAndWireByType(type, config);
   }
 
   // Handle graceful shutdown
@@ -260,22 +232,21 @@ async function main(): Promise<void> {
     await lifecycleManager.startAll();
 
     // Log startup info
-    if (hasRestConfig) {
-      logger.info({ restPort, host }, 'REST Channel started');
-      console.log(`REST Channel started on http://${host}:${restPort}`);
-    }
-    if (hasFeishuConfig) {
-      logger.info('Feishu Channel started');
-    }
-    if (hasWechatConfig) {
-      logger.info('WeChat Channel started');
+    for (const { type, config } of channelEntries) {
+      logger.info({ type }, `${type.charAt(0).toUpperCase() + type.slice(1)} Channel started`);
+      if (type === 'rest') {
+        const restConf = config as { port: number; host: string };
+        console.log(`REST Channel started on http://${restConf.host}:${restConf.port}`);
+      }
     }
 
-    logger.info({ hasRest: hasRestConfig, hasFeishu: hasFeishuConfig, hasWechat: hasWechatConfig }, 'Primary Node started successfully');
-    if (hasRestConfig) {
-      console.log(`Primary Node started on http://${host}:${restPort}`);
-    } else if (hasWechatConfig) {
-      console.log('Primary Node started (WeChat mode)');
+    logger.info(
+      { channels: channelEntries.map((e) => e.type) },
+      'Primary Node started successfully'
+    );
+    if (restEntry) {
+      const restConf = restEntry.config as { port: number; host: string };
+      console.log(`Primary Node started on http://${restConf.host}:${restConf.port}`);
     } else {
       console.log('Primary Node started (Feishu only mode)');
     }
@@ -292,3 +263,86 @@ main().catch((error) => {
   console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });
+
+// ============================================================================
+// Config Resolution Utilities
+// ============================================================================
+
+/**
+ * Resolved channel configuration entry.
+ * Each entry maps a channel type to its resolved config.
+ */
+interface ResolvedChannelConfig {
+  type: string;
+  config: Record<string, unknown>;
+}
+
+/**
+ * Resolve channel configurations from the loaded config.
+ *
+ * Handles the current mixed config structure where:
+ * - REST config lives under `channels.rest`
+ * - Feishu config lives under top-level `feishu.appId/appSecret`
+ *
+ * LIMITATION: This function has hard-coded knowledge of 'rest' and 'feishu'
+ * types due to the current mixed config structure. Adding a new config-driven
+ * channel type requires updating this function. A future config unification
+ * (all channels under `channels.<type>`) would eliminate this limitation.
+ *
+ * Note: WeChat is intentionally NOT included — it only supports dynamic
+ * registration at runtime (Issue #1638), not config-driven creation.
+ *
+ * Issue #1594 Phase 3: Centralizes config resolution so cli.ts can iterate
+ * over results without hard-coded channel type checks.
+ *
+ * @param rawConfig - The raw config object
+ * @param config - The Config singleton for accessing top-level getters
+ * @returns Array of resolved channel configs
+ */
+function resolveChannelConfigs(
+  rawConfig: DisclaudeConfigWithChannels,
+  config: typeof Config
+): ResolvedChannelConfig[] {
+  const entries: ResolvedChannelConfig[] = [];
+
+  // REST channel: configured under channels.rest
+  const restChannelConfig = rawConfig.channels?.rest as {
+    port?: number;
+    host?: string;
+    fileStorageDir?: string;
+  } | undefined;
+  if (restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
+    entries.push({
+      type: 'rest',
+      config: {
+        port: restChannelConfig.port,
+        host: restChannelConfig.host,
+        fileStorageDir: restChannelConfig.fileStorageDir,
+      },
+    });
+  }
+
+  // Feishu channel: configured under top-level feishu.appId/appSecret
+  const feishuAppId = config.FEISHU_APP_ID;
+  const feishuAppSecret = config.FEISHU_APP_SECRET;
+  if (feishuAppId && feishuAppSecret) {
+    entries.push({
+      type: 'feishu',
+      config: { appId: feishuAppId, appSecret: feishuAppSecret },
+    });
+  }
+
+  // Warn on unrecognized channel config keys (Issue #1594 review P2)
+  const knownChannelKeys = new Set(['rest', 'wechat']);
+  const channelKeys = Object.keys(rawConfig.channels || {});
+  for (const key of channelKeys) {
+    if (!knownChannelKeys.has(key)) {
+      logger.warn(
+        { channelKey: key },
+        `Unrecognized channel config key "channels.${key}" — this channel type is not supported`
+      );
+    }
+  }
+
+  return entries;
+}

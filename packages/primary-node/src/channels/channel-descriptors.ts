@@ -1,11 +1,13 @@
 /**
- * Built-in Channel Descriptors.
+ * Built-in Channel Descriptors (basic, without wiring hooks).
  *
- * Provides ChannelDescriptor instances for all built-in channel types.
- * Descriptors are defined here (in @disclaude/primary-node) rather than in
- * @disclaude/core because the actual channel implementations (RestChannel,
- * FeishuChannel, WeChatChannel) live here — importing them from core would
- * create circular dependencies.
+ * @deprecated Use `WiredChannelDescriptor` from `wired-descriptors.ts` instead.
+ * These basic descriptors lack the wiring hooks (createCallbacks, createMessageHandler,
+ * setup) required by `ChannelLifecycleManager.createAndWireByType()`.
+ *
+ * Issue #1594 Phase 3: Production code uses `BUILTIN_WIRED_DESCRIPTORS` for
+ * config-driven channel creation. These basic descriptors are kept for backward
+ * compatibility and for use with `ChannelRegistry` (type catalog only, no wiring).
  *
  * @module channels/channel-descriptors
  */
