@@ -190,7 +190,7 @@ export class ChannelLifecycleManager {
     if (this.wiredDescriptors.has(descriptor.type)) {
       throw new Error(
         `Wired channel descriptor "${descriptor.type}" is already registered. ` +
-        `Use hasWiredDescriptor() to check before registering.`
+        'Use hasWiredDescriptor() to check before registering.'
       );
     }
     this.wiredDescriptors.set(descriptor.type, descriptor);
@@ -283,7 +283,7 @@ export class ChannelLifecycleManager {
       );
     }
     // Type assertion is safe: the descriptor's factory handles config validation
-    return this.createAndWire(descriptor, config);
+    return await this.createAndWire(descriptor, config);
   }
 
   /**
