@@ -10,6 +10,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 
 | Guide | Description |
 |-------|-------------|
+| [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
 
