@@ -49,7 +49,7 @@ export function extractOpenAIConfig(options: AgentQueryOptions): {
 /**
  * 适配 MCP 服务器配置为 OpenAI SDK 的 MCPServer 实例数组
  */
-export async function adaptMcpServers(
+export function adaptMcpServers(
   mcpServers: Record<string, McpServerConfig>,
   AgentModule: typeof import('@openai/agents')
 ): Promise<unknown[]> {
@@ -80,7 +80,7 @@ export async function adaptMcpServers(
  * OpenAI SDK 的 tool() 接受单个 ToolOptions 对象:
  * { name, description, parameters, execute }
  */
-export async function adaptInlineTools(
+export function adaptInlineTools(
   mcpServers: Record<string, McpServerConfig> | undefined,
   AgentModule: typeof import('@openai/agents')
 ): Promise<unknown[]> {

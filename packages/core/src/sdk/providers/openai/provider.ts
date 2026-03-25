@@ -39,7 +39,6 @@ export class OpenAISDKProvider implements IAgentSDKProvider {
 
   private loadAgentModuleSync(): AgentModule {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       return nativeRequire('@openai/agents');
     } catch {
       throw new Error('Failed to load @openai/agents. Install it with: npm install @openai/agents');
@@ -57,7 +56,6 @@ export class OpenAISDKProvider implements IAgentSDKProvider {
   private createModel(AgentModule: AgentModule, config: { apiKey?: string; baseUrl?: string; model?: string }): unknown {
     const modelName = config.model || 'gpt-4o';
     // Use the openai package directly to create a client
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const OpenAI = nativeRequire('openai').default;
     const clientConfig: Record<string, unknown> = {};
     if (config.apiKey) {
@@ -129,7 +127,7 @@ export class OpenAISDKProvider implements IAgentSDKProvider {
 
       // StreamedRunResult is AsyncIterable<RunStreamEvent>
       for await (const event of result) {
-        if (this.disposed) break;
+        if (this.disposed) { break; }
         const message = adaptStreamEvent(event);
         if (message) {
           yield message;
@@ -231,7 +229,7 @@ export class OpenAISDKProvider implements IAgentSDKProvider {
           const result = await AgentModule.run(agent, prompt, { stream: true });
 
           for await (const event of result) {
-            if (cancelled || self.disposed) break;
+            if (cancelled || self.disposed) { break; }
             const message = adaptStreamEvent(event);
             if (message) {
               yield message;

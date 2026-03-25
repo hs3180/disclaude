@@ -178,7 +178,7 @@ export function adaptRunResult(result: any): AgentMessage {
   const metadata: AgentMessageMetadata = {};
 
   try {
-    const state = result.state;
+    const { state } = result;
     if (state?.usage) {
       const usage = state.usage as { inputTokens?: number; outputTokens?: number; totalCost?: number };
       metadata.inputTokens = usage.inputTokens;
@@ -212,7 +212,7 @@ export function adaptRunResult(result: any): AgentMessage {
   }
 
   try {
-    const finalOutput = result.finalOutput;
+    const { finalOutput } = result;
     if (finalOutput !== undefined) {
       const outputStr = typeof finalOutput === 'string'
         ? finalOutput

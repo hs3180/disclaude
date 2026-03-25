@@ -34,7 +34,9 @@ describe('OpenAISDKProvider', () => {
       assert.equal(info.available, false);
       assert.ok(info.unavailableReason?.includes('OPENAI_API_KEY'));
 
-      if (originalKey) process.env.OPENAI_API_KEY = originalKey;
+      if (originalKey) {
+        process.env.OPENAI_API_KEY = originalKey;
+      }
     });
   });
 
@@ -45,7 +47,9 @@ describe('OpenAISDKProvider', () => {
 
       assert.equal(provider.validateConfig(), false);
 
-      if (originalKey) process.env.OPENAI_API_KEY = originalKey;
+      if (originalKey) {
+        process.env.OPENAI_API_KEY = originalKey;
+      }
     });
 
     it('should return boolean for any env state', () => {
@@ -55,8 +59,11 @@ describe('OpenAISDKProvider', () => {
       const result = provider.validateConfig();
       assert.equal(typeof result, 'boolean');
 
-      if (!originalKey) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = originalKey;
+      if (!originalKey) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalKey;
+      }
     });
   });
 
