@@ -408,8 +408,9 @@ Example:
         }
 
         // Pre-validation: each option must have text and value
-        for (let i = 0; i < (options as unknown[]).length; i++) {
-          const opt = (options as unknown[])[i] as Record<string, unknown>;
+        const opts = options as Array<{ text?: unknown; value?: unknown }>;
+        for (let i = 0; i < opts.length; i++) {
+          const opt = opts[i];
           if (typeof opt.text !== 'string' || opt.text.trim().length === 0) {
             return {
               jsonrpc: '2.0',
