@@ -196,6 +196,15 @@ export {
 // Agent pool (Issue #1040)
 export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-pool.js';
 
+// Channel Lifecycle Manager (Issue #1594 Phase 2)
+export {
+  ChannelLifecycleManager,
+  type ChannelSetupContext,
+  type WiredContext,
+  type WiredChannelDescriptor,
+  type IPrimaryNodeForSetup,
+} from './channel-lifecycle-manager.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
