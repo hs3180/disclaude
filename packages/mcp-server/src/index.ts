@@ -17,6 +17,7 @@ export type {
   SendFileResult,
   MessageSentCallback,
   ActionPromptMap,
+  InteractiveOption,
   SendInteractiveResult,
 } from './tools/types.js';
 
