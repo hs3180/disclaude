@@ -195,44 +195,64 @@ Example:
               name: 'send_interactive',
               description: `Send an interactive card with buttons/actions to a chat.
 
-## Interactive Mode
-Requires actionPrompts to map button values to user messages.
+Primary Node builds the card from raw parameters (question, options).
+
+## Parameters
+- **question**: The question or main content to display (string)
+- **options**: Array of button options with text, value, and optional type
+- **chatId**: Target chat ID
+- **title**: Optional card title
+- **context**: Optional context shown above the question
+- **actionPrompts**: Optional custom action prompts
 
 ## Type Constraints (IMPORTANT)
-- **card**: MUST be an object with config/header/elements, NOT an array or string
-- **actionPrompts**: MUST be an object { [buttonValue: string]: string }, NOT an array or string
+- **question**: MUST be a non-empty string
+- **options**: MUST be a non-empty array of objects with text and value
 - **chatId**: MUST be a non-empty string
 
 Example:
 \`\`\`json
 {
-  "card": {
-    "config": {},
-    "header": {"title": {"content": "Confirm?"}},
-    "elements": [
-      {"tag": "action", "actions": [
-        {"tag": "button", "text": {"content": "OK"}, "value": "ok"},
-        {"tag": "button", "text": {"content": "Cancel"}, "value": "cancel"}
-      ]}
-    ]
-  },
-  "actionPrompts": {
-    "ok": "[用户] 点击了确认",
-    "cancel": "[用户] 点击了取消"
-  }
+  "question": "Which option do you prefer?",
+  "options": [
+    { "text": "✅ Approve", "value": "approve", "type": "primary" },
+    { "text": "❌ Reject", "value": "reject", "type": "danger" }
+  ],
+  "chatId": "oc_xxx"
 }
 \`\`\``,
               inputSchema: {
                 type: 'object',
                 properties: {
-                  card: {
-                    type: 'object',
-                    description: 'The card content object.',
+                  question: {
+                    type: 'string',
+                    description: 'The question or main content to display.',
+                  },
+                  options: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        text: { type: 'string', description: 'Button display text' },
+                        value: { type: 'string', description: 'Button action value' },
+                        type: { type: 'string', enum: ['primary', 'default', 'danger'], description: 'Button style' },
+                      },
+                      required: ['text', 'value'],
+                    },
+                    description: 'Button options for user interaction.',
+                  },
+                  title: {
+                    type: 'string',
+                    description: 'Optional card title.',
+                  },
+                  context: {
+                    type: 'string',
+                    description: 'Optional context shown above the question.',
                   },
                   actionPrompts: {
                     type: 'object',
                     additionalProperties: { type: 'string' },
-                    description: 'Maps button values to user messages. MUST be an object, NOT an array or string.',
+                    description: 'Optional custom action prompts that override auto-generated defaults.',
                   },
                   chatId: {
                     type: 'string',
@@ -243,7 +263,7 @@ Example:
                     description: 'Optional parent message ID for thread replies',
                   },
                 },
-                required: ['card', 'actionPrompts', 'chatId'],
+                required: ['question', 'options', 'chatId'],
               },
             },
             {
@@ -360,66 +380,53 @@ Example:
           },
         };
       } else if (toolName === 'send_interactive') {
-        const { card, actionPrompts } = toolArgs;
+        const { question, options } = toolArgs;
         const chatId = toolArgs.chatId as string | undefined;
 
-        // Pre-validation: card must be an object
-        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+        // Pre-validation: question must be a non-empty string
+        if (!question || typeof question !== 'string') {
           return {
             jsonrpc: '2.0',
             id,
             result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}` }],
+              content: [{ type: 'text' as const, text: '⚠️ Invalid question: must be a non-empty string' }],
               isError: true,
             },
           };
         }
 
-        // Pre-validation: card structure
-        if (!isValidFeishuCard(card as Record<string, unknown>)) {
+        // Pre-validation: options must be a non-empty array
+        if (!Array.isArray(options) || options.length === 0) {
           return {
             jsonrpc: '2.0',
             id,
             result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card structure: ${getCardValidationError(card)}` }],
+              content: [{ type: 'text' as const, text: '⚠️ Invalid options: must be a non-empty array' }],
               isError: true,
             },
           };
         }
 
-        // Pre-validation: actionPrompts must be an object (not array/string)
-        if (!actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: must be an object, got ${Array.isArray(actionPrompts) ? 'array' : typeof actionPrompts}` }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: actionPrompts non-empty
-        const promptKeys = Object.keys(actionPrompts);
-        if (promptKeys.length === 0) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid actionPrompts: must have at least one action' }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: actionPrompts values must be strings
-        for (const [key, value] of Object.entries(actionPrompts)) {
-          if (typeof value !== 'string') {
+        // Pre-validation: each option must have text and value
+        const opts = options as Array<{ text?: unknown; value?: unknown }>;
+        for (let i = 0; i < opts.length; i++) {
+          const opt = opts[i];
+          if (typeof opt.text !== 'string' || opt.text.trim().length === 0) {
             return {
               jsonrpc: '2.0',
               id,
               result: {
-                content: [{ type: 'text' as const, text: `⚠️ Invalid actionPrompts: value for "${key}" must be string, got ${typeof value}` }],
+                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].text: must be a non-empty string` }],
+                isError: true,
+              },
+            };
+          }
+          if (typeof opt.value !== 'string' || opt.value.trim().length === 0) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].value: must be a non-empty string` }],
                 isError: true,
               },
             };
@@ -439,9 +446,12 @@ Example:
         }
 
         const result = await send_interactive_message({
-          card: card as Record<string, unknown>,
-          actionPrompts: actionPrompts as Record<string, string>,
+          question: question as string,
+          options: options as Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>,
           chatId,
+          title: toolArgs.title as string | undefined,
+          context: toolArgs.context as string | undefined,
+          actionPrompts: toolArgs.actionPrompts as Record<string, string> | undefined,
           parentMessageId: toolArgs.parentMessageId as string | undefined,
         });
         return {
