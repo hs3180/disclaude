@@ -108,7 +108,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * MVP: Only supports 'text' type messages.
    * Other types are logged as warnings and silently ignored.
    */
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
       throw new Error('WeChat client not initialized');
     }
