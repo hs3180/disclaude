@@ -47,6 +47,19 @@ export type MessageSentCallback = (chatId: string) => void;
 export type ActionPromptMap = Record<string, string>;
 
 /**
+ * Interactive message option configuration.
+ * Used by send_interactive_message to define button options.
+ */
+export interface InteractiveOption {
+  /** Button display text */
+  text: string;
+  /** Action value (plain string, used as action prompt key) */
+  value: string;
+  /** Button style */
+  type?: 'primary' | 'default' | 'danger';
+}
+
+/**
  * Result type for send_interactive_message tool.
  */
 export interface SendInteractiveResult {
