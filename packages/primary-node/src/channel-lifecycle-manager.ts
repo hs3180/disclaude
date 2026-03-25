@@ -147,20 +147,74 @@ export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelC
  * Combines ChannelManager (instance tracking + lifecycle) with
  * WiredChannelDescriptor (channel-specific wiring logic).
  *
+ * Supports two usage patterns:
+ * 1. Direct: `createAndWire(descriptor, config)` — pass descriptor directly
+ * 2. Type-based: `createAndWireByType('rest', config)` — lookup by type string
+ *
+ * Issue #1594 Phase 3: Type-based creation enables config-driven channel
+ * instantiation without hard-coded channel imports in cli.ts.
+ *
  * Usage:
  * ```typescript
  * const manager = new ChannelLifecycleManager(channelManager, context);
- * const channel = await manager.createAndWire(REST_DESCRIPTOR, restConfig);
+ * manager.registerWiredDescriptor(REST_WIRED_DESCRIPTOR);
+ * manager.registerWiredDescriptor(FEISHU_WIRED_DESCRIPTOR);
+ *
+ * // Config-driven: iterate over channel configs
+ * for (const { type, config } of channelConfigs) {
+ *   await manager.createAndWireByType(type, config);
+ * }
  * await manager.startAll();
  * ```
  */
 export class ChannelLifecycleManager {
   private readonly channelManager: ChannelManager;
   private readonly context: ChannelSetupContext;
+  private readonly wiredDescriptors = new Map<string, WiredChannelDescriptor>();
 
   constructor(channelManager: ChannelManager, context: ChannelSetupContext) {
     this.channelManager = channelManager;
     this.context = context;
+  }
+
+  /**
+   * Register a wired channel descriptor for type-based lookup.
+   *
+   * After registration, channels can be created via `createAndWireByType()`
+   * using the descriptor's type string, without importing the descriptor directly.
+   *
+   * @param descriptor - The wired descriptor to register
+   * @throws {Error} if a descriptor with the same type is already registered
+   */
+  registerWiredDescriptor(descriptor: WiredChannelDescriptor): void {
+    if (this.wiredDescriptors.has(descriptor.type)) {
+      throw new Error(
+        `Wired channel descriptor "${descriptor.type}" is already registered. ` +
+        'Use hasWiredDescriptor() to check before registering.'
+      );
+    }
+    this.wiredDescriptors.set(descriptor.type, descriptor);
+  }
+
+  /**
+   * Check if a wired descriptor is registered for the given type.
+   */
+  hasWiredDescriptor(type: string): boolean {
+    return this.wiredDescriptors.has(type);
+  }
+
+  /**
+   * Get a registered wired descriptor by type.
+   */
+  getWiredDescriptor(type: string): WiredChannelDescriptor | undefined {
+    return this.wiredDescriptors.get(type);
+  }
+
+  /**
+   * Get all registered wired descriptor types.
+   */
+  getRegisteredTypes(): string[] {
+    return Array.from(this.wiredDescriptors.keys());
   }
 
   /**
@@ -201,6 +255,35 @@ export class ChannelLifecycleManager {
     }
 
     return channel;
+  }
+
+  /**
+   * Create, register, and wire a channel by type string.
+   *
+   * Looks up the registered WiredChannelDescriptor by type and delegates
+   * to createAndWire(). This enables config-driven channel creation where
+   * cli.ts doesn't need to import specific descriptors.
+   *
+   * Issue #1594 Phase 3: Config-driven channel instantiation.
+   *
+   * @param type - Channel type identifier (e.g., 'rest', 'feishu')
+   * @param config - Channel-specific configuration
+   * @returns The created and wired channel instance
+   * @throws {Error} if the channel type is not registered
+   */
+  async createAndWireByType(
+    type: string,
+    config: ChannelConfig
+  ): Promise<IChannel> {
+    const descriptor = this.wiredDescriptors.get(type);
+    if (!descriptor) {
+      const available = Array.from(this.wiredDescriptors.keys()).sort().join(', ');
+      throw new Error(
+        `Unknown channel type "${type}". Registered types: [${available}]`
+      );
+    }
+    // Type assertion is safe: the descriptor's factory handles config validation
+    return await this.createAndWire(descriptor, config);
   }
 
   /**
