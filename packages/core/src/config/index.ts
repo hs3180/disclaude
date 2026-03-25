@@ -48,13 +48,21 @@ const configLoaded = fileConfig._fromFile;
  * System environment variables take precedence — config values will NOT
  * override existing process.env entries.
  *
- * Must be called AFTER setLoadedConfig() so that the config file's env
- * section is available via getGlobalEnv().
+ * Must be called AFTER setLoadedConfig() so that the preloaded config
+ * (set via --config CLI flag) is available and takes precedence over
+ * the default config loaded at module import time.
  *
  * @see Issue #1618
  */
 export function applyGlobalEnv(): void {
-  const env = Config.getGlobalEnv();
+  // Prefer preloaded config (set via --config CLI flag) over the default
+  // config loaded at module import time. This ensures applyGlobalEnv()
+  // reads from the correct config file when --config is used.
+  const preloaded = getPreloadedConfig();
+  const env = (preloaded && validateConfig(preloaded))
+    ? (getConfigFromFile(preloaded).env || {})
+    : Config.getGlobalEnv();
+
   let applied = 0;
   let skipped = 0;
 
@@ -67,10 +75,15 @@ export function applyGlobalEnv(): void {
     }
   }
 
-  if (applied > 0 || skipped > 0) {
+  if (applied > 0) {
     logger.info(
       { applied, skipped, keys: Object.keys(env) },
       'Applied global env vars to process.env',
+    );
+  } else if (skipped > 0) {
+    logger.debug(
+      { skipped, keys: Object.keys(env) },
+      'Skipped global env vars (already set in process.env)',
     );
   }
 }
