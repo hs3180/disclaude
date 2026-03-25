@@ -220,12 +220,16 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 
 // ============================================================================
 // WeChat Wired Descriptor
-//
-
-// ============================================================================$
+// ============================================================================
 
 /**
  * WeChat Channel wired descriptor.
+ *
+ * **Design Decision (Issue #1638)**: WeChat Channel only supports dynamic
+ * registration (programmatic API), NOT config.yaml static configuration.
+ * This descriptor is kept for dynamic registration use — callers should use
+ * `ChannelLifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, config)`
+ * at runtime (e.g., after QR code authentication completes).
  *
  * Provides full wiring for the WeChat channel (MVP):
  * - PilotCallbacks without done signal (async mode)
@@ -239,6 +243,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig> = {
   type: 'wechat',
