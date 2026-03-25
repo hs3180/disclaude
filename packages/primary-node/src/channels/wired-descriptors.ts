@@ -21,6 +21,7 @@ import type { PilotCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
+import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import type {
   ChannelSetupContext,
   WiredContext,
@@ -330,4 +331,47 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     context.primaryNode.registerFeishuHandlers(feishuHandlers);
     context.logger.info('Feishu IPC handlers registered via descriptor setup');
   },
+};
+
+// ============================================================================
+// WeChat Wired Descriptor
+// ============================================================================
+
+/**
+ * WeChat Channel wired descriptor.
+ *
+ * Provides full wiring for the WeChat channel (MVP):
+ * - PilotCallbacks without done signal (async mode)
+ * - Message handler with basic text processing
+ * - No post-registration setup (MVP: no passive mode, no IPC handlers)
+ *
+ * MVP limitations:
+ * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
+ * - sendFile: not supported (logs warning only)
+ * - No message listening / long polling (outbound-only bot)
+ *
+ * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ */
+export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig> = {
+  type: 'wechat',
+  name: 'WeChat',
+  factory: (config) => new WeChatChannel(config),
+  defaultCapabilities: {
+    supportsCard: false,
+    supportsThread: false,
+    supportsFile: false,
+    supportsMarkdown: false,
+    supportsMention: false,
+    supportsUpdate: false,
+  },
+
+  createCallbacks: (channel, context) =>
+    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+
+  createMessageHandler: (channel, context) =>
+    createDefaultMessageHandler(channel, context, {
+      channelName: 'WeChat channel',
+      sendDoneSignal: false,
+    }),
 };
