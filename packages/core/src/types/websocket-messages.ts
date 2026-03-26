@@ -114,6 +114,14 @@ export interface CardActionMessage {
   actionText?: string;
   /** User who triggered the action */
   userId?: string;
+  /**
+   * Resolved prompt from InteractiveContextStore (Issue #1629).
+   * When Primary Node routes card actions to remote Worker Nodes,
+   * it resolves the prompt template before forwarding so the
+   * Worker Node can use the contextual message instead of a
+   * generic default.
+   */
+  resolvedPrompt?: string;
   /** Full action data for complex interactions */
   action?: {
     type: string;

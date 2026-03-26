@@ -101,6 +101,8 @@ export interface FeishuChannelConfig {
   appSecret?: string;
   /**
    * Route card action to Worker Node if applicable.
+   * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
+   * so remote Worker Nodes receive the contextual prompt.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -109,6 +111,8 @@ export interface FeishuChannelConfig {
     actionValue: string;
     actionText?: string;
     userId?: string;
+    /** Resolved prompt from InteractiveContextStore (Issue #1629) */
+    resolvedPrompt?: string;
     action?: {
       type: string;
       value: string;
