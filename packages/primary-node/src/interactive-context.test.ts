@@ -45,6 +45,65 @@ describe('InteractiveContextStore', () => {
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
       expect(store.size).toBe(2);
     });
+
+    it('should support multiple cards per chatId (LRU)', () => {
+      // Register 3 cards in the same chat with different action prompts
+      store.register('card-a', 'chat-1', { explain_ai: 'Tell me about AI' });
+      store.register('card-b', 'chat-1', { weather: 'Show weather' });
+      store.register('card-c', 'chat-1', { news: 'Show news' });
+
+      expect(store.size).toBe(3);
+
+      // getActionPromptsByChatId still returns the most recent
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ news: 'Show news' });
+
+      // findPromptsByChatIdAndAction can find actions from older cards
+      expect(store.findPromptsByChatIdAndAction('chat-1', 'explain_ai')).toEqual({
+        explain_ai: 'Tell me about AI',
+      });
+      expect(store.findPromptsByChatIdAndAction('chat-1', 'weather')).toEqual({
+        weather: 'Show weather',
+      });
+      expect(store.findPromptsByChatIdAndAction('chat-1', 'news')).toEqual({
+        news: 'Show news',
+      });
+      expect(store.findPromptsByChatIdAndAction('chat-1', 'nonexistent')).toBeUndefined();
+    });
+
+    it('should evict oldest entries when exceeding MAX_ENTRIES_PER_CHAT', () => {
+      // Register more cards than the max limit
+      for (let i = 0; i < InteractiveContextStore.MAX_ENTRIES_PER_CHAT + 3; i++) {
+        store.register(`card-${i}`, 'chat-1', { action: `prompt-${i}` });
+      }
+
+      // Should not exceed MAX_ENTRIES_PER_CHAT
+      expect(store.size).toBe(InteractiveContextStore.MAX_ENTRIES_PER_CHAT);
+
+      // Oldest entries should be evicted
+      expect(store.getActionPrompts('card-0')).toBeUndefined();
+      expect(store.getActionPrompts('card-1')).toBeUndefined();
+      expect(store.getActionPrompts('card-2')).toBeUndefined();
+
+      // Newest entries should still exist
+      const lastIdx = InteractiveContextStore.MAX_ENTRIES_PER_CHAT + 2;
+      expect(store.getActionPrompts(`card-${lastIdx}`)).toEqual({
+        action: `prompt-${lastIdx}`,
+      });
+    });
+
+    it('should not evict entries from different chats', () => {
+      for (let i = 0; i < InteractiveContextStore.MAX_ENTRIES_PER_CHAT + 2; i++) {
+        store.register(`chat1-card-${i}`, 'chat-1', { action: `prompt-${i}` });
+      }
+      store.register('chat2-card-0', 'chat-2', { other: 'other prompt' });
+
+      // chat-1 should have been evicted down to max
+      expect(store.getActionPrompts('chat2-card-0')).toBeDefined();
+      // chat-2 should not be affected
+      expect(store.findPromptsByChatIdAndAction('chat-2', 'other')).toEqual({
+        other: 'other prompt',
+      });
+    });
   });
 
   describe('getActionPrompts', () => {
@@ -137,6 +196,39 @@ describe('InteractiveContextStore', () => {
       const prompt = store.generatePrompt('msg-3', 'chat-1', 'action', undefined);
       expect(prompt).toBe('[用户操作] 选择了action');
     });
+
+    it('should find actionValue from older card when newest card does not have it (multi-card bug fix)', () => {
+      // This is the core bug fix test for #1625
+      // Card A (older) has action 'explain_ai'
+      store.register('card-a', 'chat-1', {
+        explain_ai: '[用户操作] 用户想了解「{{actionText}}」',
+        ai_applications: '[用户操作] 用户想了解AI应用场景',
+      });
+      // Card B (newer) has different actions - this would previously overwrite Card A's index
+      store.register('card-b', 'chat-1', {
+        weather: '[用户操作] 用户想查看天气',
+      });
+
+      // User clicks Card A's 'explain_ai' button with a real Feishu messageId (not synthetic)
+      const prompt = store.generatePrompt(
+        'real_feishu_msg_id', // doesn't match 'card-a' synthetic ID
+        'chat-1',
+        'explain_ai',
+        'AI的发展趋势'
+      );
+
+      // Should find the correct prompt from Card A, not fail because Card B is the "latest"
+      expect(prompt).toBe('[用户操作] 用户想了解「AI的发展趋势」');
+    });
+
+    it('should return undefined when actionValue does not exist in any card for the chat', () => {
+      store.register('card-a', 'chat-1', { action1: 'prompt1' });
+      store.register('card-b', 'chat-1', { action2: 'prompt2' });
+
+      // Neither card has 'nonexistent'
+      const prompt = store.generatePrompt('unknown_msg_id', 'chat-1', 'nonexistent');
+      expect(prompt).toBeUndefined();
+    });
   });
 
   describe('unregister', () => {
@@ -162,6 +254,21 @@ describe('InteractiveContextStore', () => {
       store.unregister('msg-1');
       // chatId index should still point to msg-2
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
+    });
+
+    it('should remove specific messageId from LRU array without affecting others', () => {
+      store.register('msg-1', 'chat-1', { a1: 'A1' });
+      store.register('msg-2', 'chat-1', { a2: 'A2' });
+      store.register('msg-3', 'chat-1', { a3: 'A3' });
+
+      store.unregister('msg-2');
+
+      // msg-1 and msg-3 should still be accessible
+      expect(store.getActionPrompts('msg-1')).toEqual({ a1: 'A1' });
+      expect(store.getActionPrompts('msg-2')).toBeUndefined();
+      expect(store.getActionPrompts('msg-3')).toEqual({ a3: 'A3' });
+      // findPromptsByChatIdAndAction should still find msg-1's actions
+      expect(store.findPromptsByChatIdAndAction('chat-1', 'a1')).toEqual({ a1: 'A1' });
     });
   });
 
