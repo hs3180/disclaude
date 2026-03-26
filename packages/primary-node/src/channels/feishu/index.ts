@@ -22,6 +22,9 @@ export { PassiveModeManager } from './passive-mode.js';
 // Mention Detection
 export { MentionDetector, type BotInfo } from './mention-detector.js';
 
+// Trigger Detection (Issue #1229: Smart session end)
+export { TriggerDetector, DEFAULT_TRIGGER_PATTERN, type TriggerDetectionResult } from './trigger-detector.js';
+
 // Welcome Handler
 export { WelcomeHandler } from './welcome-handler.js';
 

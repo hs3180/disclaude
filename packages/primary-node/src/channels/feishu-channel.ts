@@ -36,6 +36,7 @@ import {
   type MessageCallbacks,
   WsConnectionManager,
 } from './feishu/index.js';
+import { TriggerDetector } from './feishu/trigger-detector.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -159,6 +160,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
 
+  /** Trigger phrase detector for smart session end (Issue #1229) */
+  private triggerDetector: TriggerDetector;
+
   /**
    * Offline message queue (Issue #1351).
    *
@@ -177,6 +181,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.passiveModeManager = new PassiveModeManager();
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
+    this.triggerDetector = new TriggerDetector();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
 
     // Create message callbacks
@@ -407,6 +412,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Detect trigger phrases for smart session end.
+        // Only text type messages are checked (no cards/files).
+        const triggerResult = this.triggerDetector.detectAndStrip(message.text || '');
+        const textToSend = triggerResult.detected ? triggerResult.cleanText : (message.text || '');
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +424,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // Issue #1229: If trigger detected, asynchronously dissolve the group.
+        // Fire-and-forget: never block the message flow.
+        if (triggerResult.detected) {
+          logger.info(
+            { chatId: message.chatId, reason: triggerResult.reason, triggerMatch: triggerResult.triggerMatch },
+            'Discussion end trigger detected, dissolving group',
+          );
+          void this.handleDiscussionEnd(message.chatId, triggerResult.reason);
+        }
         break;
       }
 
@@ -610,6 +630,48 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  // ─── Smart session end (Issue #1229) ─────────────────────────────────
+
+  /**
+   * Handle discussion end: unregister group and dissolve chat.
+   *
+   * Called asynchronously (fire-and-forget) after sending the trigger message.
+   * Errors are logged but never propagated to avoid disrupting the message flow.
+   *
+   * @param chatId - Chat ID to dissolve
+   * @param reason - Optional reason from trigger phrase (e.g., 'timeout', 'abandoned')
+   */
+  private async handleDiscussionEnd(chatId: string, reason?: string): Promise<void> {
+    try {
+      // Unregister from GroupService
+      const groupService = new GroupService();
+      const wasManaged = groupService.unregisterGroup(chatId);
+
+      if (wasManaged) {
+        logger.info(
+          { chatId, reason },
+          'Group unregistered, now dissolving chat',
+        );
+      } else {
+        logger.warn(
+          { chatId, reason },
+          'Discussion end trigger in unmanaged group, still dissolving',
+        );
+      }
+
+      // Dissolve the chat via Feishu API
+      if (this.client) {
+        await dissolveChat(this.client, chatId);
+        logger.info({ chatId, reason }, 'Discussion ended, group dissolved');
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, chatId, reason },
+        'Failed to handle discussion end (group not dissolved)',
+      );
+    }
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
