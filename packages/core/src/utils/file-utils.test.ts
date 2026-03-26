@@ -187,10 +187,14 @@ describe('ensureFileExtension', () => {
 // Enhancement: ensureFileExtensionFromPath (async, path-based API)
 // Uses vi.spyOn on fsOps to intercept file I/O — zero file system side effects
 describe('ensureFileExtensionFromPath', () => {
-  let openSpy: ReturnType<typeof vi.spyOn>;
-  let renameSpy: ReturnType<typeof vi.spyOn>;
-  let copyFileSpy: ReturnType<typeof vi.spyOn>;
-  let unlinkSpy: ReturnType<typeof vi.spyOn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let openSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let renameSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let copyFileSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let unlinkSpy: any;
 
   beforeEach(() => {
     openSpy = vi.spyOn(fsOps, 'open');
