@@ -151,8 +151,8 @@ describe('BaseChannel', () => {
       const statuses: string[] = [];
 
       // Use a slow start to capture intermediate state
-      const originalDoStart = channel.doStart.bind(channel);
-      channel.doStart = async () => {
+      const originalDoStart = (channel as unknown as { doStart: () => Promise<void> }).doStart.bind(channel);
+      (channel as unknown as { doStart: () => Promise<void> }).doStart = async () => {
         statuses.push(channel.status);
         await originalDoStart();
       };
@@ -208,7 +208,6 @@ describe('BaseChannel', () => {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
-        messageId: 'msg-1',
       };
       await channel.sendMessage(message);
 
@@ -222,7 +221,6 @@ describe('BaseChannel', () => {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
-        messageId: 'msg-1',
       };
 
       await expect(channel.sendMessage(message)).rejects.toThrow('not running');
@@ -237,7 +235,6 @@ describe('BaseChannel', () => {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
-        messageId: 'msg-1',
       };
 
       await expect(channel.sendMessage(message)).rejects.toThrow('not running');
@@ -252,7 +249,6 @@ describe('BaseChannel', () => {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
-        messageId: 'msg-1',
       };
 
       await expect(channel.sendMessage(message)).rejects.toThrow('Send failed');
@@ -267,7 +263,6 @@ describe('BaseChannel', () => {
         chatId: 'chat-1',
         type: 'text',
         text: 'Hello',
-        messageId: 'msg-1',
       };
 
       await expect(channel.sendMessage(message)).rejects.toThrow('not running');
