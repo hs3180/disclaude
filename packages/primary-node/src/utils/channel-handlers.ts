@@ -19,6 +19,7 @@ import {
   type IncomingMessage,
   type FileRef,
   type ChannelApiHandlers,
+  type FeishuCard,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
@@ -91,7 +92,7 @@ export function createChannelCallbacksFactory(
     },
     sendCard: async (
       chatId: string,
-      card: Record<string, unknown>,
+      card: FeishuCard,
       description?: string,
       parentMessageId?: string
     ) => {
@@ -214,6 +215,9 @@ export interface ChannelApiHandlersOptions {
  * This unifies the IPC handler creation with the same `channel.sendMessage()`
  * delegation pattern used by `createChannelCallbacksFactory`.
  *
+ * @see createChannelCallbacksFactory — for PilotCallbacks (worker-to-channel),
+ *      this function creates ChannelApiHandlers (MCP server-to-channel).
+ *
  * @param channel - The channel instance to send messages through
  * @param options - Options for handler creation
  * @returns Partial ChannelApiHandlers with sendMessage, sendCard, uploadFile
@@ -237,29 +241,47 @@ export function createChannelApiHandlers(
 
   return {
     sendMessage: async (chatId: string, text: string, threadId?: string) => {
-      await channel.sendMessage({ chatId, type: 'text', text, threadId });
+      try {
+        await channel.sendMessage({ chatId, type: 'text', text, threadId });
+      } catch (error) {
+        logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'IPC handler failed');
+        throw error;
+      }
     },
 
     sendCard: async (
       chatId: string,
-      card: Record<string, unknown>,
+      card: FeishuCard,
       threadId?: string,
       description?: string
     ) => {
-      await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
+      try {
+        await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
+      } catch (error) {
+        logger.error({ err: error, chatId, channel: channelName, handler: 'sendCard' }, 'IPC handler failed');
+        throw error;
+      }
     },
 
     uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
-      logger.warn(
+      logger.debug(
         { chatId, filePath, channel: channelName },
         'uploadFile: using channel.sendMessage — file metadata may be incomplete'
       );
-      await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
+      try {
+        await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
+      } catch (error) {
+        logger.error({ err: error, chatId, channel: channelName, handler: 'uploadFile' }, 'IPC handler failed');
+        throw error;
+      }
+      // NOTE: fileKey and fileSize are synthetic placeholders.
+      // channel.sendMessage() does not return real file metadata.
+      // Callers should not rely on these fields for business logic.
       return {
-        fileKey: '',
+        fileKey: '',    // synthetic — not available via sendMessage
         fileType: 'file',
         fileName: filePath.split('/').pop() || 'file',
-        fileSize: 0,
+        fileSize: 0,    // synthetic — not available via sendMessage
       };
     },
   };
