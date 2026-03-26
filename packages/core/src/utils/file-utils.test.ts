@@ -3,12 +3,14 @@
  *
  * Issue #1637: File extension detection for uploaded images.
  * Enhancement: headers-based detection, SVG optimization, async path-based API.
+ *
+ * All tests are pure — no file system side effects.
+ * The ensureFileExtensionFromPath tests mock fs/promises to verify
+ * I/O behavior without touching the disk.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs/promises';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as path from 'path';
-import * as os from 'os';
 import {
   detectFileExtension,
   mimeToExtension,
@@ -17,27 +19,34 @@ import {
   ensureFileExtensionFromPath,
 } from './file-utils.js';
 
+// Mock fs/promises for ensureFileExtensionFromPath tests
+vi.mock('fs/promises', () => ({
+  open: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
+  copyFile: vi.fn(),
+}));
+
+// Import mocked module — vi.mock hoisting requires dynamic import
+import * as fs from 'fs/promises';
+
 describe('detectFileExtension', () => {
   it('should detect PNG from magic bytes', () => {
-    // PNG header: 89 50 4E 47 0D 0A 1A 0A
     const buffer = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00]);
     expect(detectFileExtension(buffer)).toBe('.png');
   });
 
   it('should detect JPEG from magic bytes', () => {
-    // JPEG header: FF D8 FF
     const buffer = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
     expect(detectFileExtension(buffer)).toBe('.jpg');
   });
 
   it('should detect GIF from magic bytes (GIF87a)', () => {
-    const buffer = Buffer.from('GIF87a', 'ascii');
-    expect(detectFileExtension(buffer)).toBe('.gif');
+    expect(detectFileExtension(Buffer.from('GIF87a', 'ascii'))).toBe('.gif');
   });
 
   it('should detect GIF from magic bytes (GIF89a)', () => {
-    const buffer = Buffer.from('GIF89a', 'ascii');
-    expect(detectFileExtension(buffer)).toBe('.gif');
+    expect(detectFileExtension(Buffer.from('GIF89a', 'ascii'))).toBe('.gif');
   });
 
   it('should detect WebP from magic bytes', () => {
@@ -48,28 +57,23 @@ describe('detectFileExtension', () => {
   });
 
   it('should detect BMP from magic bytes', () => {
-    const buffer = Buffer.from([0x42, 0x4D, 0x00, 0x00, 0x00, 0x00]);
-    expect(detectFileExtension(buffer)).toBe('.bmp');
+    expect(detectFileExtension(Buffer.from([0x42, 0x4D, 0x00, 0x00, 0x00, 0x00]))).toBe('.bmp');
   });
 
   it('should detect PDF from magic bytes', () => {
-    const buffer = Buffer.from('%PDF-1.4', 'ascii');
-    expect(detectFileExtension(buffer)).toBe('.pdf');
+    expect(detectFileExtension(Buffer.from('%PDF-1.4', 'ascii'))).toBe('.pdf');
   });
 
   it('should detect ZIP from magic bytes', () => {
-    const buffer = Buffer.from([0x50, 0x4B, 0x03, 0x04, 0x00, 0x00]);
-    expect(detectFileExtension(buffer)).toBe('.zip');
+    expect(detectFileExtension(Buffer.from([0x50, 0x4B, 0x03, 0x04, 0x00, 0x00]))).toBe('.zip');
   });
 
   it('should detect TIFF (little-endian) from magic bytes', () => {
-    const buffer = Buffer.from([0x49, 0x49, 0x2A, 0x00]);
-    expect(detectFileExtension(buffer)).toBe('.tiff');
+    expect(detectFileExtension(Buffer.from([0x49, 0x49, 0x2A, 0x00]))).toBe('.tiff');
   });
 
   it('should detect TIFF (big-endian) from magic bytes', () => {
-    const buffer = Buffer.from([0x4D, 0x4D, 0x00, 0x2A]);
-    expect(detectFileExtension(buffer)).toBe('.tiff');
+    expect(detectFileExtension(Buffer.from([0x4D, 0x4D, 0x00, 0x2A]))).toBe('.tiff');
   });
 
   it('should detect SVG from XML declaration', () => {
@@ -78,30 +82,25 @@ describe('detectFileExtension', () => {
   });
 
   it('should detect SVG from <svg tag', () => {
-    const buffer = Buffer.from('<svg width="100" height="100">', 'utf-8');
-    expect(detectFileExtension(buffer)).toBe('.svg');
+    expect(detectFileExtension(Buffer.from('<svg width="100" height="100">', 'utf-8'))).toBe('.svg');
   });
 
   // Enhancement: SVG detection only uses first 100 bytes
   it('should detect SVG even with long content (100-byte optimization)', () => {
     const content = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg">' + 'x'.repeat(200);
-    const buffer = Buffer.from(content, 'utf-8');
-    expect(detectFileExtension(buffer)).toBe('.svg');
+    expect(detectFileExtension(Buffer.from(content, 'utf-8'))).toBe('.svg');
   });
 
   it('should return undefined for unrecognized format', () => {
-    const buffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
-    expect(detectFileExtension(buffer)).toBeUndefined();
+    expect(detectFileExtension(Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]))).toBeUndefined();
   });
 
   it('should return undefined for empty buffer', () => {
-    const buffer = Buffer.alloc(0);
-    expect(detectFileExtension(buffer)).toBeUndefined();
+    expect(detectFileExtension(Buffer.alloc(0))).toBeUndefined();
   });
 
   it('should return undefined for too-short buffer', () => {
-    const buffer = Buffer.from([0x89, 0x50]); // Incomplete PNG header
-    expect(detectFileExtension(buffer)).toBeUndefined();
+    expect(detectFileExtension(Buffer.from([0x89, 0x50]))).toBeUndefined();
   });
 });
 
@@ -131,7 +130,6 @@ describe('mimeToExtension', () => {
   });
 });
 
-// Enhancement: getContentTypeFromHeaders
 describe('getContentTypeFromHeaders', () => {
   it('extracts content-type from lowercase headers', () => {
     expect(getContentTypeFromHeaders({ 'content-type': 'image/png' })).toBe('image/png');
@@ -164,9 +162,8 @@ describe('ensureFileExtension', () => {
     expect(ensureFileExtension('/tmp/photo.png', buffer)).toBe('/tmp/photo.png');
   });
 
-  it('should not modify path if unknown extension exists', () => {
+  it('should correct path when unknown extension exists', () => {
     const buffer = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    // .dat is not a known extension, but file has an extension → should still detect
     expect(ensureFileExtension('/tmp/photo.dat', buffer)).toBe('/tmp/photo.dat.png');
   });
 
@@ -199,88 +196,147 @@ describe('ensureFileExtension', () => {
 });
 
 // Enhancement: ensureFileExtensionFromPath (async, path-based API)
+// Uses mocked fs/promises — zero file system side effects
 describe('ensureFileExtensionFromPath', () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'file-ext-enh-'));
-  });
-
-  afterEach(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it('should return original path if file has a known extension', async () => {
-    const filePath = path.join(tmpDir, 'photo.png');
-    await fs.writeFile(filePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
-    const result = await ensureFileExtensionFromPath(filePath);
-    expect(result).toBe(filePath);
+    const result = await ensureFileExtensionFromPath('/tmp/photo.png');
+    expect(result).toBe('/tmp/photo.png');
+    expect(fs.open).not.toHaveBeenCalled();
+    expect(fs.rename).not.toHaveBeenCalled();
   });
 
-  it('should add extension from content-type header', async () => {
-    const filePath = path.join(tmpDir, 'image_no_ext');
-    await fs.writeFile(filePath, Buffer.from('fake data'));
-    const headers = { 'content-type': 'image/png' };
-    const result = await ensureFileExtensionFromPath(filePath, headers);
-    expect(result).toBe(filePath + '.png');
-    await expect(fs.access(result)).resolves.toBeUndefined();
-    await expect(fs.access(filePath)).rejects.toThrow();
+  it('should add extension from content-type header without file I/O', async () => {
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'image/png' });
+    expect(result).toBe('/tmp/image_no_ext.png');
+    // Headers detection should skip file I/O entirely
+    expect(fs.open).not.toHaveBeenCalled();
+    // Should rename via fs.rename
+    expect(fs.rename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
   });
 
   it('should add extension from content-type with charset parameter', async () => {
-    const filePath = path.join(tmpDir, 'image_no_ext');
-    await fs.writeFile(filePath, Buffer.from('fake data'));
-    const headers = { 'Content-Type': 'image/jpeg; charset=binary' };
-    const result = await ensureFileExtensionFromPath(filePath, headers);
-    expect(result).toBe(filePath + '.jpg');
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'Content-Type': 'image/jpeg; charset=binary' });
+    expect(result).toBe('/tmp/image_no_ext.jpg');
+    expect(fs.rename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.jpg');
   });
 
   it('should fall back to magic bytes when headers are missing', async () => {
-    const filePath = path.join(tmpDir, 'image_no_ext');
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    await fs.writeFile(filePath, Buffer.concat([pngHeader, Buffer.alloc(100, 0x00)]));
-    const result = await ensureFileExtensionFromPath(filePath);
-    expect(result).toBe(filePath + '.png');
+    // Mock fs.open to return a fake file handle that reads PNG header
+    let readBuffer: Buffer;
+    const mockHandle = {
+      read: vi.fn().mockImplementation((_, buf, offset, length) => {
+        Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    fs.open.mockResolvedValue(mockHandle as never);
+
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
+    expect(result).toBe('/tmp/image_no_ext.png');
+    expect(fs.open).toHaveBeenCalledWith('/tmp/image_no_ext', 'r');
+    expect(mockHandle.read).toHaveBeenCalled();
+    expect(mockHandle.close).toHaveBeenCalled();
+    expect(fs.rename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
   });
 
   it('should prefer headers over magic bytes', async () => {
-    const filePath = path.join(tmpDir, 'image_no_ext');
-    // JPEG content with PNG content-type
-    const jpegHeader = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
-    await fs.writeFile(filePath, Buffer.concat([jpegHeader, Buffer.alloc(100, 0x00)]));
-    const headers = { 'content-type': 'image/png' };
-    const result = await ensureFileExtensionFromPath(filePath, headers);
-    expect(result).toBe(filePath + '.png');
+    // With PNG content-type but JPEG magic bytes, headers should win
+    fs.open.mockResolvedValue({
+      read: vi.fn().mockImplementation((_, buf, offset) => {
+        Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'image/png' });
+    expect(result).toBe('/tmp/image_no_ext.png');
+    // Headers path should have been taken, no magic bytes fallback
+    expect(fs.open).not.toHaveBeenCalled();
   });
 
   it('should fall back to magic bytes when content-type is unknown', async () => {
-    const filePath = path.join(tmpDir, 'image_no_ext');
-    const gifHeader = Buffer.from('GIF87a');
-    await fs.writeFile(filePath, Buffer.concat([gifHeader, Buffer.alloc(100, 0x00)]));
-    const headers = { 'content-type': 'application/unknown' };
-    const result = await ensureFileExtensionFromPath(filePath, headers);
-    expect(result).toBe(filePath + '.gif');
+    fs.open.mockResolvedValue({
+      read: vi.fn().mockImplementation((_, buf, offset) => {
+        Buffer.from('GIF87a').copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'application/unknown' });
+    expect(result).toBe('/tmp/image_no_ext.gif');
+    expect(fs.open).toHaveBeenCalled();
+    expect(fs.rename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.gif');
   });
 
   it('should return original path when extension cannot be determined', async () => {
-    const filePath = path.join(tmpDir, 'unknown_file');
-    await fs.writeFile(filePath, Buffer.from('plain text content'));
-    const result = await ensureFileExtensionFromPath(filePath);
-    expect(result).toBe(filePath);
+    // Mock fs.open to return unrecognized bytes
+    fs.open.mockResolvedValue({
+      read: vi.fn().mockImplementation((_, buf, offset) => {
+        Buffer.from([0x00, 0x01, 0x02, 0x03]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+
+    const result = await ensureFileExtensionFromPath('/tmp/unknown_file');
+    expect(result).toBe('/tmp/unknown_file');
+    expect(fs.rename).not.toHaveBeenCalled();
   });
 
-  it('should return original path for non-existent file', async () => {
-    const filePath = path.join(tmpDir, 'nonexistent');
-    const result = await ensureFileExtensionFromPath(filePath);
-    expect(result).toBe(filePath);
+  it('should return original path and not attempt rename when fs.open throws', async () => {
+    fs.open.mockRejectedValue(new Error('ENOENT'));
+    const result = await ensureFileExtensionFromPath('/tmp/nonexistent');
+    expect(result).toBe('/tmp/nonexistent');
+    expect(fs.rename).not.toHaveBeenCalled();
+  });
+
+  it('should fall back to copy+delete when rename fails', async () => {
+    fs.open.mockResolvedValue({
+      read: vi.fn().mockImplementation((_, buf, offset) => {
+        Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    fs.rename.mockRejectedValue(new Error('EXDEV: cross-device link'));
+
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
+    expect(result).toBe('/tmp/image_no_ext.png');
+    expect(fs.rename).toHaveBeenCalled();
+    expect(fs.copyFile).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
+    expect(fs.unlink).toHaveBeenCalledWith('/tmp/image_no_ext');
+  });
+
+  it('should return original path when both rename and copy+delete fail', async () => {
+    fs.open.mockResolvedValue({
+      read: vi.fn().mockImplementation((_, buf, offset) => {
+        Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    fs.rename.mockRejectedValue(new Error('EXDEV'));
+    fs.copyFile.mockRejectedValue(new Error('EACCES'));
+
+    const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
+    expect(result).toBe('/tmp/image_no_ext');
   });
 
   it('should handle the real Feishu scenario', async () => {
-    const filePath = path.join(tmpDir, 'image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g');
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    await fs.writeFile(filePath, Buffer.concat([pngHeader, Buffer.alloc(100, 0x00)]));
-    const result = await ensureFileExtensionFromPath(filePath);
-    expect(result).toBe(filePath + '.png');
-    await expect(fs.access(result)).resolves.toBeUndefined();
+    const result = await ensureFileExtensionFromPath(
+      '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g',
+    );
+    expect(result).toBe('/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g.png');
+    expect(fs.rename).toHaveBeenCalledWith(
+      '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g',
+      '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g.png',
+    );
   });
 });
