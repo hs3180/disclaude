@@ -345,6 +345,13 @@ describe('ensureFileExtensionFromPath', () => {
   });
 
   it('should handle the real Feishu scenario', async () => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
+        Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
     renameSpy.mockResolvedValue(undefined);
 
     const result = await ensureFileExtensionFromPath(
