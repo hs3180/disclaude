@@ -31,6 +31,21 @@ register_cleanup
 
 TEST_FILE_PATH="workspace/mcp-test-file.txt"
 
+# Default IPC socket path (matches DEFAULT_IPC_CONFIG.socketPath in core)
+DEFAULT_IPC_SOCKET="${DISCLAUDE_WORKER_IPC_SOCKET:-${DISCLAUDE_IPC_SOCKET_PATH:-/tmp/disclaude-interactive.ipc}}"
+
+# Check if IPC socket is available for send_file tool tests.
+# Returns 0 if available, 1 if not.
+is_ipc_available() {
+    local socket_path="${1:-$DEFAULT_IPC_SOCKET}"
+    if [ -S "$socket_path" ]; then
+        log_debug "IPC socket found: $socket_path"
+        return 0
+    fi
+    log_debug "IPC socket not found: $socket_path"
+    return 1
+}
+
 create_test_file() {
     local workspace_dir="$PROJECT_ROOT/workspace"
     mkdir -p "$workspace_dir"
@@ -67,10 +82,21 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    # Issue #1634: Skip test when IPC is not available.
+    # Without IPC, send_file returns an error and the Agent enters diagnostic
+    # mode (multiple tool calls to investigate), causing timeout.
+    if ! is_ipc_available; then
+        log_skip "send_file tool test (IPC not available - no socket at $DEFAULT_IPC_SOCKET)"
+        return 0
+    fi
+
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    # Issue #1634: Use a concise prompt that discourages diagnostic behavior.
+    # Explicitly tell the agent to report the result in one turn without
+    # investigating further if the tool fails.
+    assert_sync_chat_ok "Use the send_file tool to send the file $TEST_FILE_PATH to chat $chat_id. Report the result in one sentence. Do NOT investigate errors or try alternative approaches." "$chat_id" || {
         cleanup_test_file
         return 1
     }
@@ -103,7 +129,7 @@ test_tool_result_format() {
 
 declare_test "Health check" test_health_check "fast" "Verify server is running"
 declare_test "send_text tool" test_send_text_tool "ai" "Agent calls send_text tool"
-declare_test "send_file tool" test_send_file_tool "ai" "Agent calls send_file tool with test file"
+declare_test "send_file tool" test_send_file_tool "ai" "Agent calls send_file tool with test file (requires IPC)"
 declare_test "Tool result format" test_tool_result_format "ai" "Validate tool result formatting"
 
 main_test_suite "Integration Test: MCP Tools"
