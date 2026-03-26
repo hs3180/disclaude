@@ -11,6 +11,7 @@ import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer, type Server, type Socket } from 'net';
 import { createLogger } from '../utils/logger.js';
+import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
   type IpcConfig,
@@ -36,7 +37,7 @@ export interface ChannelApiHandlers {
   sendMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
   sendCard: (
     chatId: string,
-    card: Record<string, unknown>,
+    card: FeishuCard,
     threadId?: string,
     description?: string
   ) => Promise<void>;

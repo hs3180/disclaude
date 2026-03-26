@@ -79,7 +79,11 @@ describe('IPC Protocol', () => {
       const sendCard: IpcRequest<'sendCard'> = {
         type: 'sendCard',
         id: 'req-6',
-        payload: { chatId: 'chat-1', card: { type: 'text' }, description: 'Test card' },
+        payload: {
+          chatId: 'chat-1',
+          card: { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] },
+          description: 'Test card',
+        },
       };
       expect(sendCard.payload.description).toBe('Test card');
 
