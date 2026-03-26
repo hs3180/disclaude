@@ -45,13 +45,15 @@ export interface ScheduleAgent {
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
+ * @param soul - Optional per-task SOUL.md path (Issue #1315)
  * @returns A ScheduleAgent instance (caller must dispose)
  */
 export type ScheduleAgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
-  model?: string
-) => ScheduleAgent;
+  model?: string,
+  soul?: string
+) => ScheduleAgent | Promise<ScheduleAgent>;
 
 /**
  * Options for creating a schedule executor.
@@ -97,10 +99,11 @@ export interface ScheduleExecutorOptions {
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
   const { agentFactory, callbacks } = options;
 
-  return async (chatId: string, prompt: string, userId?: string, model?: string): Promise<void> => {
+  return async (chatId: string, prompt: string, userId?: string, model?: string, soul?: string): Promise<void> => {
     // Create a short-lived agent for this execution
     // Issue #1338: Pass model override for per-task model selection
-    const agent = agentFactory(chatId, callbacks, model);
+    // Issue #1315: Pass per-task soul path for personality override
+    const agent = await agentFactory(chatId, callbacks, model, soul);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks

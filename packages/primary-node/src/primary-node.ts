@@ -51,6 +51,9 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1315: SOUL.md personality system
+  loadSoul,
+  hasSoulConfig,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -445,9 +448,34 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass per-task soul content for personality override
+    const soulConfig = Config.getSoulConfig();
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: async (chatId, callbacks, model, soulPath) => {
+        // Issue #1315: Per-task soul overrides global soul
+        let systemPromptAppend: string | undefined;
+
+        if (soulPath) {
+          try {
+            const soulResult = await loadSoul({ path: soulPath }, workspaceDir);
+            systemPromptAppend = soulResult.content;
+          } catch (err) {
+            logger.warn({ soulPath, err }, 'Failed to load per-task SOUL.md, falling back to global or none');
+          }
+        } else if (soulConfig && hasSoulConfig(soulConfig)) {
+          try {
+            const soulResult = await loadSoul(soulConfig, workspaceDir);
+            systemPromptAppend = soulResult.content;
+          } catch (err) {
+            logger.warn({ soulPath: soulConfig.path, err }, 'Failed to load global SOUL.md, skipping');
+          }
+        }
+
+        return AgentFactory.createScheduleAgent(
+          chatId,
+          toPilotCallbacks(callbacks),
+          { ...(model ? { model } : {}), ...(systemPromptAppend ? { systemPromptAppend } : {}) }
+        );
       },
       callbacks: schedulerCallbacks,
     });

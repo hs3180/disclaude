@@ -303,3 +303,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md personality system (Issue #1315)
+export {
+  loadSoul,
+  hasSoulConfig,
+  type SoulConfig,
+  type SoulLoadResult,
+  SoulLoadError,
+} from './soul/index.js';

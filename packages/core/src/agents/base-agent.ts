@@ -102,6 +102,12 @@ export abstract class BaseAgent implements Disposable {
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
 
+  /**
+   * Optional system prompt append content for personality injection.
+   * Issue #1315: SOUL.md personality system.
+   */
+  protected readonly systemPromptAppend?: string;
+
   protected readonly logger: Logger;
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
@@ -111,6 +117,9 @@ export abstract class BaseAgent implements Disposable {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
+
+    // Issue #1315: Store system prompt append for personality injection
+    this.systemPromptAppend = config.systemPromptAppend;
 
     // Get provider from config, fallback to runtime context
     // This allows agents to be created with explicit provider setting
@@ -190,6 +199,11 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // Issue #1315: Inject SOUL.md personality content into system prompt
+    if (this.systemPromptAppend) {
+      options.appendSystemPrompt = this.systemPromptAppend;
     }
 
     return options;

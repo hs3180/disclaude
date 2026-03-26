@@ -216,6 +216,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        soul: frontmatter['soul'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -225,6 +226,11 @@ export class ScheduleFileScanner {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
       } else if (task.model) {
         logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
+      }
+
+      // Issue #1315: Log per-task soul configuration
+      if (task.soul) {
+        logger.info({ taskId: task.id, name: task.name, soul: task.soul }, 'Schedule task will use per-task SOUL.md');
       }
 
       logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');

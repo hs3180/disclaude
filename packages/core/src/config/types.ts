@@ -294,6 +294,17 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * SOUL.md configuration section.
+ * Issue #1315: Agent personality/behavior definition system.
+ */
+export interface SoulConfigSection {
+  /** Path to SOUL.md file (supports tilde expansion) */
+  path?: string;
+  /** Maximum file size in bytes (default: 32768 = 32KB) */
+  maxSize?: number;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -322,6 +333,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** SOUL.md personality configuration (Issue #1315) */
+  soul?: SoulConfigSection;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
