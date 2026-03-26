@@ -1,8 +1,9 @@
 /**
- * WeChat Channel module exports (MVP).
+ * WeChat Channel module exports.
  *
  * @module channels/wechat
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 export { WeChatChannel } from './wechat-channel.js';

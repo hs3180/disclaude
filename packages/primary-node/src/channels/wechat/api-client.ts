@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -11,12 +11,15 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
+ * - POST ilink/bot/upload              - Upload media to CDN
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatCdnUploadResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -29,10 +32,13 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/** Maximum file size for CDN upload (20MB). */
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and media handling.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -211,6 +217,141 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Media endpoints (POST, with auth headers)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a media file to WeChat CDN.
+   *
+   * POST /ilink/bot/upload (multipart/form-data)
+   *
+   * @param params - Upload parameters
+   * @returns CDN URL and file key for the uploaded file
+   * @throws {Error} If file exceeds 20MB size limit
+   * @throws {Error} If response is missing url or file_key
+   */
+  async uploadMedia(params: {
+    /** File data as Buffer */
+    fileData: Buffer;
+    /** File name (used in multipart form) */
+    fileName: string;
+    /** MIME type (default: application/octet-stream) */
+    mimeType?: string;
+  }): Promise<{ url: string; fileKey: string }> {
+    const { fileData, fileName, mimeType } = params;
+
+    // Validate file size
+    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(
+        `File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES} bytes)`
+      );
+    }
+
+    const url = `${this.baseUrl}/ilink/bot/upload`;
+    const formData = new FormData();
+    formData.append('file', new Blob([fileData], { type: mimeType ?? 'application/octet-stream' }), fileName);
+
+    const headers = this.buildAuthHeaders('');
+
+    // Override Content-Type: let browser set multipart boundary
+    delete headers['Content-Type'];
+    delete headers['Content-Length'];
+
+    logger.info({ fileName, fileSize: fileData.length }, 'Uploading media to CDN');
+
+    const response = await this.fetchMultipart<WeChatCdnUploadResponse>(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      timeoutMs: DEFAULT_API_TIMEOUT_MS,
+    });
+
+    if (!response.url || !response.file_key) {
+      throw new Error('Upload response missing url or file_key');
+    }
+
+    logger.info({ url: response.url, fileKey: response.file_key }, 'Media uploaded to CDN');
+    return { url: response.url, fileKey: response.file_key };
+  }
+
+  /**
+   * Send an image message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage with image_item (type: 2).
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    /** Recipient user ID */
+    to: string;
+    /** CDN URL of the uploaded image */
+    imageUrl: string;
+    /** Thread context token for replies */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, imageUrl, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, imageUrl }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage with file_item (type: 3).
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    /** Recipient user ID */
+    to: string;
+    /** CDN URL of the uploaded file */
+    fileUrl: string;
+    /** File name displayed to recipient */
+    fileName?: string;
+    /** Thread context token for replies */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, fileUrl, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const fileItem: Record<string, unknown> = { url: fileUrl };
+    if (fileName) {
+      fileItem.file_name = fileName;
+    }
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 3, file_item: fileItem }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
 
@@ -320,6 +461,61 @@ export class WeChatApiClient {
 
       if (error instanceof Error && error.name === 'AbortError') {
         logger.error({ url }, 'API request timed out');
+        throw error;
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch wrapper for multipart/form-data requests (file uploads).
+   *
+   * Unlike fetchJson, this handles FormData body and does not set
+   * Content-Type manually (browser/fetch sets the multipart boundary).
+   */
+  private async fetchMultipart<T>(url: string, opts: {
+    method: string;
+    headers: Record<string, string>;
+    body: FormData;
+    timeoutMs?: number;
+  }): Promise<T> {
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: opts.method,
+        headers: opts.headers,
+        body: opts.body,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ url, status: response.status, body: text }, 'Upload request failed');
+        throw new Error(`WeChat API error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as Record<string, unknown>;
+
+      const ret = data.ret as number | undefined;
+      if (ret !== undefined && ret !== 0) {
+        const errMsg = (data.err_msg as string) || (data.errmsg as string) || `Error code ${ret}`;
+        logger.error({ url, ret, errMsg }, 'Upload API returned error');
+        throw new Error(`WeChat API error [${ret}]: ${errMsg}`);
+      }
+
+      return data as T;
+    } catch (error) {
+      clearTimeout(timer);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.error({ url }, 'Upload request timed out');
         throw error;
       }
 
