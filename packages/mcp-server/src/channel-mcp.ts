@@ -17,6 +17,10 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  add_members,
+  remove_members,
+  list_members,
+  list_chats,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -30,6 +34,10 @@ export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
+export { add_members } from './tools/add-members.js';
+export { remove_members } from './tools/remove-members.js';
+export { list_members } from './tools/list-members.js';
+export { list_chats } from './tools/list-chats.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -370,6 +378,97 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
     handler: async ({ chatId }: { chatId: string }) => {
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1678: Group member management tools (platform-agnostic)
+  {
+    name: 'add_members',
+    description: `Add members to a group chat.
+
+Adds one or more members to an existing group chat by their IDs.
+
+## Parameters
+- **chatId**: Target group chat ID
+- **memberIds**: Array of member IDs to add (platform decides ID format, e.g., open_id for Feishu)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx", "ou_yyy"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+      memberIds: z.array(z.string()).describe('Array of member IDs to add (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: {
+      chatId: string;
+      memberIds: string[];
+    }) => {
+      const result = await add_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'remove_members',
+    description: `Remove members from a group chat.
+
+Removes one or more members from an existing group chat by their IDs.
+
+## Parameters
+- **chatId**: Target group chat ID
+- **memberIds**: Array of member IDs to remove (platform decides ID format, e.g., open_id for Feishu)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+      memberIds: z.array(z.string()).describe('Array of member IDs to remove (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: {
+      chatId: string;
+      memberIds: string[];
+    }) => {
+      const result = await remove_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'list_members',
+    description: `List all members of a group chat.
+
+Returns the member IDs of all members in the specified group chat.
+
+## Parameters
+- **chatId**: Target group chat ID
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      const result = await list_members({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'list_chats',
+    description: `List all group chats the bot is in.
+
+Returns all group chats where the bot is a member, including chat IDs and names.
+
+## Example
+No parameters required.
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      const result = await list_chats();
       return toolSuccess(result.message);
     },
   },

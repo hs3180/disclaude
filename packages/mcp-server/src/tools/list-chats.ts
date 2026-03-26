@@ -1,0 +1,63 @@
+/**
+ * list_chats tool implementation.
+ *
+ * Lists all chats the bot is in via IPC to Primary Node.
+ * Platform-agnostic: works with any channel that supports chat listing.
+ *
+ * @module mcp-server/tools/list-chats
+ */
+
+import { createLogger, getIpcClient } from '@disclaude/core';
+import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import type { GetBotChatsResult } from './types.js';
+
+const logger = createLogger('ListChats');
+
+/**
+ * Get all chats the bot is in.
+ */
+export async function list_chats(): Promise<GetBotChatsResult> {
+  logger.info('list_chats called');
+
+  try {
+    // Check IPC availability
+    if (!(await isIpcAvailable())) {
+      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+      logger.error(errorMsg);
+      return {
+        success: false,
+        error: errorMsg,
+        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+      };
+    }
+
+    const ipcClient = getIpcClient();
+    const result = await ipcClient.getBotChats();
+
+    if (!result.success) {
+      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
+      logger.error({ errorType: result.errorType, error: result.error }, 'list_chats failed');
+      return {
+        success: false,
+        error: result.error ?? 'Failed to get bot chats via IPC',
+        message: errorMsg,
+      };
+    }
+
+    const chats = result.chats ?? [];
+    logger.info({ chatCount: chats.length }, 'Chats listed');
+    const chatList = chats.map((c: { chatId: string; name: string }) => `${c.name} (${c.chatId})`).join('\n');
+    return {
+      success: true,
+      chats,
+      message: chats.length > 0
+        ? `✅ Bot is in ${chats.length} chat(s):\n${chatList}`
+        : '✅ Bot is not in any chats.',
+    };
+
+  } catch (error) {
+    logger.error({ err: error }, 'list_chats FAILED');
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return { success: false, error: errorMessage, message: `❌ Failed to list chats: ${errorMessage}` };
+  }
+}

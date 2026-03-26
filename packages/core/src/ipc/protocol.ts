@@ -23,7 +23,12 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
   | 'createChat'
-  | 'dissolveChat';
+  | 'dissolveChat'
+  // Group member management (Issue #1678: add/remove/list members + list chats)
+  | 'addMembers'
+  | 'removeMembers'
+  | 'getMembers'
+  | 'getBotChats';
 
 /**
  * IPC request payload types.
@@ -70,6 +75,19 @@ export interface IpcRequestPayloads {
   dissolveChat: {
     chatId: string;
   };
+  // Group member management (Issue #1678)
+  addMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  removeMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  getMembers: {
+    chatId: string;
+  };
+  getBotChats: Record<string, never>;
 }
 
 /**
@@ -100,6 +118,21 @@ export interface IpcResponsePayloads {
   };
   dissolveChat: {
     success: boolean;
+  };
+  // Group member management (Issue #1678)
+  addMembers: {
+    success: boolean;
+  };
+  removeMembers: {
+    success: boolean;
+  };
+  getMembers: {
+    success: boolean;
+    memberIds?: string[];
+  };
+  getBotChats: {
+    success: boolean;
+    chats?: Array<{ chatId: string; name: string }>;
   };
 }
 
