@@ -1,11 +1,13 @@
 /**
  * File utility functions.
  *
- * Provides file type detection from magic bytes and file extension utilities.
+ * Provides file type detection from magic bytes, MIME headers, and file extension utilities.
  *
  * Issue #1637: Add file extension detection for uploaded images.
+ * Enhancement: Add headers-based detection, SVG optimization, async path-based API.
  */
 
+import * as fs from 'fs/promises';
 import * as path from 'path';
 
 /**
@@ -24,6 +26,11 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'text/plain': '.txt',
   'application/json': '.json',
 };
+
+/**
+ * Known extensions (lowercase, with dot) for extension validation.
+ */
+const KNOWN_EXTENSIONS = new Set(Object.values(MIME_TO_EXTENSION));
 
 /**
  * Magic bytes signatures for common file types.
@@ -87,10 +94,12 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
     ext: '.tiff',
   },
   // SVG (text-based): check for XML declaration or <svg tag
+  // Optimized: only inspect first 100 bytes instead of 256
   {
     detect: (buf) => {
-      const header = buf.subarray(0, Math.min(buf.length, 256)).toString('utf-8').trim();
-      return header.startsWith('<?xml') || header.toLowerCase().startsWith('<svg');
+      const len = Math.min(buf.length, 100);
+      const header = buf.subarray(0, len).toString('utf-8').trimStart();
+      return header.startsWith('<?xml') || header.startsWith('<svg');
     },
     ext: '.svg',
   },
@@ -138,9 +147,32 @@ export function mimeToExtension(mimeType: string): string | undefined {
 }
 
 /**
+ * Extract content-type from HTTP response headers.
+ * Handles various header key casing conventions and strips parameters.
+ *
+ * @param headers - Response headers object (e.g., from Feishu SDK response.headers)
+ * @returns Content-type string (lowercase, without parameters) or undefined
+ */
+export function getContentTypeFromHeaders(headers: Record<string, unknown> | undefined): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === 'content-type') {
+      const value = headers[key];
+      if (typeof value === 'string') {
+        return value.split(';')[0].trim().toLowerCase();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Ensure a file has the correct extension based on its content.
  *
- * If the file already has an extension, returns the original path.
+ * If the file already has a known extension, returns the original path.
  * If not, detects the file type from magic bytes and appends the correct extension.
  *
  * @param filePath - Current file path (may or may not have an extension)
@@ -154,9 +186,9 @@ export function mimeToExtension(mimeType: string): string | undefined {
  * ```
  */
 export function ensureFileExtension(filePath: string, buffer: Buffer): string {
-  // If file already has an extension, return as-is
-  // Use path.extname to correctly handle dots in directory names
-  if (path.extname(filePath)) {
+  // If file already has a known extension, return as-is
+  const currentExt = path.extname(filePath).toLowerCase();
+  if (currentExt && KNOWN_EXTENSIONS.has(currentExt)) {
     return filePath;
   }
 
@@ -169,3 +201,102 @@ export function ensureFileExtension(filePath: string, buffer: Buffer): string {
   // Unable to detect, return original path
   return filePath;
 }
+
+/**
+ * Ensure a file has the correct extension based on its content.
+ *
+ * Async variant that reads the file directly, eliminating the need for callers
+ * to handle file I/O. Uses a two-strategy detection approach:
+ *
+ * 1. **Headers** (if provided): Extract extension from Content-Type header
+ * 2. **Magic bytes** (fallback): Read first 12 bytes and check against known signatures
+ *
+ * When an extension is determined, the file is renamed and the new path is returned.
+ * If the file already has a known extension, or no type can be detected, returns the
+ * original path unchanged.
+ *
+ * @param filePath - Current path of the downloaded file
+ * @param headers - Optional response headers for content-type detection
+ * @returns The (possibly renamed) file path with correct extension
+ *
+ * @example
+ * ```typescript
+ * const newPath = await ensureFileExtensionFromPath('/tmp/downloads/image_v3_abc', headers);
+ * // newPath === '/tmp/downloads/image_v3_abc.png'
+ * ```
+ */
+export async function ensureFileExtensionFromPath(
+  filePath: string,
+  headers?: Record<string, unknown>,
+): Promise<string> {
+  // If file already has a known extension, return as-is
+  const currentExt = path.extname(filePath).toLowerCase();
+  if (currentExt && KNOWN_EXTENSIONS.has(currentExt)) {
+    return filePath;
+  }
+
+  // Strategy 1: Content-type from headers (avoids file I/O entirely)
+  const contentType = getContentTypeFromHeaders(headers);
+  if (contentType) {
+    const extFromMime = MIME_TO_EXTENSION[contentType];
+    if (extFromMime) {
+      return await renameWithExtension(filePath, extFromMime);
+    }
+  }
+
+  // Strategy 2: Magic bytes detection (read only first 12 bytes)
+  try {
+    const fd = await fsOps.open(filePath, 'r');
+    const header = Buffer.alloc(12);
+    await fd.read(header, 0, 12, 0);
+    await fd.close();
+
+    const detectedExt = detectFileExtension(header);
+    if (detectedExt) {
+      return await renameWithExtension(filePath, detectedExt);
+    }
+  } catch {
+    // File read failed — return original path
+  }
+
+  // No extension could be determined — return as-is
+  return filePath;
+}
+
+/**
+ * Rename a file by appending the given extension.
+ * Gracefully degrades on failure (returns original path).
+ *
+ * @param filePath - Current file path
+ * @param ext - Extension to append (with dot, e.g., '.png')
+ * @returns New file path after rename, or original path on failure
+ */
+async function renameWithExtension(filePath: string, ext: string): Promise<string> {
+  const newPath = filePath + ext;
+  try {
+    await fsOps.rename(filePath, newPath);
+    return newPath;
+  } catch {
+    // Rename may fail (e.g., cross-device link) — try copy + delete
+    try {
+      await fsOps.copyFile(filePath, newPath);
+      await fsOps.unlink(filePath);
+      return newPath;
+    } catch {
+      // Last resort: return original path
+      return filePath;
+    }
+  }
+}
+
+/**
+ * File system operations used by ensureFileExtensionFromPath.
+ * Replace for testing to avoid real file I/O.
+ * @internal
+ */
+export const fsOps = {
+  open: fs.open,
+  rename: fs.rename,
+  unlink: fs.unlink,
+  copyFile: fs.copyFile,
+};
