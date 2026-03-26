@@ -168,6 +168,61 @@ describe('WiredChannelDescriptors', () => {
       expect(FEISHU_WIRED_DESCRIPTOR.setup).toBeDefined();
       expect(typeof FEISHU_WIRED_DESCRIPTOR.setup).toBe('function');
     });
+
+    it('should wire routeCardAction when CardActionRouter is available (Issue #1629)', async () => {
+      const mockChannel = createMockChannel('feishu');
+      const mockRouteCardAction = vi.fn().mockResolvedValue(true);
+      const context = createMockContext({
+        primaryNode: {
+          getInteractiveContextStore: vi.fn().mockReturnValue({
+            generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
+          }),
+          registerFeishuHandlers: vi.fn(),
+          getCardActionRouter: vi.fn().mockReturnValue({
+            routeCardAction: mockRouteCardAction,
+          }),
+        },
+      });
+
+      const config = { appId: 'test-id', appSecret: 'test-secret' };
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
+
+      // Verify routeCardAction was wired
+      expect(config.routeCardAction).toBeDefined();
+      expect(typeof config.routeCardAction).toBe('function');
+
+      // Verify calling routeCardAction delegates to CardActionRouter
+      const message = {
+        chatId: 'chat-1',
+        cardMessageId: 'msg-1',
+        actionType: 'button',
+        actionValue: 'confirm',
+        actionText: 'Confirm',
+        resolvedPrompt: 'User clicked Confirm',
+      };
+      const result = await config.routeCardAction!(message);
+      expect(result).toBe(true);
+      expect(mockRouteCardAction).toHaveBeenCalledWith(message);
+    });
+
+    it('should not wire routeCardAction when CardActionRouter is unavailable (Issue #1629)', async () => {
+      const mockChannel = createMockChannel('feishu');
+      const context = createMockContext({
+        primaryNode: {
+          getInteractiveContextStore: vi.fn().mockReturnValue({
+            generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
+          }),
+          registerFeishuHandlers: vi.fn(),
+          // No getCardActionRouter — simulates older PrimaryNode
+        },
+      });
+
+      const config = { appId: 'test-id', appSecret: 'test-secret' };
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
+
+      // routeCardAction should NOT be wired when CardActionRouter is unavailable
+      expect(config.routeCardAction).toBeUndefined();
+    });
   });
 
   describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {

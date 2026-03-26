@@ -35,6 +35,27 @@ import { ChannelManager } from './channel-manager.js';
 // ============================================================================
 
 /**
+ * Card action routing message type.
+ * Issue #1629: Used by routeCardAction callback to forward card actions
+ * to remote Worker Nodes via CardActionRouter.
+ */
+export interface CardActionRouteMessage {
+  chatId: string;
+  cardMessageId: string;
+  actionType: string;
+  actionValue: string;
+  actionText?: string;
+  userId?: string;
+  resolvedPrompt?: string;
+  action?: {
+    type: string;
+    value: string;
+    text?: string;
+    trigger?: string;
+  };
+}
+
+/**
  * Minimal interface for PrimaryNode access in channel setup hooks.
  * PrimaryNode satisfies this interface structurally (duck typing).
  */
@@ -50,6 +71,13 @@ export interface IPrimaryNodeForSetup {
     ): string | undefined;
   };
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
+  /**
+   * Get the CardActionRouter for routing card actions to Worker Nodes.
+   * Issue #1629: Wired in Feishu descriptor setup to enable remote routing.
+   */
+  getCardActionRouter?(): {
+    routeCardAction(message: CardActionRouteMessage): Promise<boolean>;
+  };
 }
 
 /**
