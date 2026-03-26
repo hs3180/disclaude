@@ -13,6 +13,13 @@ export type {
   SendInteractiveResult,
   CreateChatResult,
   DissolveChatResult,
+  // Issue #1317: Temporary session types
+  SessionStatus,
+  SessionOption,
+  TemporarySession,
+  StartDiscussionResult,
+  CheckDiscussionResult,
+  ListDiscussionsResult,
 } from './types.js';
 
 // Shared utilities
@@ -48,3 +55,17 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Temporary session management (Issue #1317)
+export {
+  readSession,
+  writeSession,
+  updateSession,
+  listSessions,
+  deleteSession,
+  generateSessionId,
+  expireOverdueSessions,
+} from './temporary-session.js';
+export { start_discussion } from './start-discussion.js';
+export { check_discussion } from './check-discussion.js';
+export { list_discussions } from './list-discussions.js';

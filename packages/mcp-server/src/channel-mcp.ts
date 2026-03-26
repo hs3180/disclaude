@@ -17,10 +17,13 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  start_discussion,
+  check_discussion,
+  list_discussions,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
-import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
+import type { InteractiveOption, ActionPromptMap, SessionStatus } from './tools/types.js';
 
 // Re-export
 export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -371,6 +374,129 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
       return toolSuccess(result.message);
+    },
+  },
+  // ============================================================================
+  // Issue #1317: Temporary session management tools
+  // - start_discussion: Create a discussion session with interactive card
+  // - check_discussion: Check session status
+  // - list_discussions: List all sessions
+  // ============================================================================
+  {
+    name: 'start_discussion',
+    description: `Start a temporary discussion session.
+
+Creates a group chat (optional), sends an interactive card, and persists session state as a JSON file.
+Use this when you need to ask the user a question and continue working asynchronously.
+The session lifecycle: pending → active → expired.
+
+## Parameters
+- **topic**: Discussion topic (string, used for session ID and optional group name)
+- **message**: The message content to display in the interactive card (string)
+- **options**: Array of button options with text, value, and optional type (array)
+- **chatId**: Existing chat ID (optional, creates new group if not provided)
+- **memberIds**: Member IDs for new group creation (optional array)
+- **groupName**: Name for the new group (optional, defaults to topic)
+- **actionPrompts**: Custom action prompts (optional object)
+- **context**: Use-case specific context stored in session (optional object)
+- **expiresInMinutes**: Session expiry time in minutes (optional, default 1440 = 24h)
+
+## Example
+\`\`\`json
+{
+  "topic": "PR #123 Review",
+  "message": "Please review PR #123: Fix authentication bug",
+  "options": [
+    { "text": "✅ Merge", "value": "merge", "type": "primary" },
+    { "text": "❌ Close", "value": "close", "type": "danger" }
+  ],
+  "context": { "prNumber": 123, "repository": "hs3180/disclaude" }
+}
+\`\`\``,
+    parameters: z.object({
+      topic: z.string().describe('Discussion topic'),
+      message: z.string().describe('The message content to display'),
+      options: z.array(z.object({
+        text: z.string().describe('Button display text'),
+        value: z.string().describe('Button action value'),
+        type: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
+      })).describe('Button options for user interaction'),
+      chatId: z.string().optional().describe('Existing chat ID (creates new group if not provided)'),
+      memberIds: z.array(z.string()).optional().describe('Member IDs for new group creation'),
+      groupName: z.string().optional().describe('Name for the new group (defaults to topic)'),
+      actionPrompts: z.record(z.string(), z.string()).optional().describe('Custom action prompts'),
+      context: z.record(z.string(), z.unknown()).optional().describe('Use-case specific context'),
+      expiresInMinutes: z.number().optional().describe('Session expiry in minutes (default: 1440)'),
+    }),
+    handler: async (params: {
+      topic: string;
+      message: string;
+      options: InteractiveOption[];
+      chatId?: string;
+      memberIds?: string[];
+      groupName?: string;
+      actionPrompts?: ActionPromptMap;
+      context?: Record<string, unknown>;
+      expiresInMinutes?: number;
+    }) => {
+      try {
+        const result = await start_discussion(params);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion start failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'check_discussion',
+    description: `Check the status of a discussion session.
+
+Reads the session JSON file and returns its current state (pending, active, or expired).
+Automatically marks overdue sessions as expired.
+
+## Parameters
+- **sessionId**: The session identifier to check
+
+## Example
+\`\`\`json
+{"sessionId": "pr-123-review-abc123"}
+\`\`\``,
+    parameters: z.object({
+      sessionId: z.string().describe('The session identifier to check'),
+    }),
+    handler: async ({ sessionId }: { sessionId: string }) => {
+      try {
+        const result = await check_discussion({ sessionId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion check failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'list_discussions',
+    description: `List all discussion sessions, optionally filtered by status.
+
+Returns all temporary sessions with their status, topic, and response info.
+Automatically marks overdue sessions as expired before listing.
+
+## Parameters
+- **status**: Optional status filter ('pending', 'active', 'expired')
+
+## Example
+\`\`\`json
+{"status": "active"}
+\`\`\``,
+    parameters: z.object({
+      status: z.enum(['pending', 'active', 'expired']).optional().describe('Filter by session status'),
+    }),
+    handler: async ({ status }: { status?: SessionStatus }) => {
+      try {
+        const result = await list_discussions(status ? { status } : undefined);
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion list failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
