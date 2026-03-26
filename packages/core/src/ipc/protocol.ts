@@ -62,10 +62,12 @@ export interface IpcRequestPayloads {
     actionPrompts?: Record<string, string>;
   };
   // Group management (Issue #1546)
+  // Issue #1228: Added soul parameter for discussion personality injection
   createChat: {
     name?: string;
     description?: string;
     memberIds?: string[];
+    soul?: string;
   };
   dissolveChat: {
     chatId: string;
@@ -93,10 +95,12 @@ export interface IpcResponsePayloads {
     messageId?: string;
   };
   // Group management (Issue #1546)
+  // Issue #1228: Added soul in response for confirmation
   createChat: {
     success: boolean;
     chatId?: string;
     name?: string;
+    soul?: string;
   };
   dissolveChat: {
     success: boolean;

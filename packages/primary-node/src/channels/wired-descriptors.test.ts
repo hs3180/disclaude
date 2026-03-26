@@ -57,6 +57,8 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
 function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSetupContext {
   return {
     agentPool: {
+      registerSoul: vi.fn(),
+      unregisterSoul: vi.fn(),
       getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn() }),
     },
     controlHandler: vi.fn() as unknown as ControlHandler,
@@ -273,6 +275,8 @@ describe('WiredChannelDescriptors', () => {
       const mockAgent = { processMessage: vi.fn() };
       const context = createMockContext({
         agentPool: {
+      registerSoul: vi.fn(),
+      unregisterSoul: vi.fn(),
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
         },
       });
@@ -304,6 +308,8 @@ describe('WiredChannelDescriptors', () => {
       const mockAgent = { processMessage: vi.fn().mockImplementation(() => { throw error; }) };
       const context = createMockContext({
         agentPool: {
+      registerSoul: vi.fn(),
+      unregisterSoul: vi.fn(),
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
         },
       });

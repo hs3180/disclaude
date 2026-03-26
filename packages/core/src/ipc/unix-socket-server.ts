@@ -57,8 +57,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
-  /** Create a group chat (optional platform capability) */
-  createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
+  /** Create a group chat (optional platform capability). Issue #1228: Added soul param. */
+  createChat?: (name?: string, description?: string, memberIds?: string[], soul?: string) => Promise<{ chatId: string; name: string }>;
   /** Dissolve a group chat (optional platform capability) */
   dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
 }
@@ -217,6 +217,7 @@ export function createInteractiveMessageHandler(
         }
 
         // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
+        // Issue #1228: Added soul parameter for discussion personality injection.
         case 'createChat': {
           const handlers = channelHandlersContainer?.handlers;
           if (!handlers) {
@@ -233,11 +234,11 @@ export function createInteractiveMessageHandler(
               error: 'createChat not supported by this channel',
             };
           }
-          const { name, description, memberIds } =
+          const { name, description, memberIds, soul } =
             request.payload as IpcRequestPayloads['createChat'];
           try {
-            const result = await handlers.createChat(name, description, memberIds);
-            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name } };
+            const result = await handlers.createChat(name, description, memberIds, soul);
+            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name, soul } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

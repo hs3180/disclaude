@@ -34,7 +34,8 @@ export { send_card } from './send-card.js';
 export { send_file } from './send-file.js';
 
 // Group management (Issue #1546)
-export { create_chat } from './create-chat.js';
+// Issue #1228: create_chat now supports soul parameter
+export { create_chat, resolveSoulPath } from './create-chat.js';
 export { dissolve_chat } from './dissolve-chat.js';
 
 // Interactive Message

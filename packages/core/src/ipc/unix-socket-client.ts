@@ -494,18 +494,21 @@ export class UnixSocketIpcClient {
   /**
    * Create a group chat via IPC.
    * Issue #1546: Platform-agnostic group creation.
+   * Issue #1228: Added `soul` parameter for discussion personality injection.
    *
    * @param name - Group name (optional, platform may auto-generate)
    * @param description - Group description (optional)
    * @param memberIds - Initial member IDs (optional, platform decides ID format)
+   * @param soul - Soul profile path or built-in name (optional, Issue #1228)
    */
   async createChat(
     name?: string,
     description?: string,
-    memberIds?: string[]
+    memberIds?: string[],
+    soul?: string
   ): Promise<{ success: boolean; chatId?: string; name?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('createChat', { name, description, memberIds });
+      return await this.request('createChat', { name, description, memberIds, soul });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error }, 'createChat failed');

@@ -52,6 +52,8 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
   return {
     channel: createMockChannel(),
     agentPool: {
+      registerSoul: vi.fn(),
+      unregisterSoul: vi.fn(),
       getOrCreateChatAgent: vi.fn().mockReturnValue({
         processMessage: vi.fn(),
       }),

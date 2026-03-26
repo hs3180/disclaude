@@ -60,6 +60,10 @@ export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
     getOrCreateChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+    // Issue #1228: Register a soul profile for a chatId
+    registerSoul: (chatId: string, soul: string, workspaceDir?: string) => Promise<void>;
+    // Issue #1228: Unregister soul profile for a chatId (e.g., when chat is dissolved)
+    unregisterSoul: (chatId: string) => void;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;

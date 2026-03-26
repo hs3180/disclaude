@@ -195,10 +195,17 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1546: Group management handlers (platform-agnostic)
-      createChat: (name?: string, description?: string, memberIds?: string[]) => {
-        return feishuChannel.createChat(name, description, memberIds);
+      // Issue #1228: createChat now accepts optional soul param for personality injection
+      createChat: async (name?: string, description?: string, memberIds?: string[], soul?: string) => {
+        const result = await feishuChannel.createChat(name, description, memberIds);
+        if (soul) {
+          await context.agentPool.registerSoul(result.chatId, soul);
+        }
+        return result;
       },
+      // Issue #1228: Also unregister soul when chat is dissolved
       dissolveChat: (chatId: string) => {
+        context.agentPool.unregisterSoul(chatId);
         return feishuChannel.dissolveChat(chatId);
       },
     };

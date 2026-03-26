@@ -61,6 +61,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #1228: Append SOUL.md personality content to system prompt
+  if (options.appendSystemPrompt) {
+    sdkOptions.appendSystemPrompt = options.appendSystemPrompt;
+  }
+
   return sdkOptions;
 }
 
