@@ -306,13 +306,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       logger.info({ wsState: state }, 'WebSocket connection state changed');
     });
 
-    this.wsConnectionManager.on('pong', (rttMs) => {
-      logger.debug(
-        { rttMs, hasInterception: this.wsConnectionManager?.getMetrics().hasWsInterception },
-        'WebSocket Pong received (transport-level liveness signal)',
-      );
-    });
-
     this.wsConnectionManager.on('deadConnection', (elapsedMs) => {
       logger.warn(
         { elapsedMs },

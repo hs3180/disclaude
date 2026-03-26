@@ -86,20 +86,19 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
- * WebSocket health monitoring constants (Issue #1351, #1437)
+ * WebSocket health monitoring constants (Issue #1351, #1666).
  *
  * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.
- * The Feishu SDK's WSClient uses an application-layer Ping/Pong protocol over the `ws`
- * npm package (NOT standard WebSocket ping/pong frames). This manager attaches its
- * own listener to the SDK's internal WebSocket instance to detect Pong responses
- * as a transport-level liveness signal.
  *
- * When NAT/firewall silently drops a connection, the SDK's pingLoop sends pings but
- * may not receive Pong responses. The health check detects this absence and triggers
- * a reconnect before the SDK's own close event fires.
+ * Simplified approach (Issue #1666): The Feishu WS Server does NOT respond to
+ * client-sent application-layer ping messages. Therefore, we use passive message
+ * listening — any message from the server (including SDK pong, user messages, or
+ * data frames) resets the liveness timer. If no message arrives within the timeout,
+ * the connection is deemed dead and a reconnect is triggered.
  *
- * Issue #1437: Adds a custom ping loop with shorter interval (5s vs SDK's 120s)
- * to significantly reduce dead connection detection time from ~5 minutes to ~15 seconds.
+ * The SDK's own pingLoop (~120s interval) continues to run and the server responds
+ * to those pings with pong, which our event handler captures via
+ * `recordMessageReceived()`.
  */
 export const WS_HEALTH = {
   /**
@@ -107,38 +106,19 @@ export const WS_HEALTH = {
    * the connection dead. If no message (data, pong, or control) arrives within
    * this window, the connection is force-closed and reconnection is triggered.
    *
-   * Set to 3 × CUSTOM_PING_INTERVAL_MS (= 15s). With a custom ping every 5s,
-   * 3 consecutive missed pongs is sufficient to detect a dead connection while
-   * tolerating transient network glitches. This is a significant improvement
-   * over the previous 5-minute timeout (Issue #1437).
+   * Set to 130s — slightly longer than the SDK's pingLoop interval (~120s) to
+   * allow the SDK's own ping/pong cycle to keep the connection alive. If the
+   * SDK's pings also go unanswered, we detect it shortly after.
    */
-  DEAD_CONNECTION_TIMEOUT_MS: 15 * 1000, // 15 seconds
+  DEAD_CONNECTION_TIMEOUT_MS: 130 * 1000, // 130 seconds
 
   /**
    * Interval between health checks. Each tick compares now against
-   * lastPongAt (primary) or lastMessageReceived (fallback) to detect
-   * zombie connections.
+   * lastMessageReceivedAt to detect zombie connections.
    *
-   * Reduced to 5s to match the custom ping interval — health checks
-   * should run at least as frequently as pings to quickly detect
-   * missed pong responses.
+   * Set to 30s — no need for frequent checks since the timeout is 130s.
    */
-  HEALTH_CHECK_INTERVAL_MS: 5 * 1000, // 5 seconds
-
-  /**
-   * Custom ping loop interval (Issue #1437).
-   *
-   * Sends application-layer ping frames at 5s intervals via the SDK's
-   * sendMessage() method, independent of the SDK's own pingLoop (120s).
-   * The SDK's pingLoop continues to run concurrently — both pings are
-   * harmless as the server responds to each with a Pong.
-   *
-   * Benefits:
-   * - Reduces dead connection detection from ~5 minutes to ~15 seconds
-   * - More frequent bidirectional traffic prevents NAT table entry expiry
-   * - Server pong responses carry updated PingInterval/ReconnectConfig
-   */
-  CUSTOM_PING_INTERVAL_MS: 5 * 1000, // 5 seconds
+  HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
 
   /**
    * Exponential backoff configuration for reconnection attempts.
@@ -162,26 +142,6 @@ export const WS_HEALTH = {
    * Offline message queue configuration.
    * Messages sent during reconnection are queued and flushed after reconnect.
    */
-  /**
-   * Background polling configuration for WS instance availability (Issue #1504).
-   *
-   * WSClient.start() is fire-and-forget — it resolves before the SDK finishes
-   * establishing the internal WebSocket connection (~300ms). After start(),
-   * we poll getWSInstance() at short intervals until a non-null instance is
-   * available, then pass it directly to interceptWsFromClient() to attach
-   * the Pong listener.
-   *
-   * The polling runs in the background (non-blocking) — connectFresh() returns
-   * immediately in fallback mode and upgrades to active Pong detection once
-   * the instance becomes available.
-   */
-  INSTANCE_POLL: {
-    /** Maximum time to wait for WS instance before giving up (ms) */
-    TIMEOUT_MS: 10 * 1000, // 10 seconds
-    /** Interval between polling attempts (ms) */
-    INTERVAL_MS: 50, // 50ms
-  },
-
   OFFLINE_QUEUE: {
     /** Maximum number of messages to buffer while offline */
     MAX_SIZE: 100,
