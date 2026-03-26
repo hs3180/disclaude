@@ -395,4 +395,80 @@ describe('WeChatApiClient', () => {
         .rejects.toThrow('Error code 999');
     });
   });
+
+  describe('getUpdates', () => {
+    it('should fetch updates via POST to getupdates endpoint', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, msg_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        })
+      );
+      expect(result.ret).toBe(0);
+      expect(result.msg_list).toEqual([]);
+    });
+
+    it('should return messages from response', async () => {
+      const messages = [
+        { msg_id: 'msg-1', from_user_id: 'user-1', message_type: 1, item_list: [{ type: 1, text_item: { text: 'Hi' } }] },
+      ];
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, msg_list: messages })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result.msg_list).toHaveLength(1);
+      expect(result.msg_list?.[0].msg_id).toBe('msg-1');
+    });
+
+    it('should return empty list on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates({ timeoutMs: 1000 });
+
+      expect(result).toEqual({ ret: 0, msg_list: [] });
+    });
+
+    it('should use custom timeout when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, msg_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates({ timeoutMs: 5000 });
+
+      // The fetch should have been called - we can't easily verify the timeout
+      // value directly, but we verify the endpoint was hit
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.any(Object)
+      );
+    });
+
+    it('should re-throw non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Server error'));
+
+      client.setToken('bot-token');
+      await expect(client.getUpdates()).rejects.toThrow('Server error');
+    });
+  });
 });

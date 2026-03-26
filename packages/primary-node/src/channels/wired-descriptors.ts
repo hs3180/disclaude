@@ -221,18 +221,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * `ChannelLifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, config)`
  * at runtime (e.g., after QR code authentication completes).
  *
- * Provides full wiring for the WeChat channel (MVP):
+ * Provides full wiring for the WeChat channel:
  * - PilotCallbacks without done signal (async mode)
  * - Message handler with basic text processing
- * - No post-registration setup (MVP: no passive mode, no IPC handlers)
+ * - Message listening via getUpdates long-poll (Issue #1556)
+ * - No post-registration setup (no passive mode, no IPC handlers)
  *
- * MVP limitations:
+ * Current limitations:
  * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
  * - sendFile: not supported (logs warning only)
- * - No message listening / long polling (outbound-only bot)
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig> = {

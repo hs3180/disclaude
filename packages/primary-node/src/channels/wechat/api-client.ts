@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatGetUpdatesResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -210,6 +212,46 @@ export class WeChatApiClient {
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
   }
 
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * @param params - Poll parameters
+   * @returns List of incoming messages (may be empty on timeout)
+   */
+  async getUpdates(params?: {
+    /** Long-poll timeout in ms (default: 35000) */
+    timeoutMs?: number;
+  }): Promise<WeChatGetUpdatesResponse> {
+    const timeoutMs = params?.timeoutMs ?? LONG_POLL_TIMEOUT_MS;
+    const body = {
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    try {
+      const data = await this.postJsonWithTimeout<WeChatGetUpdatesResponse>(
+        'ilink/bot/getupdates',
+        body,
+        timeoutMs
+      );
+
+      const msgCount = data.msg_list?.length ?? 0;
+      if (msgCount > 0) {
+        logger.debug({ count: msgCount }, 'Received messages from getUpdates');
+      }
+
+      return data;
+    } catch (error) {
+      // Timeout during long polling is normal — return empty response
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out');
+        return { ret: 0, msg_list: [] };
+      }
+      throw error;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
@@ -230,6 +272,33 @@ export class WeChatApiClient {
       headers,
       body: bodyStr,
       timeoutMs: DEFAULT_API_TIMEOUT_MS,
+    });
+
+    return data;
+  }
+
+  /**
+   * Make an authenticated POST request with a custom timeout.
+   *
+   * Used for long-polling endpoints like getUpdates.
+   */
+  private async postJsonWithTimeout<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<T> {
+    const url = `${this.baseUrl}/${endpoint}`;
+    const bodyStr = JSON.stringify(body);
+
+    const headers = this.buildAuthHeaders(bodyStr);
+
+    logger.trace({ endpoint, timeoutMs }, 'API POST request (custom timeout)');
+
+    const data = await this.fetchJson<T>(url, {
+      method: 'POST',
+      headers,
+      body: bodyStr,
+      timeoutMs,
     });
 
     return data;
