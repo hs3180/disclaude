@@ -140,7 +140,7 @@ describe('createChannelCallbacksFactory', () => {
   it('sendCard should delegate to channel.sendMessage with card type', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
-    const card = { elements: [] };
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
     await callbacks.sendCard('chat-001', card, 'Test card');
     expect(channel.sendMessage).toHaveBeenCalledWith({
       chatId: 'chat-001',
@@ -154,7 +154,7 @@ describe('createChannelCallbacksFactory', () => {
   it('sendCard should pass threadId as parentMessageId', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
-    await callbacks.sendCard('chat-001', { elements: [] }, 'desc', 'thread-456');
+    await callbacks.sendCard('chat-001', { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] }, 'desc', 'thread-456');
     expect(channel.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'thread-456' }),
     );
