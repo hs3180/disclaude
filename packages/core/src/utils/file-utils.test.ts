@@ -207,6 +207,16 @@ describe('ensureFileExtensionFromPath', () => {
     vi.restoreAllMocks();
   });
 
+  it('should spy on fsOps correctly (sanity check)', async () => {
+    openSpy.mockResolvedValue({ read: vi.fn(), close: vi.fn() });
+    renameSpy.mockResolvedValue(undefined);
+
+    // Verify fsOps.open is actually the spy
+    const handle = await fsOps.open('/tmp/test', 'r');
+    expect(openSpy).toHaveBeenCalledWith('/tmp/test', 'r');
+    expect(handle).toBeDefined();
+  });
+
   it('should return original path if file has a known extension', async () => {
     const result = await ensureFileExtensionFromPath('/tmp/photo.png');
     expect(result).toBe('/tmp/photo.png');
