@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as path from 'path';
 import {
   detectFileExtension,
   mimeToExtension,
@@ -87,7 +86,7 @@ describe('detectFileExtension', () => {
 
   // Enhancement: SVG detection only uses first 100 bytes
   it('should detect SVG even with long content (100-byte optimization)', () => {
-    const content = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg">' + 'x'.repeat(200);
+    const content = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg">'.concat('x'.repeat(200));
     expect(detectFileExtension(Buffer.from(content, 'utf-8'))).toBe('.svg');
   });
 
@@ -226,9 +225,8 @@ describe('ensureFileExtensionFromPath', () => {
 
   it('should fall back to magic bytes when headers are missing', async () => {
     // Mock fs.open to return a fake file handle that reads PNG header
-    let readBuffer: Buffer;
     const mockHandle = {
-      read: vi.fn().mockImplementation((_, buf, offset, length) => {
+      read: vi.fn().mockImplementation((_unused, buf, offset, _length) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),

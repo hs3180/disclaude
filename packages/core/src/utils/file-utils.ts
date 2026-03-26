@@ -154,7 +154,9 @@ export function mimeToExtension(mimeType: string): string | undefined {
  * @returns Content-type string (lowercase, without parameters) or undefined
  */
 export function getContentTypeFromHeaders(headers: Record<string, unknown> | undefined): string | undefined {
-  if (!headers) return undefined;
+  if (!headers) {
+    return undefined;
+  }
 
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === 'content-type') {
