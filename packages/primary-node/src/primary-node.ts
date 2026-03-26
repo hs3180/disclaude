@@ -171,10 +171,18 @@ export class PrimaryNode extends EventEmitter {
     this.execNodeRegistry.on('node:unregistered', (nodeId: string) => this.emit('worker:disconnected', nodeId));
 
     // Initialize CardActionRouter
+    // Issue #1629: Use real ExecNodeRegistry implementations for sendToRemoteNode
+    // and isNodeConnected so that card actions can be routed to connected Worker Nodes.
     this.cardActionRouter = new CardActionRouter({
-      // eslint-disable-next-line require-await
-      sendToRemoteNode: async () => false, // Override in subclass
-      isNodeConnected: () => false,
+      sendToRemoteNode: async (nodeId: string, message) => {
+        const node = this.execNodeRegistry.getNode(nodeId);
+        if (node?.ws && node.ws.readyState === node.ws.OPEN) {
+          node.ws.send(JSON.stringify(message));
+          return true;
+        }
+        return false;
+      },
+      isNodeConnected: (nodeId: string) => this.execNodeRegistry.isNodeConnected(nodeId),
     });
 
     // Initialize DebugGroupService

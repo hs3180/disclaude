@@ -141,6 +141,15 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
+    // Issue #1629: Wire routeCardAction to CardActionRouter
+    // This enables routing card action callbacks from Feishu to remote Worker Nodes
+    // when the chat context was registered by a Worker Node (via WebSocketServerService).
+    const cardActionRouter = context.primaryNode.getCardActionRouter?.();
+    if (cardActionRouter) {
+      config.routeCardAction = (message) => cardActionRouter.routeCardAction(message);
+      context.logger.info('Card action routing wired to CardActionRouter (Issue #1629)');
+    }
+
     // 2. Set up passive mode adapter
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
     // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
