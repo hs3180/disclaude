@@ -821,6 +821,10 @@ export class MessageHandler {
     await this.addTypingReaction(message_id);
 
     // Handle commands
+    // Skill-only commands (e.g., /feedback, /site-miner) are NOT in ControlCommandType.
+    // The control handler returns { success: false } with no message for unrecognized types,
+    // allowing the message to fall through to Agent processing where skills handle them.
+    // See Issue #1640.
     if (textWithoutMentions.startsWith('/')) {
       const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
       const cmd = command.toLowerCase();
