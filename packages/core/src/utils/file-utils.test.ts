@@ -9,30 +9,14 @@
  * I/O behavior without touching the disk.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Create mock functions using vi.hoisted so they are available before any imports
-const { mockOpen, mockRename, mockUnlink, mockCopyFile } = vi.hoisted(() => ({
-  mockOpen: vi.fn(),
-  mockRename: vi.fn(),
-  mockUnlink: vi.fn(),
-  mockCopyFile: vi.fn(),
-}));
-
-// Mock fs/promises using the hoisted mock functions
-vi.mock('fs/promises', () => ({
-  open: mockOpen,
-  rename: mockRename,
-  unlink: mockUnlink,
-  copyFile: mockCopyFile,
-}));
-
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   detectFileExtension,
   mimeToExtension,
   getContentTypeFromHeaders,
   ensureFileExtension,
   ensureFileExtensionFromPath,
+  fsOps,
 } from './file-utils.js';
 
 describe('detectFileExtension', () => {
@@ -201,57 +185,76 @@ describe('ensureFileExtension', () => {
 });
 
 // Enhancement: ensureFileExtensionFromPath (async, path-based API)
-// Uses mocked fs/promises — zero file system side effects
+// Uses vi.spyOn on fsOps to intercept file I/O — zero file system side effects
 describe('ensureFileExtensionFromPath', () => {
+  let openSpy: ReturnType<typeof vi.spyOn>;
+  let renameSpy: ReturnType<typeof vi.spyOn>;
+  let copyFileSpy: ReturnType<typeof vi.spyOn>;
+  let unlinkSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    openSpy = vi.spyOn(fsOps, 'open');
+    renameSpy = vi.spyOn(fsOps, 'rename');
+    copyFileSpy = vi.spyOn(fsOps, 'copyFile');
+    unlinkSpy = vi.spyOn(fsOps, 'unlink');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should return original path if file has a known extension', async () => {
     const result = await ensureFileExtensionFromPath('/tmp/photo.png');
     expect(result).toBe('/tmp/photo.png');
-    expect(mockOpen).not.toHaveBeenCalled();
-    expect(mockRename).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
   });
 
   it('should add extension from content-type header without file I/O', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'image/png' });
     expect(result).toBe('/tmp/image_no_ext.png');
     // Headers detection should skip file I/O entirely
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
     // Should rename via fs.rename
-    expect(mockRename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
   });
 
   it('should add extension from content-type with charset parameter', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'Content-Type': 'image/jpeg; charset=binary' });
     expect(result).toBe('/tmp/image_no_ext.jpg');
-    expect(mockRename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.jpg');
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.jpg');
   });
 
   it('should fall back to magic bytes when headers are missing', async () => {
-    // Mock fs.open to return a fake file handle that reads PNG header
+    // Mock fsOps.open to return a fake file handle that reads PNG header
     const mockHandle = {
-      read: vi.fn().mockImplementation((_unused, buf, offset, _length) => {
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number, _length: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
       close: vi.fn().mockResolvedValue(undefined),
     };
-    mockOpen.mockResolvedValue(mockHandle as never);
+    openSpy.mockResolvedValue(mockHandle as never);
+    renameSpy.mockResolvedValue(undefined);
 
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
     expect(result).toBe('/tmp/image_no_ext.png');
-    expect(mockOpen).toHaveBeenCalledWith('/tmp/image_no_ext', 'r');
+    expect(openSpy).toHaveBeenCalledWith('/tmp/image_no_ext', 'r');
     expect(mockHandle.read).toHaveBeenCalled();
     expect(mockHandle.close).toHaveBeenCalled();
-    expect(mockRename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
   });
 
   it('should prefer headers over magic bytes', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
     // With PNG content-type but JPEG magic bytes, headers should win
-    mockOpen.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused, buf, offset) => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
         Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -261,28 +264,29 @@ describe('ensureFileExtensionFromPath', () => {
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'image/png' });
     expect(result).toBe('/tmp/image_no_ext.png');
     // Headers path should have been taken, no magic bytes fallback
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it('should fall back to magic bytes when content-type is unknown', async () => {
-    mockOpen.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused, buf, offset) => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
         Buffer.from('GIF87a').copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
       close: vi.fn().mockResolvedValue(undefined),
     } as never);
+    renameSpy.mockResolvedValue(undefined);
 
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext', { 'content-type': 'application/unknown' });
     expect(result).toBe('/tmp/image_no_ext.gif');
-    expect(mockOpen).toHaveBeenCalled();
-    expect(mockRename).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.gif');
+    expect(openSpy).toHaveBeenCalled();
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.gif');
   });
 
   it('should return original path when extension cannot be determined', async () => {
-    // Mock fs.open to return unrecognized bytes
-    mockOpen.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused, buf, offset) => {
+    // Mock fsOps.open to return unrecognized bytes
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
         Buffer.from([0x00, 0x01, 0x02, 0x03]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -291,54 +295,59 @@ describe('ensureFileExtensionFromPath', () => {
 
     const result = await ensureFileExtensionFromPath('/tmp/unknown_file');
     expect(result).toBe('/tmp/unknown_file');
-    expect(mockRename).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
   });
 
   it('should return original path and not attempt rename when fs.open throws', async () => {
-    mockOpen.mockRejectedValue(new Error('ENOENT'));
+    openSpy.mockRejectedValue(new Error('ENOENT'));
+
     const result = await ensureFileExtensionFromPath('/tmp/nonexistent');
     expect(result).toBe('/tmp/nonexistent');
-    expect(mockRename).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
   });
 
   it('should fall back to copy+delete when rename fails', async () => {
-    mockOpen.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused, buf, offset) => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
       close: vi.fn().mockResolvedValue(undefined),
     } as never);
-    mockRename.mockRejectedValue(new Error('EXDEV: cross-device link'));
+    renameSpy.mockRejectedValue(new Error('EXDEV: cross-device link'));
+    copyFileSpy.mockResolvedValue(undefined);
+    unlinkSpy.mockResolvedValue(undefined);
 
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
     expect(result).toBe('/tmp/image_no_ext.png');
-    expect(mockRename).toHaveBeenCalled();
-    expect(mockCopyFile).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
-    expect(mockUnlink).toHaveBeenCalledWith('/tmp/image_no_ext');
+    expect(renameSpy).toHaveBeenCalled();
+    expect(copyFileSpy).toHaveBeenCalledWith('/tmp/image_no_ext', '/tmp/image_no_ext.png');
+    expect(unlinkSpy).toHaveBeenCalledWith('/tmp/image_no_ext');
   });
 
   it('should return original path when both rename and copy+delete fail', async () => {
-    mockOpen.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused, buf, offset) => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
       close: vi.fn().mockResolvedValue(undefined),
     } as never);
-    mockRename.mockRejectedValue(new Error('EXDEV'));
-    mockCopyFile.mockRejectedValue(new Error('EACCES'));
+    renameSpy.mockRejectedValue(new Error('EXDEV'));
+    copyFileSpy.mockRejectedValue(new Error('EACCES'));
 
     const result = await ensureFileExtensionFromPath('/tmp/image_no_ext');
     expect(result).toBe('/tmp/image_no_ext');
   });
 
   it('should handle the real Feishu scenario', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
     const result = await ensureFileExtensionFromPath(
       '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g',
     );
     expect(result).toBe('/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g.png');
-    expect(mockRename).toHaveBeenCalledWith(
+    expect(renameSpy).toHaveBeenCalledWith(
       '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g',
       '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g.png',
     );

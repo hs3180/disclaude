@@ -246,7 +246,7 @@ export async function ensureFileExtensionFromPath(
 
   // Strategy 2: Magic bytes detection (read only first 12 bytes)
   try {
-    const fd = await fs.open(filePath, 'r');
+    const fd = await fsOps.open(filePath, 'r');
     const header = Buffer.alloc(12);
     await fd.read(header, 0, 12, 0);
     await fd.close();
@@ -274,13 +274,13 @@ export async function ensureFileExtensionFromPath(
 async function renameWithExtension(filePath: string, ext: string): Promise<string> {
   const newPath = filePath + ext;
   try {
-    await fs.rename(filePath, newPath);
+    await fsOps.rename(filePath, newPath);
     return newPath;
   } catch {
     // Rename may fail (e.g., cross-device link) — try copy + delete
     try {
-      await fs.copyFile(filePath, newPath);
-      await fs.unlink(filePath);
+      await fsOps.copyFile(filePath, newPath);
+      await fsOps.unlink(filePath);
       return newPath;
     } catch {
       // Last resort: return original path
@@ -288,3 +288,15 @@ async function renameWithExtension(filePath: string, ext: string): Promise<strin
     }
   }
 }
+
+/**
+ * File system operations used by ensureFileExtensionFromPath.
+ * Replace for testing to avoid real file I/O.
+ * @internal
+ */
+export const fsOps = {
+  open: fs.open,
+  rename: fs.rename,
+  unlink: fs.unlink,
+  copyFile: fs.copyFile,
+};
