@@ -9,7 +9,7 @@
  * - UnixSocketIpcServer: start/stop lifecycle, connection handling, message routing
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -645,7 +645,7 @@ describe('UnixSocketIpcServer', () => {
         client.on('data', onData);
         client.on('error', reject);
 
-        client.write(JSON.stringify({ type: 'ping', id: 'test-after-invalid', payload: {} }) + '\n');
+        client.write(`${JSON.stringify({ type: 'ping', id: 'test-after-invalid', payload: {} })}\n`);
 
         setTimeout(() => {
           client.destroy();
@@ -681,7 +681,7 @@ describe('UnixSocketIpcServer', () => {
         setTimeout(() => resolve(false), 500);
       });
 
-      const connected = await connectPromise;
+      const _connected = await connectPromise;
       await stopPromise;
 
       // Connection may or may not succeed depending on timing
@@ -700,11 +700,11 @@ describe('UnixSocketIpcServer', () => {
 
       const response = await new Promise<string>((resolve, reject) => {
         const client = createConnection(socketPath, () => {
-          client.write(JSON.stringify({
+          client.write(`${JSON.stringify({
             type: 'sendMessage',
             id: 'msg-1',
             payload: { chatId: 'chat-1', text: 'Hello via socket' },
-          }) + '\n');
+          })}\n`);
         });
 
         let buffer = '';

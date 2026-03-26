@@ -10,14 +10,13 @@
  * - State management
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BaseChannel } from './base-channel.js';
 import type {
   ChannelConfig,
   OutgoingMessage,
   MessageHandler,
   ControlHandler,
-  ControlResponse,
 } from '../types/channel.js';
 
 // ============================================================================
@@ -35,6 +34,7 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   public shouldFailStop = false;
   public shouldFailSend = false;
 
+  // eslint-disable-next-line require-await
   protected async doStart(): Promise<void> {
     this.doStartCalls++;
     if (this.shouldFailStart) {
@@ -42,6 +42,7 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
     }
   }
 
+  // eslint-disable-next-line require-await
   protected async doStop(): Promise<void> {
     this.doStopCalls++;
     if (this.shouldFailStop) {
@@ -49,6 +50,7 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
     }
   }
 
+  // eslint-disable-next-line require-await
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     this.doSendMessageCalls.push(message);
     if (this.shouldFailSend) {
