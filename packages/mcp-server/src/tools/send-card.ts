@@ -7,8 +7,7 @@
  * @module mcp-server/tools/send-card
  */
 
-import { createLogger, getIpcClient } from '@disclaude/core';
-import type { FeishuCard } from '@disclaude/core';
+import { createLogger, getIpcClient, type FeishuCard } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
