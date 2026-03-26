@@ -22,15 +22,15 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleListNodes', () => {
-  it('should return message when no nodes connected', () => {
+  it('should return message when no nodes connected', async () => {
     const context = createMockContext();
-    const result = handleListNodes({ type: 'list-nodes', chatId: 'chat-1' }, context);
+    const result = await handleListNodes({ type: 'list-nodes', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('无已连接的远程节点');
   });
 
-  it('should list connected nodes', () => {
+  it('should list connected nodes', async () => {
     const nodes = [
       { nodeId: 'node-1', name: 'Local Node', status: 'connected' as const, activeChats: 3, isLocal: true },
       { nodeId: 'node-2', name: 'Remote Node', status: 'connected' as const, activeChats: 1, isLocal: false },
@@ -43,7 +43,7 @@ describe('handleListNodes', () => {
         clearDebugGroup: vi.fn(),
       },
     });
-    const result = handleListNodes({ type: 'list-nodes', chatId: 'chat-1' }, context);
+    const result = await handleListNodes({ type: 'list-nodes', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Local Node');

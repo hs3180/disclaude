@@ -23,15 +23,15 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleShowDebug', () => {
-  it('should return message when no debug group is set', () => {
+  it('should return message when no debug group is set', async () => {
     const context = createMockContext();
-    const result = handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
+    const result = await handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('没有设置 Debug 组');
   });
 
-  it('should return debug group info when set', () => {
+  it('should return debug group info when set', async () => {
     const debugGroup = { name: 'Test Group', setAt: Date.now() };
     const context = createMockContext({
       node: {
@@ -41,7 +41,7 @@ describe('handleShowDebug', () => {
         clearDebugGroup: vi.fn(),
       },
     });
-    const result = handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
+    const result = await handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Test Group');
@@ -49,9 +49,9 @@ describe('handleShowDebug', () => {
 });
 
 describe('handleClearDebug', () => {
-  it('should clear debug group and return success', () => {
+  it('should clear debug group and return success', async () => {
     const context = createMockContext();
-    const result = handleClearDebug({ type: 'clear-debug', chatId: 'chat-1' }, context);
+    const result = await handleClearDebug({ type: 'clear-debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(context.node.clearDebugGroup).toHaveBeenCalledOnce();
