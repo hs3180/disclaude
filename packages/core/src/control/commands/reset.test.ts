@@ -22,9 +22,9 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleReset', () => {
-  it('should reset agent pool for the given chatId', () => {
+  it('should reset agent pool for the given chatId', async () => {
     const context = createMockContext();
-    const result = handleReset({ type: 'reset', chatId: 'chat-123' }, context);
+    const result = await handleReset({ type: 'reset', chatId: 'chat-123' }, context);
 
     expect(result.success).toBe(true);
     expect(context.agentPool.reset).toHaveBeenCalledWith('chat-123');
@@ -33,9 +33,9 @@ describe('handleReset', () => {
 });
 
 describe('handleRestart', () => {
-  it('should reset agent pool for the given chatId', () => {
+  it('should reset agent pool for the given chatId', async () => {
     const context = createMockContext();
-    const result = handleRestart({ type: 'restart', chatId: 'chat-456' }, context);
+    const result = await handleRestart({ type: 'restart', chatId: 'chat-456' }, context);
 
     expect(result.success).toBe(true);
     expect(context.agentPool.reset).toHaveBeenCalledWith('chat-456');

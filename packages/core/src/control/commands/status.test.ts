@@ -22,25 +22,25 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleStatus', () => {
-  it('should return status with node ID', () => {
+  it('should return status with node ID', async () => {
     const context = createMockContext();
-    const result = handleStatus({ type: 'status', chatId: 'chat-1' }, context);
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('test-node-id');
     expect(result.message).toContain('服务状态');
   });
 
-  it('should show 0 connected nodes', () => {
+  it('should show 0 connected nodes', async () => {
     const context = createMockContext();
-    const result = handleStatus({ type: 'status', chatId: 'chat-1' }, context);
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('连接节点数');
     expect(result.message).toContain('无远程节点');
   });
 
-  it('should list connected nodes', () => {
+  it('should list connected nodes', async () => {
     const nodes = [
       { nodeId: 'n1', name: 'Node A', status: 'connected' as const, activeChats: 2, isLocal: true },
       { nodeId: 'n2', name: 'Node B', status: 'connected' as const, activeChats: 0, isLocal: false },
@@ -53,7 +53,7 @@ describe('handleStatus', () => {
         clearDebugGroup: vi.fn(),
       },
     });
-    const result = handleStatus({ type: 'status', chatId: 'chat-1' }, context);
+    const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Node A');

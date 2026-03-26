@@ -681,7 +681,7 @@ describe('UnixSocketIpcServer', () => {
         setTimeout(() => resolve(false), 500);
       });
 
-      const _connected = await connectPromise;
+      await connectPromise;
       await stopPromise;
 
       // Connection may or may not succeed depending on timing
