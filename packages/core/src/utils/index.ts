@@ -82,3 +82,10 @@ export {
 export {
   setupAgentsInWorkspace,
 } from './agents-setup.js';
+
+// File Utils (Issue #1637)
+export {
+  detectFileExtension,
+  mimeToExtension,
+  ensureFileExtension,
+} from './file-utils.js';
