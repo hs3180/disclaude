@@ -28,6 +28,8 @@
     "test": "npm run build && vitest --run",
     "test:watch": "vitest",
     "test:coverage": "npm run build && vitest --run --coverage",
+    "test:feishu": "npm run build && FEISHU_INTEGRATION_TEST=true vitest --run packages/primary-node/src/__tests__/integration/feishu/",
+    "test:integration:feishu": "./tests/integration/feishu-interactive-test.sh",
     "test:integration": "./tests/integration/run-all-tests.sh",
     "test:integration:rest": "./tests/integration/rest-channel-test.sh",
     "test:integration:use-case-1": "./tests/integration/use-case-1-basic-reply.sh",
