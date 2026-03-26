@@ -207,16 +207,6 @@ describe('ensureFileExtensionFromPath', () => {
     vi.restoreAllMocks();
   });
 
-  it('should spy on fsOps correctly (sanity check)', async () => {
-    openSpy.mockResolvedValue({ read: vi.fn(), close: vi.fn() });
-    renameSpy.mockResolvedValue(undefined);
-
-    // Verify fsOps.open is actually the spy
-    const handle = await fsOps.open('/tmp/test', 'r');
-    expect(openSpy).toHaveBeenCalledWith('/tmp/test', 'r');
-    expect(handle).toBeDefined();
-  });
-
   it('should return original path if file has a known extension', async () => {
     const result = await ensureFileExtensionFromPath('/tmp/photo.png');
     expect(result).toBe('/tmp/photo.png');
@@ -246,7 +236,7 @@ describe('ensureFileExtensionFromPath', () => {
   it('should fall back to magic bytes when headers are missing', async () => {
     // Mock fsOps.open to return a fake file handle that reads PNG header
     const mockHandle = {
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number, _length: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number, _length: number, _position: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -268,7 +258,7 @@ describe('ensureFileExtensionFromPath', () => {
 
     // With PNG content-type but JPEG magic bytes, headers should win
     openSpy.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
         Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -283,7 +273,7 @@ describe('ensureFileExtensionFromPath', () => {
 
   it('should fall back to magic bytes when content-type is unknown', async () => {
     openSpy.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
         Buffer.from('GIF87a').copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -300,7 +290,7 @@ describe('ensureFileExtensionFromPath', () => {
   it('should return original path when extension cannot be determined', async () => {
     // Mock fsOps.open to return unrecognized bytes
     openSpy.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
         Buffer.from([0x00, 0x01, 0x02, 0x03]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -322,7 +312,7 @@ describe('ensureFileExtensionFromPath', () => {
 
   it('should fall back to copy+delete when rename fails', async () => {
     openSpy.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
@@ -341,7 +331,7 @@ describe('ensureFileExtensionFromPath', () => {
 
   it('should return original path when both rename and copy+delete fail', async () => {
     openSpy.mockResolvedValue({
-      read: vi.fn().mockImplementation((_unused: unknown, buf: Buffer, offset: number) => {
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
         Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(buf, offset);
         return Promise.resolve({ bytesRead: 12 });
       }),
