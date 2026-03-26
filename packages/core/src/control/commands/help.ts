@@ -24,14 +24,6 @@ export const handleHelp: CommandHandler = (
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
       '| `/show-debug` | 显示 Debug 组信息 | `/show-debug` |',
       '| `/clear-debug` | 清除 Debug 组 | `/clear-debug` |',
-      '',
-      '🤖 **Skill 命令**（由 Agent 处理）',
-      '',
-      '| 命令 | 说明 | 用法 |',
-      '|------|------|------|',
-      '| `/feedback` | 提交反馈/Issue | `/feedback [描述]` |',
-      '| `/skill-creator` | 创建自定义 Skill | `/skill-creator` |',
-      '| `/site-miner` | 网站信息挖掘 | `/site-miner` |',
     ].join('\n'),
   };
 };
