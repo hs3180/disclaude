@@ -43,6 +43,44 @@ export interface FeishuEventData {
 }
 
 /**
+ * Feishu interactive card structure.
+ *
+ * Used by `send_card` and `send_interactive` MCP tools to send rich messages.
+ * This type provides compile-time validation for card construction.
+ *
+ * @see https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content
+ */
+export interface FeishuCard {
+  /** Card configuration */
+  config: {
+    /** Enable wide screen mode */
+    wide_screen_mode?: boolean;
+    /** Card update mode: 'replace' | 'append' (for card updates) */
+    update_mode?: 'replace' | 'append';
+    /** Custom configuration key-value pairs */
+    [key: string]: unknown;
+  };
+  /** Card header */
+  header: {
+    /** Header title */
+    title: {
+      /** Title text format: 'plain_text' | 'lark_md' */
+      tag: string;
+      /** Title content */
+      content: string;
+    };
+    /** Header template color: 'blue' | 'red' | 'green' | 'orange' | 'violet' | 'indigo' | 'grey' | 'yellow' | 'turquoise' | 'wathet' | 'default' */
+    template?: string;
+    /** Custom header key-value pairs */
+    [key: string]: unknown;
+  };
+  /** Card body elements */
+  elements: unknown[];
+  /** Additional card fields */
+  [key: string]: unknown;
+}
+
+/**
  * Feishu card action event structure.
  * Triggered when user interacts with card buttons, menus, etc.
  * @see https://open.feishu.cn/document/client-docs/bot-v3/events/card-action-trigger

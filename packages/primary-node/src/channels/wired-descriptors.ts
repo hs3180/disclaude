@@ -29,6 +29,7 @@ import type {
 import {
   createChannelCallbacksFactory,
   createDefaultMessageHandler,
+  createChannelApiHandlers,
 } from '../utils/channel-handlers.js';
 import {
   buildInteractiveCard,
@@ -150,27 +151,16 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
 
     // 3. Register IPC handlers for MCP Server connections
+    // Base handlers reuse the same channel.sendMessage pattern as PilotCallbacks
+    // (Issue #1555: unified handler injection — avoids duplication)
+    const baseHandlers = createChannelApiHandlers(feishuChannel, {
+      logger: context.logger,
+      channelName: 'Feishu',
+    });
+
     const feishuHandlers: FeishuApiHandlers = {
-      sendMessage: async (chatId: string, text: string, threadId?: string) => {
-        await feishuChannel.sendMessage({ chatId, type: 'text', text, threadId });
-      },
-      sendCard: async (
-        chatId: string,
-        card: Record<string, unknown>,
-        threadId?: string,
-        description?: string
-      ) => {
-        await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId, description });
-      },
-      uploadFile: async (chatId: string, filePath: string, threadId?: string) => {
-        await feishuChannel.sendMessage({ chatId, type: 'file', filePath, threadId });
-        return {
-          fileKey: '',
-          fileType: 'file',
-          fileName: filePath.split('/').pop() || 'file',
-          fileSize: 0,
-        };
-      },
+      ...baseHandlers,
+
       // Issue #1571: Build interactive card from raw parameters using extracted builder
       sendInteractive: async (chatId: string, params: {
         question: string;

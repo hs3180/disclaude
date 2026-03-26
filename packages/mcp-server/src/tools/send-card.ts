@@ -7,7 +7,7 @@
  * @module mcp-server/tools/send-card
  */
 
-import { createLogger, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, type FeishuCard } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
@@ -26,7 +26,8 @@ async function sendCardViaIpc(
   description?: string
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendCard(chatId, card, threadId, description);
+  // Card has been validated by isValidFeishuCard() before this call
+  return await ipcClient.sendCard(chatId, card as FeishuCard, threadId, description);
 }
 
 /**

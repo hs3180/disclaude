@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createChannelCallbacksFactory,
   createDefaultMessageHandler,
+  createChannelApiHandlers,
 } from './channel-handlers.js';
 import type { IChannel, IncomingMessage } from '@disclaude/core';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
@@ -139,7 +140,7 @@ describe('createChannelCallbacksFactory', () => {
   it('sendCard should delegate to channel.sendMessage with card type', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
-    const card = { elements: [] };
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
     await callbacks.sendCard('chat-001', card, 'Test card');
     expect(channel.sendMessage).toHaveBeenCalledWith({
       chatId: 'chat-001',
@@ -153,7 +154,7 @@ describe('createChannelCallbacksFactory', () => {
   it('sendCard should pass threadId as parentMessageId', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
-    await callbacks.sendCard('chat-001', { elements: [] }, 'desc', 'thread-456');
+    await callbacks.sendCard('chat-001', { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] }, 'desc', 'thread-456');
     expect(channel.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: 'thread-456' }),
     );
@@ -452,5 +453,213 @@ describe('createDefaultMessageHandler', () => {
       type: 'text',
       text: '❌ Error: string error',
     });
+  });
+});
+
+// ============================================================================
+// Tests: createChannelApiHandlers
+// ============================================================================
+
+describe('createChannelApiHandlers', () => {
+  let channel: IChannel;
+
+  beforeEach(() => {
+    channel = createMockChannel();
+    vi.clearAllMocks();
+  });
+
+  it('should return handlers with sendMessage, sendCard, and uploadFile', () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    expect(typeof handlers.sendMessage).toBe('function');
+    expect(typeof handlers.sendCard).toBe('function');
+    expect(typeof handlers.uploadFile).toBe('function');
+    // Should NOT include Feishu-specific methods
+    expect((handlers as any).sendInteractive).toBeUndefined();
+    expect((handlers as any).createChat).toBeUndefined();
+  });
+
+  it('sendMessage should delegate to channel.sendMessage with text type', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await handlers.sendMessage('chat-001', 'Hello IPC');
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Hello IPC',
+      threadId: undefined,
+    });
+  });
+
+  it('sendMessage should pass threadId', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await handlers.sendMessage('chat-001', 'Reply', 'thread-123');
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Reply',
+      threadId: 'thread-123',
+    });
+  });
+
+  it('sendCard should delegate to channel.sendMessage with card type', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+    await handlers.sendCard('chat-001', card, 'thread-1', 'My card');
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'card',
+      card,
+      threadId: 'thread-1',
+      description: 'My card',
+    });
+  });
+
+  it('sendCard should work with only required params', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+    await handlers.sendCard('chat-001', card);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'card',
+      card,
+      threadId: undefined,
+      description: undefined,
+    });
+  });
+
+  it('uploadFile should delegate to channel.sendMessage and return file metadata', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const result = await handlers.uploadFile('chat-001', '/path/to/report.pdf');
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'file',
+      filePath: '/path/to/report.pdf',
+      threadId: undefined,
+    });
+    expect(result).toEqual({
+      fileKey: '',
+      fileType: 'file',
+      fileName: 'report.pdf',
+      fileSize: 0,
+    });
+  });
+
+  it('uploadFile should pass threadId', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await handlers.uploadFile('chat-001', '/path/to/file.pdf', 'thread-456');
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'file',
+      filePath: '/path/to/file.pdf',
+      threadId: 'thread-456',
+    });
+  });
+
+  it('uploadFile should extract filename from path with no slashes', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const result = await handlers.uploadFile('chat-001', 'simple-file.txt');
+    expect(result.fileName).toBe('simple-file.txt');
+  });
+
+  it('uploadFile should log debug about incomplete metadata', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Feishu',
+    });
+    await handlers.uploadFile('chat-001', '/path/to/doc.pdf');
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Feishu' }),
+      'uploadFile: using channel.sendMessage — file metadata may be incomplete'
+    );
+  });
+
+  it('should be spreadable with channel-specific handlers', async () => {
+    const baseHandlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    // Simulate Feishu pattern: spread base + add specific handlers
+    const fullHandlers = {
+      ...baseHandlers,
+      sendInteractive: vi.fn().mockResolvedValue({ messageId: 'synth-123' }),
+      createChat: vi.fn().mockResolvedValue({ chatId: 'new-chat', name: 'New' }),
+    };
+
+    // Base handler still works
+    await fullHandlers.sendMessage('chat-001', 'test');
+    expect(channel.sendMessage).toHaveBeenCalled();
+
+    // Specific handler also works
+    const interactiveResult = await fullHandlers.sendInteractive('chat-001', {
+      question: 'Pick one',
+      options: [{ text: 'A', value: 'a' }],
+    });
+    expect(interactiveResult.messageId).toBe('synth-123');
+  });
+
+  it('sendMessage should log error and re-throw on channel failure', async () => {
+    const error = new Error('Network error');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await expect(handlers.sendMessage('chat-001', 'fail')).rejects.toThrow('Network error');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendMessage' }),
+      'IPC handler failed',
+    );
+  });
+
+  it('sendCard should log error and re-throw on channel failure', async () => {
+    const error = new Error('Card send failed');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+    await expect(handlers.sendCard('chat-001', card)).rejects.toThrow('Card send failed');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendCard' }),
+      'IPC handler failed',
+    );
+  });
+
+  it('uploadFile should log error and re-throw on channel failure', async () => {
+    const error = new Error('File send failed');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await expect(handlers.uploadFile('chat-001', '/path/to/file.pdf')).rejects.toThrow('File send failed');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'uploadFile' }),
+      'IPC handler failed',
+    );
   });
 });

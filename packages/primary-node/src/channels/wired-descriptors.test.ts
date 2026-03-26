@@ -254,7 +254,7 @@ describe('WiredChannelDescriptors', () => {
       const callbacksFactory = WECHAT_WIRED_DESCRIPTOR.createCallbacks(mockChannel, context);
       const callbacks = callbacksFactory('test-chat-id');
 
-      const card = { elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'test' } }] };
+      const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'test' } }] };
       await callbacks.sendCard('test-chat-id', card, 'card description');
 
       // The shared helper sends card type - the WeChat channel's doSendMessage
