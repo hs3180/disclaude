@@ -121,6 +121,25 @@ describe('createControlHandler', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('Unknown command');
   });
+
+  it('should return failure for switch-node (valid type, no handler yet)', async () => {
+    const context = createMockContext();
+    const handler = createControlHandler(context);
+
+    // switch-node is a valid ControlCommandType (Primary Node only),
+    // but no handler is registered yet — backend switchChatNode() exists
+    const command: ControlCommand = {
+      type: 'switch-node' as ControlCommandType,
+      chatId: 'test-chat',
+      targetNodeId: 'target-node-id',
+    };
+
+    const result = await handler(command);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBeUndefined();
+    expect(result.error).toContain('Unknown command');
+  });
 });
 
 describe('getHandler', () => {
@@ -131,6 +150,8 @@ describe('getHandler', () => {
     expect(getHandler('feedback' as ControlCommandType)).toBeUndefined();
     expect(getHandler('site-miner' as ControlCommandType)).toBeUndefined();
     expect(getHandler('skill-creator' as ControlCommandType)).toBeUndefined();
+    // switch-node is a valid type but handler not yet implemented
+    expect(getHandler('switch-node' as ControlCommandType)).toBeUndefined();
   });
 
   it('should return handler for all registered commands', async () => {
