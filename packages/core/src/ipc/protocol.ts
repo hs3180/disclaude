@@ -8,6 +8,7 @@
 
 import { tmpdir } from 'os';
 import { join } from 'path';
+import type { FeishuCard } from '../types/platform.js';
 
 /**
  * IPC request types.
@@ -37,7 +38,7 @@ export interface IpcRequestPayloads {
   };
   sendCard: {
     chatId: string;
-    card: Record<string, unknown>;
+    card: FeishuCard;
     threadId?: string;
     description?: string;
   };
