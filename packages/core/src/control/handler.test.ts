@@ -140,6 +140,27 @@ describe('createControlHandler', () => {
     expect(result.message).toBeUndefined();
     expect(result.error).toContain('Unknown command');
   });
+
+  it('should catch errors from failed command execution and return Command failed', async () => {
+    const context = createMockContext();
+    // Make agentPool.reset throw to trigger the catch block in createControlHandler
+    context.agentPool.reset.mockImplementation(() => {
+      throw new Error('Agent pool unavailable');
+    });
+    const handler = createControlHandler(context);
+
+    const command: ControlCommand = {
+      type: 'reset' as ControlCommandType,
+      chatId: 'test-chat',
+    };
+
+    const result = await handler(command);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBeUndefined();
+    expect(result.error).toContain('Command failed');
+    expect(result.error).toContain('Agent pool unavailable');
+  });
 });
 
 describe('getHandler', () => {
