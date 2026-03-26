@@ -54,4 +54,5 @@ export { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 export {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
+  WECHAT_WIRED_DESCRIPTOR,
 } from './wired-descriptors.js';

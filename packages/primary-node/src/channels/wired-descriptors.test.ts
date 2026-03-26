@@ -5,6 +5,7 @@
  *
  * @see Issue #1594 - Channel Lifecycle Manager
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,7 +15,9 @@ import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
+  BUILTIN_WIRED_DESCRIPTORS,
 } from './wired-descriptors.js';
+import { ChannelLifecycleManager } from '../channel-lifecycle-manager.js';
 import type {
   ChannelSetupContext,
   WiredContext,
@@ -325,6 +328,85 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('WeChat dynamic registration (Issue #1638)', () => {
+    it('should NOT be in BUILTIN_WIRED_DESCRIPTORS (dynamic registration only)', () => {
+      const types = BUILTIN_WIRED_DESCRIPTORS.map((d) => d.type);
+      expect(types).not.toContain('wechat');
+      expect(types).toEqual(expect.arrayContaining(['rest', 'feishu']));
+    });
+
+    it('should be creatable via createAndWire() without config-driven registration', async () => {
+      const { ChannelManager } = await import('../channel-manager.js');
+
+      const channelManager = new ChannelManager();
+      const context = createMockContext();
+      const lifecycleManager = new ChannelLifecycleManager(channelManager, context);
+
+      // WeChat should NOT be registered for config-driven creation
+      expect(lifecycleManager.hasWiredDescriptor('wechat')).toBe(false);
+
+      // But we can still create it via direct descriptor registration
+      lifecycleManager.registerWiredDescriptor(WECHAT_WIRED_DESCRIPTOR);
+      expect(lifecycleManager.hasWiredDescriptor('wechat')).toBe(true);
+
+      // Create and wire the channel dynamically
+      const channel = await lifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, {
+        baseUrl: 'https://ilinkai.weixin.qq.com',
+        token: 'test-token',
+        routeTag: 'test-route',
+      } as any);
+
+      expect(channel).toBeDefined();
+      expect(channel.id).toBeDefined();
+    });
+
+    it('should support start/stop lifecycle without config file', async () => {
+      const { ChannelManager } = await import('../channel-manager.js');
+
+      const channelManager = new ChannelManager();
+      const context = createMockContext();
+      const lifecycleManager = new ChannelLifecycleManager(channelManager, context);
+
+      // Register WeChat descriptor dynamically
+      lifecycleManager.registerWiredDescriptor(WECHAT_WIRED_DESCRIPTOR);
+
+      // Create and wire the channel — use a mock factory to avoid real network calls
+      const mockWechatChannel = createMockChannel('wechat-dynamic', 'WeChat Dynamic');
+      const originalFactory = WECHAT_WIRED_DESCRIPTOR.factory;
+      vi.spyOn(WECHAT_WIRED_DESCRIPTOR, 'factory').mockReturnValue(mockWechatChannel as any);
+
+      await lifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, {
+        baseUrl: 'https://ilinkai.weixin.qq.com',
+      } as any);
+
+      // Start all channels — should include the dynamically registered WeChat
+      await lifecycleManager.startAll();
+      expect(mockWechatChannel.start).toHaveBeenCalledTimes(1);
+
+      // Stop all channels — should clean up properly
+      await lifecycleManager.stopAll();
+      expect(mockWechatChannel.stop).toHaveBeenCalledTimes(1);
+
+      // Restore original factory
+      vi.restoreAllMocks();
+    });
+
+    it('should fail createAndWireByType("wechat") when not pre-registered', async () => {
+      const { ChannelManager } = await import('../channel-manager.js');
+
+      const channelManager = new ChannelManager();
+      const context = createMockContext();
+      const lifecycleManager = new ChannelLifecycleManager(channelManager, context);
+
+      // Without explicit registration, createAndWireByType should fail
+      await expect(
+        lifecycleManager.createAndWireByType('wechat', {
+          baseUrl: 'https://ilinkai.weixin.qq.com',
+        } as any)
+      ).rejects.toThrow(/Unknown channel type "wechat"/);
     });
   });
 });

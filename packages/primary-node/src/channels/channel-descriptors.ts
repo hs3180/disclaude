@@ -55,6 +55,11 @@ export const FEISHU_CHANNEL_DESCRIPTOR: ChannelDescriptor<FeishuChannelConfig> =
 
 /**
  * WeChat Channel descriptor.
+ *
+ * @deprecated Removed from BUILTIN_CHANNEL_DESCRIPTORS per Issue #1638:
+ * WeChat only supports dynamic registration, not config.yaml static configuration.
+ * Use WECHAT_WIRED_DESCRIPTOR from wired-descriptors.ts for dynamic registration.
+ * Kept for backward compatibility only — prefer WiredChannelDescriptor.
  */
 export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> = {
   type: 'wechat',
@@ -74,6 +79,10 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
 /**
  * All built-in channel descriptors for bulk registration.
  *
+ * Note: WeChat is intentionally NOT included — it only supports dynamic
+ * registration at runtime (Issue #1638), not config-driven creation.
+ * Use WECHAT_WIRED_DESCRIPTOR from wired-descriptors.ts for dynamic registration.
+ *
  * @example
  * ```typescript
  * import { ChannelRegistry } from '@disclaude/core';
@@ -88,5 +97,4 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
 export const BUILTIN_CHANNEL_DESCRIPTORS: ChannelDescriptor[] = [
   REST_CHANNEL_DESCRIPTOR,
   FEISHU_CHANNEL_DESCRIPTOR,
-  WECHAT_CHANNEL_DESCRIPTOR,
 ];
