@@ -95,6 +95,42 @@ describe('CardActionRouter', () => {
     });
   });
 
+  describe('maxAge expiry', () => {
+    it('should return false when context has expired', async () => {
+      // Create router with very short maxAge (1ms)
+      const expiredRouter = new CardActionRouter({
+        sendToRemoteNode,
+        isNodeConnected,
+        maxAge: 1,
+      });
+
+      expiredRouter.registerChatContext('chat-expired', 'node-1', true);
+      // Wait for entry to expire
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const result = await expiredRouter.routeCardAction(baseMessage);
+      expect(result).toBe(false);
+      expect(sendToRemoteNode).not.toHaveBeenCalled();
+
+      expiredRouter.dispose();
+    });
+
+    it('should route to different nodes for different chatIds', async () => {
+      router.registerChatContext('chat-a', 'node-a', true);
+      router.registerChatContext('chat-b', 'node-b', true);
+
+      const messageA: CardActionMessage = { ...baseMessage, chatId: 'chat-a' };
+      const messageB: CardActionMessage = { ...baseMessage, chatId: 'chat-b' };
+
+      await router.routeCardAction(messageA);
+      await router.routeCardAction(messageB);
+
+      expect(sendToRemoteNode).toHaveBeenCalledTimes(2);
+      expect(sendToRemoteNode).toHaveBeenCalledWith('node-a', messageA);
+      expect(sendToRemoteNode).toHaveBeenCalledWith('node-b', messageB);
+    });
+  });
+
   describe('Issue #1629: resolvedPrompt passthrough', () => {
     it('should pass resolvedPrompt through to remote node', async () => {
       router.registerChatContext('chat-1', 'node-1', true);
@@ -138,6 +174,21 @@ describe('CardActionRouter', () => {
 
       await router.routeCardAction(fullMessage);
       expect(sendToRemoteNode).toHaveBeenCalledWith('node-1', fullMessage);
+    });
+
+    it('should pass empty string resolvedPrompt as-is to remote node', async () => {
+      router.registerChatContext('chat-1', 'node-1', true);
+
+      const messageWithEmptyPrompt: CardActionMessage = {
+        ...baseMessage,
+        resolvedPrompt: '',
+      };
+
+      const result = await router.routeCardAction(messageWithEmptyPrompt);
+      expect(result).toBe(true);
+      const sentMessage = sendToRemoteNode.mock.calls[0][1] as CardActionMessage;
+      // Empty string is truthy for the field but falsy for || fallback in Worker Node
+      expect(sentMessage.resolvedPrompt).toBe('');
     });
   });
 });
