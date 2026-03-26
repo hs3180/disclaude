@@ -111,6 +111,7 @@ export type ControlCommandType =
   | 'status'
   | 'help'
   | 'list-nodes'
+  | 'switch-node' // Primary Node only — not forwarded via WebSocket
   // Group management commands (Issue #486)
   | 'create-group'
   | 'add-group-member'
@@ -135,6 +136,9 @@ export interface ControlCommand {
 
   /** Additional command data */
   data?: Record<string, unknown>;
+
+  /** Target node ID for switch-node command */
+  targetNodeId?: string;
 }
 
 /**
