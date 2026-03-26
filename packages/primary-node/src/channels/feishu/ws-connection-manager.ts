@@ -5,67 +5,56 @@
  * the SDK's pingLoop only sends Pings without checking Pong responses, leaving
  * readyState as OPEN with no messages flowing.
  *
- * Addresses Issue #1437: Adds a custom ping loop with shorter interval (5s vs
- * SDK's 120s) to reduce dead connection detection from ~5 minutes to ~15 seconds.
+ * Simplified by Issue #1666: Removed the custom ping loop (Issue #1437) and
+ * SDK internal WebSocket interception (Issue #1504) since the Lark WS Server
+ * does NOT respond to client-sent application-layer ping messages. The custom
+ * ping loop was completely ineffective.
  *
- * This module wraps the Feishu SDK's WSClient lifecycle with:
- * - **Pong detection**: Accesses the SDK's internal `wsConfig` to obtain the raw
- *   `ws` WebSocket instance after `WSClient.start()` completes, then attaches a
- *   `message` listener for transport-level Pong frame detection.
- * - **Custom ping loop**: Sends application-layer ping frames at 5s intervals via
- *   the SDK's `sendMessage()` method, independent of the SDK's own pingLoop.
- * - **Auto-reconnect**: Exponential backoff with jitter when dead connections are detected
- * - **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped)
- * - **Observability**: Emits events and logs for connection lifecycle monitoring,
- *   including Pong round-trip time and Pong-specific metrics
+ * This module now uses a simple passive message listening approach:
+ * - **Passive monitoring**: Any message from the server (SDK pong, user messages,
+ *   data frames) resets the liveness timer via `recordMessageReceived()`.
+ * - **Auto-reconnect**: Exponential backoff with jitter when dead connections are detected.
+ * - **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped).
+ * - **Observability**: Emits events and logs for connection lifecycle monitoring.
  *
- * ### How Pong detection works
+ * ### How it works
  *
- * The Feishu SDK's WSClient uses `require('ws')` (the npm `ws` package) internally,
- * NOT `globalThis.WebSocket`. This means monkey-patching `globalThis.WebSocket` has
- * no effect — the SDK creates its own WebSocket instance from the `ws` module.
+ * 1. **Start**: Creates a WSClient and calls `start()`.
  *
- * After `WSClient.start()` completes, the SDK stores the WebSocket instance in
- * its internal `wsConfig.wsInstance` field (accessible at runtime despite being
- * declared `private` in TypeScript). We read this instance via
- * `wsClient.wsConfig.getWSInstance()` and attach our own `message` listener.
+ * 2. **Health check**: Every `healthCheckIntervalMs` (30s), checks
+ *    `lastMessageReceivedAt`. If no message received within
+ *    `deadConnectionTimeoutMs` (130s), the connection is deemed dead.
  *
- * Every `message` event on the raw `ws` WebSocket — including SDK application-level
- * Pong control frames — triggers our liveness timer reset. This is the primary
- * signal for dead connection detection, even when no user messages arrive.
+ * 3. **Message tracking**: `recordMessageReceived()` is called by the
+ *    FeishuChannel event handler whenever any server message arrives.
+ *    This captures SDK pong responses, user messages, and any other data.
  *
- * ### How the custom ping loop works (Issue #1437)
+ * 4. **Dead connection → reconnect**: Force-closes the WSClient, then
+ *    creates a new one with exponentially increasing delays.
  *
- * The SDK's built-in pingLoop runs at 120s intervals, which is too slow for
- * timely dead connection detection. This manager adds an independent ping loop
- * that sends the same application-layer ping frame format at 5s intervals:
+ * 5. **Reconnect flow**: On each failure, delay doubles (capped at `maxDelayMs`)
+ *    with random jitter. If `maxAttempts` is reached, transitions to 'stopped'.
  *
- * ```
- * { headers: [{ key: "type", value: "ping" }], service: serviceId, method: 0, SeqID: 0, LogID: 0 }
- * ```
+ * ### Why not intercept SDK internals?
  *
- * The SDK's `sendMessage()` method is used to encode and send the frame via
- * protobuf. Both the SDK's pingLoop and our custom loop run concurrently —
- * the server responds to each ping with a Pong, and our Pong detection
- * captures all of them.
- *
- * If internal WebSocket access fails (e.g., SDK internal changes), the manager
- * falls back to `recordMessageReceived()` calls from the FeishuChannel event handler.
- *
- * Offline message queue is managed at the FeishuChannel level.
+ * The Lark WS Server does NOT respond to client-sent application-layer ping
+ * messages. The custom ping loop (Issue #1437) and SDK WebSocket interception
+ * (Issue #1504) were built around the assumption that we could detect pong
+ * responses to our own pings, but this was incorrect. The SDK's own pingLoop
+ * (~120s) handles keepalive, and its pong responses flow through the normal
+ * event handler path — captured by `recordMessageReceived()`.
  *
  * Usage:
  * ```typescript
  * const manager = new WsConnectionManager({ appId, appSecret });
  * manager.on('stateChange', (state) => logger.info({ state }, 'Connection state'));
- * manager.on('pong', (rttMs) => logger.debug({ rttMs }, 'Pong received'));
  * await manager.start(eventDispatcher);
  * await manager.stop();
  * ```
  *
  * @module channels/feishu/ws-connection-manager
  * @see https://github.com/hs3180/disclaude/issues/1351
- * @see https://github.com/hs3180/disclaude/issues/1437
+ * @see https://github.com/hs3180/disclaude/issues/1666
  */
 
 import { EventEmitter } from 'events';
@@ -88,12 +77,8 @@ export type WsConnectionState = 'connected' | 'reconnecting' | 'stopped';
 export interface WsConnectionManagerEvents {
   /** Connection state changed */
   stateChange: [state: WsConnectionState];
-  /** Any server message received (including Pong) */
+  /** Any server message received (including SDK pong) */
   heartbeat: [lastReceived: number];
-  /** Pong control frame received from server */
-  pong: [rttMs: number];
-  /** Custom ping sent (Issue #1437) */
-  ping: [intervalMs: number];
   /** Dead connection detected, initiating reconnect */
   deadConnection: [elapsedMs: number];
   /** Reconnect attempt succeeded */
@@ -136,8 +121,6 @@ export interface WsConnectionManagerConfig {
   reconnectMaxDelayMs?: number;
   /** Override reconnect max attempts (-1 = infinite) */
   reconnectMaxAttempts?: number;
-  /** Override custom ping interval (ms). Set to 0 to disable custom ping loop. */
-  customPingIntervalMs?: number;
 }
 
 /**
@@ -185,103 +168,41 @@ function createDefaultSdkLogger(): {
 }
 
 /**
- * Detect if a raw WebSocket message buffer contains a Feishu Pong control frame.
- *
- * The Feishu SDK uses a custom protobuf-like binary protocol. Pong frames have:
- * - `method` field = 0 (control frame)
- * - `headers` containing `{ key: "type", value: "pong" }`
- *
- * Since the SDK sends Ping every ~30s and the server responds with Pong,
- * detecting Pong frames provides a reliable transport-level liveness signal
- * independent of user message activity.
- *
- * Implementation: scans the binary buffer for the UTF-8 string "pong"
- * which appears as a protobuf string field value within the headers.
- * This is simpler and more robust than full protobuf decoding.
- *
- * @param data - Raw WebSocket message data (Buffer, ArrayBuffer, or Buffer-like)
- * @returns `true` if the buffer likely contains a Pong control frame
- */
-export function isPongFrame(data: Buffer | ArrayBuffer | Uint8Array): boolean {
-  let buf: Uint8Array;
-  if (Buffer.isBuffer(data)) {
-    buf = data;
-  } else if (data instanceof ArrayBuffer) {
-    buf = new Uint8Array(data);
-  } else if (data instanceof Uint8Array) {
-    buf = data;
-  } else {
-    return false;
-  }
-
-  // Search for the bytes representing protobuf-encoded string "pong"
-  // In protobuf, a string field is: length-varint + utf8-bytes
-  // "pong" = 4 bytes, so we look for \x04 (varint 4) followed by "pong"
-  const pongMarker = [0x04, 0x70, 0x6f, 0x6e, 0x67]; // \x04pong
-  for (let i = 0; i <= buf.length - pongMarker.length; i++) {
-    let match = true;
-    for (let j = 0; j < pongMarker.length; j++) {
-      if (buf[i + j] !== pongMarker[j]) {
-        match = false;
-        break;
-      }
-    }
-    if (match) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
  * WebSocket Connection Manager.
  *
  * Wraps the Feishu SDK's WSClient to add zombie connection detection and
- * exponential-backoff reconnection, with **transport-level Pong detection**
- * via SDK internal WebSocket access.
+ * exponential-backoff reconnection via passive message listening.
  *
  * ### How it works
  *
- * 1. **Start**: Creates a WSClient and calls `start()`. After the SDK's
- *    internal WebSocket connection is established, accesses the SDK's private
- *    `wsConfig` to obtain the raw `ws` WebSocket instance and attaches our
- *    `message` listener for Pong frame detection.
+ * 1. **Start**: Creates a WSClient and calls `start()`.
  *
- * 2. **Pong detection**: The SDK's `pingLoop` sends application-level Ping
- *    frames every ~120s (configurable by server). The server responds with
- *    Pong control frames. Our listener on the raw WebSocket detects these
- *    Pong frames and records `lastPongAt` + round-trip time. This is the
- *    primary liveness signal — even if no user messages arrive, Pong responses
- *    confirm the connection is alive.
+ * 2. **Health check**: Every `healthCheckIntervalMs` (30s), checks
+ *    `lastMessageReceivedAt`. If no message received within
+ *    `deadConnectionTimeoutMs` (130s), the connection is deemed dead.
  *
- * 3. **Health check**: Every `healthCheckIntervalMs`, checks `lastPongAt`.
- *    If no Pong received within `deadConnectionTimeoutMs`, the connection
- *    is deemed dead (zombie). Falls back to checking `lastMessageReceivedAt`
- *    (from `recordMessageReceived()`) if Pong tracking is unavailable.
+ * 3. **Message tracking**: `recordMessageReceived()` is called by the
+ *    FeishuChannel event handler whenever any server message arrives.
  *
  * 4. **Dead connection → reconnect**: Force-closes the WSClient, then
  *    creates a new one with exponentially increasing delays.
  *
- * 5. **Reconnect flow**: On each failure, delay doubles (capped at `maxDelayMs`)
- *    with random jitter. If `maxAttempts` is reached, transitions to 'stopped'.
+ * ### Simplified architecture (Issue #1666)
  *
- * ### Why not monkey-patch globalThis.WebSocket?
+ * ```
+ * 连接建立 → 启动 health check 定时器（每 30s）
+ *     ↓
+ * 每次收到 server 消息 → 更新 lastMessageReceivedAt
+ *     ↓
+ * health check 检测: elapsed > 130s → 触发重连
+ * ```
  *
- * The Feishu SDK uses `require('ws')` (the npm `ws` package) internally,
- * resolved as a local CommonJS variable, NOT `globalThis.WebSocket`.
- * Therefore, monkey-patching `globalThis.WebSocket` has no effect — the SDK
- * creates WebSocket instances directly from the `ws` module import.
- *
- * ### Graceful degradation
- *
- * If internal WebSocket access fails (e.g., SDK internal API changes),
- * the manager falls back to relying on `recordMessageReceived()` calls from
- * FeishuChannel event handlers. This is less reliable for idle bots but still functional.
- *
- * If the custom ping loop cannot be started (e.g., `sendMessage()` unavailable),
- * health monitoring still works using the SDK's own 120s pingLoop Pong responses.
- * The dead connection detection will just be slower in that case.
+ * No longer requires:
+ * - ❌ Intercepting SDK internal WebSocket instance
+ * - ❌ Parsing protobuf binary pong frames
+ * - ❌ Custom ping loop
+ * - ❌ RTT calculation
+ * - ❌ SDK internal API dependencies (`wsConfig.getWSInstance()` etc.)
  */
 export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents> {
   private readonly config: WsConnectionManagerConfig;
@@ -295,26 +216,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   // State machine
   private _state: WsConnectionState = 'stopped';
 
-  // Health monitoring — transport level (Pong)
-  private lastPongAt: number = 0;
-  private pongCount: number = 0;
-  private lastPingSentAt: number = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private interceptedWs?: { instance: any; onMessageBound: (...args: unknown[]) => void };
-
-  // Custom ping loop (Issue #1437)
-  private customPingTimer?: ReturnType<typeof setInterval>;
-  private customPingCount: number = 0;
-  private customPingIntervalMs: number;
-
-  // Health monitoring — application level (fallback)
+  // Health monitoring — passive message listening
   private lastMessageReceivedAt: number = 0;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly deadConnectionTimeoutMs: number;
   private readonly healthCheckIntervalMs: number;
-
-  // WS instance polling (Issue #1504)
-  private pollTimerId?: ReturnType<typeof setTimeout>;
 
   // Reconnect state
   private reconnectAttempt: number = 0;
@@ -342,14 +248,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       ?? WS_HEALTH.RECONNECT.MAX_DELAY_MS;
     this.reconnectMaxAttempts = config.reconnectMaxAttempts
       ?? WS_HEALTH.RECONNECT.MAX_ATTEMPTS;
-    this.customPingIntervalMs = config.customPingIntervalMs
-      ?? WS_HEALTH.CUSTOM_PING_INTERVAL_MS;
 
     logger.info(
       {
         deadConnectionTimeoutMs: this.deadConnectionTimeoutMs,
         healthCheckIntervalMs: this.healthCheckIntervalMs,
-        customPingIntervalMs: this.customPingIntervalMs,
         reconnectBaseDelayMs: this.reconnectBaseDelayMs,
         reconnectMaxDelayMs: this.reconnectMaxDelayMs,
         reconnectMaxAttempts: this.reconnectMaxAttempts,
@@ -372,41 +275,24 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    */
   getMetrics(): {
     state: WsConnectionState;
-    lastPongAt: number;
     lastMessageReceivedAt: number;
-    timeSinceLastPongMs: number;
     timeSinceLastMessageMs: number;
-    pongCount: number;
-    customPingCount: number;
-    customPingIntervalMs: number;
     reconnectAttempt: number;
     isConnected: boolean;
-    hasWsInterception: boolean;
   } {
     return {
       state: this._state,
-      lastPongAt: this.lastPongAt,
       lastMessageReceivedAt: this.lastMessageReceivedAt,
-      timeSinceLastPongMs: this.lastPongAt > 0
-        ? Date.now() - this.lastPongAt
-        : 0,
       timeSinceLastMessageMs: this.lastMessageReceivedAt > 0
         ? Date.now() - this.lastMessageReceivedAt
         : 0,
-      pongCount: this.pongCount,
-      customPingCount: this.customPingCount,
-      customPingIntervalMs: this.customPingIntervalMs,
       reconnectAttempt: this.reconnectAttempt,
       isConnected: this._state === 'connected',
-      hasWsInterception: !!this.interceptedWs,
     };
   }
 
   /**
    * Start the WebSocket connection with health monitoring.
-   *
-   * After WSClient.start() completes, accesses the SDK's internal wsConfig
-   * to obtain the raw `ws` WebSocket instance for Pong detection.
    *
    * @param eventDispatcher - Feishu SDK EventDispatcher for handling events
    */
@@ -431,11 +317,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     logger.info('WsConnectionManager stopping');
 
     this.stopHealthCheck();
-    this.stopCustomPingLoop();
-    this.clearPollTimer();
     this.clearReconnectTimer();
     this.closeClient();
-    this.detachWsListener();
 
     this.transitionTo('stopped');
     this.isReconnecting = false;
@@ -445,14 +328,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   }
 
   /**
-   * Record that a message was received from the server (application level).
+   * Record that a message was received from the server.
    *
-   * This is a **supplementary** liveness signal used as fallback when
-   * transport-level Pong detection is unavailable (e.g., SDK internal
-   * WebSocket access failed).
-   *
-   * The primary liveness signal comes from intercepted WebSocket `message`
-   * events which include Pong control frames.
+   * This is the sole liveness signal. Called by FeishuChannel event handlers
+   * for all incoming messages — including SDK pong responses, user messages,
+   * and any other server-initiated data.
    */
   recordMessageReceived(): void {
     this.lastMessageReceivedAt = Date.now();
@@ -461,365 +341,17 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   /**
    * Check if the connection is currently healthy.
-   *
-   * Prefers transport-level Pong detection when available.
-   * Falls back to application-level message tracking.
    */
   isHealthy(): boolean {
     if (this._state !== 'connected') {
       return false;
     }
 
-    // Primary: check Pong-based liveness
-    if (this.lastPongAt > 0) {
-      const elapsed = Date.now() - this.lastPongAt;
-      return elapsed < this.deadConnectionTimeoutMs;
-    }
-
-    // Fallback: check application-level message tracking
     if (this.lastMessageReceivedAt === 0) {
-      return true; // Grace period
+      return true; // Grace period — just connected
     }
     const elapsed = Date.now() - this.lastMessageReceivedAt;
     return elapsed < this.deadConnectionTimeoutMs;
-  }
-
-  // ─── WebSocket interception (Pong detection) ──────────────────────────
-
-  /**
-   * Access the SDK's internal WebSocket instance and attach our Pong listener.
-   *
-   * The Feishu SDK's WSClient uses `require('ws')` internally (NOT globalThis.WebSocket),
-   * so monkey-patching globalThis.WebSocket has no effect. Instead, after WSClient.start()
-   * completes, we access the SDK's private `wsConfig` to get the raw `ws` WebSocket
-   * instance via `wsClient.wsConfig.getWSInstance()`.
-   *
-   * This is safe because:
-   * - The SDK stores the instance in `wsConfig.wsInstance` after connect()
-   * - The `ws` package's `.on('message', ...)` is addititive (doesn't replace SDK's handler)
-   * - TypeScript `private` is only a compile-time check; at runtime the field is accessible
-   *
-   * @param wsClient - The WSClient instance (typed as `any` to access private fields)
-   * @param preObtainedInstance - Optional pre-obtained WS instance to avoid TOCTOU race
-   *   (Issue #1504). When provided, this instance is used directly instead of re-querying
-   *   `getWSInstance()`, eliminating the window where the SDK could reset the instance
-   *   between poll and interception.
-   * @returns `true` if interception succeeded
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private interceptWsFromClient(wsClient: any, preObtainedInstance?: any): boolean {
-    try {
-      // Access SDK's internal wsConfig to get the raw `ws` WebSocket instance
-      // SDK code: this.wsConfig.setWSInstance(wsInstance) in connect()
-      // Use preObtainedInstance if provided to avoid TOCTOU race (Issue #1504)
-      const wsInstance = preObtainedInstance ?? wsClient.wsConfig?.getWSInstance?.();
-      if (!wsInstance) {
-        logger.debug('SDK wsConfig.getWSInstance() returned null — connection may not be ready');
-        return false;
-      }
-
-      // The `ws` package's .on() is additive — it doesn't replace the SDK's own handler
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const onMessageBound = (data: any) => {
-        this.onWsMessage(data);
-      };
-
-      wsInstance.on('message', onMessageBound);
-      this.interceptedWs = { instance: wsInstance, onMessageBound };
-
-      logger.debug('Successfully intercepted SDK WebSocket via wsConfig for Pong detection');
-      return true;
-    } catch (error) {
-      logger.warn({ err: error }, 'Failed to intercept SDK WebSocket — falling back to application-level detection');
-      return false;
-    }
-  }
-
-  /**
-   * Handler for intercepted WebSocket message events.
-   *
-   * Called for EVERY message on the raw `ws` WebSocket, including:
-   * - SDK application-level Pong responses (control frames)
-   * - User messages (data frames)
-   * - Any other server-initiated messages
-   *
-   * The `ws` library passes raw data as the first argument (Buffer/ArrayBuffer),
-   * unlike the browser WebSocket which wraps it in a MessageEvent.
-   *
-   * Detects Pong frames by scanning the binary data for the protobuf-encoded
-   * "pong" marker and records timing for health monitoring.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private onWsMessage(data: any): void {
-    const now = Date.now();
-
-    // Update application-level liveness (covers all message types)
-    this.lastMessageReceivedAt = now;
-
-    // Detect Pong control frames specifically
-    if (data && isPongFrame(data)) {
-      this.pongCount++;
-      this.lastPongAt = now;
-
-      // Estimate round-trip time from last Ping
-      let rttMs = -1;
-      if (this.lastPingSentAt > 0) {
-        rttMs = now - this.lastPingSentAt;
-        this.lastPingSentAt = 0; // Reset after pairing
-      }
-
-      logger.debug(
-        { pongCount: this.pongCount, rttMs, elapsedSinceConnect: now - (this.lastPongAt - rttMs) },
-        'Pong received from server',
-      );
-
-      this.emit('pong', rttMs);
-    }
-
-    this.emit('heartbeat', now);
-  }
-
-  /**
-   * Detach our message listener from the intercepted WebSocket.
-   */
-  private detachWsListener(): void {
-    if (this.interceptedWs) {
-      try {
-        // The `ws` package uses .off() or .removeListener() (not removeEventListener)
-        this.interceptedWs.instance.off('message', this.interceptedWs.onMessageBound);
-        logger.debug('Detached WebSocket Pong listener');
-      } catch (error) {
-        logger.debug({ err: error }, 'Error detaching WebSocket listener');
-      }
-      this.interceptedWs = undefined;
-    }
-  }
-
-  /**
-   * Background poll for WS instance availability after `start()` (Issue #1504).
-   *
-   * WSClient.start() is fire-and-forget — it resolves before the SDK finishes
-   * establishing the internal WebSocket connection (~300ms). This method polls
-   * `getWSInstance()` at short intervals until a non-null instance is available,
-   * then passes it **directly** to `interceptWsFromClient()` via the
-   * `preObtainedInstance` parameter (TOCTOU avoidance).
-   *
-   * Key design decisions:
-   * - **Non-blocking**: `connectFresh()` returns immediately in fallback mode;
-   *   Pong detection upgrades to active asynchronously once the instance appears.
-   * - **TOCTOU avoidance**: The polled instance is passed directly to
-   *   `interceptWsFromClient()` instead of re-querying `getWSInstance()`.
-   * - **Resilient**: If interception fails for a transient reason, polling
-   *   continues instead of giving up.
-   * - **Clean shutdown**: The poll timer is tracked via `pollTimerId` and
-   *   cleared in `stop()` to prevent post-stop callbacks.
-   */
-  private pollForWsInstance(): void {
-    const startTime = Date.now();
-
-    const poll = (): void => {
-      // Guard: don't poll if manager has been stopped
-      if (this._state === 'stopped') {
-        return;
-      }
-
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const wsConfig = (this.wsClient as any)?.wsConfig;
-        if (!wsConfig || typeof wsConfig.getWSInstance !== 'function') {
-          logger.debug('wsConfig.getWSInstance not available — stopping WS instance poll');
-          return;
-        }
-
-        const instance = wsConfig.getWSInstance();
-
-        let interceptionFailed = false;
-
-        if (instance) {
-          // Pass the instance directly to avoid TOCTOU race (Issue #1504)
-          const success = this.interceptWsFromClient(this.wsClient, instance);
-          if (success) {
-            logger.debug(
-              { waitTimeMs: Date.now() - startTime },
-              'WS instance obtained via polling — Pong detection active',
-            );
-            return;
-          }
-
-          // Instance available but interception failed (transient issue).
-          // Continue polling instead of giving up (Issue #1504 review feedback).
-          interceptionFailed = true;
-          logger.debug(
-            { waitTimeMs: Date.now() - startTime },
-            'SDK WebSocket instance available but interception failed, will retry',
-          );
-        }
-
-        // Check timeout
-        if (Date.now() - startTime >= WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS) {
-          if (interceptionFailed) {
-            logger.warn(
-              { waitTimeMs: Date.now() - startTime },
-              'WS instance available but interception kept failing — staying in fallback mode',
-            );
-          } else {
-            logger.warn(
-              { waitTimeMs: Date.now() - startTime },
-              'WS instance poll timed out — staying in fallback mode',
-            );
-          }
-          return;
-        }
-
-        // Schedule next poll
-        this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
-        if (this.pollTimerId.unref) {
-          this.pollTimerId.unref();
-        }
-      } catch (error) {
-        logger.warn({ err: error }, 'Error during WS instance polling');
-        // Continue polling if manager is still active and timeout not reached
-        // Note: cast needed because TS narrows _state after the 'stopped' guard above
-        const currentState = this._state as WsConnectionState;
-        if (currentState !== 'stopped' && Date.now() - startTime < WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS) {
-          this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
-          if (this.pollTimerId.unref) {
-            this.pollTimerId.unref();
-          }
-        }
-      }
-    };
-
-    // Start polling after a short initial delay
-    this.pollTimerId = setTimeout(poll, WS_HEALTH.INSTANCE_POLL.INTERVAL_MS);
-    if (this.pollTimerId.unref) {
-      this.pollTimerId.unref();
-    }
-
-    logger.debug(
-      { intervalMs: WS_HEALTH.INSTANCE_POLL.INTERVAL_MS, timeoutMs: WS_HEALTH.INSTANCE_POLL.TIMEOUT_MS },
-      'Started background WS instance polling',
-    );
-  }
-
-  /**
-   * Clear the WS instance poll timer.
-   *
-   * Must be called from `stop()` to prevent post-stop callbacks.
-   */
-  private clearPollTimer(): void {
-    if (this.pollTimerId) {
-      clearTimeout(this.pollTimerId);
-      this.pollTimerId = undefined;
-    }
-  }
-
-  // ─── Custom ping loop (Issue #1437) ────────────────────────────────────
-
-  /**
-   * Start the custom ping loop that sends application-layer ping frames
-   * at a configurable interval (default 5s).
-   *
-   * Uses the SDK's `sendMessage()` method to encode and send the ping frame
-   * via protobuf. This is the same mechanism as the SDK's internal `pingLoop()`,
-   * but with a much shorter interval for faster dead connection detection.
-   *
-   * The SDK's own pingLoop (120s default) continues running concurrently.
-   * Both loops send pings independently; the server responds to each with
-   * a Pong, and our Pong detection captures all of them.
-   *
-   * Graceful degradation:
-   * - If `wsClient.sendMessage` is not available (SDK internal change), the
-   *   loop is silently skipped. Health monitoring falls back to Pong detection
-   *   from the SDK's pingLoop only.
-   * - If `customPingIntervalMs` is 0, the custom ping loop is disabled.
-   */
-  private startCustomPingLoop(): void {
-    this.stopCustomPingLoop();
-
-    if (!this.customPingIntervalMs || this.customPingIntervalMs <= 0) {
-      logger.debug('Custom ping loop disabled (interval is 0 or negative)');
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const client = this.wsClient as any;
-    if (!client || typeof client.sendMessage !== 'function') {
-      logger.debug('SDK sendMessage() not available — custom ping loop skipped');
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const wsConfig = client.wsConfig as any;
-    if (!wsConfig || typeof wsConfig.getWS !== 'function') {
-      logger.debug('SDK wsConfig.getWS() not available — custom ping loop skipped');
-      return;
-    }
-
-    // Get serviceId from SDK's wsConfig (same source as SDK's pingLoop)
-    const wsParams = wsConfig.getWS();
-    const serviceId = wsParams?.serviceId;
-    if (serviceId === undefined) {
-      logger.debug('serviceId not available in wsConfig — custom ping loop skipped');
-      return;
-    }
-
-    this.customPingTimer = setInterval(() => {
-      try {
-        // Construct the same ping frame as the SDK's pingLoop
-        const frame = {
-          headers: [{ key: 'type', value: 'ping' }],
-          service: Number(serviceId),
-          method: 0, // FrameType.control
-          SeqID: 0,
-          LogID: 0,
-        };
-
-        // Record timing before sending for RTT estimation
-        this.lastPingSentAt = Date.now();
-
-        // Use the SDK's sendMessage to encode (protobuf) and send
-        client.sendMessage(frame);
-
-        this.customPingCount++;
-
-        if (this.customPingCount <= 3 || this.customPingCount % 60 === 0) {
-          // Log first 3 pings and then every 5 minutes (60 × 5s)
-          logger.debug(
-            { customPingCount: this.customPingCount, intervalMs: this.customPingIntervalMs },
-            'Custom ping sent',
-          );
-        }
-
-        this.emit('ping', this.customPingIntervalMs);
-      } catch (error) {
-        logger.warn({ err: error }, 'Failed to send custom ping — stopping custom ping loop');
-        this.stopCustomPingLoop();
-      }
-    }, this.customPingIntervalMs);
-
-    if (this.customPingTimer.unref) {
-      this.customPingTimer.unref();
-    }
-
-    logger.info(
-      { intervalMs: this.customPingIntervalMs, serviceId },
-      'Custom ping loop started',
-    );
-  }
-
-  /**
-   * Stop the custom ping loop.
-   */
-  private stopCustomPingLoop(): void {
-    if (this.customPingTimer) {
-      clearInterval(this.customPingTimer);
-      this.customPingTimer = undefined;
-      logger.debug(
-        { totalPings: this.customPingCount },
-        'Custom ping loop stopped',
-      );
-    }
   }
 
   // ─── Connection lifecycle ────────────────────────────────────────────────
@@ -827,21 +359,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   /**
    * Create a fresh WSClient and connect.
    *
-   * After WSClient.start() completes, accesses the SDK's internal wsConfig
-   * to obtain the raw `ws` WebSocket instance for Pong detection.
-   *
    * @returns `true` if connection succeeded
    */
   private async connectFresh(): Promise<boolean> {
     const sdkLogger = this.config.sdkLogger ?? createDefaultSdkLogger();
-
-    // Reset Pong state for new connection
-    this.lastPongAt = 0;
-    this.pongCount = 0;
-    this.lastPingSentAt = 0;
-    this.customPingCount = 0;
-    this.stopCustomPingLoop();
-    this.detachWsListener();
 
     try {
       this.wsClient = new this.larkSDK.WSClient({
@@ -862,24 +383,12 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         throw new Error('WSClient.start() returned false');
       }
 
-      // Access SDK's internal WebSocket instance for Pong detection
-      // WSClient.start() is fire-and-forget (Issue #1504): it resolves before
-      // the SDK finishes connecting (~300ms), so getWSInstance() may return null.
-      // Try immediately (zero-cost), then poll in background if needed.
-      if (!this.interceptWsFromClient(this.wsClient)) {
-        this.pollForWsInstance();
-      }
-
-      // Start custom ping loop for faster dead connection detection (Issue #1437)
-      this.startCustomPingLoop();
-
       // Start grace period
       this.lastMessageReceivedAt = Date.now();
       this.reconnectAttempt = 0;
       this.transitionTo('connected');
 
-      const interceptionStatus = this.interceptedWs ? 'with Pong detection' : 'without Pong detection (fallback mode)';
-      logger.info(`WebSocket connection established ${interceptionStatus}`);
+      logger.info('WebSocket connection established');
       return true;
     } catch (error) {
       logger.error({ err: error, attempt: this.reconnectAttempt }, 'Failed to establish WebSocket connection');
@@ -934,44 +443,31 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   /**
    * Single health check iteration.
    *
-   * Prefers Pong-based detection (transport level). Falls back to
-   * application-level message tracking if Pong interception is unavailable.
+   * Checks `lastMessageReceivedAt` — the sole liveness signal.
+   * Any message from the server (pong, user message, data frame) resets this
+   * via `recordMessageReceived()`.
    */
   private runHealthCheck(): void {
     if (this._state !== 'connected' || this.isReconnecting) {
       return;
     }
 
-    // Determine the most recent liveness signal
-    let lastActivityAt: number;
-    let signalType: string;
-
-    if (this.lastPongAt > 0) {
-      // Primary: Pong-based (transport level)
-      lastActivityAt = this.lastPongAt;
-      signalType = 'pong';
-    } else if (this.lastMessageReceivedAt > 0) {
-      // Fallback: application-level message tracking
-      lastActivityAt = this.lastMessageReceivedAt;
-      signalType = 'message';
-    } else {
-      // Grace period: just connected, no signals yet
+    // Grace period: just connected, no signals yet
+    if (this.lastMessageReceivedAt === 0) {
       return;
     }
 
-    const elapsed = Date.now() - lastActivityAt;
+    const elapsed = Date.now() - this.lastMessageReceivedAt;
 
     if (elapsed >= this.deadConnectionTimeoutMs) {
       logger.warn(
         {
           elapsedMs: elapsed,
           timeoutMs: this.deadConnectionTimeoutMs,
-          signalType,
-          pongCount: this.pongCount,
-          hasWsInterception: !!this.interceptedWs,
+          signalType: 'message',
           reconnectAttempt: this.reconnectAttempt,
         },
-        `Dead connection detected — no ${signalType} received within timeout`,
+        'Dead connection detected — no message received within timeout',
       );
 
       this.emit('deadConnection', elapsed);
