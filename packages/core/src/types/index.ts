@@ -53,6 +53,7 @@ export { createFileRef, createInboundAttachment, createOutboundFile } from './fi
 
 // Platform types (Feishu-specific)
 export type {
+  FeishuCard,
   FeishuMessageEvent,
   FeishuEventData,
   FeishuCardActionEvent,

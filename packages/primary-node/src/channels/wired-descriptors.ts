@@ -194,7 +194,6 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 
         return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
       },
-
       // Issue #1546: Group management handlers (platform-agnostic)
       createChat: (name?: string, description?: string, memberIds?: string[]) => {
         return feishuChannel.createChat(name, description, memberIds);

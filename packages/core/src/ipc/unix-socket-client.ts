@@ -10,6 +10,7 @@
 import { existsSync } from 'fs';
 import { createConnection, type Socket } from 'net';
 import { createLogger } from '../utils/logger.js';
+import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
   type IpcConfig,
@@ -413,7 +414,7 @@ export class UnixSocketIpcClient {
    */
   async sendCard(
     chatId: string,
-    card: Record<string, unknown>,
+    card: FeishuCard,
     threadId?: string,
     description?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {

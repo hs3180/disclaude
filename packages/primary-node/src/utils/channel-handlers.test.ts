@@ -514,7 +514,7 @@ describe('createChannelApiHandlers', () => {
       logger: mockLogger,
       channelName: 'Test',
     });
-    const card = { elements: [] };
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
     await handlers.sendCard('chat-001', card, 'thread-1', 'My card');
     expect(channel.sendMessage).toHaveBeenCalledWith({
       chatId: 'chat-001',
@@ -530,7 +530,7 @@ describe('createChannelApiHandlers', () => {
       logger: mockLogger,
       channelName: 'Test',
     });
-    const card = { elements: [] };
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
     await handlers.sendCard('chat-001', card);
     expect(channel.sendMessage).toHaveBeenCalledWith({
       chatId: 'chat-001',
@@ -584,13 +584,13 @@ describe('createChannelApiHandlers', () => {
     expect(result.fileName).toBe('simple-file.txt');
   });
 
-  it('uploadFile should log warning about incomplete metadata', async () => {
+  it('uploadFile should log debug about incomplete metadata', async () => {
     const handlers = createChannelApiHandlers(channel, {
       logger: mockLogger,
       channelName: 'Feishu',
     });
     await handlers.uploadFile('chat-001', '/path/to/doc.pdf');
-    expect(mockLogger.warn).toHaveBeenCalledWith(
+    expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 'chat-001', channel: 'Feishu' }),
       'uploadFile: using channel.sendMessage — file metadata may be incomplete'
     );
@@ -618,5 +618,48 @@ describe('createChannelApiHandlers', () => {
       options: [{ text: 'A', value: 'a' }],
     });
     expect(interactiveResult.messageId).toBe('synth-123');
+  });
+
+  it('sendMessage should log error and re-throw on channel failure', async () => {
+    const error = new Error('Network error');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await expect(handlers.sendMessage('chat-001', 'fail')).rejects.toThrow('Network error');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendMessage' }),
+      'IPC handler failed',
+    );
+  });
+
+  it('sendCard should log error and re-throw on channel failure', async () => {
+    const error = new Error('Card send failed');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+    await expect(handlers.sendCard('chat-001', card)).rejects.toThrow('Card send failed');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendCard' }),
+      'IPC handler failed',
+    );
+  });
+
+  it('uploadFile should log error and re-throw on channel failure', async () => {
+    const error = new Error('File send failed');
+    (channel.sendMessage as any).mockRejectedValueOnce(error);
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    await expect(handlers.uploadFile('chat-001', '/path/to/file.pdf')).rejects.toThrow('File send failed');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'uploadFile' }),
+      'IPC handler failed',
+    );
   });
 });
