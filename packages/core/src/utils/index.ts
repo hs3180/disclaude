@@ -87,5 +87,7 @@ export {
 export {
   detectFileExtension,
   mimeToExtension,
+  getContentTypeFromHeaders,
   ensureFileExtension,
+  ensureFileExtensionFromPath,
 } from './file-utils.js';
