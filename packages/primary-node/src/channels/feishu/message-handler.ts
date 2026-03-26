@@ -990,19 +990,25 @@ export class MessageHandler {
     // Worker Nodes receive the contextual prompt via resolvedPrompt field.
     // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
     // Falls back to default text if no prompt template is registered.
+    const defaultMessage = `用户点击了按钮「${buttonText}」`;
     let messageContent: string;
     let resolvedPrompt: string | undefined;
-    if (this.callbacks.resolveActionPrompt) {
-      const promptFromTemplate = this.callbacks.resolveActionPrompt(
-        message_id,
-        chat_id,
-        action.value,
-        action.text,
-      );
-      resolvedPrompt = promptFromTemplate || undefined;
-      messageContent = promptFromTemplate || `用户点击了按钮「${buttonText}」`;
-    } else {
-      messageContent = `用户点击了按钮「${buttonText}」`;
+    try {
+      if (this.callbacks.resolveActionPrompt) {
+        const promptFromTemplate = this.callbacks.resolveActionPrompt(
+          message_id,
+          chat_id,
+          action.value,
+          action.text,
+        );
+        resolvedPrompt = promptFromTemplate || undefined;
+        messageContent = promptFromTemplate || defaultMessage;
+      } else {
+        messageContent = defaultMessage;
+      }
+    } catch (err) {
+      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to resolve action prompt, using default');
+      messageContent = defaultMessage;
     }
 
     // Try to route card action to Worker Node first
@@ -1031,7 +1037,6 @@ export class MessageHandler {
 
     // Emit card action as a message to the agent
     try {
-
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
         chatId: chat_id,
