@@ -90,3 +90,31 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for get_task_status tool.
+ * Issue #857: Provides task context for the Reporter Agent.
+ */
+export interface GetTaskStatusResult {
+  success: boolean;
+  message: string;
+  error?: string;
+  /** Full task status (when taskId is provided and found) */
+  task?: {
+    taskId: string;
+    status: string;
+    title: string;
+    description: string;
+    chatId: string;
+    currentIteration: number;
+    totalIterations: number;
+    hasFinalResult: boolean;
+    hasFinalSummary: boolean;
+    createdAt: string;
+    updatedAt: string;
+    latestEvaluationSummary: string;
+    latestExecutionSummary: string;
+  };
+  /** List of tasks (when no taskId is provided) */
+  tasks?: Array<{ taskId: string }>;
+}
+

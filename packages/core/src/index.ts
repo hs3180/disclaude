@@ -215,6 +215,8 @@ export {
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,
+  TaskStatusInfo,
+  TaskExecutionStatus,
 } from './task/index.js';
 
 export {
@@ -222,6 +224,8 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  TaskStatusReader,
+  type TaskStatusReaderConfig,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

@@ -17,6 +17,7 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  get_task_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -371,6 +372,62 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #857: Task status reading for Reporter Agent
+  {
+    name: 'get_task_status',
+    description: `Get the current status of a task from the workspace.
+
+Reads task files (task.md, iterations, final_result.md) and returns structured
+status information. Used by the Reporter Agent to decide when and what to report.
+
+## Parameters
+- **taskId**: Task identifier (message ID). If omitted, lists all task IDs.
+
+## When to call
+- Before deciding whether to send a progress report
+- To check if a task is still running or completed
+- To get context about what the task is doing
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\`
+
+Returns status, title, current iteration, and latest evaluation/execution summaries.`,
+    parameters: z.object({
+      taskId: z.string().optional().describe(
+        'Task identifier (message ID). If omitted, returns a list of all task IDs.'
+      ),
+    }),
+    handler: async ({ taskId }: { taskId?: string }) => {
+      try {
+        const result = await get_task_status({ taskId });
+        if (result.success && result.task) {
+          const t = result.task;
+          const statusEmoji: Record<string, string> = {
+            unknown: '❓',
+            created: '📝',
+            iterating: '🔄',
+            completed: '✅',
+            error: '❌',
+          };
+          const emoji = statusEmoji[t.status] ?? '❓';
+          const lines = [
+            `${emoji} Task: ${t.title}`,
+            `Status: ${t.status} | Iteration: ${t.currentIteration}/${t.totalIterations}`,
+            t.description ? `Description: ${t.description}` : '',
+            t.latestEvaluationSummary ? `Latest eval: ${t.latestEvaluationSummary}` : '',
+            t.latestExecutionSummary ? `Latest exec: ${t.latestExecutionSummary}` : '',
+            `Created: ${t.createdAt} | Updated: ${t.updatedAt}`,
+          ].filter(Boolean);
+          return toolSuccess(lines.join('\n'));
+        }
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to get task status: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

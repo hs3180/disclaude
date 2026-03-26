@@ -7,7 +7,7 @@
  */
 
 // Types
-export type { TaskDefinitionDetails, TaskMessageType } from './types.js';
+export type { TaskDefinitionDetails, TaskMessageType, TaskStatusInfo, TaskExecutionStatus } from './types.js';
 
 // Dialogue Message Tracker
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';
@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Status Reader (Issue #857)
+export { TaskStatusReader, type TaskStatusReaderConfig } from './task-status.js';
