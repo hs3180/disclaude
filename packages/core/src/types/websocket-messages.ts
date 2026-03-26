@@ -27,13 +27,14 @@ export interface PromptMessage {
 
 /**
  * Message sent from Communication Node to Execution Node for control commands.
+ *
+ * Note: Only commands that need to be forwarded to Execution Nodes are listed here.
+ * Commands like 'switch-node' are handled on Primary Node only and intentionally excluded.
  */
 export interface CommandMessage {
   type: 'command';
-  command: 'reset' | 'restart' | 'list-nodes' | 'switch-node';
+  command: 'reset' | 'restart' | 'list-nodes';
   chatId: string;
-  /** Target exec node ID for switch-node command */
-  targetNodeId?: string;
   /** Whether to keep context when resetting (Issue #1213) */
   keepContext?: boolean;
 }
