@@ -144,7 +144,7 @@ describe('createControlHandler', () => {
   it('should catch errors from failed command execution and return Command failed', async () => {
     const context = createMockContext();
     // Make agentPool.reset throw to trigger the catch block in createControlHandler
-    context.agentPool.reset.mockImplementation(() => {
+    vi.mocked(context.agentPool.reset).mockImplementation(() => {
       throw new Error('Agent pool unavailable');
     });
     const handler = createControlHandler(context);
