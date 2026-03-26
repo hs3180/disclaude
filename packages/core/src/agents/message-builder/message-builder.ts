@@ -32,6 +32,7 @@ import type { MessageData, MessageBuilderContext, MessageBuilderOptions } from '
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -138,6 +139,9 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
+    // Project context from CLAUDE.md (Issue #1506)
+    const projectContextSection = buildProjectContextGuidance(msg.projectContext);
+
     // Compose all sections
     const sections: string[] = [];
 
@@ -146,6 +150,10 @@ export class MessageBuilder {
     }
 
     sections.push(metadataParts.join('\n'));
+
+    if (projectContextSection) {
+      sections.push(projectContextSection);
+    }
 
     if (persistedHistorySection) {
       sections.push(persistedHistorySection);

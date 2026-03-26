@@ -342,12 +342,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param text - User's message text
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
+   * @param projectContext - Optional project CLAUDE.md content (Issue #1506)
    */
   async executeOnce(
     chatId: string,
     text: string,
     messageId?: string,
-    senderOpenId?: string
+    senderOpenId?: string,
+    projectContext?: string
   ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -391,6 +393,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
+      projectContext,
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');

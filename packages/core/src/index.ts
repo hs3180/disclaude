@@ -146,6 +146,7 @@ export {
   MessageBuilder,
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,

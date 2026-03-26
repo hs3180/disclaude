@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -108,5 +109,51 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should return empty string when no content is provided', () => {
+    expect(buildProjectContextGuidance()).toBe('');
+    expect(buildProjectContextGuidance(undefined)).toBe('');
+  });
+
+  it('should return empty string when content is empty string', () => {
+    expect(buildProjectContextGuidance('')).toBe('');
+  });
+
+  it('should return empty string when content is whitespace only', () => {
+    expect(buildProjectContextGuidance('   \n\t  ')).toBe('');
+  });
+
+  it('should include Project Context heading', () => {
+    const result = buildProjectContextGuidance('# Project Rules\nUse TypeScript.');
+    expect(result).toContain('Project Context (CLAUDE.md)');
+  });
+
+  it('should include the CLAUDE.md content', () => {
+    const content = '# My Project\n\n- Use TypeScript\n- Follow strict linting';
+    const result = buildProjectContextGuidance(content);
+    expect(result).toContain('# My Project');
+    expect(result).toContain('Use TypeScript');
+    expect(result).toContain('Follow strict linting');
+  });
+
+  it('should instruct agent to follow project guidelines', () => {
+    const result = buildProjectContextGuidance('Some rules');
+    expect(result).toContain('Follow these conventions');
+    expect(result).toContain('coding standards');
+  });
+
+  it('should trim leading/trailing whitespace from content', () => {
+    const result = buildProjectContextGuidance('  \n  Rules here  \n  ');
+    expect(result).toContain('Rules here');
+  });
+
+  it('should preserve markdown formatting in content', () => {
+    const content = '## Code Style\n```typescript\nconst x = 1;\n```';
+    const result = buildProjectContextGuidance(content);
+    expect(result).toContain('## Code Style');
+    expect(result).toContain('```typescript');
   });
 });

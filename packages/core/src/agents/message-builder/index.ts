@@ -20,6 +20,7 @@ export { MessageBuilder } from './message-builder.js';
 export {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,

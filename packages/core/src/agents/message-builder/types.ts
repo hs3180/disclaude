@@ -30,6 +30,16 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Project-specific CLAUDE.md content for dev task context (Issue #1506).
+   *
+   * When a sub-agent is spawned to work on a development project,
+   * this field contains the CLAUDE.md content from the project directory.
+   * The MessageBuilder will include it as a "Project Context" section
+   * in the agent prompt, helping the agent understand project-specific
+   * conventions, structure, and coding standards.
+   */
+  projectContext?: string;
 }
 
 /**

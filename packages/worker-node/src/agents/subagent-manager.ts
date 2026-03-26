@@ -41,11 +41,23 @@
  */
 
 import { randomUUID } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import { createLogger, type ChatAgent } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
 import type { PilotCallbacks } from './pilot/index.js';
 
 const logger = createLogger('SubagentManager');
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Maximum size for CLAUDE.md content (Issue #1506).
+ * Prevents token bloat from excessively large project context files.
+ */
+const MAX_CLAUDE_MD_SIZE = 32 * 1024; // 32 KB
 
 // ============================================================================
 // Type Definitions
@@ -108,6 +120,17 @@ export interface SubagentOptions {
   onProgress?: (message: string) => void;
   /** Optional sender OpenId for scheduled tasks */
   senderOpenId?: string;
+  /**
+   * Optional project directory path (Issue #1506).
+   *
+   * When specified, the SubagentManager will attempt to load CLAUDE.md
+   * from this directory and include its content in the sub-agent's prompt.
+   * This enables the sub-agent to understand project-specific conventions,
+   * coding standards, and development guidelines.
+   *
+   * Only applicable to 'task' type sub-agents.
+   */
+  projectDir?: string;
 }
 
 /**
@@ -312,6 +335,51 @@ export class SubagentManager {
   }
 
   /**
+   * Load CLAUDE.md content from a project directory (Issue #1506).
+   *
+   * Reads the CLAUDE.md file from the specified project directory.
+   * Returns undefined if the file doesn't exist or exceeds the size limit.
+   * Errors other than ENOENT are logged as warnings but silently handled.
+   *
+   * @param projectDir - Absolute or relative path to the project directory
+   * @returns CLAUDE.md content string, or undefined if not available
+   */
+  private loadClaudeMd(projectDir: string): string | undefined {
+    try {
+      const claudeMdPath = resolve(projectDir, 'CLAUDE.md');
+
+      if (!existsSync(claudeMdPath)) {
+        logger.debug({ projectDir, path: claudeMdPath }, 'CLAUDE.md not found in project directory');
+        return undefined;
+      }
+
+      const content = readFileSync(claudeMdPath, 'utf-8');
+
+      if (content.length > MAX_CLAUDE_MD_SIZE) {
+        logger.warn(
+          { projectDir, size: content.length, max: MAX_CLAUDE_MD_SIZE },
+          'CLAUDE.md exceeds size limit, truncating'
+        );
+        return `${content.slice(0, MAX_CLAUDE_MD_SIZE)}\n\n... (truncated)`;
+      }
+
+      logger.info(
+        { projectDir, size: content.length },
+        'CLAUDE.md loaded from project directory'
+      );
+      return content;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        logger.debug({ projectDir }, 'CLAUDE.md not found (ENOENT)');
+        return undefined;
+      }
+      logger.warn({ err, projectDir }, 'Failed to load CLAUDE.md, skipping');
+      return undefined;
+    }
+  }
+
+  /**
    * Spawn a task agent in memory.
    */
   private async spawnTaskAgent(
@@ -332,16 +400,25 @@ export class SubagentManager {
     this.inMemoryAgents.set(subagentId, agent);
     handle.status = 'running';
 
-    logger.info({ subagentId, name: options.name }, 'Task subagent started');
+    // Issue #1506: Load CLAUDE.md from project directory if specified
+    const projectContext = options.projectDir
+      ? this.loadClaudeMd(options.projectDir)
+      : undefined;
+
+    logger.info(
+      { subagentId, name: options.name, hasProjectContext: !!projectContext },
+      'Task subagent started'
+    );
     this.notifyStatusChange(handle);
 
-    // Execute task
+    // Execute task with optional project context
     try {
       await agent.executeOnce(
         options.chatId,
         options.prompt,
         undefined,
-        options.senderOpenId
+        options.senderOpenId,
+        projectContext
       );
 
       handle.status = 'completed';

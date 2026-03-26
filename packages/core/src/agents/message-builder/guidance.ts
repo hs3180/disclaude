@@ -180,6 +180,40 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the project context section from CLAUDE.md content.
+ *
+ * Issue #1506: When a sub-agent is spawned to work on a development project,
+ * the CLAUDE.md from the project directory provides project-specific context
+ * (coding conventions, project structure, development guidelines, etc.).
+ *
+ * This section is inserted into the agent prompt to help the agent understand
+ * the project it's working on, following the revised approach of loading
+ * CLAUDE.md from the development project's own directory (not the workspace root).
+ *
+ * @param claudeMdContent - Content of the CLAUDE.md file from the project directory
+ * @returns Formatted project context section, or empty string if no content
+ */
+export function buildProjectContextGuidance(claudeMdContent?: string): string {
+  if (!claudeMdContent || !claudeMdContent.trim()) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+You are working on a development project. The project provides the following
+guidelines via its CLAUDE.md file. Follow these conventions, coding standards,
+and project-specific instructions carefully:
+
+${claudeMdContent.trim()}
+
+---`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

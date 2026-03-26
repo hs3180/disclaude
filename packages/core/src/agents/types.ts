@@ -156,12 +156,14 @@ export interface ChatAgent extends Disposable {
    * @param text - Message text
    * @param messageId - Optional message identifier
    * @param senderOpenId - Optional sender's open_id
+   * @param projectContext - Optional project CLAUDE.md content (Issue #1506)
    */
   executeOnce(
     chatId: string,
     text: string,
     messageId?: string,
-    senderOpenId?: string
+    senderOpenId?: string,
+    projectContext?: string
   ): Promise<void>;
 
   /**

@@ -508,4 +508,52 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context section when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug in auth module',
+        messageId: 'msg-123',
+        projectContext: '# Project Conventions\n- Use TypeScript strict mode\n- All tests must pass',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('Use TypeScript strict mode');
+      expect(result).toContain('All tests must pass');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should place project context after metadata and before history', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        projectContext: 'Project rules here',
+        chatHistoryContext: 'Chat history...',
+      }, 'chat-456');
+
+      const metadataIdx = result.indexOf('Chat ID');
+      const projectCtxIdx = result.indexOf('Project Context (CLAUDE.md)');
+      const historyIdx = result.indexOf('Recent Chat History');
+      expect(projectCtxIdx).toBeGreaterThan(metadataIdx);
+      expect(historyIdx).toBeGreaterThan(projectCtxIdx);
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules\nSome rules',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+  });
 });
