@@ -91,3 +91,27 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Session Store (Issue #1391)
+export {
+  isValidSessionId,
+  getSessionDir,
+  getSessionFilePath,
+  createSession,
+  readSession,
+  updateSession,
+  deleteSession,
+  activateSession,
+  respondToSession,
+  expireSession,
+  listSessions,
+  findSessionByMessageId,
+  cleanupExpiredSessions,
+  sessionFs,
+} from './session-store.js';
+export type {
+  SessionStatus,
+  SessionFile,
+  ListSessionsFilter,
+  UpdateResult,
+} from './session-store.js';
