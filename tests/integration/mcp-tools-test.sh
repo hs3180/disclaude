@@ -55,7 +55,9 @@ test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
     local chat_id="test-mcp-send-text-$$"
-    assert_sync_chat_ok "请尝试使用 send_text 工具发送消息 'Hello from MCP test' 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || return 1
+    # Same defensive prompt style as send_file — call once, report result,
+    # no diagnostic loop (see #1634).
+    assert_sync_chat_ok "请调用一次 send_text 工具发送消息 'Hello from MCP test'。无论工具返回成功还是错误，请直接将工具的返回内容告诉我，不要尝试诊断或再次调用工具。" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送"; then
         log_pass "Agent acknowledged tool usage"
@@ -69,12 +71,23 @@ test_send_file_tool() {
 
     create_test_file
 
+    # Increase timeout for send_file test — when IPC is unavailable the agent
+    # may attempt extra tool calls before reporting the failure.  180 s gives
+    # enough headroom without making the overall suite too slow.
+    local saved_timeout="$TIMEOUT"
+    TIMEOUT=180
+
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    # Prompt explicitly asks the agent to call the tool exactly once and
+    # report the raw result, avoiding the diagnostic-loop behaviour that
+    # caused the original timeout (see #1634).
+    assert_sync_chat_ok "请调用一次 send_file 工具发送文件 $TEST_FILE_PATH。无论工具返回成功还是错误，请直接将工具的返回内容告诉我，不要尝试诊断、排查或再次调用工具。" "$chat_id" || {
+        TIMEOUT="$saved_timeout"
         cleanup_test_file
         return 1
     }
 
+    TIMEOUT="$saved_timeout"
     cleanup_test_file
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
