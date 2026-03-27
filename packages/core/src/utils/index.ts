@@ -91,3 +91,25 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Research Manager (Issue #1707)
+export {
+  getResearchRootDir,
+  getResearchDir,
+  getResearchFilePath,
+  getResearchCwd,
+  createResearchWorkspace,
+  readResearchFile,
+  researchWorkspaceExists,
+  updateResearchFileSection,
+  appendToResearchFileSection,
+  parseResearchSections,
+  listResearchTopics,
+  RESEARCH_DIR_NAME,
+  RESEARCH_FILE_NAME,
+  RESEARCH_SUB_DIRS,
+} from './research-manager.js';
+export type {
+  CreateResearchOptions,
+  ResearchSection,
+} from './research-manager.js';
