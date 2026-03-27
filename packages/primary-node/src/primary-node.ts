@@ -51,11 +51,14 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1703: Temp chat lifecycle management
+  ChatStore,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
+import { TempChatLifecycleService } from './services/temp-chat-lifecycle-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 
@@ -153,6 +156,10 @@ export class PrimaryNode extends EventEmitter {
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
 
+  // Temp chat lifecycle management (Issue #1703)
+  protected chatStore: ChatStore;
+  protected tempChatLifecycleService?: TempChatLifecycleService;
+
   constructor(config: PrimaryNodeOptions = {}) {
     super();
     this.port = config.port || 3001;
@@ -185,6 +192,11 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize InteractiveContextStore (Issue #1572)
     this.interactiveContextStore = new InteractiveContextStore();
+
+    // Initialize ChatStore for temp chat lifecycle (Issue #1703)
+    const workspaceDir = Config.getWorkspaceDir();
+    const tempChatStoreDir = path.join(workspaceDir, 'schedules', '.temp-chats');
+    this.chatStore = new ChatStore({ storeDir: tempChatStoreDir });
 
     logger.info({
       nodeId: this.localNodeId,
@@ -245,6 +257,14 @@ export class PrimaryNode extends EventEmitter {
    */
   getInteractiveContextStore(): InteractiveContextStore {
     return this.interactiveContextStore;
+  }
+
+  /**
+   * Get the ChatStore for temp chat lifecycle management.
+   * Issue #1703: Temp chat lifecycle management.
+   */
+  getChatStore(): ChatStore {
+    return this.chatStore;
   }
 
   /**
@@ -373,6 +393,9 @@ export class PrimaryNode extends EventEmitter {
     // Initialize Scheduler (Issue #1377)
     await this.initScheduler();
 
+    // Initialize temp chat lifecycle service (Issue #1703)
+    this.initTempChatLifecycle();
+
     this.running = true;
     this.emit('started');
     logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
@@ -391,6 +414,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Stop Scheduler (Issue #1377)
     this.stopScheduler();
+
+    // Stop temp chat lifecycle service (Issue #1703)
+    this.tempChatLifecycleService?.stop();
 
     // Stop IPC server (Issue #1042)
     await this.stopIpcServer();
@@ -493,6 +519,18 @@ export class PrimaryNode extends EventEmitter {
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');
+  }
+
+  /**
+   * Initialize temp chat lifecycle service.
+   * Issue #1703: Starts periodic cleanup of expired temp chats.
+   */
+  protected initTempChatLifecycle(): void {
+    this.tempChatLifecycleService = new TempChatLifecycleService({
+      chatStore: this.chatStore,
+    });
+    this.tempChatLifecycleService.start();
+    logger.info('Temp chat lifecycle service started');
   }
 
   /**
