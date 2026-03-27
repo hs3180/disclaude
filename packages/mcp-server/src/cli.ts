@@ -26,6 +26,7 @@ import {
   send_interactive_message,
 } from './index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { getChatIdValidationError } from './utils/chat-id-validator.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -313,6 +314,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format
+        const textChatIdError = getChatIdValidationError(toolArgs.chatId);
+        if (textChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${textChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_text({
           text: toolArgs.text,
@@ -323,7 +336,8 @@ Example:
           jsonrpc: '2.0',
           id,
           result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
+            content: [{ type: 'text' as const, text: result.success ? result.message : result.message }],
+            isError: !result.success,
           },
         };
       } else if (toolName === 'send_card') {
@@ -366,6 +380,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format
+        const cardChatIdError = getChatIdValidationError(chatId);
+        if (cardChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${cardChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_card({
           card: card as Record<string, unknown>,
@@ -376,7 +402,8 @@ Example:
           jsonrpc: '2.0',
           id,
           result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
+            content: [{ type: 'text' as const, text: result.success ? result.message : result.message }],
+            isError: !result.success,
           },
         };
       } else if (toolName === 'send_interactive') {
@@ -444,6 +471,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format
+        const interactiveChatIdError = getChatIdValidationError(chatId);
+        if (interactiveChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${interactiveChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_interactive_message({
           question: question as string,
@@ -458,7 +497,8 @@ Example:
           jsonrpc: '2.0',
           id,
           result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
+            content: [{ type: 'text' as const, text: result.success ? result.message : result.message }],
+            isError: !result.success,
           },
         };
       } else if (toolName === 'send_file') {
@@ -483,6 +523,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format
+        const fileChatIdError = getChatIdValidationError(toolArgs.chatId);
+        if (fileChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${fileChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_file({
           filePath: toolArgs.filePath,
@@ -492,7 +544,8 @@ Example:
           jsonrpc: '2.0',
           id,
           result: {
-            content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : `⚠️ ${result.message}` }],
+            content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : result.message }],
+            isError: !result.success,
           },
         };
       } else {
