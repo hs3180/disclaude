@@ -3,8 +3,8 @@
  *
  * Verifies that:
  * - Recognized commands are dispatched to their handlers
- * - Unrecognized commands (including skill-only commands like /feedback) return
- *   { success: false } with no message, allowing fallthrough to agent/skill processing
+ * - Unrecognized commands return { success: false } with no message,
+ *   allowing fallthrough to agent/skill processing
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -73,26 +73,7 @@ describe('createControlHandler', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should return failure with no message for unrecognized skill-only command "feedback"', async () => {
-    const context = createMockContext();
-    const handler = createControlHandler(context);
-
-    // Simulate /feedback which is a skill, not a system command
-    const command: ControlCommand = {
-      type: 'feedback' as ControlCommandType,
-      chatId: 'test-chat',
-    };
-
-    const result = await handler(command);
-
-    // Unrecognized commands should return success:false with no message,
-    // allowing the message handler to fall through to agent/skill processing
-    expect(result.success).toBe(false);
-    expect(result.message).toBeUndefined();
-    expect(result.error).toContain('Unknown command');
-  });
-
-  it('should return failure with no message for unrecognized command "site-miner"', async () => {
+  it('should return failure with no message for unrecognized skill-only command "site-miner"', async () => {
     const context = createMockContext();
     const handler = createControlHandler(context);
 
@@ -168,7 +149,6 @@ describe('getHandler', () => {
     const { getHandler } = await import('./commands/index.js');
 
     // Skill-only commands should not have registered handlers
-    expect(getHandler('feedback' as ControlCommandType)).toBeUndefined();
     expect(getHandler('site-miner' as ControlCommandType)).toBeUndefined();
     expect(getHandler('skill-creator' as ControlCommandType)).toBeUndefined();
     // switch-node is a valid type but handler not yet implemented
