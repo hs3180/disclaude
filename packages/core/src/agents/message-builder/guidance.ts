@@ -213,3 +213,52 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess. Shared state between
+ * the main process and the agent is communicated via a `.runtime-env` file
+ * in the workspace directory. These variables are automatically loaded into
+ * the subprocess environment, but the agent needs prompt guidance to be
+ * aware of what variables are available and how to use them.
+ *
+ * @param runtimeEnvContext - Optional pre-formatted string listing available
+ *   runtime-env keys and their descriptions. When provided, the guidance
+ *   includes this dynamic listing. When omitted, only generic guidance is shown.
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvContext?: string): string {
+  const dynamicListing = runtimeEnvContext
+    ? `
+
+### Currently Available Variables
+
+${runtimeEnvContext}`
+    : '';
+
+  return `
+
+---
+
+## Runtime Environment
+
+You have access to **shared environment variables** that persist across conversations and are available to all agents and MCP servers.
+
+### How It Works
+
+A file called \`.runtime-env\` in the workspace directory stores key-value pairs (format: \`KEY=VALUE\`). These variables are **automatically loaded** into your subprocess environment at startup, so you can access them via \`process.env\` in Node.js scripts.
+
+### Common Variables
+
+| Variable | Description |
+|----------|-------------|
+| \`GH_TOKEN\` | GitHub App Installation Access Token |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601, 1-hour lifetime) |
+
+### Reading and Writing
+
+- **Read**: The variables are already in your environment. You can check them with \`echo $GH_TOKEN\`.
+- **Write**: Use the Write tool to update \`.runtime-env\` (KEY=VALUE format, one per line). Changes take effect in the **next** agent turn, not the current one.
+- **Refresh**: If a token has expired (check \`GH_TOKEN_EXPIRES_AT\`), trigger the \`github-jwt-auth\` skill to regenerate it.${dynamicListing}`;
+}

@@ -85,6 +85,16 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should include runtime environment guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment');
+      expect(result).toContain('.runtime-env');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -94,6 +104,7 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
       expect(result).not.toContain('Location Awareness');
+      expect(result).not.toContain('Runtime Environment');
     });
   });
 
@@ -185,6 +196,29 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Persisted history...');
       expect(result).toContain('Recent Chat History');
       expect(result).toContain('Chat history...');
+    });
+
+    it('should include runtime-env dynamic listing when runtimeEnvContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        runtimeEnvContext: '- `GH_TOKEN` — GitHub token (active)',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment');
+      expect(result).toContain('Currently Available Variables');
+      expect(result).toContain('GH_TOKEN');
+      expect(result).toContain('active');
+    });
+
+    it('should include runtime-env guidance without dynamic listing when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment');
+      expect(result).not.toContain('Currently Available Variables');
     });
 
     it('should not include persisted history for skill commands', () => {

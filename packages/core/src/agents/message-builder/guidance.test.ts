@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,57 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment section heading', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment');
+  });
+
+  it('should explain the .runtime-env file mechanism', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('shared environment variables');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should mention commonly known variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain reading and writing', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Read');
+    expect(result).toContain('Write');
+    expect(result).toContain('next');
+    expect(result).toContain('github-jwt-auth');
+  });
+
+  it('should include dynamic listing when runtimeEnvContext is provided', () => {
+    const context = '- `CUSTOM_VAR` — A custom variable\n- `API_KEY` — An API key';
+    const result = buildRuntimeEnvGuidance(context);
+
+    expect(result).toContain('Currently Available Variables');
+    expect(result).toContain('CUSTOM_VAR');
+    expect(result).toContain('API_KEY');
+  });
+
+  it('should not include dynamic listing when runtimeEnvContext is not provided', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).not.toContain('Currently Available Variables');
+  });
+
+  it('should not include dynamic listing when runtimeEnvContext is empty string', () => {
+    const result = buildRuntimeEnvGuidance('');
+    expect(result).not.toContain('Currently Available Variables');
+  });
+
+  it('should explain that changes take effect in the next turn', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('next');
   });
 });
