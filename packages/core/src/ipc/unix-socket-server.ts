@@ -61,6 +61,12 @@ export interface ChannelApiHandlers {
   createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
   /** Dissolve a group chat (optional platform capability) */
   dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
+  /** Register a temp chat for lifecycle tracking (Issue #1703) */
+  registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => Promise<{ success: boolean; expiresAt?: string }>;
+  /** List all tracked temp chats (Issue #1703) */
+  listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
+  /** Mark a temp chat as responded (Issue #1703) */
+  markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
 }
 
 /**
@@ -264,6 +270,86 @@ export function createInteractiveMessageHandler(
             request.payload as IpcRequestPayloads['dissolveChat'];
           try {
             const result = await handlers.dissolveChat(chatId);
+            return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Temporary chat lifecycle management (Issue #1703)
+        case 'registerTempChat': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.registerTempChat) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'registerTempChat not supported by this channel',
+            };
+          }
+          const { chatId, expiresAt, creatorChatId, context } =
+            request.payload as IpcRequestPayloads['registerTempChat'];
+          try {
+            const result = await handlers.registerTempChat(chatId, { expiresAt, creatorChatId, context });
+            return { id: request.id, success: true, payload: { success: result.success, chatId, expiresAt: result.expiresAt } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'listTempChats': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.listTempChats) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'listTempChats not supported by this channel',
+            };
+          }
+          try {
+            const chats = await handlers.listTempChats();
+            return { id: request.id, success: true, payload: { success: true, chats } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'markChatResponded': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.markChatResponded) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'markChatResponded not supported by this channel',
+            };
+          }
+          const { chatId, response } =
+            request.payload as IpcRequestPayloads['markChatResponded'];
+          try {
+            const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

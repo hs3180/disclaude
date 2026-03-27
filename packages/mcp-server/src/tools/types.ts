@@ -90,3 +90,15 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for register_temp_chat tool.
+ * Issue #1703: Temp chat lifecycle management.
+ */
+export interface RegisterTempChatResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
