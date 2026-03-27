@@ -13,6 +13,10 @@ export type {
   SendInteractiveResult,
   CreateChatResult,
   DissolveChatResult,
+  AddMembersResult,
+  RemoveMembersResult,
+  GetMembersResult,
+  GetBotChatsResult,
 } from './types.js';
 
 // Shared utilities
@@ -36,6 +40,12 @@ export { send_file } from './send-file.js';
 // Group management (Issue #1546)
 export { create_chat } from './create-chat.js';
 export { dissolve_chat } from './dissolve-chat.js';
+
+// Group member management (Issue #1678)
+export { add_members } from './add-members.js';
+export { remove_members } from './remove-members.js';
+export { get_members } from './get-members.js';
+export { get_bot_chats } from './get-bot-chats.js';
 
 // Interactive Message
 export {

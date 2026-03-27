@@ -201,6 +201,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       dissolveChat: (chatId: string) => {
         return feishuChannel.dissolveChat(chatId);
       },
+      // Issue #1678: Group member management handlers (platform-agnostic)
+      addMembers: (chatId: string, memberIds: string[]) => {
+        return feishuChannel.addMembers(chatId, memberIds);
+      },
+      removeMembers: (chatId: string, memberIds: string[]) => {
+        return feishuChannel.removeMembers(chatId, memberIds);
+      },
+      getMembers: (chatId: string) => {
+        return feishuChannel.getMembers(chatId);
+      },
+      getBotChats: () => {
+        return feishuChannel.getBotChats();
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

@@ -90,3 +90,44 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for add_members tool.
+ */
+export interface AddMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for remove_members tool.
+ */
+export interface RemoveMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for get_members tool.
+ */
+export interface GetMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  members?: string[];
+  error?: string;
+}
+
+/**
+ * Result type for get_bot_chats tool.
+ */
+export interface GetBotChatsResult {
+  success: boolean;
+  message: string;
+  chats?: Array<{ chatId: string; name: string }>;
+  error?: string;
+}
+

@@ -17,6 +17,10 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  add_members,
+  remove_members,
+  get_members,
+  get_bot_chats,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -30,6 +34,10 @@ export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
+export { add_members } from './tools/add-members.js';
+export { remove_members } from './tools/remove-members.js';
+export { get_members } from './tools/get-members.js';
+export { get_bot_chats } from './tools/get-bot-chats.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -370,6 +378,98 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
     handler: async ({ chatId }: { chatId: string }) => {
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1678: Group member management tools (platform-agnostic)
+  {
+    name: 'add_members',
+    description: `Add members to a group chat.
+
+Adds one or more members to an existing group chat by their user IDs.
+
+## Parameters
+- **chatId**: Target chat ID
+- **memberIds**: Array of member IDs to add (platform decides ID format, e.g., open_id for Feishu)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_abc", "ou_def"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      memberIds: z.array(z.string()).describe('Member IDs to add (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      // add_members handles all errors internally and returns { success, message }
+      const result = await add_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'remove_members',
+    description: `Remove members from a group chat.
+
+Removes one or more members from an existing group chat by their user IDs.
+
+## Parameters
+- **chatId**: Target chat ID
+- **memberIds**: Array of member IDs to remove (platform decides ID format, e.g., open_id for Feishu)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_abc"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      memberIds: z.array(z.string()).describe('Member IDs to remove (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      // remove_members handles all errors internally and returns { success, message }
+      const result = await remove_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'get_members',
+    description: `Get members of a group chat.
+
+Returns the list of all members in a group chat.
+
+## Parameters
+- **chatId**: Target chat ID
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      // get_members handles all errors internally and returns { success, message }
+      const result = await get_members({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'get_bot_chats',
+    description: `Get all chats the bot is in.
+
+Returns a list of all group chats where the bot is a member, including chat IDs and names.
+
+## Parameters
+
+No parameters required.
+
+## Example
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}).describe('No parameters required'),
+    handler: async () => {
+      // get_bot_chats handles all errors internally and returns { success, message }
+      const result = await get_bot_chats();
       return toolSuccess(result.message);
     },
   },

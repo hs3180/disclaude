@@ -114,6 +114,29 @@ describe('UnixSocketIpcClient', () => {
         dissolveChat: async () => {
           return { success: true };
         },
+        // Issue #1678: Group member management mock handlers
+        // eslint-disable-next-line require-await
+        addMembers: async (_chatId, memberIds) => {
+          return { success: true, addedCount: memberIds.length };
+        },
+        // eslint-disable-next-line require-await
+        removeMembers: async (_chatId, memberIds) => {
+          return { success: true, removedCount: memberIds.length };
+        },
+        // eslint-disable-next-line require-await
+        getMembers: async () => {
+          return { success: true, members: ['ou_a', 'ou_b', 'ou_c'] };
+        },
+        // eslint-disable-next-line require-await
+        getBotChats: async () => {
+          return {
+            success: true,
+            chats: [
+              { chatId: 'oc_1', name: 'Group A' },
+              { chatId: 'oc_2', name: 'Group B' },
+            ],
+          };
+        },
       },
     };
 
@@ -199,6 +222,35 @@ describe('UnixSocketIpcClient', () => {
     const result = await client.dissolveChat('oc_target');
 
     expect(result.success).toBe(true);
+  });
+
+  // Issue #1678: Group member management IPC tests
+  it('should add members via addMembers IPC (Issue #1678)', async () => {
+    const result = await client.addMembers('oc_target', ['ou_a', 'ou_b']);
+
+    expect(result.success).toBe(true);
+  });
+
+  it('should remove members via removeMembers IPC (Issue #1678)', async () => {
+    const result = await client.removeMembers('oc_target', ['ou_a']);
+
+    expect(result.success).toBe(true);
+  });
+
+  it('should get members via getMembers IPC (Issue #1678)', async () => {
+    const result = await client.getMembers('oc_target');
+
+    expect(result.success).toBe(true);
+    expect(result.members).toEqual(['ou_a', 'ou_b', 'ou_c']);
+  });
+
+  it('should get bot chats via getBotChats IPC (Issue #1678)', async () => {
+    const result = await client.getBotChats();
+
+    expect(result.success).toBe(true);
+    expect(result.chats).toHaveLength(2);
+    expect(result.chats?.[0].chatId).toBe('oc_1');
+    expect(result.chats?.[0].name).toBe('Group A');
   });
 });
 
