@@ -303,3 +303,13 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Agent Mode module (Issue #1709: Research Mode — Phase 1)
+export {
+  ResearchModeManager,
+  sanitizeTopicName,
+  type AgentMode,
+  type ResearchModeState,
+  type EnterResearchModeResult,
+  type EnterResearchModeOptions,
+} from './modes/index.js';

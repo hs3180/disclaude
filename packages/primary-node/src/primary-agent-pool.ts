@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type ResearchModeManager } from '@disclaude/core';
 import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
 
 /**
@@ -19,6 +19,7 @@ import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/wo
  *
  * Issue #1499: Allows injecting channel-specific MessageBuilderOptions
  * at pool creation time.
+ * Issue #1709: Allows injecting ResearchModeManager for research mode CWD switching.
  */
 export interface PrimaryAgentPoolOptions {
   /**
@@ -31,6 +32,17 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Research Mode Manager for CWD switching.
+   *
+   * When provided, all Pilot instances created by this pool will
+   * check for research mode and switch their working directory
+   * to the research workspace when active.
+   *
+   * Issue #1709: Research Mode — Phase 1.
+   */
+  researchModeManager?: ResearchModeManager;
 }
 
 /**
@@ -59,6 +71,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        researchModeManager: this.options.researchModeManager,
       });
       this.agents.set(chatId, agent);
     }
