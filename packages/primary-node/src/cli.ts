@@ -201,6 +201,10 @@ async function main(): Promise<void> {
     lifecycleManager.registerWiredDescriptor(descriptor);
   }
 
+  // Expose lifecycle manager through PrimaryNode for dynamic channel registration
+  // (Issue #1638: WeChat and other channels that only support runtime registration)
+  primaryNode.setChannelLifecycleManager(lifecycleManager);
+
   // Create and wire channels from resolved config (Issue #1594 Phase 3)
   // Config-driven: cli.ts no longer hard-codes channel type checks.
   for (const { type, config } of channelEntries) {

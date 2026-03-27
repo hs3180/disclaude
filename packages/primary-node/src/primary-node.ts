@@ -58,6 +58,7 @@ import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
+import type { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -139,6 +140,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Channel management (Issue #1594: unified channel lifecycle)
   protected channelManager: ChannelManager;
+
+  // Dynamic channel registration (Issue #1638: WeChat dynamic-only)
+  protected channelLifecycleManager?: ChannelLifecycleManager;
 
   // IPC Server for MCP Server connections (Issue #1042)
   protected ipcServer: UnixSocketIpcServer | null = null;
@@ -268,6 +272,31 @@ export class PrimaryNode extends EventEmitter {
    */
   getChannelManager(): ChannelManager {
     return this.channelManager;
+  }
+
+  /**
+   * Set the ChannelLifecycleManager for dynamic channel registration.
+   *
+   * Issue #1638: Enables runtime dynamic channel registration (e.g., WeChat)
+   * from skills, plugins, or external modules. The lifecycle manager is created
+   * by cli.ts and injected here so PrimaryNode can expose dynamic registration APIs.
+   *
+   * @param manager - The ChannelLifecycleManager instance
+   */
+  setChannelLifecycleManager(manager: ChannelLifecycleManager): void {
+    this.channelLifecycleManager = manager;
+  }
+
+  /**
+   * Get the ChannelLifecycleManager for dynamic channel operations.
+   *
+   * Issue #1638: Allows skills/plugins to dynamically register channels
+   * (e.g., WeChat after QR code authentication) at runtime.
+   *
+   * @returns The ChannelLifecycleManager instance, or undefined if not set
+   */
+  getChannelLifecycleManager(): ChannelLifecycleManager | undefined {
+    return this.channelLifecycleManager;
   }
 
   // ============================================================================

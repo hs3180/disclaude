@@ -54,4 +54,11 @@ export { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 export {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
+  // Issue #1638: WeChat descriptor for dynamic registration only (not config-driven)
+  WECHAT_WIRED_DESCRIPTOR,
 } from './wired-descriptors.js';
+
+// Dynamic-only channel descriptors (Issue #1638)
+export {
+  DYNAMIC_ONLY_CHANNEL_DESCRIPTORS,
+} from './channel-descriptors.js';

@@ -424,3 +424,167 @@ describe('WiredChannelDescriptor integration', () => {
     expect(capturedWiredContext?.logger).toBe(context.logger);
   });
 });
+
+// Issue #1638: WeChat dynamic registration lifecycle tests
+describe('WeChat dynamic registration lifecycle (Issue #1638)', () => {
+  let channelManager: ChannelManager;
+  let context: ChannelSetupContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    channelManager = new ChannelManager();
+    context = createMockContext();
+  });
+
+  it('should create and wire WeChat channel via createAndWire without config file', async () => {
+    // Simulate the WeChat wired descriptor behavior (dynamic registration only)
+    const wechatChannel = createMockChannel('wechat', 'WeChat');
+    const wechatDescriptor: WiredChannelDescriptor = {
+      type: 'wechat',
+      name: 'WeChat',
+      factory: (config) => {
+        // WeChat factory can accept runtime-acquired config (e.g., token from QR scan)
+        expect(config).toBeDefined();
+        return wechatChannel;
+      },
+      defaultCapabilities: {
+        supportsCard: false,
+        supportsThread: false,
+        supportsFile: false,
+        supportsMarkdown: false,
+        supportsMention: false,
+        supportsUpdate: false,
+      },
+      createCallbacks: vi.fn().mockReturnValue((_chatId: string) => ({
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        sendFile: vi.fn().mockResolvedValue(undefined),
+        onDone: vi.fn().mockResolvedValue(undefined),
+      })),
+      createMessageHandler: vi.fn().mockReturnValue(vi.fn().mockResolvedValue(undefined)),
+      // No setup hook (WeChat MVP: no passive mode, no IPC handlers)
+    };
+
+    const manager = new ChannelLifecycleManager(channelManager, context);
+
+    // Dynamic registration: pass descriptor directly, no config file needed
+    const channel = await manager.createAndWire(wechatDescriptor, {
+      token: 'runtime-acquired-token',
+      baseUrl: 'https://ilinkai.weixin.qq.com',
+    } as any);
+
+    expect(channel).toBe(wechatChannel);
+    expect(channelManager.has('wechat')).toBe(true);
+    expect(wechatDescriptor.createCallbacks).toHaveBeenCalledTimes(1);
+    expect(wechatDescriptor.createMessageHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('should support WeChat lifecycle start/stop after dynamic registration', async () => {
+    const wechatChannel = createMockChannel('wechat', 'WeChat');
+    const wechatDescriptor: WiredChannelDescriptor = {
+      type: 'wechat',
+      name: 'WeChat',
+      factory: () => wechatChannel,
+      defaultCapabilities: {
+        supportsCard: false,
+        supportsThread: false,
+        supportsFile: false,
+        supportsMarkdown: false,
+        supportsMention: false,
+        supportsUpdate: false,
+      },
+      createCallbacks: vi.fn().mockReturnValue(() => ({
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        sendFile: vi.fn().mockResolvedValue(undefined),
+        onDone: vi.fn().mockResolvedValue(undefined),
+      })),
+      createMessageHandler: vi.fn().mockReturnValue(vi.fn().mockResolvedValue(undefined)),
+    };
+
+    const manager = new ChannelLifecycleManager(channelManager, context);
+
+    // Register WeChat dynamically at runtime
+    await manager.createAndWire(wechatDescriptor, {
+      token: 'runtime-acquired-token',
+    } as any);
+
+    // Start all channels (including the dynamically registered WeChat)
+    await manager.startAll();
+    expect(wechatChannel.start).toHaveBeenCalledTimes(1);
+
+    // Stop all channels
+    await manager.stopAll();
+    expect(wechatChannel.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not include wechat in type-based registration (config-driven only)', () => {
+    // Only REST and Feishu should be registered for config-driven creation
+    const manager = new ChannelLifecycleManager(channelManager, context);
+
+    // Verify wechat is NOT available for type-based creation
+    expect(manager.hasWiredDescriptor('wechat')).toBe(false);
+
+    // Attempting to create by type should fail
+    expect(manager.getWiredDescriptor('wechat')).toBeUndefined();
+  });
+
+  it('should support WeChat alongside config-driven channels', async () => {
+    // Register config-driven channels (REST, Feishu)
+    const restChannel = createMockChannel('rest', 'REST');
+    const restDescriptor = createTestDescriptor({ type: 'rest', factory: () => restChannel });
+    const feishuChannel = createMockChannel('feishu', 'Feishu');
+    const feishuDescriptor = createTestDescriptor({ type: 'feishu', factory: () => feishuChannel });
+
+    // Register WeChat dynamically
+    const wechatChannel = createMockChannel('wechat', 'WeChat');
+    const wechatDescriptor: WiredChannelDescriptor = {
+      type: 'wechat',
+      name: 'WeChat',
+      factory: () => wechatChannel,
+      defaultCapabilities: {
+        supportsCard: false,
+        supportsThread: false,
+        supportsFile: false,
+        supportsMarkdown: false,
+        supportsMention: false,
+        supportsUpdate: false,
+      },
+      createCallbacks: vi.fn().mockReturnValue(() => ({
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        sendFile: vi.fn().mockResolvedValue(undefined),
+        onDone: vi.fn().mockResolvedValue(undefined),
+      })),
+      createMessageHandler: vi.fn().mockReturnValue(vi.fn().mockResolvedValue(undefined)),
+    };
+
+    const manager = new ChannelLifecycleManager(channelManager, context);
+
+    // Config-driven: register descriptors and create by type
+    manager.registerWiredDescriptor(restDescriptor);
+    manager.registerWiredDescriptor(feishuDescriptor);
+    await manager.createAndWireByType('rest', { port: 3000 } as any);
+    await manager.createAndWireByType('feishu', { appId: 'xxx' } as any);
+
+    // Dynamic: create WeChat directly with descriptor
+    await manager.createAndWire(wechatDescriptor, { token: 'runtime-token' } as any);
+
+    // All 3 channels should be registered
+    expect(channelManager.size()).toBe(3);
+    expect(channelManager.has('rest')).toBe(true);
+    expect(channelManager.has('feishu')).toBe(true);
+    expect(channelManager.has('wechat')).toBe(true);
+
+    // All should start and stop together
+    await manager.startAll();
+    expect(restChannel.start).toHaveBeenCalledTimes(1);
+    expect(feishuChannel.start).toHaveBeenCalledTimes(1);
+    expect(wechatChannel.start).toHaveBeenCalledTimes(1);
+
+    await manager.stopAll();
+    expect(restChannel.stop).toHaveBeenCalledTimes(1);
+    expect(feishuChannel.stop).toHaveBeenCalledTimes(1);
+    expect(wechatChannel.stop).toHaveBeenCalledTimes(1);
+  });
+});

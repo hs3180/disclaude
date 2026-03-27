@@ -167,7 +167,13 @@ channels:
 
   # WeChat Channel
   # WeChat only supports dynamic registration (programmatic API), not config.yaml.
-  # To use WeChat, register via the dynamic channel API at runtime.
+  # WeChat uses QR code authentication — credentials are obtained at runtime,
+  # not pre-configured in a YAML file.
+  #
+  # To use WeChat, register via the dynamic channel API at runtime:
+  #   const manager = primaryNode.getChannelLifecycleManager();
+  #   await manager.createAndWire(WECHAT_WIRED_DESCRIPTOR, { token: acquiredToken });
+  #
   # @see https://github.com/hs3180/disclaude/issues/1638
 
 # -----------------------------------------------------------------------------

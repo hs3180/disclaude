@@ -74,6 +74,10 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
 /**
  * All built-in channel descriptors for bulk registration.
  *
+ * Note: WeChat is NOT included here (Issue #1638: dynamic registration only).
+ * WeChat uses QR code authentication and must be registered at runtime via
+ * `ChannelLifecycleManager.createAndWire()`, not through config-driven loading.
+ *
  * @example
  * ```typescript
  * import { ChannelRegistry } from '@disclaude/core';
@@ -88,5 +92,25 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
 export const BUILTIN_CHANNEL_DESCRIPTORS: ChannelDescriptor[] = [
   REST_CHANNEL_DESCRIPTOR,
   FEISHU_CHANNEL_DESCRIPTOR,
+];
+
+/**
+ * Channel descriptors that only support dynamic (runtime) registration.
+ *
+ * These channels cannot be configured via config.yaml because they require
+ * runtime interaction (e.g., QR code authentication) to obtain credentials.
+ *
+ * Issue #1638: WeChat Channel only supports dynamic registration.
+ *
+ * @example
+ * ```typescript
+ * import { ChannelLifecycleManager, WECHAT_WIRED_DESCRIPTOR } from './wired-descriptors.js';
+ *
+ * // After QR code authentication completes:
+ * const manager = primaryNode.getChannelLifecycleManager();
+ * await manager.createAndWire(WECHAT_WIRED_DESCRIPTOR, { token: acquiredToken });
+ * ```
+ */
+export const DYNAMIC_ONLY_CHANNEL_DESCRIPTORS: ChannelDescriptor[] = [
   WECHAT_CHANNEL_DESCRIPTOR,
 ];
