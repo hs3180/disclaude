@@ -51,6 +51,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1315: SOUL.md personality injection
+  SoulLoader,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -152,6 +154,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
+
+  // Issue #1315: Global SOUL.md content for personality injection
+  protected globalSoulContent?: string;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -370,6 +375,9 @@ export class PrimaryNode extends EventEmitter {
     // Start IPC server for MCP Server connections (Issue #1042)
     await this.startIpcServer();
 
+    // Issue #1315: Load global SOUL.md content at startup
+    await this.loadGlobalSoul();
+
     // Initialize Scheduler (Issue #1377)
     await this.initScheduler();
 
@@ -398,6 +406,54 @@ export class PrimaryNode extends EventEmitter {
     this.running = false;
     this.emit('stopped');
     logger.info({ nodeId: this.localNodeId }, 'PrimaryNode stopped');
+  }
+
+  // ============================================================================
+  // Soul Loading (Issue #1315)
+  // ============================================================================
+
+  /**
+   * Load global SOUL.md content from config.
+   *
+   * Issue #1315: Loads the SOUL.md file once at startup.
+   * The content is stored and passed to agents via systemPromptAppend.
+   * If the file doesn't exist or can't be loaded, gracefully degrades
+   * (globalSoulContent remains undefined).
+   */
+  protected async loadGlobalSoul(): Promise<void> {
+    const soulConfig = Config.getSoulConfig();
+
+    if (!soulConfig?.path) {
+      logger.debug('No soul.path configured, skipping SOUL.md loading');
+      return;
+    }
+
+    const loader = new SoulLoader(soulConfig.path);
+    const result = await loader.load();
+
+    if (result && 'content' in result) {
+      this.globalSoulContent = result.content;
+      logger.info(
+        { path: result.resolvedPath, sizeBytes: result.sizeBytes },
+        'Global SOUL.md loaded successfully',
+      );
+    } else if (result && 'reason' in result) {
+      logger.warn(
+        { reason: result.reason, message: result.message, path: soulConfig.path },
+        'Failed to load SOUL.md, using default behavior',
+      );
+    }
+    // If result is null, file not found - silent degradation
+  }
+
+  /**
+   * Get the global SOUL.md content.
+   * Issue #1315: Returns undefined if no SOUL.md is configured or loaded.
+   *
+   * @returns SOUL.md content string, or undefined
+   */
+  getGlobalSoulContent(): string | undefined {
+    return this.globalSoulContent;
   }
 
   // ============================================================================
@@ -445,9 +501,15 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass soul content — per-task soul overrides global soul
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        // Per-task soul (systemPromptAppend) overrides global soul when set
+        const effectiveSoul = systemPromptAppend ?? this.globalSoulContent;
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), {
+          ...(model ? { model } : {}),
+          systemPromptAppend: effectiveSoul,
+        });
       },
       callbacks: schedulerCallbacks,
     });

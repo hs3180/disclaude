@@ -303,3 +303,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Soul module (Issue #1315: SOUL.md personality injection system)
+export {
+  SoulLoader,
+  SOUL_MAX_SIZE_BYTES,
+  type SoulLoadResult,
+  type SoulLoadError,
+  type SoulLoadErrorReason,
+} from './soul/index.js';

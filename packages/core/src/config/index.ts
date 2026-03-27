@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -483,5 +484,16 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get soul configuration.
+   * Returns the soul config from config file, or undefined if not configured.
+   * @see Issue #1315
+   *
+   * @returns Soul configuration object, or undefined if not configured
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    return fileConfigOnly.soul;
   }
 }

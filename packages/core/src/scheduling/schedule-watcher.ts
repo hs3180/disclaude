@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'soul':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -216,6 +217,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        soul: frontmatter['soul'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -225,6 +227,11 @@ export class ScheduleFileScanner {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
       } else if (task.model) {
         logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
+      }
+
+      // Issue #1315: Log if soul is specified
+      if (task.soul && task.soul.trim().length > 0) {
+        logger.info({ taskId: task.id, name: task.name, soul: task.soul }, 'Schedule task will use per-task soul override');
       }
 
       logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');
@@ -267,6 +274,9 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.soul) {
+      frontmatter.push(`soul: "${task.soul}"`);
     }
 
     frontmatter.push('---', '');

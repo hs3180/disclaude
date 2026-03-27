@@ -65,6 +65,7 @@ export interface PilotCallbacks {
  *
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
+ * Issue #1315: Added systemPromptAppend for SOUL.md personality injection.
  */
 export interface PilotConfig extends BaseAgentConfig {
   /**
@@ -100,6 +101,13 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * System prompt append content for SOUL.md personality injection.
+   * Issue #1315: When provided, appended to the system prompt
+   * to inject personality/behavioral guidelines.
+   */
+  systemPromptAppend?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

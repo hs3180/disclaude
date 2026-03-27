@@ -287,6 +287,25 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Soul configuration section.
+ * Issue #1315: SOUL.md Agent personality/behavior definition.
+ *
+ * Defines the path to a SOUL.md file that contains personality and behavioral
+ * guidelines for the Agent. The content is injected into the system prompt
+ * at agent creation time.
+ *
+ * Example disclaude.config.yaml:
+ * ```yaml
+ * soul:
+ *   path: ~/.disclaude/SOUL.md
+ * ```
+ */
+export interface SoulConfig {
+  /** Path to the SOUL.md file (supports ~ expansion) */
+  path?: string;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -322,6 +341,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Soul/personality configuration (Issue #1315) */
+  soul?: SoulConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
