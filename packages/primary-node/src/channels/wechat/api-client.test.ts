@@ -1,7 +1,8 @@
 /**
- * Tests for WeChatApiClient (MVP).
+ * Tests for WeChatApiClient.
  *
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -393,6 +394,107 @@ describe('WeChatApiClient', () => {
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'test' }))
         .rejects.toThrow('Error code 999');
+    });
+  });
+
+  describe('getUpdates (Issue #1556 Phase 3.1)', () => {
+    it('should return updates from API', async () => {
+      const updates = [
+        {
+          msg_id: 'msg-1',
+          from_user_id: 'user-123',
+          to_user_id: 'bot-456',
+          item_list: [{ type: 1, text_item: { text: 'Hello bot!' } }],
+          create_time: 1710000000,
+        },
+      ];
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: updates })),
+      });
+
+      client.setToken('test-token');
+      const result = await client.getUpdates();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].msg_id).toBe('msg-1');
+      expect(result[0].from_user_id).toBe('user-123');
+    });
+
+    it('should return empty array on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('test-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when no updates', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('test-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when update_list is missing', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should pass signal to underlying fetch', async () => {
+      const updates = [{ msg_id: 'msg-1', from_user_id: 'user-123', item_list: [] }];
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: updates })),
+      });
+
+      client.setToken('test-token');
+      const controller = new AbortController();
+      await client.getUpdates({ signal: controller.signal });
+
+      // Verify signal was passed through
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
+    it('should throw on non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      await expect(client.getUpdates()).rejects.toThrow('Network error');
+    });
+
+    it('should use default long-poll timeout', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('test-token');
+      await client.getUpdates();
+
+      // Verify fetch was called (timeout is internal, just ensure no crash)
+      expect(mockFetch).toHaveBeenCalled();
     });
   });
 });
