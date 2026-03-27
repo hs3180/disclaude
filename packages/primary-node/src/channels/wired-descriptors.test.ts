@@ -20,6 +20,7 @@ import type {
   WiredContext,
 } from '../channel-lifecycle-manager.js';
 import type { IChannel, ControlHandler, ChannelCapabilities } from '@disclaude/core';
+import type { FeishuChannelConfig } from './feishu-channel.js';
 
 // Mock logger
 const mockLogger = {
@@ -184,7 +185,7 @@ describe('WiredChannelDescriptors', () => {
         },
       });
 
-      const config = { appId: 'test-id', appSecret: 'test-secret' };
+      const config: FeishuChannelConfig = { appId: 'test-id', appSecret: 'test-secret' };
       await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
 
       // Verify routeCardAction was wired
@@ -217,7 +218,7 @@ describe('WiredChannelDescriptors', () => {
         },
       });
 
-      const config = { appId: 'test-id', appSecret: 'test-secret' };
+      const config: FeishuChannelConfig = { appId: 'test-id', appSecret: 'test-secret' };
       await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, config, context);
 
       // routeCardAction should NOT be wired when CardActionRouter is unavailable
