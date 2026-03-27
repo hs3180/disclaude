@@ -180,6 +180,64 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment guidance section.
+ *
+ * Issue #1371: Agents run in SDK subprocesses and cannot access in-memory
+ * singletons from the main process. The `.runtime-env` file in the workspace
+ * directory provides a file-based mechanism for cross-process state sharing.
+ * This guidance makes agents aware of available shared variables and how to
+ * read/write them.
+ *
+ * @returns Formatted runtime environment guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment (.runtime-env)
+
+**Shared state file**: Your workspace contains a \`.runtime-env\` file that enables cross-process state sharing between the main process, MCP servers, skills, and agent subprocesses.
+
+### How It Works
+
+- Runtime environment variables are stored in \`{workspace}/.runtime-env\` (KEY=VALUE format)
+- Variables are **automatically loaded** into your environment at startup (via \`process.env\`)
+- Skills and tools can **read and write** to this file during execution
+
+### Known Variables
+
+| Variable | Description | Writer |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub Installation Access Token (auto-refreshed) | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601) | \`github-jwt-auth\` skill |
+
+### Reading Variables
+
+- **Already in your environment**: Most runtime-env variables are pre-loaded. You can use them directly (e.g., \`GH_TOKEN\` is available as \`process.env.GH_TOKEN\`).
+- **Read the file directly**: Use the Read tool on \`.runtime-env\` to see all current variables.
+
+### Writing Variables
+
+When a skill needs to share state with other processes, it can write to \`.runtime-env\`:
+
+\`\`\`
+# Read current values
+cat .runtime-env
+
+# Write/update a variable (KEY=VALUE format, one per line)
+echo "MY_KEY=my_value" >> .runtime-env
+\`\`\`
+
+### Important Notes
+
+- This file is in \`.gitignore\` — never commit it
+- Tokens have expiration times — check \`GH_TOKEN_EXPIRES_AT\` before use
+- Prefer using existing variables over creating new ones
+- When GitHub operations fail with auth errors, the token may need refreshing via the \`/github-jwt-auth\` skill`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
