@@ -23,7 +23,11 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
   | 'createChat'
-  | 'dissolveChat';
+  | 'dissolveChat'
+  // Temporary chat lifecycle management (Issue #1703)
+  | 'registerTempChat'
+  | 'listTempChats'
+  | 'markChatResponded';
 
 /**
  * IPC request payload types.
@@ -70,6 +74,22 @@ export interface IpcRequestPayloads {
   dissolveChat: {
     chatId: string;
   };
+  // Temporary chat lifecycle management (Issue #1703)
+  registerTempChat: {
+    chatId: string;
+    expiresAt?: string;
+    creatorChatId?: string;
+    context?: Record<string, unknown>;
+  };
+  listTempChats: Record<string, never>;
+  markChatResponded: {
+    chatId: string;
+    response: {
+      selectedValue: string;
+      responder: string;
+      repliedAt: string;
+    };
+  };
 }
 
 /**
@@ -99,6 +119,25 @@ export interface IpcResponsePayloads {
     name?: string;
   };
   dissolveChat: {
+    success: boolean;
+  };
+  // Temporary chat lifecycle management (Issue #1703)
+  registerTempChat: {
+    success: boolean;
+    chatId?: string;
+    expiresAt?: string;
+  };
+  listTempChats: {
+    success: boolean;
+    chats?: Array<{
+      chatId: string;
+      createdAt: string;
+      expiresAt: string;
+      creatorChatId?: string;
+      responded: boolean;
+    }>;
+  };
+  markChatResponded: {
     success: boolean;
   };
 }
