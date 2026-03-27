@@ -42,21 +42,35 @@ export interface InteractiveContext {
  *
  * Supports two lookup strategies:
  * 1. By messageId (exact match)
- * 2. By chatId (returns the most recent context for a chat, used as fallback
- *    when the real Feishu messageId doesn't match the synthetic messageId used
- *    during registration)
+ * 2. By chatId + actionValue (searches all contexts for a chat to find the
+ *    one containing the matching actionValue, used as fallback when the real
+ *    Feishu messageId doesn't match the synthetic messageId used during
+ *    registration)
+ *
+ * Multiple interactive cards can coexist in the same chat. The chatId index
+ * uses an LRU-style array to track recent cards per chat, bounded by
+ * MAX_ENTRIES_PER_CHAT.
+ *
+ * Fixes #1625 — actionPrompts override when multiple cards share a chatId.
  */
 export class InteractiveContextStore {
   private readonly contexts = new Map<string, InteractiveContext>();
 
   /**
-   * Index: chatId → most recent messageId.
+   * Index: chatId → messageId[] (most recent last).
    * Used for chatId-based fallback lookup when the exact messageId is unknown.
+   * Supports multiple interactive cards per chat (LRU-bounded).
    */
-  private readonly chatIdIndex = new Map<string, string>();
+  private readonly chatIdIndex = new Map<string, string[]>();
 
   /** Maximum age for contexts before cleanup (default: 24 hours) */
   private readonly maxAge: number;
+
+  /**
+   * Maximum number of message IDs tracked per chatId.
+   * Oldest entries are evicted when this limit is exceeded.
+   */
+  static readonly MAX_ENTRIES_PER_CHAT = 10;
 
   constructor(maxAge?: number) {
     this.maxAge = maxAge ?? 24 * 60 * 60 * 1000;
@@ -64,6 +78,9 @@ export class InteractiveContextStore {
 
   /**
    * Register action prompts for a message.
+   *
+   * Supports multiple interactive cards per chatId. The chatId index tracks
+   * up to MAX_ENTRIES_PER_CHAT entries using LRU-style eviction.
    *
    * @param messageId - Message ID (from Feishu or synthetic)
    * @param chatId - Chat ID where the card was sent
@@ -77,8 +94,17 @@ export class InteractiveContextStore {
       createdAt: Date.now(),
     });
 
-    // Update chatId index to point to the latest messageId for this chat
-    this.chatIdIndex.set(chatId, messageId);
+    // Update chatId index — append to array (dedup, most recent last)
+    const existing = this.chatIdIndex.get(chatId) ?? [];
+    const filtered = existing.filter((id) => id !== messageId);
+    filtered.push(messageId);
+
+    // LRU eviction: keep only the most recent entries
+    if (filtered.length > InteractiveContextStore.MAX_ENTRIES_PER_CHAT) {
+      filtered.splice(0, filtered.length - InteractiveContextStore.MAX_ENTRIES_PER_CHAT);
+    }
+
+    this.chatIdIndex.set(chatId, filtered);
 
     logger.debug(
       { messageId, chatId, actions: Object.keys(actionPrompts) },
@@ -100,26 +126,59 @@ export class InteractiveContextStore {
   /**
    * Get action prompts by chatId (returns the most recent context for a chat).
    *
-   * This is a fallback lookup for card action callbacks where the real Feishu
-   * messageId doesn't match the synthetic messageId used during registration.
+   * This is a backward-compatible fallback lookup for card action callbacks
+   * where the real Feishu messageId doesn't match the synthetic messageId used
+   * during registration.
    *
    * @param chatId - Chat ID to look up
    * @returns Action prompt map, or undefined if not found
    */
   getActionPromptsByChatId(chatId: string): ActionPromptMap | undefined {
-    const messageId = this.chatIdIndex.get(chatId);
-    if (!messageId) {
+    const messageIds = this.chatIdIndex.get(chatId);
+    if (!messageIds || messageIds.length === 0) {
       return undefined;
     }
 
-    const context = this.contexts.get(messageId);
-    if (!context) {
-      // Stale index entry, clean up
-      this.chatIdIndex.delete(chatId);
+    // Return the most recent context's prompts
+    for (let i = messageIds.length - 1; i >= 0; i--) {
+      const context = this.contexts.get(messageIds[i]);
+      if (context) {
+        return context.actionPrompts;
+      }
+    }
+
+    // All entries stale, clean up
+    this.chatIdIndex.delete(chatId);
+    return undefined;
+  }
+
+  /**
+   * Find action prompts by chatId that contain a specific actionValue.
+   *
+   * Searches through all registered contexts for a chatId (from most recent
+   * to oldest) and returns the first ActionPromptMap that contains the given
+   * actionValue. This resolves the issue where multiple interactive cards in
+   * the same chat cause the wrong prompts to be returned.
+   *
+   * @param chatId - Chat ID to search
+   * @param actionValue - The action value to find
+   * @returns Action prompt map containing the actionValue, or undefined
+   */
+  findActionPrompts(chatId: string, actionValue: string): ActionPromptMap | undefined {
+    const messageIds = this.chatIdIndex.get(chatId);
+    if (!messageIds || messageIds.length === 0) {
       return undefined;
     }
 
-    return context.actionPrompts;
+    // Search from most recent to oldest
+    for (let i = messageIds.length - 1; i >= 0; i--) {
+      const context = this.contexts.get(messageIds[i]);
+      if (context && context.actionPrompts[actionValue]) {
+        return context.actionPrompts;
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -146,9 +205,9 @@ export class InteractiveContextStore {
     // Try exact messageId lookup first
     let prompts = this.getActionPrompts(messageId);
 
-    // Fallback to chatId-based lookup
+    // Fallback: search all contexts for this chatId to find one containing the actionValue
     if (!prompts) {
-      prompts = this.getActionPromptsByChatId(chatId);
+      prompts = this.findActionPrompts(chatId, actionValue);
     }
 
     if (!prompts) {
@@ -196,9 +255,17 @@ export class InteractiveContextStore {
     const context = this.contexts.get(messageId);
     const removed = this.contexts.delete(messageId);
     if (removed) {
-      // Clean up chatId index if it points to this messageId
-      if (context && this.chatIdIndex.get(context.chatId) === messageId) {
-        this.chatIdIndex.delete(context.chatId);
+      // Remove this messageId from the chatId index array
+      if (context) {
+        const entries = this.chatIdIndex.get(context.chatId);
+        if (entries) {
+          const filtered = entries.filter((id) => id !== messageId);
+          if (filtered.length === 0) {
+            this.chatIdIndex.delete(context.chatId);
+          } else {
+            this.chatIdIndex.set(context.chatId, filtered);
+          }
+        }
       }
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
@@ -217,9 +284,15 @@ export class InteractiveContextStore {
     for (const [messageId, context] of this.contexts) {
       if (now - context.createdAt > this.maxAge) {
         this.contexts.delete(messageId);
-        // Clean up chatId index
-        if (this.chatIdIndex.get(context.chatId) === messageId) {
-          this.chatIdIndex.delete(context.chatId);
+        // Remove from chatId index array
+        const entries = this.chatIdIndex.get(context.chatId);
+        if (entries) {
+          const filtered = entries.filter((id) => id !== messageId);
+          if (filtered.length === 0) {
+            this.chatIdIndex.delete(context.chatId);
+          } else {
+            this.chatIdIndex.set(context.chatId, filtered);
+          }
         }
         cleaned++;
       }
