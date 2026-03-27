@@ -4,10 +4,12 @@
  * Provides per-chatId mode switching between 'normal' and 'research' modes.
  *
  * Issue #1709: Research Mode — Phase 1 (Mode switching framework + CWD + SOUL)
+ * Issue #1710: RESEARCH.md 研究状态文件 (Phase 1 + Phase 2)
  *
  * When research mode is active for a chatId:
  * - The agent's working directory is switched to `workspace/research/{topic}/`
  * - A CLAUDE.md with research behavior norms is injected (via SDK settingSources)
+ * - A RESEARCH.md state file is created for tracking research progress
  * - Mode state is persisted per-chatId
  *
  * Architecture:
@@ -23,6 +25,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import { ResearchStateFile } from './research-state.js';
 
 const logger = createLogger('ResearchMode');
 
@@ -54,6 +57,8 @@ export interface EnterResearchModeResult {
   workspaceDir: string;
   /** The path to the created CLAUDE.md (SOUL) file */
   soulFilePath: string;
+  /** The path to the created RESEARCH.md state file */
+  researchStateFilePath: string;
 }
 
 /**
@@ -85,7 +90,20 @@ You are operating in **Research Mode**. Follow these behavior norms:
 
 - \`notes/\` — Research notes and intermediate artifacts
 - \`sources/\` — Collected source materials and references
-- \`RESEARCH.md\` — Research state file (auto-maintained)
+- \`RESEARCH.md\` — Research state file (auto-maintained by you)
+
+## RESEARCH.md Maintenance (Important!)
+
+You are responsible for maintaining the \`RESEARCH.md\` file in this workspace.
+After each research interaction, update the file to reflect your progress:
+
+- **New findings** → Add to the "## Findings" section with source references
+- **New questions** → Add to "## Pending Questions" as unchecked items
+- **Resolved questions** → Move from "Pending" to "Findings" with the answer
+- **Conclusions** → Update "## Conclusions" when research reaches a verdict
+
+Use the \`Edit\` tool to update specific sections. Do NOT rewrite the entire file
+unless the structure needs significant reorganization.
 
 ## Guidelines
 
@@ -157,13 +175,16 @@ export class ResearchModeManager {
   /**
    * Enter research mode for a chatId.
    *
-   * Creates the research workspace directory and injects a CLAUDE.md
-   * (SOUL) file with research behavior norms. The CLAUDE.md is picked up
-   * by the SDK via `settingSources: ['project']`.
+   * Creates the research workspace directory, injects a CLAUDE.md
+   * (SOUL) file with research behavior norms, and initializes the
+   * RESEARCH.md state file for tracking research progress.
+   *
+   * The CLAUDE.md is picked up by the SDK via `settingSources: ['project']`.
+   * The RESEARCH.md is auto-maintained by the agent during research interactions.
    *
    * @param chatId - Chat identifier
    * @param options - Research mode options
-   * @returns Result with workspace directory and SOUL file paths
+   * @returns Result with workspace directory, SOUL file path, and research state file path
    * @throws Error if topic is empty
    */
   async enterResearchMode(
@@ -195,6 +216,10 @@ export class ResearchModeManager {
       logger.info({ chatId, soulFilePath }, 'Created CLAUDE.md (Research SOUL)');
     }
 
+    // Initialize RESEARCH.md state file (Issue #1710)
+    const researchStateFile = new ResearchStateFile(topicDir);
+    const researchStateFilePath = await researchStateFile.init(trimmedTopic);
+
     // Also create sub-directories for research workflow
     for (const subDir of ['notes', 'sources']) {
       const subPath = path.join(topicDir, subDir);
@@ -210,11 +235,11 @@ export class ResearchModeManager {
     this.states.set(chatId, state);
 
     logger.info(
-      { chatId, topic: trimmedTopic, workspaceDir: topicDir },
+      { chatId, topic: trimmedTopic, workspaceDir: topicDir, researchStateFilePath },
       'Entered research mode'
     );
 
-    return { workspaceDir: topicDir, soulFilePath };
+    return { workspaceDir: topicDir, soulFilePath, researchStateFilePath };
   }
 
   /**

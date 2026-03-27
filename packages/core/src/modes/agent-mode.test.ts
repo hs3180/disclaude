@@ -234,6 +234,60 @@ describe('ResearchModeManager', () => {
       const chats = manager.getActiveResearchChats();
       expect(chats).toHaveLength(1);
     });
+
+    it('should create RESEARCH.md state file (Issue #1710)', async () => {
+      const result = await manager.enterResearchMode('chat-1', {
+        topic: 'Test Research',
+        workspaceBaseDir: tempDir,
+      });
+
+      // Verify researchStateFilePath is returned
+      expect(result.researchStateFilePath).toBeDefined();
+      expect(result.researchStateFilePath).toContain('RESEARCH.md');
+      expect(result.researchStateFilePath).toContain(result.workspaceDir);
+
+      // Verify file exists and has correct content
+      const content = await fs.readFile(result.researchStateFilePath, 'utf-8');
+      expect(content).toContain('# Test Research');
+      expect(content).toContain('## Research Goals');
+      expect(content).toContain('## Findings');
+      expect(content).toContain('## Pending Questions');
+      expect(content).toContain('## Conclusions');
+      expect(content).toContain('## Resources');
+    });
+
+    it('should not overwrite existing RESEARCH.md', async () => {
+      await manager.enterResearchMode('chat-1', {
+        topic: 'Test Research',
+        workspaceBaseDir: tempDir,
+      });
+
+      const firstResult = manager.getResearchInfo('chat-1');
+      const researchPath = path.join(firstResult!.workspaceDir, 'RESEARCH.md');
+      await fs.writeFile(researchPath, '# Custom Research\n\nPreserved', 'utf-8');
+
+      // Exit and re-enter
+      manager.exitResearchMode('chat-1');
+      const result = await manager.enterResearchMode('chat-1', {
+        topic: 'Test Research',
+        workspaceBaseDir: tempDir,
+      });
+
+      const content = await fs.readFile(result.researchStateFilePath, 'utf-8');
+      expect(content).toContain('# Custom Research');
+      expect(content).not.toContain('## Research Goals');
+    });
+
+    it('should include RESEARCH.md maintenance instructions in SOUL', async () => {
+      const result = await manager.enterResearchMode('chat-1', {
+        topic: 'Test Research',
+        workspaceBaseDir: tempDir,
+      });
+
+      const soulContent = await fs.readFile(result.soulFilePath, 'utf-8');
+      expect(soulContent).toContain('RESEARCH.md Maintenance');
+      expect(soulContent).toContain('auto-maintained by you');
+    });
   });
 
   describe('exitResearchMode', () => {

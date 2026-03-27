@@ -304,7 +304,7 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
-// Agent Mode module (Issue #1709: Research Mode — Phase 1)
+// Agent Mode module (Issue #1709: Research Mode — Phase 1, Issue #1710: RESEARCH.md)
 export {
   ResearchModeManager,
   sanitizeTopicName,
@@ -312,4 +312,11 @@ export {
   type ResearchModeState,
   type EnterResearchModeResult,
   type EnterResearchModeOptions,
+} from './modes/index.js';
+
+// Research State File (Issue #1710: RESEARCH.md 研究状态文件)
+export {
+  ResearchStateFile,
+  generateResearchTemplate,
+  RESEARCH_STATE_FILENAME,
 } from './modes/index.js';
