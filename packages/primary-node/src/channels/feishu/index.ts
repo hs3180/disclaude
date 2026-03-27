@@ -22,6 +22,9 @@ export { PassiveModeManager } from './passive-mode.js';
 // Mention Detection
 export { MentionDetector, type BotInfo } from './mention-detector.js';
 
+// Trigger Phrase Detection (Issue #1229)
+export { TriggerDetector, type TriggerReason, type TriggerResult, type NoTriggerResult, type DetectionResult } from './trigger-detector.js';
+
 // Welcome Handler
 export { WelcomeHandler } from './welcome-handler.js';
 

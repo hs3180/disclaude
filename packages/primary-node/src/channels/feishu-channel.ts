@@ -35,6 +35,7 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  TriggerDetector,
 } from './feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
@@ -155,6 +156,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // Modular components
   private passiveModeManager: PassiveModeManager;
   private mentionDetector: MentionDetector;
+  private triggerDetector: TriggerDetector;
   private welcomeHandler: WelcomeHandler;
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
@@ -176,6 +178,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize modular components
     this.passiveModeManager = new PassiveModeManager();
     this.mentionDetector = new MentionDetector();
+    this.triggerDetector = new TriggerDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
 
@@ -394,6 +397,51 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Handle discussion end: dissolve group chat and unregister from GroupService.
+   *
+   * Called asynchronously after the final message is sent, so it never
+   * blocks the message flow.
+   *
+   * @param chatId - Chat ID to dissolve
+   * @param reason - Reason for ending (normal, timeout, abandoned, etc.)
+   * @param summary - Optional summary text
+   *
+   * @see Issue #1229 - 智能会话结束
+   */
+  private async handleDiscussionEnd(
+    chatId: string,
+    reason: string,
+    summary?: string
+  ): Promise<void> {
+    if (!this.client) {
+      logger.warn('Cannot dissolve group: Feishu client not initialized');
+      return;
+    }
+
+    try {
+      // Only dissolve groups that are managed by the bot
+      const groupService = new GroupService();
+      const isManaged = groupService.isManaged(chatId);
+
+      if (!isManaged) {
+        logger.info({ chatId }, 'Skipping discussion end: group is not managed by bot');
+        return;
+      }
+
+      // Dissolve via Feishu API and unregister
+      await dissolveChat(this.client, chatId);
+      groupService.unregisterGroup(chatId);
+
+      logger.info(
+        { chatId, reason, summary, groupName: groupService.getGroup(chatId)?.name },
+        'Discussion ended and group dissolved'
+      );
+    } catch (error) {
+      logger.error({ err: error, chatId, reason }, 'Failed to dissolve group after discussion end');
+    }
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -407,6 +455,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Detect trigger phrases for smart session end
+        const rawText = message.text || '';
+        const detection = this.triggerDetector.detectAndStrip(rawText);
+        const sendText = detection.cleanText;
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +467,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: sendText }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // If trigger detected, asynchronously dissolve the group
+        if (detection.detected) {
+          logger.info(
+            { chatId: message.chatId, reason: detection.reason, summary: detection.summary },
+            'Discussion end trigger detected, dissolving group asynchronously'
+          );
+          // Fire-and-forget: don't block message flow
+          this.handleDiscussionEnd(message.chatId, detection.reason, detection.summary).catch((err) => {
+            logger.error({ err, chatId: message.chatId }, 'Failed to handle discussion end');
+          });
+        }
         break;
       }
 
