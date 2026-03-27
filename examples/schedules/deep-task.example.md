@@ -64,12 +64,17 @@ ls -d workspace/tasks/*/ 2>/dev/null
 3. 分析当前任务状态（检查 `iterations/` 目录下的历史迭代）
 4. 调用 evaluator skill 评估任务完成状态：
    - 如果评估结果为 COMPLETE：
+     - 更新 `progress.md` 状态为 completed
      - 创建 `final_result.md`，写入结果摘要
      - 删除 `running.lock`
    - 如果评估结果为 NEED_EXECUTE：
      - 调用 executor skill 执行任务
+     - Executor 会自动更新 `progress.md`（Task Context）
      - 在 `iterations/` 下创建新迭代目录（如 `iter-N/`），保存执行记录
      - 删除 `running.lock`
+
+> **Note**: `progress.md` 作为 Task Context，由 Executor 写入、Task Reporter 读取。
+> 详见 `task-reporter` schedule。
 
 ### 5. 迭代限制
 
@@ -82,9 +87,11 @@ ls -d workspace/tasks/*/ 2>/dev/null
 ```
 tasks/{taskId}/
 ├── task.md           → 存在 = 任务已创建
+├── progress.md       → 任务进度上下文（Executor 写入，Reporter 读取）
 ├── final_result.md   → 存在 = 任务已完成 ✅
 ├── running.lock      → 存在 = 任务执行中 🔄
 ├── failed.md         → 存在 = 任务失败 ❌
+├── .last-report      → 最近一次进度报告时间戳（Reporter 写入）
 └── iterations/
     ├── iter-1/
     ├── iter-2/
