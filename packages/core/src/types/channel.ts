@@ -255,8 +255,9 @@ export interface IChannel {
    * Send a message through this channel.
    *
    * @param message - Message to send
+   * @returns The platform message ID if available, undefined otherwise
    */
-  sendMessage(message: OutgoingMessage): Promise<void>;
+  sendMessage(message: OutgoingMessage): Promise<string | void>;
 
   /**
    * Start the channel.
