@@ -370,7 +370,7 @@ Current implementation uses in-memory sessions:
 ### 5. Tool Configuration
 
 Tools are configured via `disallowedTools` in the agent classes:
-- **Pilot** (`src/agents/pilot.ts`): Uses `disallowedTools: ['AskUserQuestion']`
+- **Pilot** (`packages/worker-node/src/agents/pilot/index.ts`): Uses `disallowedTools: ['EnterPlanMode']`
 - **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
 
 To enable/disable tools, modify the `disallowedTools` array in `Pilot.processMessage()` or `Pilot.executeOnce()`.

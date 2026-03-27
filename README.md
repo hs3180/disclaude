@@ -259,7 +259,7 @@ Ruliu (Baidu InfoFlow) is supported via HTTP Webhook. Configuration:
 
 | Category | Tools |
 |----------|-------|
-| **Planning** | `TodoWrite`, `Task`, `ExitPlanMode`, `AskUserQuestion` |
+| **Planning** | `TodoWrite`, `Task`, `ExitPlanMode` |
 | **File System** | `Read`, `Write`, `Edit`, `Glob`, `Grep` |
 | **Execution** | `Bash`, `KillShell`, `NotebookEdit` |
 | **Code** | `LSP` (Language Server Protocol) |
