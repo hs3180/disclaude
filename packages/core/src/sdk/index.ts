@@ -15,11 +15,16 @@
  * ├── factory.ts               # Provider 工厂
  * └── providers/
  *     ├── index.ts
- *     └── claude/              # Claude SDK 实现
+ *     ├── claude/              # Claude SDK 实现
+ *     │   ├── index.ts
+ *     │   ├── provider.ts
+ *     │   ├── message-adapter.ts
+ *     │   └── options-adapter.ts
+ *     └── acp/                 # ACP 协议基础设施 (Issue #1333)
  *         ├── index.ts
- *         ├── provider.ts
- *         ├── message-adapter.ts
- *         └── options-adapter.ts
+ *         ├── types.ts         # JSON-RPC 2.0 + ACP 类型定义
+ *         ├── transport.ts     # 传输层 (stdio/SSE)
+ *         └── connection.ts    # 连接管理器
  * ```
  *
  * ## 使用示例
@@ -115,6 +120,44 @@ export type {
 // ============================================================================
 
 export { ClaudeSDKProvider } from './providers/index.js';
+
+// ACP (Agent Communication Protocol) 基础设施
+export {
+  AcpConnection,
+  StdioTransport,
+  createTransport,
+  AcpMethod,
+  JsonRpcErrorCode,
+} from './providers/index.js';
+
+export type {
+  AcpConnectionState,
+  AcpConnectionConfig,
+  AcpTransportType,
+  AcpTransportConfig,
+  AcpStdioTransportConfig,
+  AcpSseTransportConfig,
+  AcpClientCapabilities,
+  AcpServerCapabilities,
+  AcpModelInfo,
+  AcpTaskSendParams,
+  AcpTaskOptions,
+  AcpContentBlock,
+  AcpMessage,
+  AcpNotificationMessageParams,
+  AcpNotificationProgressParams,
+  AcpNotificationCompleteParams,
+  AcpUsageStats,
+  AcpInitializeParams,
+  AcpInitializeResult,
+  JsonRpcMessage,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse,
+  JsonRpcErrorResponse,
+  JsonRpcError,
+  JsonRpcNotification,
+  AcpMethodName,
+} from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出
