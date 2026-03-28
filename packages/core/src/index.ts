@@ -303,3 +303,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Research module (Issue #1710 - RESEARCH.md file management)
+export {
+  ResearchFileManager,
+  isValidTopic,
+  sanitizeTopic,
+  type ResearchFileManagerConfig,
+  type ResearchInitOptions,
+  type ResearchFinding,
+  type ResearchQuestion,
+  type ResearchResource,
+  type ParsedResearch,
+} from './research/index.js';
