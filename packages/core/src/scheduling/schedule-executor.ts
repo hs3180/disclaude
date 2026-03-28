@@ -2,6 +2,7 @@
  * Schedule Executor Factory - Creates TaskExecutor for scheduled task execution.
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
+ * Issue #1315: Support for per-task SOUL.md personality injection.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
@@ -12,8 +13,8 @@
  * createScheduleExecutor(agentFactory) => TaskExecutor
  *
  * Scheduler uses TaskExecutor to execute tasks:
- *   executor(chatId, prompt, userId)
- *     -> agentFactory(chatId, callbacks)
+ *   executor(chatId, prompt, userId, model, systemPromptAppend)
+ *     -> agentFactory(chatId, callbacks, model, systemPromptAppend)
  *       -> agent.executeOnce(chatId, prompt, undefined, userId)
  *         -> agent.dispose()
  * ```
@@ -45,12 +46,14 @@ export interface ScheduleAgent {
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
+ * @param systemPromptAppend - Optional system prompt append for SOUL.md injection (Issue #1315)
  * @returns A ScheduleAgent instance (caller must dispose)
  */
 export type ScheduleAgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
-  model?: string
+  model?: string,
+  systemPromptAppend?: string
 ) => ScheduleAgent;
 
 /**
@@ -73,6 +76,7 @@ export interface ScheduleExecutorOptions {
  *
  * Issue #1382: This enables both Primary Node and Worker Node to use
  * the same executor logic, just with different agent factories.
+ * Issue #1315: Passes systemPromptAppend for SOUL.md personality injection.
  *
  * @param options - Executor options including agent factory and callbacks
  * @returns A TaskExecutor function for use with Scheduler
@@ -81,8 +85,11 @@ export interface ScheduleExecutorOptions {
  * ```typescript
  * // In Primary Node or Worker Node:
  * const executor = createScheduleExecutor({
- *   agentFactory: (chatId, callbacks) => {
- *     return AgentFactory.createScheduleAgent(chatId, callbacks);
+ *   agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+ *     return AgentFactory.createScheduleAgent(chatId, callbacks, {
+ *       model,
+ *       systemPromptAppend,
+ *     });
  *   },
  *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
  * });
@@ -97,10 +104,11 @@ export interface ScheduleExecutorOptions {
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
   const { agentFactory, callbacks } = options;
 
-  return async (chatId: string, prompt: string, userId?: string, model?: string): Promise<void> => {
+  return async (chatId: string, prompt: string, userId?: string, model?: string, systemPromptAppend?: string): Promise<void> => {
     // Create a short-lived agent for this execution
     // Issue #1338: Pass model override for per-task model selection
-    const agent = agentFactory(chatId, callbacks, model);
+    // Issue #1315: Pass systemPromptAppend for SOUL.md personality injection
+    const agent = agentFactory(chatId, callbacks, model, systemPromptAppend);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks

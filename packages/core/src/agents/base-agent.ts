@@ -43,6 +43,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Optional system prompt to append (SOUL.md personality injection).
+   * Passed through to AgentQueryOptions.systemPromptAppend.
+   * @see Issue #1315
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -190,6 +196,11 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // Set system prompt append (Issue #1315: SOUL.md personality injection)
+    if (extra.systemPromptAppend) {
+      options.systemPromptAppend = extra.systemPromptAppend;
     }
 
     return options;

@@ -28,6 +28,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import { loadSoulContent } from '../utils/soul-loader.js';
 
 const logger = createLogger('Scheduler');
 
@@ -57,8 +58,9 @@ export interface SchedulerCallbacks {
  * @param prompt - The task prompt to execute
  * @param userId - Optional user ID for context
  * @param model - Optional model override for this task (Issue #1338)
+ * @param systemPromptAppend - Optional system prompt for SOUL.md injection (Issue #1315)
  */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string) => Promise<void>;
+export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, systemPromptAppend?: string) => Promise<void>;
 
 /**
  * Scheduler options.
@@ -77,6 +79,13 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Global SOUL.md content for personality injection.
+   * Loaded once at startup and passed to all task executions.
+   * Per-task soul (task.soul) overrides this when set.
+   * @see Issue #1315
+   */
+  globalSoulContent?: string | null;
 }
 
 /**
@@ -118,12 +127,15 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /** Global SOUL.md content for personality injection (Issue #1315) */
+  private globalSoulContent?: string | null;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.globalSoulContent = options.globalSoulContent;
     logger.info('Scheduler created');
   }
 
@@ -295,9 +307,16 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
+      // Issue #1315: Resolve soul content for this task execution
+      // Per-task soul (task.soul) overrides global soul when set
+      const soulContent = task.soul
+        ? loadSoulContent(task.soul)
+        : this.globalSoulContent;
+
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      // Issue #1315: Pass soul content for personality injection
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, soulContent ?? undefined);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

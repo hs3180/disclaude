@@ -72,6 +72,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // System prompt append for SOUL.md personality injection (Issue #1315)
+  private readonly systemPromptAppend?: string;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -101,6 +104,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Issue #1315: Store system prompt append for SOUL.md personality injection
+    this.systemPromptAppend = config.systemPromptAppend;
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -378,9 +384,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1315: Include systemPromptAppend for SOUL.md personality injection
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.systemPromptAppend && { systemPromptAppend: this.systemPromptAppend }),
     });
 
     // Get capabilities for message building
@@ -581,9 +589,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1315: Include systemPromptAppend for SOUL.md personality injection
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.systemPromptAppend && { systemPromptAppend: this.systemPromptAppend }),
     });
 
     this.logger.info(
