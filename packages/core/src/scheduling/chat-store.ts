@@ -251,13 +251,14 @@ export class ChatStore {
       return false;
     }
 
-    // Update in-memory record
-    record.response = response;
+    // Update in-memory record (spread to avoid mutation of cached object)
+    const updatedRecord = { ...record, response };
+    this.cache.set(chatId, updatedRecord);
 
     // Persist to file
     try {
       const filePath = this.getFilePath(chatId);
-      await fsPromises.writeFile(filePath, JSON.stringify(record, null, 2), 'utf-8');
+      await fsPromises.writeFile(filePath, JSON.stringify(updatedRecord, null, 2), 'utf-8');
       logger.debug({ chatId, responder: response.responder }, 'Temp chat marked as responded');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to persist temp chat response');
