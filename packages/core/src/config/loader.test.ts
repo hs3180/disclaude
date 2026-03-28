@@ -15,6 +15,9 @@ import {
   loadConfigFile,
   getConfigFromFile,
   validateConfig,
+  validateRequiredConfig,
+  setLoadedConfig,
+  getPreloadedConfig,
 } from './loader.js';
 
 // Mock fs module
@@ -354,6 +357,136 @@ describe('validateConfig', () => {
 
     // Should still validate as we only check known structure
     expect(validateConfig(config)).toBe(true);
+  });
+});
+
+describe('validateRequiredConfig', () => {
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  beforeEach(() => {
+    // Ensure ANTHROPIC_API_KEY is not set for these tests
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterEach(() => {
+    if (originalAnthropicKey !== undefined) {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    } else {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  it('should return valid for config with both glm apiKey and model', () => {
+    const config = {
+      glm: { apiKey: 'glm-key', model: 'glm-5' },
+    };
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should return error when glm apiKey is set without model', () => {
+    const config = {
+      glm: { apiKey: 'glm-key' },
+    };
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe('glm.model');
+    expect(result.errors[0].message).toContain('glm.model is required');
+  });
+
+  it('should return error when glm model is set without apiKey', () => {
+    const config = {
+      glm: { model: 'glm-5' },
+    };
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe('glm.apiKey');
+    expect(result.errors[0].message).toContain('glm.apiKey is required');
+  });
+
+  it('should return error when ANTHROPIC_API_KEY is set without agent.model', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+
+    const config = {};
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].field).toBe('agent.model');
+  });
+
+  it('should return valid when ANTHROPIC_API_KEY is set with agent.model', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+
+    const config = {
+      agent: { model: 'claude-sonnet-4-20250514' },
+    };
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(true);
+  });
+
+  it('should return valid for minimal config without API keys', () => {
+    const config = {};
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('should return multiple errors for multiple validation failures', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+
+    const config = {
+      glm: { apiKey: 'glm-key' },
+    };
+
+    const result = validateRequiredConfig(config);
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('setLoadedConfig / getPreloadedConfig', () => {
+  it('should return null initially', () => {
+    expect(getPreloadedConfig()).toBeNull();
+  });
+
+  it('should store and retrieve preloaded config', () => {
+    const config = {
+      _source: '/path/to/config.yaml',
+      _fromFile: true,
+      agent: { model: 'test-model' },
+    };
+
+    setLoadedConfig(config);
+
+    const retrieved = getPreloadedConfig();
+    expect(retrieved).toEqual(config);
+  });
+
+  it('should allow overwriting preloaded config', () => {
+    const config1 = {
+      _source: '/path/1.yaml',
+      _fromFile: true,
+    };
+    const config2 = {
+      _source: '/path/2.yaml',
+      _fromFile: true,
+      workspace: { dir: '/new-workspace' },
+    };
+
+    setLoadedConfig(config1);
+    expect(getPreloadedConfig()).toEqual(config1);
+
+    setLoadedConfig(config2);
+    expect(getPreloadedConfig()).toEqual(config2);
   });
 });
 
