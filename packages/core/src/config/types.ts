@@ -259,6 +259,22 @@ export interface MessagingConfig {
 }
 
 /**
+ * Soul configuration section.
+ *
+ * Controls SOUL.md personality file loading for Agent injection.
+ * @see Issue #1228 - Discussion focus keeping via SOUL.md
+ * @see Issue #1315 - SOUL.md personality definition system
+ */
+export interface SoulConfig {
+  /**
+   * Path to the global SOUL.md file.
+   * Supports tilde expansion (~/.disclaude/SOUL.md).
+   * If not set, looks for SOUL.md in workspace root.
+   */
+  path?: string;
+}
+
+/**
  * Session restoration configuration (Issue #1213).
  * Controls how chat history is loaded when agent starts or resets.
  */
@@ -322,6 +338,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Soul configuration (Issue #1228, #1315) */
+  soul?: SoulConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

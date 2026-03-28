@@ -4,6 +4,8 @@
  * Creates a new group chat via IPC to Primary Node.
  * Platform-agnostic: works with any channel that supports group creation.
  *
+ * Issue #1228: Added soulId parameter for discussion personality injection.
+ *
  * @module mcp-server/tools/create-chat
  */
 
@@ -19,15 +21,17 @@ const logger = createLogger('CreateChat');
  * @param params.name - Group name (optional, auto-generated if not provided)
  * @param params.description - Group description (optional)
  * @param params.memberIds - Initial member IDs (optional, platform decides ID format)
+ * @param params.soulId - SOUL profile identifier for discussion personality (optional)
  */
 export async function create_chat(params: {
   name?: string;
   description?: string;
   memberIds?: string[];
+  soulId?: string;
 }): Promise<CreateChatResult> {
-  const { name, description, memberIds } = params;
+  const { name, description, memberIds, soulId } = params;
 
-  logger.info({ name, description, memberCount: memberIds?.length }, 'create_chat called');
+  logger.info({ name, description, memberCount: memberIds?.length, soulId }, 'create_chat called');
 
   try {
     // Check IPC availability
@@ -42,7 +46,7 @@ export async function create_chat(params: {
     }
 
     const ipcClient = getIpcClient();
-    const result = await ipcClient.createChat(name, description, memberIds);
+    const result = await ipcClient.createChat(name, description, memberIds, soulId);
 
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
@@ -54,12 +58,13 @@ export async function create_chat(params: {
       };
     }
 
-    logger.info({ chatId: result.chatId, name: result.name }, 'Group chat created');
+    logger.info({ chatId: result.chatId, name: result.name, soulId }, 'Group chat created');
     return {
       success: true,
       chatId: result.chatId,
       name: result.name,
-      message: `✅ Group chat created (chatId: ${result.chatId}, name: ${result.name ?? 'auto'})`,
+      soulId: result.soulId,
+      message: `✅ Group chat created (chatId: ${result.chatId}, name: ${result.name ?? 'auto'}${soulId ? `, soul: ${soulId}` : ''})`,
     };
 
   } catch (error) {

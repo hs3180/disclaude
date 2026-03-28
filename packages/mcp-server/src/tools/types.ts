@@ -77,6 +77,8 @@ export interface CreateChatResult {
   message: string;
   chatId?: string;
   name?: string;
+  /** SOUL profile identifier that was applied (Issue #1228) */
+  soulId?: string;
   error?: string;
 }
 

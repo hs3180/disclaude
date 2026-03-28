@@ -354,6 +354,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   /**
    * Create a group chat via Feishu API.
    * Issue #1546: Group management capability exposed through IPC handlers.
+   * Issue #1228: Added soulId for discussion personality injection.
    *
    * Note: `description` is accepted for API compatibility but not supported
    * by the Feishu CreateGroup API — it will be silently ignored.
@@ -361,11 +362,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * @param name - Group name (optional, auto-generated if not provided)
    * @param _description - Group description (not supported by Feishu, ignored)
    * @param memberIds - Initial member IDs (open_id format)
+   * @param soulId - SOUL profile identifier for personality injection
    */
   async createChat(
     name?: string,
     _description?: string,
-    memberIds?: string[]
+    memberIds?: string[],
+    soulId?: string
   ): Promise<{ chatId: string; name: string }> {
     if (!this.client) {
       throw new Error('Feishu client not initialized');
@@ -374,6 +377,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const groupInfo = await groupService.createGroup(this.client, {
       topic: name,
       members: memberIds,
+      soulId,
     });
     return { chatId: groupInfo.chatId, name: groupInfo.name };
   }

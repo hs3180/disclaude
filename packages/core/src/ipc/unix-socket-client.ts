@@ -502,10 +502,11 @@ export class UnixSocketIpcClient {
   async createChat(
     name?: string,
     description?: string,
-    memberIds?: string[]
-  ): Promise<{ success: boolean; chatId?: string; name?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    memberIds?: string[],
+    soulId?: string
+  ): Promise<{ success: boolean; chatId?: string; name?: string; soulId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('createChat', { name, description, memberIds });
+      return await this.request('createChat', { name, description, memberIds, soulId });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error }, 'createChat failed');

@@ -57,8 +57,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
-  /** Create a group chat (optional platform capability) */
-  createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
+  /** Create a group chat (optional platform capability). Issue #1228: Added soulId. */
+  createChat?: (name?: string, description?: string, memberIds?: string[], soulId?: string) => Promise<{ chatId: string; name: string }>;
   /** Dissolve a group chat (optional platform capability) */
   dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
 }
@@ -233,11 +233,11 @@ export function createInteractiveMessageHandler(
               error: 'createChat not supported by this channel',
             };
           }
-          const { name, description, memberIds } =
+          const { name, description, memberIds, soulId } =
             request.payload as IpcRequestPayloads['createChat'];
           try {
-            const result = await handlers.createChat(name, description, memberIds);
-            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name } };
+            const result = await handlers.createChat(name, description, memberIds, soulId);
+            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name, soulId } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

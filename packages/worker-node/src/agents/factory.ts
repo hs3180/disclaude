@@ -101,6 +101,11 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * SOUL.md content for personality injection.
+   * Issue #1228, #1315: SOUL.md personality definition system.
+   */
+  soulContent?: string;
 }
 
 /**
@@ -186,6 +191,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        soulContent: options.soulContent,
       };
 
       return new Pilot(config);
@@ -230,6 +236,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      soulContent: options.soulContent,
     };
 
     return new Pilot(config);
@@ -268,6 +275,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      soulContent: options.soulContent,
     };
 
     return new Pilot(config);

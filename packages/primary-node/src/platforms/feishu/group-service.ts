@@ -39,6 +39,14 @@ export interface GroupInfo {
    * @see Issue #721 - 话题群基础设施
    */
   isTopicGroup?: boolean;
+  /**
+   * SOUL profile identifier for personality injection.
+   * When set, the agent for this group will have the corresponding
+   * SOUL.md content injected into its system prompt.
+   *
+   * @see Issue #1228 - Discussion focus keeping via SOUL.md
+   */
+  soulId?: string;
 }
 
 /**
@@ -53,6 +61,14 @@ export interface CreateGroupOptions {
   members?: string[];
   /** Creator open_id (optional, used for auto-adding and tracking) */
   creatorId?: string;
+  /**
+   * SOUL profile identifier for personality injection.
+   * Stored in GroupInfo and used by PrimaryAgentPool when creating
+   * the agent for this group.
+   *
+   * @see Issue #1228 - Discussion focus keeping via SOUL.md
+   */
+  soulId?: string;
 }
 
 /**
@@ -254,7 +270,7 @@ export class GroupService {
    * @see Issue #692 - GroupService 支持创建群聊
    */
   async createGroup(client: lark.Client, options: CreateGroupOptions = {}): Promise<GroupInfo> {
-    const { topic, members, creatorId } = options;
+    const { topic, members, creatorId, soulId } = options;
 
     // Create the chat via Feishu API
     const chatId = await createDiscussionChat(client, { topic, members }, creatorId);
@@ -271,6 +287,7 @@ export class GroupService {
       createdAt: Date.now(),
       createdBy: creatorId,
       initialMembers: actualMembers,
+      soulId,
     };
 
     // Register the group

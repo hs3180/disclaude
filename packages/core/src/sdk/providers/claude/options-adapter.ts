@@ -61,6 +61,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // SOUL.md system prompt injection (Issue #1228, #1315)
+  if (options.systemPromptAppend) {
+    sdkOptions.systemPrompt = options.systemPromptAppend;
+  }
+
   return sdkOptions;
 }
 

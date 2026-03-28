@@ -320,6 +320,7 @@ For display-only cards, use send_card instead.
     },
   },
   // Issue #1546: Group management tools (platform-agnostic)
+  // Issue #1228: Added soulId parameter for discussion personality injection
   {
     name: 'create_chat',
     description: `Create a new group chat.
@@ -331,23 +332,28 @@ The bot becomes the group owner and can dissolve the group later.
 - **name**: Group name (optional, auto-generated if not provided)
 - **description**: Group description (optional)
 - **memberIds**: Initial member IDs (optional, platform decides ID format)
+- **soulId**: SOUL profile identifier for discussion personality injection (optional).
+  Use "discussion" for focused discussion groups where the agent should stay on topic.
+  The SOUL profile is loaded from the souls/ directory (e.g., souls/discussion.md).
 
 ## Example
 \`\`\`json
-{"name": "PR #123 Review", "memberIds": ["ou_xxx", "ou_yyy"]}
+{"name": "PR #123 Review", "memberIds": ["ou_xxx", "ou_yyy"], "soulId": "discussion"}
 \`\`\``,
     parameters: z.object({
       name: z.string().optional().describe('Group name (optional, auto-generated if not provided)'),
       description: z.string().optional().describe('Group description (optional)'),
       memberIds: z.array(z.string()).optional().describe('Initial member IDs (platform decides ID format)'),
+      soulId: z.string().optional().describe('SOUL profile identifier for personality injection (e.g., "discussion" for focused discussions)'),
     }),
-    handler: async ({ name, description, memberIds }: {
+    handler: async ({ name, description, memberIds, soulId }: {
       name?: string;
       description?: string;
       memberIds?: string[];
+      soulId?: string;
     }) => {
       // create_chat handles all errors internally and returns { success, message }
-      const result = await create_chat({ name, description, memberIds });
+      const result = await create_chat({ name, description, memberIds, soulId });
       return toolSuccess(result.message);
     },
   },

@@ -448,6 +448,17 @@ export class Config {
   }
 
   /**
+   * Get soul configuration for SOUL.md personality injection.
+   * @see Issue #1228 - Discussion focus keeping via SOUL.md
+   * @see Issue #1315 - SOUL.md personality definition system
+   *
+   * @returns Soul configuration (path to global SOUL.md, if configured)
+   */
+  static getSoulConfig(): { path?: string } {
+    return fileConfigOnly.soul || {};
+  }
+
+  /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.
    * @see Issue #1213

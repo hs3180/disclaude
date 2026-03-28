@@ -292,6 +292,17 @@ export {
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 
+// Soul module (Issue #1228, #1315 - SOUL.md personality injection)
+export {
+  loadSoul,
+  loadSoulFile,
+  expandTilde,
+  formatSoulAsSystemPrompt,
+  MAX_SOUL_SIZE_BYTES,
+  type SoulLoadResult,
+  type SoulLoadOptions,
+} from './soul/index.js';
+
 // Control module - unified control command handling
 export {
   createControlHandler,

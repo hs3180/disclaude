@@ -391,12 +391,13 @@ describe('createInteractiveMessageHandler', () => {
       });
       const response = await handler(request);
 
-      expect(container.handlers!.createChat).toHaveBeenCalledWith('Test Group', 'Test description', ['ou_a', 'ou_b']);
+      expect(container.handlers!.createChat).toHaveBeenCalledWith('Test Group', 'Test description', ['ou_a', 'ou_b'], undefined);
       expect(response.success).toBe(true);
       expect(response.payload).toEqual({
         success: true,
         chatId: 'oc_new_group',
         name: 'Test Group',
+        soulId: undefined,
       });
     });
 

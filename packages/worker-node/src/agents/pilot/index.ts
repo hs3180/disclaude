@@ -72,6 +72,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // SOUL.md content for personality injection (Issue #1228, #1315)
+  private readonly soulContent?: string;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -102,7 +105,10 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
-    this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
+    // Store SOUL.md content for personality injection (Issue #1228, #1315)
+    this.soulContent = config.soulContent;
+
+    this.logger.info({ chatId: this.boundChatId, hasSoul: !!this.soulContent }, 'Pilot created for chatId');
   }
 
   protected getAgentName(): string {
@@ -381,6 +387,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.soulContent,
     });
 
     // Get capabilities for message building
@@ -584,10 +591,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.soulContent,
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools, hasSoul: !!this.soulContent },
       'Starting SDK query with message channel'
     );
 

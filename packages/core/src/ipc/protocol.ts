@@ -61,11 +61,13 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
-  // Group management (Issue #1546)
+  // Group management (Issue #1546, Issue #1228: soul support)
   createChat: {
     name?: string;
     description?: string;
     memberIds?: string[];
+    /** SOUL profile identifier for discussion personality injection */
+    soulId?: string;
   };
   dissolveChat: {
     chatId: string;
@@ -92,11 +94,12 @@ export interface IpcResponsePayloads {
     success: boolean;
     messageId?: string;
   };
-  // Group management (Issue #1546)
+  // Group management (Issue #1546, Issue #1228: soul support)
   createChat: {
     success: boolean;
     chatId?: string;
     name?: string;
+    soulId?: string;
   };
   dissolveChat: {
     success: boolean;
