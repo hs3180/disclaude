@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildRuntimeEnvAwarenessGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -87,6 +88,56 @@ describe('buildOutputFormatGuidance', () => {
     const result = buildOutputFormatGuidance();
     expect(result).toContain('Convert JSON objects to readable text');
     expect(result).toContain('Markdown tables instead of raw JSON');
+  });
+});
+
+describe('buildRuntimeEnvAwarenessGuidance', () => {
+  it('should include runtime environment sharing section header', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Runtime Environment Sharing');
+  });
+
+  it('should mention the .runtime-env file', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain auto-loading mechanism', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Auto-loaded');
+    expect(result).toContain('process.env');
+  });
+
+  it('should explain read/write operations', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Read tool');
+    expect(result).toContain('Write tool');
+  });
+
+  it('should mention GH_TOKEN as a common variable', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GitHub');
+  });
+
+  it('should mention GH_TOKEN_EXPIRES_AT', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should include KEY=VALUE format explanation', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should warn against hardcoding secrets', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('hardcode');
+  });
+
+  it('should advise preserving existing variables when writing', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('preserve');
   });
 });
 

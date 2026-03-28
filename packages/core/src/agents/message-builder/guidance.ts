@@ -180,6 +180,48 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent shares state with the main process via a
+ * `.runtime-env` file in the workspace directory. The agent should be
+ * aware of this mechanism so it can read/write shared environment
+ * variables (e.g., GH_TOKEN, API keys) and understand that its own
+ * environment is auto-populated from this file.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvAwarenessGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Sharing
+
+You have access to a **runtime environment file** (\`.runtime-env\`) in the workspace directory for sharing state between processes.
+
+### How it works
+
+- **Auto-loaded**: Variables from \`.runtime-env\` are automatically loaded into your environment. You can access them via \`process.env.VARIABLE_NAME\`.
+- **Read**: Use the Read tool to check current variables: read \`{workspace}/.runtime-env\`
+- **Write**: Use the Write tool to set a variable: write \`KEY=VALUE\` lines to \`{workspace}/.runtime-env\`
+- **Format**: Simple \`KEY=VALUE\` per line, \`#\` for comments, blank lines ignored.
+
+### Common variables
+
+| Variable | Purpose |
+|----------|---------|
+| \`GH_TOKEN\` | GitHub authentication token for API operations |
+| \`GH_TOKEN_EXPIRES_AT\` | Expiration timestamp for the GitHub token |
+
+### Guidelines
+
+- When you need to share data with the main process or other agent instances, write it to \`.runtime-env\`
+- Before performing GitHub API operations, check if \`GH_TOKEN\` is available in your environment
+- Do NOT hardcode secrets — use \`.runtime-env\` for any sensitive values that need to persist across sessions
+- When writing to \`.runtime-env\`, preserve existing variables (read first, then write the full content)`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
