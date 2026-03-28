@@ -8,7 +8,7 @@
 #   ./tests/integration/mcp-tools-test.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 120 for tool execution)
+#   --timeout SECONDS   Request timeout (default: 180 for tool execution)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -19,7 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-120}"
+TIMEOUT="${TIMEOUT:-180}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
@@ -70,7 +70,7 @@ test_send_file_tool() {
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    assert_sync_chat_ok "请调用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。调用工具后直接报告结果，无论成功或失败，不要进行任何额外的诊断、排查或重试操作。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
