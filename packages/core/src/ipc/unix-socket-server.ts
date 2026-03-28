@@ -99,10 +99,12 @@ export type FeishuHandlersContainer = ChannelHandlersContainer;
  * dispatch cases removed; only registerActionPrompts callback remains for
  * internal use by the sendInteractive handler.
  * Issue #1546: Added createChat / dissolveChat dispatch cases.
+ * Issue #1629: Added registerCardContext for IPC card action routing.
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
-  channelHandlersContainer?: ChannelHandlersContainer
+  channelHandlersContainer?: ChannelHandlersContainer,
+  registerCardContext?: (chatId: string, nodeId: string, isRemote: boolean) => void
 ): IpcRequestHandler {
 
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -183,7 +185,7 @@ export function createInteractiveMessageHandler(
               error: 'Channel API handlers not available',
             };
           }
-          const { chatId, question, options, title, context, threadId, actionPrompts } =
+          const { chatId, question, options, title, context, threadId, actionPrompts, nodeId } =
             request.payload as IpcRequestPayloads['sendInteractive'];
           try {
             const result = await handlers.sendInteractive(chatId, {
@@ -206,6 +208,17 @@ export function createInteractiveMessageHandler(
               logger.debug(
                 { messageId: result.messageId, chatId, actionCount: Object.keys(resolvedPrompts).length },
                 'sendInteractive: action prompts registered'
+              );
+            }
+
+            // Issue #1629: Register card context for routing card actions back to Worker Node
+            // When a Worker Node sends a card via IPC, it includes its nodeId so that
+            // Primary Node can route card action callbacks to the correct node.
+            if (registerCardContext && result.messageId && nodeId) {
+              registerCardContext(chatId, nodeId, true);
+              logger.debug(
+                { messageId: result.messageId, chatId, nodeId },
+                'sendInteractive: card context registered for routing'
               );
             }
 

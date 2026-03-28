@@ -379,6 +379,117 @@ describe('createInteractiveMessageHandler', () => {
       expect(response.success).toBe(false);
       expect(response.error).toBe('Card build failed');
     });
+
+    // Issue #1629: Card context registration for IPC-sent cards
+    describe('Issue #1629: card context registration', () => {
+      it('should call registerCardContext when nodeId is provided', async () => {
+        const registerCardContext = vi.fn();
+        const handlerWithContext = createInteractiveMessageHandler(
+          registerActionPrompts, container, registerCardContext
+        );
+        const request = createRequest('sendInteractive', 'req-1629-1', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+          nodeId: 'worker-node-1',
+        });
+        const response = await handlerWithContext(request);
+
+        expect(response.success).toBe(true);
+        expect(registerCardContext).toHaveBeenCalledWith('chat-1', 'worker-node-1', true);
+      });
+
+      it('should NOT call registerCardContext when nodeId is not provided', async () => {
+        const registerCardContext = vi.fn();
+        const handlerWithContext = createInteractiveMessageHandler(
+          registerActionPrompts, container, registerCardContext
+        );
+        const request = createRequest('sendInteractive', 'req-1629-2', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+        });
+        const response = await handlerWithContext(request);
+
+        expect(response.success).toBe(true);
+        expect(registerCardContext).not.toHaveBeenCalled();
+      });
+
+      it('should NOT call registerCardContext when callback is not provided', async () => {
+        const handlerNoContext = createInteractiveMessageHandler(registerActionPrompts, container);
+        const request = createRequest('sendInteractive', 'req-1629-3', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+          nodeId: 'worker-node-1',
+        });
+        const response = await handlerNoContext(request);
+
+        expect(response.success).toBe(true);
+        // Should not throw — callback is optional
+      });
+
+      it('should NOT call registerCardContext when messageId is missing', async () => {
+        const registerCardContext = vi.fn();
+        const noMsgContainer = createMockHandlersContainer({
+          sendInteractive: vi.fn().mockResolvedValue({}),
+        });
+        const handlerNoMsg = createInteractiveMessageHandler(
+          registerActionPrompts, noMsgContainer, registerCardContext
+        );
+        const request = createRequest('sendInteractive', 'req-1629-4', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+          nodeId: 'worker-node-1',
+        });
+        const response = await handlerNoMsg(request);
+
+        expect(response.success).toBe(true);
+        expect(registerCardContext).not.toHaveBeenCalled();
+      });
+
+      it('should NOT call registerCardContext when sendInteractive fails', async () => {
+        const registerCardContext = vi.fn();
+        const errorContainer = createMockHandlersContainer({
+          sendInteractive: vi.fn().mockRejectedValue(new Error('Send failed')),
+        });
+        const errorHandler = createInteractiveMessageHandler(
+          registerActionPrompts, errorContainer, registerCardContext
+        );
+        const request = createRequest('sendInteractive', 'req-1629-5', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+          nodeId: 'worker-node-1',
+        });
+        const response = await errorHandler(request);
+
+        expect(response.success).toBe(false);
+        expect(registerCardContext).not.toHaveBeenCalled();
+      });
+
+      it('should register both action prompts and card context', async () => {
+        const registerCardContext = vi.fn();
+        const handlerWithContext = createInteractiveMessageHandler(
+          registerActionPrompts, container, registerCardContext
+        );
+        const request = createRequest('sendInteractive', 'req-1629-6', {
+          chatId: 'chat-1',
+          question: 'Choose:',
+          options: [{ text: 'A', value: 'a' }],
+          nodeId: 'worker-node-1',
+          actionPrompts: { a: 'A selected' },
+        });
+        const response = await handlerWithContext(request);
+
+        expect(response.success).toBe(true);
+        expect(registerActionPrompts).toHaveBeenCalledWith(
+          'interactive_msg_1', 'chat-1', { opt1: 'Option 1 selected' }
+        );
+        expect(registerCardContext).toHaveBeenCalledWith('chat-1', 'worker-node-1', true);
+      });
+    });
   });
 
   // ----- createChat -----

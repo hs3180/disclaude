@@ -60,6 +60,8 @@ export interface IpcRequestPayloads {
     context?: string;
     threadId?: string;
     actionPrompts?: Record<string, string>;
+    /** Issue #1629: Optional nodeId for card action routing to remote Worker Nodes */
+    nodeId?: string;
   };
   // Group management (Issue #1546)
   createChat: {

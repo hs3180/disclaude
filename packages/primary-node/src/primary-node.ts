@@ -294,11 +294,17 @@ export class PrimaryNode extends EventEmitter {
     const contextStore = this.interactiveContextStore;
 
     // Create the request handler with Feishu handlers container
+    // Issue #1629: Pass registerCardContext callback so IPC-sent cards
+    // with nodeId can be routed back to the correct Worker Node.
     const requestHandler = createInteractiveMessageHandler(
       (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
         contextStore.register(messageId, chatId, actionPrompts);
       },
-      this.feishuHandlersContainer
+      this.feishuHandlersContainer,
+      // Issue #1629: Register card context for IPC-sent cards with nodeId
+      (chatId: string, nodeId: string, isRemote: boolean) => {
+        this.cardActionRouter.registerChatContext(chatId, nodeId, isRemote);
+      }
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
