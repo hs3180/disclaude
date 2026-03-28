@@ -90,3 +90,14 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for start_discussion tool.
+ * Issue #631: Non-blocking discussion initiation.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+

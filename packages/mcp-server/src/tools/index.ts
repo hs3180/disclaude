@@ -13,6 +13,7 @@ export type {
   SendInteractiveResult,
   CreateChatResult,
   DissolveChatResult,
+  StartDiscussionResult,
 } from './types.js';
 
 // Shared utilities
@@ -36,6 +37,9 @@ export { send_file } from './send-file.js';
 // Group management (Issue #1546)
 export { create_chat } from './create-chat.js';
 export { dissolve_chat } from './dissolve-chat.js';
+
+// Discussion (Issue #631)
+export { start_discussion } from './start-discussion.js';
 
 // Interactive Message
 export {
