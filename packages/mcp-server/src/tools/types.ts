@@ -90,3 +90,44 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for add_members tool (Issue #1678).
+ */
+export interface AddMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for remove_members tool (Issue #1678).
+ */
+export interface RemoveMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for list_members tool (Issue #1678).
+ */
+export interface ListMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  memberIds?: string[];
+  error?: string;
+}
+
+/**
+ * Result type for list_chats tool (Issue #1678).
+ */
+export interface ListChatsResult {
+  success: boolean;
+  message: string;
+  chats?: Array<{ chatId: string; name: string }>;
+  error?: string;
+}
+

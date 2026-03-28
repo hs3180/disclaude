@@ -61,6 +61,14 @@ export interface ChannelApiHandlers {
   createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
   /** Dissolve a group chat (optional platform capability) */
   dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
+  /** Add members to a chat (optional platform capability, Issue #1678) */
+  addMembers?: (chatId: string, memberIds: string[]) => Promise<void>;
+  /** Remove members from a chat (optional platform capability, Issue #1678) */
+  removeMembers?: (chatId: string, memberIds: string[]) => Promise<void>;
+  /** List members of a chat (optional platform capability, Issue #1678) */
+  listMembers?: (chatId: string) => Promise<string[]>;
+  /** List all chats the bot is in (optional platform capability, Issue #1678) */
+  listChats?: () => Promise<Array<{ chatId: string; name: string }>>;
 }
 
 /**
@@ -265,6 +273,78 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.dissolveChat(chatId);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Member management (Issue #1678: add/remove/list members + list chats)
+        case 'addMembers': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return { id: request.id, success: false, error: 'Channel API handlers not available' };
+          }
+          if (!handlers.addMembers) {
+            return { id: request.id, success: false, error: 'addMembers not supported by this channel' };
+          }
+          const { chatId, memberIds } = request.payload as IpcRequestPayloads['addMembers'];
+          try {
+            await handlers.addMembers(chatId, memberIds);
+            return { id: request.id, success: true, payload: { success: true } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'removeMembers': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return { id: request.id, success: false, error: 'Channel API handlers not available' };
+          }
+          if (!handlers.removeMembers) {
+            return { id: request.id, success: false, error: 'removeMembers not supported by this channel' };
+          }
+          const { chatId, memberIds } = request.payload as IpcRequestPayloads['removeMembers'];
+          try {
+            await handlers.removeMembers(chatId, memberIds);
+            return { id: request.id, success: true, payload: { success: true } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'listMembers': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return { id: request.id, success: false, error: 'Channel API handlers not available' };
+          }
+          if (!handlers.listMembers) {
+            return { id: request.id, success: false, error: 'listMembers not supported by this channel' };
+          }
+          const { chatId } = request.payload as IpcRequestPayloads['listMembers'];
+          try {
+            const memberIds = await handlers.listMembers(chatId);
+            return { id: request.id, success: true, payload: { success: true, memberIds } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        case 'listChats': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return { id: request.id, success: false, error: 'Channel API handlers not available' };
+          }
+          if (!handlers.listChats) {
+            return { id: request.id, success: false, error: 'listChats not supported by this channel' };
+          }
+          try {
+            const chats = await handlers.listChats();
+            return { id: request.id, success: true, payload: { success: true, chats } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
