@@ -524,10 +524,26 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Initialize temp chat lifecycle service.
    * Issue #1703: Starts periodic cleanup of expired temp chats.
+   *
+   * The dissolveChat callback lazily resolves from registered channel handlers
+   * at cleanup time (not at init), since channels are registered after start().
+   * FeishuChannel.dissolveChat() handles both platform dissolution and
+   * GroupService unregistration, so no separate unregisterGroup is needed.
    */
   protected initTempChatLifecycle(): void {
     this.tempChatLifecycleService = new TempChatLifecycleService({
       chatStore: this.chatStore,
+      // Lazily resolve dissolveChat from registered channel handlers.
+      // Handlers are registered after channel setup (registerFeishuHandlers),
+      // so we use a closure that checks at cleanup time.
+      dissolveChat: async (chatId: string) => {
+        const { handlers } = this.feishuHandlersContainer;
+        if (handlers?.dissolveChat) {
+          await handlers.dissolveChat(chatId);
+        } else {
+          logger.warn({ chatId }, 'dissolveChat not available — channel handlers not registered yet');
+        }
+      },
     });
     this.tempChatLifecycleService.start();
     logger.info('Temp chat lifecycle service started');
