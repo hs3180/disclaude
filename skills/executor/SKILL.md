@@ -21,11 +21,12 @@ You are a task execution specialist. Your job is to implement features, fix bugs
 
 1. Read Task.md for requirements
 2. Read evaluation.md for guidance (if available from Evaluator)
-3. Execute the task:
+3. **Load project context**: If working in a development project directory (after cloning/downloading), check for `CLAUDE.md` and use the `/project-context` skill to understand the project's conventions before making changes
+4. Execute the task:
    - Make code changes
    - Run tests if required
    - Verify expected results
-4. Create execution.md with work summary
+5. Create execution.md with work summary
 
 ## Output Files
 
