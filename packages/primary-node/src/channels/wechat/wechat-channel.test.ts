@@ -210,16 +210,26 @@ describe('WeChatChannel', () => {
   });
 
   describe('checkHealth', () => {
-    it('should return true when client has token', () => {
+    it('should return true when client has token and listener is active', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).messageListener = { isListening: vi.fn().mockReturnValue(true) };
       mockHasToken.mockReturnValue(true);
       expect((channel as any).checkHealth()).toBe(true);
+    });
+
+    it('should return false when client has token but listener is not active', () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).messageListener = { isListening: vi.fn().mockReturnValue(false) };
+      mockHasToken.mockReturnValue(true);
+      expect((channel as any).checkHealth()).toBe(false);
     });
 
     it('should return false when client has no token', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).messageListener = { isListening: vi.fn().mockReturnValue(true) };
       mockHasToken.mockReturnValue(false);
       expect((channel as any).checkHealth()).toBe(false);
     });
