@@ -102,6 +102,16 @@ export {
   clearRuntimeContext,
 } from './agents/types.js';
 
+// Agent Mode (Issue #1709: Research Mode Phase 1)
+export {
+  type AgentMode,
+  type ModeConfig,
+  type ResearchModeOptions,
+  resolveModeConfig,
+  isValidResearchTopic,
+  getResearchWorkspaceDir,
+} from './agents/mode.js';
+
 // Message channel
 export { MessageChannel } from './agents/message-channel.js';
 
