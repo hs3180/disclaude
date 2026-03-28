@@ -42,18 +42,25 @@ export interface InteractiveContext {
  *
  * Supports two lookup strategies:
  * 1. By messageId (exact match)
- * 2. By chatId (returns the most recent context for a chat, used as fallback
- *    when the real Feishu messageId doesn't match the synthetic messageId used
- *    during registration)
+ * 2. By chatId (searches all contexts for a chat to find one containing
+ *    the requested actionValue, used as fallback when the real Feishu
+ *    messageId doesn't match the synthetic messageId used during registration)
+ *
+ * Multiple cards per chat are supported via an LRU-style chatId index
+ * (capped at MAX_ENTRIES_PER_CHAT entries per chatId).
  */
 export class InteractiveContextStore {
   private readonly contexts = new Map<string, InteractiveContext>();
 
   /**
-   * Index: chatId → most recent messageId.
+   * Index: chatId → ordered array of messageIds (oldest → newest).
    * Used for chatId-based fallback lookup when the exact messageId is unknown.
+   * Capped at MAX_ENTRIES_PER_CHAT entries per chatId (LRU eviction).
    */
-  private readonly chatIdIndex = new Map<string, string>();
+  private readonly chatIdIndex = new Map<string, string[]>();
+
+  /** Maximum number of card contexts retained per chatId (LRU eviction). */
+  private static readonly MAX_ENTRIES_PER_CHAT = 10;
 
   /** Maximum age for contexts before cleanup (default: 24 hours) */
   private readonly maxAge: number;
@@ -77,8 +84,20 @@ export class InteractiveContextStore {
       createdAt: Date.now(),
     });
 
-    // Update chatId index to point to the latest messageId for this chat
-    this.chatIdIndex.set(chatId, messageId);
+    // Append to chatId index (deduplicate if re-registering same messageId)
+    const existing = this.chatIdIndex.get(chatId) || [];
+    const filtered = existing.filter((id) => id !== messageId);
+    filtered.push(messageId);
+
+    // LRU eviction: keep only the most recent entries
+    if (filtered.length > InteractiveContextStore.MAX_ENTRIES_PER_CHAT) {
+      const evicted = filtered.splice(0, filtered.length - InteractiveContextStore.MAX_ENTRIES_PER_CHAT);
+      for (const evictedId of evicted) {
+        this.contexts.delete(evictedId);
+      }
+    }
+
+    this.chatIdIndex.set(chatId, filtered);
 
     logger.debug(
       { messageId, chatId, actions: Object.keys(actionPrompts) },
@@ -100,22 +119,25 @@ export class InteractiveContextStore {
   /**
    * Get action prompts by chatId (returns the most recent context for a chat).
    *
-   * This is a fallback lookup for card action callbacks where the real Feishu
-   * messageId doesn't match the synthetic messageId used during registration.
+   * This is a general-purpose fallback for callers that don't have an actionValue.
+   * For card action callbacks, prefer {@link generatePrompt} which searches all
+   * same-chat contexts to find the one containing the specific actionValue.
    *
    * @param chatId - Chat ID to look up
    * @returns Action prompt map, or undefined if not found
    */
   getActionPromptsByChatId(chatId: string): ActionPromptMap | undefined {
-    const messageId = this.chatIdIndex.get(chatId);
-    if (!messageId) {
+    const messageIds = this.chatIdIndex.get(chatId);
+    if (!messageIds || messageIds.length === 0) {
       return undefined;
     }
 
-    const context = this.contexts.get(messageId);
+    // Return the latest context's prompts
+    const latestMessageId = messageIds[messageIds.length - 1];
+    const context = this.contexts.get(latestMessageId);
     if (!context) {
-      // Stale index entry, clean up
-      this.chatIdIndex.delete(chatId);
+      // Clean up stale entries from the index
+      this.purgeStaleChatIdIndex(chatId, messageIds);
       return undefined;
     }
 
@@ -125,7 +147,8 @@ export class InteractiveContextStore {
   /**
    * Generate a prompt from an interaction using the registered template.
    *
-   * Tries exact messageId lookup first, then falls back to chatId-based lookup.
+   * Tries exact messageId lookup first, then falls back to searching all
+   * contexts for the same chatId to find one containing the actionValue.
    *
    * @param messageId - The card message ID (from Feishu callback)
    * @param chatId - The chat ID (for fallback lookup)
@@ -146,9 +169,9 @@ export class InteractiveContextStore {
     // Try exact messageId lookup first
     let prompts = this.getActionPrompts(messageId);
 
-    // Fallback to chatId-based lookup
+    // Fallback: search all contexts for this chatId to find one with the actionValue
     if (!prompts) {
-      prompts = this.getActionPromptsByChatId(chatId);
+      prompts = this.findActionPromptsForAction(chatId, actionValue);
     }
 
     if (!prompts) {
@@ -187,6 +210,49 @@ export class InteractiveContextStore {
   }
 
   /**
+   * Search all contexts for a chatId to find one containing the given actionValue.
+   *
+   * Iterates from newest to oldest, returning the first context whose actionPrompts
+   * include the requested actionValue. This solves the overwrite problem where
+   * multiple interactive cards exist in the same chat.
+   *
+   * @param chatId - Chat ID to search
+   * @param actionValue - The action value to match
+   * @returns Action prompt map containing the actionValue, or undefined
+   */
+  private findActionPromptsForAction(chatId: string, actionValue: string): ActionPromptMap | undefined {
+    const messageIds = this.chatIdIndex.get(chatId);
+    if (!messageIds || messageIds.length === 0) {
+      return undefined;
+    }
+
+    // Search from newest to oldest
+    for (let i = messageIds.length - 1; i >= 0; i--) {
+      const context = this.contexts.get(messageIds[i]);
+      if (context && context.actionPrompts[actionValue]) {
+        return context.actionPrompts;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Remove stale entries from the chatId index (entries whose context no longer exists).
+   *
+   * @param chatId - Chat ID to purge
+   * @param messageIds - Current array of messageIds for this chatId
+   */
+  private purgeStaleChatIdIndex(chatId: string, messageIds: string[]): void {
+    const valid = messageIds.filter((id) => this.contexts.has(id));
+    if (valid.length === 0) {
+      this.chatIdIndex.delete(chatId);
+    } else if (valid.length < messageIds.length) {
+      this.chatIdIndex.set(chatId, valid);
+    }
+  }
+
+  /**
    * Remove action prompts for a message.
    *
    * @param messageId - Message ID to unregister
@@ -195,10 +261,16 @@ export class InteractiveContextStore {
   unregister(messageId: string): boolean {
     const context = this.contexts.get(messageId);
     const removed = this.contexts.delete(messageId);
-    if (removed) {
-      // Clean up chatId index if it points to this messageId
-      if (context && this.chatIdIndex.get(context.chatId) === messageId) {
-        this.chatIdIndex.delete(context.chatId);
+    if (removed && context) {
+      // Remove from chatId index array
+      const messageIds = this.chatIdIndex.get(context.chatId);
+      if (messageIds) {
+        const filtered = messageIds.filter((id) => id !== messageId);
+        if (filtered.length === 0) {
+          this.chatIdIndex.delete(context.chatId);
+        } else {
+          this.chatIdIndex.set(context.chatId, filtered);
+        }
       }
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
@@ -213,15 +285,21 @@ export class InteractiveContextStore {
   cleanupExpired(): number {
     const now = Date.now();
     let cleaned = 0;
+    const affectedChatIds = new Set<string>();
 
     for (const [messageId, context] of this.contexts) {
       if (now - context.createdAt > this.maxAge) {
         this.contexts.delete(messageId);
-        // Clean up chatId index
-        if (this.chatIdIndex.get(context.chatId) === messageId) {
-          this.chatIdIndex.delete(context.chatId);
-        }
+        affectedChatIds.add(context.chatId);
         cleaned++;
+      }
+    }
+
+    // Purge stale entries from chatId index for affected chats
+    for (const chatId of affectedChatIds) {
+      const messageIds = this.chatIdIndex.get(chatId);
+      if (messageIds) {
+        this.purgeStaleChatIdIndex(chatId, messageIds);
       }
     }
 
