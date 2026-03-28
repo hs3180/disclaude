@@ -318,3 +318,20 @@ export {
   sanitizeTopicName,
   ResearchModeManager,
 } from './modes/index.js';
+
+// Research module - RESEARCH.md lifecycle management (Issue #1710)
+export {
+  ResearchFileManager,
+  isValidTopic,
+  buildTemplate,
+  formatFinding,
+  appendToSection,
+  replaceSection,
+  insertSection,
+  parseContent,
+  type ResearchFileManagerConfig,
+  type ResearchInitOptions,
+  type ResearchFinding,
+  type ResearchResource,
+  type ParsedResearch,
+} from './research/index.js';
