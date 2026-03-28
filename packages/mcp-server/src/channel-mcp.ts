@@ -17,6 +17,9 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  register_temp_chat,
+  list_temp_chats,
+  mark_chat_responded,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -30,6 +33,7 @@ export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
+export { register_temp_chat, list_temp_chats, mark_chat_responded } from './tools/register-temp-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -370,6 +374,87 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
     handler: async ({ chatId }: { chatId: string }) => {
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1703: Temp chat lifecycle management tools
+  {
+    name: 'register_temp_chat',
+    description: `Register a temporary chat for automatic lifecycle management.
+
+After registration, the Primary Node will track the chat and automatically
+dissolve it when it expires (default: 24 hours). Use this after creating
+a temporary group with create_chat.
+
+## Parameters
+- **chatId**: Chat ID of the temporary group (required)
+- **expiresAt**: ISO timestamp when the chat should expire (optional, defaults to 24h)
+- **creatorChatId**: Chat ID where the creation request originated (optional)
+- **context**: Arbitrary context data for the temp chat (optional)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "expiresAt": "2026-03-29T00:00:00Z", "creatorChatId": "oc_yyy"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Chat ID of the temporary group'),
+      expiresAt: z.string().optional().describe('ISO timestamp when the chat should expire (optional, defaults to 24h)'),
+      creatorChatId: z.string().optional().describe('Chat ID where the creation request originated'),
+      context: z.record(z.string(), z.unknown()).optional().describe('Arbitrary context data'),
+    }),
+    handler: async ({ chatId, expiresAt, creatorChatId, context }: {
+      chatId: string;
+      expiresAt?: string;
+      creatorChatId?: string;
+      context?: Record<string, unknown>;
+    }) => {
+      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'list_temp_chats',
+    description: `List all temporary chats currently being tracked by the lifecycle manager.
+
+Returns all registered temporary chats with their status (active/expired, responded/pending).
+
+## Example
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      const result = await list_temp_chats();
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'mark_chat_responded',
+    description: `Mark a temporary chat as responded by a user.
+
+Records that a user has interacted with a temporary chat (e.g., clicked a button).
+This information is used by the lifecycle service to decide cleanup behavior.
+
+## Parameters
+- **chatId**: Chat ID of the temporary group (required)
+- **selectedValue**: The value of the button the user clicked (required)
+- **responder**: User identifier who responded (required)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "selectedValue": "approve", "responder": "ou_yyy"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Chat ID of the temporary group'),
+      selectedValue: z.string().describe('The value of the button the user clicked'),
+      responder: z.string().describe('User identifier who responded'),
+    }),
+    handler: async ({ chatId, selectedValue, responder }: {
+      chatId: string;
+      selectedValue: string;
+      responder: string;
+    }) => {
+      const result = await mark_chat_responded({ chatId, selectedValue, responder });
       return toolSuccess(result.message);
     },
   },

@@ -547,6 +547,99 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Temp chat lifecycle operations (Issue #1703: temporary chat management)
+  // ============================================================================
+
+  /**
+   * Register a temporary chat via IPC.
+   * Issue #1703: Begin lifecycle tracking for a temporary group chat.
+   *
+   * @param chatId - Chat ID of the temporary group
+   * @param opts - Registration options (expiresAt, creatorChatId, context)
+   */
+  async registerTempChat(
+    chatId: string,
+    opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }
+  ): Promise<{ success: boolean; chatId?: string; expiresAt?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('registerTempChat', { chatId, ...opts });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'registerTempChat failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * List all temporary chats via IPC.
+   * Issue #1703: Query all tracked temporary chats.
+   */
+  async listTempChats(): Promise<{
+    success: boolean;
+    chats?: Array<{
+      chatId: string;
+      createdAt: string;
+      expiresAt: string;
+      creatorChatId?: string;
+      responded: boolean;
+    }>;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  }> {
+    try {
+      return await this.request('listTempChats', {});
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error }, 'listTempChats failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Mark a temporary chat as responded via IPC.
+   * Issue #1703: Record user interaction with a temporary chat.
+   *
+   * @param chatId - Chat ID of the temporary group
+   * @param response - The user's response data
+   */
+  async markChatResponded(
+    chatId: string,
+    response: { selectedValue: string; responder: string; repliedAt: string }
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('markChatResponded', { chatId, response });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'markChatResponded failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

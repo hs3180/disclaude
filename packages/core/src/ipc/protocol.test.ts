@@ -145,6 +145,51 @@ describe('IPC Protocol', () => {
       };
       expect(dissolveChat.payload.chatId).toBe('oc_xxx');
     });
+
+    it('should type-check temp chat lifecycle requests (Issue #1703)', () => {
+      const registerTempChat: IpcRequest<'registerTempChat'> = {
+        type: 'registerTempChat',
+        id: 'req-20',
+        payload: {
+          chatId: 'oc_temp',
+          expiresAt: '2026-12-31T00:00:00.000Z',
+          creatorChatId: 'oc_creator',
+          context: { prNumber: 123 },
+        },
+      };
+      expect(registerTempChat.payload.chatId).toBe('oc_temp');
+      expect(registerTempChat.payload.expiresAt).toBe('2026-12-31T00:00:00.000Z');
+      expect(registerTempChat.payload.context?.prNumber).toBe(123);
+
+      const registerTempChatMinimal: IpcRequest<'registerTempChat'> = {
+        type: 'registerTempChat',
+        id: 'req-21',
+        payload: { chatId: 'oc_temp_min' },
+      };
+      expect(registerTempChatMinimal.payload.expiresAt).toBeUndefined();
+
+      const listTempChats: IpcRequest<'listTempChats'> = {
+        type: 'listTempChats',
+        id: 'req-22',
+        payload: {},
+      };
+      expect(listTempChats.payload).toEqual({});
+
+      const markChatResponded: IpcRequest<'markChatResponded'> = {
+        type: 'markChatResponded',
+        id: 'req-23',
+        payload: {
+          chatId: 'oc_temp',
+          response: {
+            selectedValue: 'approve',
+            responder: 'ou_user1',
+            repliedAt: '2026-03-28T00:00:00.000Z',
+          },
+        },
+      };
+      expect(markChatResponded.payload.response.selectedValue).toBe('approve');
+      expect(markChatResponded.payload.response.responder).toBe('ou_user1');
+    });
   });
 
   describe('IpcResponse types', () => {
@@ -213,6 +258,37 @@ describe('IPC Protocol', () => {
         payload: { success: true },
       };
       expect(dissolveResponse.payload?.success).toBe(true);
+    });
+
+    it('should type-check temp chat lifecycle responses (Issue #1703)', () => {
+      const registerResponse: IpcResponse<'registerTempChat'> = {
+        id: 'req-20',
+        success: true,
+        payload: { success: true, chatId: 'oc_temp', expiresAt: '2026-12-31T00:00:00.000Z' },
+      };
+      expect(registerResponse.payload?.chatId).toBe('oc_temp');
+      expect(registerResponse.payload?.expiresAt).toBe('2026-12-31T00:00:00.000Z');
+
+      const listResponse: IpcResponse<'listTempChats'> = {
+        id: 'req-22',
+        success: true,
+        payload: {
+          success: true,
+          chats: [
+            { chatId: 'oc_t1', createdAt: '2026-03-28T00:00:00.000Z', expiresAt: '2026-03-29T00:00:00.000Z', responded: false },
+            { chatId: 'oc_t2', createdAt: '2026-03-28T00:00:00.000Z', expiresAt: '2026-03-29T00:00:00.000Z', creatorChatId: 'oc_c', responded: true },
+          ],
+        },
+      };
+      expect(listResponse.payload?.chats).toHaveLength(2);
+      expect(listResponse.payload?.chats?.[1].responded).toBe(true);
+
+      const markResponse: IpcResponse<'markChatResponded'> = {
+        id: 'req-23',
+        success: true,
+        payload: { success: true },
+      };
+      expect(markResponse.payload?.success).toBe(true);
     });
   });
 

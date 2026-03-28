@@ -210,6 +210,12 @@ export {
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
+  // Issue #1703: Temp chat lifecycle store
+  TempChatStore,
+  type TempChatStoreOptions,
+  type TempChatRecord,
+  type TempChatResponse,
+  type RegisterTempChatOptions,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)

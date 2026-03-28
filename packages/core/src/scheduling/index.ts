@@ -3,6 +3,7 @@
  *
  * This module provides:
  * - CooldownManager: Manages cooldown periods for scheduled tasks
+ * - TempChatStore: Manages temporary chat lifecycle records (Issue #1703)
  * - ScheduledTask: Type definition for scheduled tasks
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
@@ -21,6 +22,15 @@ export {
   CooldownManager,
   type CooldownManagerOptions,
 } from './cooldown-manager.js';
+
+// Temp Chat Store (Issue #1703)
+export {
+  TempChatStore,
+  type TempChatStoreOptions,
+  type TempChatRecord,
+  type TempChatResponse,
+  type RegisterTempChatOptions,
+} from './chat-store.js';
 
 // File Scanner & Watcher
 export {

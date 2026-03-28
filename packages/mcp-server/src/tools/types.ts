@@ -90,3 +90,42 @@ export interface DissolveChatResult {
   error?: string;
 }
 
+/**
+ * Result type for register_temp_chat tool.
+ * Issue #1703: Temporary chat lifecycle management.
+ */
+export interface RegisterTempChatResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
+/**
+ * Result type for list_temp_chats tool.
+ * Issue #1703: Temporary chat lifecycle management.
+ */
+export interface ListTempChatsResult {
+  success: boolean;
+  message: string;
+  chats?: Array<{
+    chatId: string;
+    createdAt: string;
+    expiresAt: string;
+    creatorChatId?: string;
+    responded: boolean;
+  }>;
+  error?: string;
+}
+
+/**
+ * Result type for mark_chat_responded tool.
+ * Issue #1703: Temporary chat lifecycle management.
+ */
+export interface MarkChatRespondedResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+
