@@ -51,7 +51,11 @@ export { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 export { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 
 // Wired Channel Descriptors (Issue #1594 Phase 2)
+// Note: WECHAT_WIRED_DESCRIPTOR is exported for dynamic registration use only.
+// It is NOT included in BUILTIN_WIRED_DESCRIPTORS (Issue #1638: WeChat only
+// supports dynamic registration, not config-driven creation).
 export {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
+  WECHAT_WIRED_DESCRIPTOR,
 } from './wired-descriptors.js';

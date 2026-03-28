@@ -5,6 +5,7 @@
  *
  * @see Issue #1594 - Channel Lifecycle Manager
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,6 +15,7 @@ import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
+  BUILTIN_WIRED_DESCRIPTORS,
 } from './wired-descriptors.js';
 import type {
   ChannelSetupContext,
@@ -171,7 +173,7 @@ describe('WiredChannelDescriptors', () => {
     });
   });
 
-  describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {
+  describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554, #1638)', () => {
     it('should have correct type and name', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.type).toBe('wechat');
       expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
@@ -326,6 +328,33 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  // Issue #1638: WeChat only supports dynamic registration, not config-driven creation
+  describe('BUILTIN_WIRED_DESCRIPTORS (Issue #1638)', () => {
+    it('should NOT include WeChat descriptor (dynamic registration only)', () => {
+      const types = BUILTIN_WIRED_DESCRIPTORS.map((d) => d.type);
+      expect(types).not.toContain('wechat');
+    });
+
+    it('should include REST and Feishu descriptors', () => {
+      const types = BUILTIN_WIRED_DESCRIPTORS.map((d) => d.type);
+      expect(types).toContain('rest');
+      expect(types).toContain('feishu');
+    });
+
+    it('should have exactly 2 built-in descriptors', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS).toHaveLength(2);
+    });
+
+    it('should allow WeChat to be registered dynamically via WECHAT_WIRED_DESCRIPTOR', () => {
+      // Verify the descriptor exists and has the correct structure for dynamic use
+      expect(WECHAT_WIRED_DESCRIPTOR.type).toBe('wechat');
+      expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
+      expect(typeof WECHAT_WIRED_DESCRIPTOR.factory).toBe('function');
+      expect(typeof WECHAT_WIRED_DESCRIPTOR.createCallbacks).toBe('function');
+      expect(typeof WECHAT_WIRED_DESCRIPTOR.createMessageHandler).toBe('function');
     });
   });
 });
