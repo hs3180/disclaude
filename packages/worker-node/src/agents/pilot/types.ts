@@ -5,7 +5,7 @@
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, ResearchModeManager } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -100,6 +100,17 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional ResearchModeManager for per-chatId mode switching.
+   *
+   * When provided, the Pilot checks this manager in startAgentLoop()
+   * to determine if the current chatId is in research mode. If so,
+   * it sets the SDK's cwd to the research workspace directory.
+   *
+   * Issue #1709: Research Mode Phase 1.
+   */
+  researchModeManager?: ResearchModeManager;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

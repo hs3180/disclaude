@@ -309,3 +309,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Modes module - agent mode management (Issue #1709)
+export {
+  type AgentMode,
+  type ResearchState,
+  type ResearchModeManagerOptions,
+  sanitizeTopicName,
+  ResearchModeManager,
+} from './modes/index.js';

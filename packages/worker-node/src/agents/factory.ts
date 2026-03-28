@@ -35,7 +35,7 @@
  * @module agents/factory
  */
 
-import { Config, type ChatAgent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type ChatAgent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ResearchModeManager } from '@disclaude/core';
 import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
 
 // ============================================================================
@@ -101,6 +101,12 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional ResearchModeManager for per-chatId mode switching.
+   * Issue #1709: Research Mode Phase 1.
+   */
+  researchModeManager?: ResearchModeManager;
 }
 
 /**
@@ -186,6 +192,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        researchModeManager: options.researchModeManager,
       };
 
       return new Pilot(config);

@@ -24,6 +24,7 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  ResearchModeManager,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -163,8 +164,14 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1709: Shared ResearchModeManager for per-chatId mode switching
+  const researchModeManager = new ResearchModeManager({
+    baseWorkspaceDir: Config.getWorkspaceDir(),
+  });
+
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    researchModeManager,
   });
 
   // Create unified control handler context
@@ -179,6 +186,7 @@ async function main(): Promise<void> {
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
+    researchMode: researchModeManager,
     logger,
   };
 
