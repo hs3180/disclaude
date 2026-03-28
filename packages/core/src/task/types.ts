@@ -33,3 +33,42 @@ export interface TaskDefinitionDetails {
   constraints: string[];
   quality_criteria: string[];
 }
+
+/**
+ * Task status enum for progress tracking.
+ * Issue #857: Used by getTaskStatus to report task state.
+ */
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'not_found';
+
+/**
+ * Task status information returned by getTaskStatus.
+ * Issue #857: Provides comprehensive task state for Reporter Agent.
+ */
+export interface TaskStatusInfo {
+  /** Task identifier */
+  taskId: string;
+  /** Current task status */
+  status: TaskStatus;
+  /** Task title (extracted from task.md first heading) */
+  title: string | null;
+  /** Task description (from task.md) */
+  description: string | null;
+  /** Total number of iterations completed */
+  totalIterations: number;
+  /** Latest iteration number (0 if no iterations) */
+  latestIteration: number;
+  /** Whether a final result exists */
+  hasFinalResult: boolean;
+  /** Whether a final summary exists */
+  hasFinalSummary: boolean;
+  /** ISO timestamp of task creation (from task.md frontmatter or file stats) */
+  createdAt: string | null;
+  /** ISO timestamp of last activity (from file stats) */
+  lastModified: string | null;
+  /** Elapsed time in seconds since task creation */
+  elapsedSeconds: number | null;
+  /** Whether the task is currently running (has running.lock) */
+  isRunning: boolean;
+  /** Path to the task directory */
+  taskDir: string;
+}

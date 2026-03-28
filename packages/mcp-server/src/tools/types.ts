@@ -102,3 +102,9 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Re-export TaskStatusInfo from core for MCP tool consumers.
+ * Issue #857: Task progress reporting.
+ */
+export type { TaskStatusInfo } from '@disclaude/core';
+

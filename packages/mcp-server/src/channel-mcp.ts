@@ -18,7 +18,8 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  get_task_status,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -408,6 +409,47 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #857: Task status query for Reporter Agent
+  {
+    name: 'get_task_status',
+    description: `Get status of a specific task or list all tasks in the workspace.
+
+Returns task state information including:
+- Current status (pending/running/completed/failed/not_found)
+- Task title and description
+- Number of iterations completed
+- Elapsed time since creation
+- Whether the task is currently running
+
+Use WITHOUT taskId to list all tasks. Use WITH taskId to get details for a specific task.
+
+This tool is designed for the Reporter Agent to monitor task progress and decide
+when to report updates to users.
+
+## Parameters
+- **taskId**: Optional task ID to query. If omitted, lists all tasks.
+
+## Example - List all tasks:
+\`\`\`json
+{}
+\`\`\`
+
+## Example - Get specific task:
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().optional().describe('Optional task ID. If omitted, lists all tasks.'),
+    }),
+    handler: async ({ taskId }: { taskId?: string }) => {
+      try {
+        const result = await get_task_status({ taskId });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ Task status check failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

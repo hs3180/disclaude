@@ -28,6 +28,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import type { TaskStatus, TaskStatusInfo } from './types.js';
 
 const logger = createLogger('TaskFileManager');
 
@@ -506,5 +507,179 @@ export class TaskFileManager {
    */
   getFinalResultPath(taskId: string): string {
     return path.join(this.getTaskDir(taskId), 'final_result.md');
+  }
+
+  /**
+   * Get comprehensive task status information.
+   * Issue #857: Provides task state for Reporter Agent to make intelligent progress decisions.
+   *
+   * Status is determined by file existence:
+   * - completed: final_result.md exists
+   * - failed: failed.md exists
+   * - running: running.lock exists
+   * - pending: task.md exists but none of the above
+   * - not_found: task directory doesn't exist
+   *
+   * @param taskId - Task identifier
+   * @returns Task status information
+   */
+  async getTaskStatus(taskId: string): Promise<TaskStatusInfo> {
+    const taskDir = this.getTaskDir(taskId);
+
+    // Check if task directory exists
+    const dirExists = await this.taskExists(taskId);
+    if (!dirExists) {
+      return {
+        taskId,
+        status: 'not_found',
+        title: null,
+        description: null,
+        totalIterations: 0,
+        latestIteration: 0,
+        hasFinalResult: false,
+        hasFinalSummary: false,
+        createdAt: null,
+        lastModified: null,
+        elapsedSeconds: null,
+        isRunning: false,
+        taskDir,
+      };
+    }
+
+    // Check status markers
+    const finalResultPath = path.join(taskDir, 'final_result.md');
+    const failedPath = path.join(taskDir, 'failed.md');
+    const runningLockPath = path.join(taskDir, 'running.lock');
+    const taskSpecPath = path.join(taskDir, 'task.md');
+
+    let status: TaskStatus = 'pending';
+    let hasFinalResult = false;
+    let hasFailed = false;
+    let isRunning = false;
+
+    try {
+      await fs.access(finalResultPath);
+      hasFinalResult = true;
+      status = 'completed';
+    } catch {
+      // final_result.md doesn't exist
+    }
+
+    if (!hasFinalResult) {
+      try {
+        await fs.access(failedPath);
+        hasFailed = true;
+        status = 'failed';
+      } catch {
+        // failed.md doesn't exist
+      }
+    }
+
+    if (!hasFinalResult && !hasFailed) {
+      try {
+        await fs.access(runningLockPath);
+        isRunning = true;
+        status = 'running';
+      } catch {
+        // running.lock doesn't exist
+      }
+    }
+
+    // Get task spec info
+    let title: string | null = null;
+    let description: string | null = null;
+    let createdAt: string | null = null;
+
+    try {
+      const specContent = await fs.readFile(taskSpecPath, 'utf-8');
+      // Extract title from first heading (# Title)
+      const titleMatch = specContent.match(/^#\s+(.+)$/m);
+      if (titleMatch) {
+        title = titleMatch[1].trim();
+      }
+      // Extract description from first section after title
+      const descMatch = specContent.match(/^##\s+Description\s*\n([\s\S]*?)(?=\n##\s|\n---|$)/im);
+      if (descMatch) {
+        description = descMatch[1].trim().substring(0, 500); // Limit description length
+      }
+      // Extract createdAt from frontmatter
+      const createdMatch = specContent.match(/\*\*Created\*\*:\s*(.+)/);
+      if (createdMatch) {
+        createdAt = createdMatch[1].trim();
+      }
+    } catch {
+      // task.md doesn't exist or can't be read
+    }
+
+    // Get file stats for timing
+    let lastModified: string | null = null;
+    let elapsedSeconds: number | null = null;
+    try {
+      const stats = await fs.stat(taskDir);
+      lastModified = stats.mtime.toISOString();
+      if (createdAt) {
+        const createdTime = new Date(createdAt).getTime();
+        const now = Date.now();
+        if (!isNaN(createdTime)) {
+          elapsedSeconds = Math.floor((now - createdTime) / 1000);
+        }
+      } else {
+        // Fall back to directory creation time
+        elapsedSeconds = Math.floor((Date.now() - stats.birthtime.getTime()) / 1000);
+      }
+    } catch {
+      // Can't get stats
+    }
+
+    // Get iteration info
+    const iterations = await this.listIterations(taskId);
+    const stats = await this.getTaskStats(taskId);
+
+    return {
+      taskId,
+      status,
+      title,
+      description,
+      totalIterations: iterations.length,
+      latestIteration: iterations.length > 0 ? iterations[iterations.length - 1] : 0,
+      hasFinalResult,
+      hasFinalSummary: stats.hasFinalSummary,
+      createdAt,
+      lastModified,
+      elapsedSeconds,
+      isRunning,
+      taskDir,
+    };
+  }
+
+  /**
+   * List all task IDs in the tasks directory.
+   * Issue #857: Used by Reporter Agent to discover active tasks.
+   *
+   * @returns Array of task IDs
+   */
+  async listAllTasks(): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(this.tasksBaseDir, { withFileTypes: true });
+      const taskIds: string[] = [];
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          // Check if task.md exists
+          const taskSpecPath = path.join(this.tasksBaseDir, entry.name, 'task.md');
+          try {
+            await fs.access(taskSpecPath);
+            taskIds.push(entry.name);
+          } catch {
+            // No task.md, skip
+          }
+        }
+      }
+
+      return taskIds;
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to list all tasks');
+      return [];
+    }
   }
 }
