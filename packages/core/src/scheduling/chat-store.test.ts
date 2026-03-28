@@ -5,8 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ChatStore } from './chat-store.js';
-import type { TempChatResponse } from './chat-store.js';
+import { ChatStore, type TempChatResponse } from './chat-store.js';
 import * as fsPromises from 'fs/promises';
 
 vi.mock('fs/promises', () => ({

@@ -5,8 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TempChatLifecycleService } from './temp-chat-lifecycle-service.js';
-import type { TempChatLifecycleDeps } from './temp-chat-lifecycle-service.js';
+import { TempChatLifecycleService, type TempChatLifecycleDeps } from './temp-chat-lifecycle-service.js';
 import { ChatStore } from '@disclaude/core';
 
 // Mock ChatStore — avoid file I/O in unit tests
