@@ -17,6 +17,7 @@ import {
   send_file,
   create_chat,
   dissolve_chat,
+  register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -30,6 +31,7 @@ export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
+export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -370,6 +372,41 @@ Permanently deletes a group chat created by the bot. The bot must be the group o
     handler: async ({ chatId }: { chatId: string }) => {
       // dissolve_chat handles all errors internally and returns { success, message }
       const result = await dissolve_chat({ chatId });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1703: Temp chat lifecycle management
+  {
+    name: 'register_temp_chat',
+    description: `Register a temporary chat for automatic lifecycle management.
+
+The Primary Node will track the chat and automatically dissolve it when it expires.
+Use this after creating a group chat (via create_chat) that should be temporary.
+
+## Parameters
+- **chatId**: The chat ID to track (required)
+- **expiresAt**: ISO timestamp for expiry (optional, defaults to 24h)
+- **creatorChatId**: The originating chat ID (optional, for notifications)
+- **context**: Arbitrary context data (optional, for consumer identification)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "expiresAt": "2026-03-28T10:00:00.000Z", "context": {"prNumber": 123}}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to track'),
+      expiresAt: z.string().optional().describe('ISO timestamp for expiry (defaults to 24h)'),
+      creatorChatId: z.string().optional().describe('The originating chat ID'),
+      context: z.record(z.string(), z.unknown()).optional().describe('Arbitrary context data'),
+    }),
+    handler: async ({ chatId, expiresAt, creatorChatId, context }: {
+      chatId: string;
+      expiresAt?: string;
+      creatorChatId?: string;
+      context?: Record<string, unknown>;
+    }) => {
+      // register_temp_chat handles all errors internally and returns { success, message }
+      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
     },
   },

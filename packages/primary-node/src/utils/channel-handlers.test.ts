@@ -64,6 +64,7 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
         generatePrompt: vi.fn().mockReturnValue('prompt'),
       }),
       registerFeishuHandlers: vi.fn(),
+      getChatStore: vi.fn().mockReturnValue({}),
     },
     callbacks: vi.fn().mockReturnValue({
       sendMessage: vi.fn().mockResolvedValue(undefined),

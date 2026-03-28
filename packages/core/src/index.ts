@@ -189,6 +189,12 @@ export {
 export {
   CooldownManager,
   type CooldownManagerOptions,
+  // Issue #1703: Temp chat lifecycle management
+  ChatStore,
+  type ChatStoreOptions,
+  type TempChatRecord,
+  type TempChatResponse,
+  type RegisterTempChatOptions,
   // Issue #1041: Full schedule module migrated from worker-node
   ScheduleFileScanner,
   ScheduleFileWatcher,
