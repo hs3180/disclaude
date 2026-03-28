@@ -30,6 +30,7 @@ import { InteractionManager, WelcomeService, createFeishuClient, dissolveChat, G
 import {
   PassiveModeManager,
   MentionDetector,
+  TriggerDetector,
   WelcomeHandler,
   MessageHandler as FeishuMessageHandler,
   messageLogger,
@@ -155,6 +156,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // Modular components
   private passiveModeManager: PassiveModeManager;
   private mentionDetector: MentionDetector;
+  private triggerDetector: TriggerDetector;
   private welcomeHandler: WelcomeHandler;
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
@@ -176,6 +178,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize modular components
     this.passiveModeManager = new PassiveModeManager();
     this.mentionDetector = new MentionDetector();
+    this.triggerDetector = new TriggerDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
 
@@ -394,6 +397,40 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Handle discussion end triggered by [DISCUSSION_END] phrase.
+   *
+   * Issue #1229: After the clean message is sent, asynchronously dissolves
+   * the group chat and unregisters it from the group service.
+   *
+   * This runs as fire-and-forget — errors are logged but never propagate
+   * to avoid disrupting the message sending flow.
+   *
+   * @param chatId - The chat to dissolve
+   * @param reason - The trigger reason (e.g., 'normal', 'timeout', 'abandoned')
+   * @param summary - Optional summary from the trigger
+   */
+  private async handleDiscussionEnd(
+    chatId: string,
+    reason: string,
+    summary?: string
+  ): Promise<void> {
+    try {
+      logger.info(
+        { chatId, reason, hasSummary: !!summary },
+        'Handling discussion end: dissolving group'
+      );
+      await this.dissolveChat(chatId);
+      logger.info({ chatId, reason }, 'Discussion ended: group dissolved successfully');
+    } catch (error) {
+      // Never throw from fire-and-forget cleanup — just log the failure
+      logger.error(
+        { err: error, chatId, reason },
+        'Failed to dissolve group after discussion end trigger'
+      );
+    }
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -407,6 +444,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Detect [DISCUSSION_END] trigger in outgoing text messages.
+        // If detected, strip the trigger and send clean text, then dissolve the group.
+        const triggerResult = this.triggerDetector.detectAndStrip(message.text || '');
+        const textToSend = triggerResult.cleanText;
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +456,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // If trigger was detected, asynchronously dissolve the group after sending
+        if (triggerResult.detected) {
+          logger.info(
+            { chatId: message.chatId, reason: triggerResult.reason, summary: triggerResult.summary },
+            'Discussion end trigger detected, initiating group dissolution'
+          );
+          // Fire-and-forget: dissolve group without blocking message flow
+          void this.handleDiscussionEnd(message.chatId, triggerResult.reason, triggerResult.summary);
+        }
         break;
       }
 
@@ -610,6 +662,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Get the TriggerDetector for testing purposes.
+   * Issue #1229
+   * @internal
+   */
+  getTriggerDetector(): TriggerDetector {
+    return this.triggerDetector;
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
