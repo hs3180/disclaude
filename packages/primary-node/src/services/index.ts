@@ -4,7 +4,6 @@
  * Contains node-level services for Primary Node.
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
- * @see Issue #1703 - Temp chat lifecycle management
  */
 
 export {
@@ -16,8 +15,6 @@ export {
 
 export {
   TempChatLifecycleService,
-  getTempChatLifecycleService,
-  resetTempChatLifecycleService,
   type TempChatLifecycleDeps,
   type TempChatLifecycleConfig,
   type CleanupResult,

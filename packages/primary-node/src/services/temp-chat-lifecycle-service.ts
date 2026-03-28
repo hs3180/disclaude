@@ -210,32 +210,3 @@ export class TempChatLifecycleService {
     return this.intervalId !== null;
   }
 }
-
-// Singleton instance
-let lifecycleService: TempChatLifecycleService | null = null;
-
-/**
- * Get the singleton TempChatLifecycleService instance.
- *
- * @param deps - Dependencies (required on first call)
- * @param config - Optional configuration
- */
-export function getTempChatLifecycleService(
-  deps?: TempChatLifecycleDeps,
-  config?: TempChatLifecycleConfig
-): TempChatLifecycleService | null {
-  if (!lifecycleService && deps) {
-    lifecycleService = new TempChatLifecycleService(deps, config);
-  }
-  return lifecycleService;
-}
-
-/**
- * Reset the singleton instance (for testing).
- */
-export function resetTempChatLifecycleService(): void {
-  if (lifecycleService) {
-    lifecycleService.stop();
-  }
-  lifecycleService = null;
-}
