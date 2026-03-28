@@ -12,3 +12,10 @@ export {
   resetDebugGroupService,
   type DebugGroupInfo,
 } from './debug-group-service.js';
+
+export {
+  TempChatLifecycleService,
+  type TempChatLifecycleDeps,
+  type TempChatLifecycleConfig,
+  type CleanupResult,
+} from './temp-chat-lifecycle-service.js';

@@ -50,6 +50,8 @@ export interface IPrimaryNodeForSetup {
     ): string | undefined;
   };
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
+  /** Issue #1703: Get the ChatStore for temp chat lifecycle management */
+  getChatStore(): import('@disclaude/core').ChatStore;
 }
 
 /**

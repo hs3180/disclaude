@@ -201,6 +201,33 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       dissolveChat: (chatId: string) => {
         return feishuChannel.dissolveChat(chatId);
       },
+      // Issue #1703: Temp chat lifecycle management handlers
+      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => {
+        const chatStore = context.primaryNode.getChatStore();
+        await chatStore.registerTempChat(chatId, {
+          expiresAt: opts?.expiresAt,
+          creatorChatId: opts?.creatorChatId,
+          context: opts?.context,
+        });
+        const record = await chatStore.getTempChat(chatId);
+        return { success: true, expiresAt: record?.expiresAt };
+      },
+      listTempChats: async () => {
+        const chatStore = context.primaryNode.getChatStore();
+        const records = await chatStore.listTempChats();
+        return records.map(r => ({
+          chatId: r.chatId,
+          createdAt: r.createdAt,
+          expiresAt: r.expiresAt,
+          creatorChatId: r.creatorChatId,
+          responded: r.response !== undefined,
+        }));
+      },
+      markChatResponded: async (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => {
+        const chatStore = context.primaryNode.getChatStore();
+        const updated = await chatStore.markTempChatResponded(chatId, response);
+        return { success: updated };
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);
