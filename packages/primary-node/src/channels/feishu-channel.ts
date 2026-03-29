@@ -394,7 +394,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
     if (!this.client) {
       throw new Error('Client not initialized');
     }
@@ -402,38 +402,32 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // If WebSocket is reconnecting, queue message for later (Issue #1351)
     if (this.wsConnectionManager && this.wsConnectionManager.state !== 'connected') {
       this.queueOfflineMessage(message);
-      return;
+      return undefined;
     }
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
+        const { msg_type, content } = this.buildFeishuMessageContent('text', JSON.stringify({ text: message.text || '' }));
+        const messageId = await this.sendFeishuMessage({
+          chatId: message.chatId,
+          threadId: message.threadId,
+          msg_type,
+          content,
         });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
-        break;
+        logger.debug({ chatId: message.chatId, messageId, threadId: message.threadId }, 'Text message sent');
+        return messageId;
       }
 
       case 'card': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'interactive',
-            content: JSON.stringify(message.card || {}),
-          },
+        const { msg_type, content } = this.buildFeishuMessageContent('interactive', JSON.stringify(message.card || {}));
+        const messageId = await this.sendFeishuMessage({
+          chatId: message.chatId,
+          threadId: message.threadId,
+          msg_type,
+          content,
         });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Card message sent');
-        break;
+        logger.debug({ chatId: message.chatId, messageId, threadId: message.threadId }, 'Card message sent');
+        return messageId;
       }
 
       case 'file': {
@@ -472,16 +466,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           }
           logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
 
-          // Send image message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'image',
-              content: JSON.stringify({ image_key: imageKey }),
-            },
+          // Send image message (Issue #1619: supports thread reply for files)
+          const { msg_type, content } = this.buildFeishuMessageContent('image', JSON.stringify({ image_key: imageKey }));
+          const messageId = await this.sendFeishuMessage({
+            chatId: message.chatId,
+            threadId: message.threadId,
+            msg_type,
+            content,
           });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'Image message sent');
+          logger.info({ chatId: message.chatId, messageId, fileName, threadId: message.threadId }, 'Image message sent');
+          return messageId;
         } else {
           // Upload file using im.file.create
           if (fileSize > 30 * 1024 * 1024) {
@@ -513,27 +507,84 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           }
           logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
 
-          // Send file message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'file',
-              content: JSON.stringify({ file_key: fileKey }),
-            },
+          // Send file message (Issue #1619: supports thread reply for files)
+          const { msg_type, content } = this.buildFeishuMessageContent('file', JSON.stringify({ file_key: fileKey }));
+          const messageId = await this.sendFeishuMessage({
+            chatId: message.chatId,
+            threadId: message.threadId,
+            msg_type,
+            content,
           });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'File message sent');
+          logger.info({ chatId: message.chatId, messageId, fileName, threadId: message.threadId }, 'File message sent');
+          return messageId;
         }
-        break;
       }
 
       case 'done':
         logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
-        break;
+        return undefined;
 
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  /**
+   * Build Feishu message content structure.
+   * Extracted helper for consistent message construction across types.
+   *
+   * @param msg_type - Feishu message type (text, interactive, image, file)
+   * @param content - JSON stringified message content
+   */
+  private buildFeishuMessageContent(msg_type: string, content: string): { msg_type: string; content: string } {
+    return { msg_type, content };
+  }
+
+  /**
+   * Send a message via Feishu API, using thread reply when threadId is provided.
+   *
+   * Issue #1619: When threadId is present, uses `client.im.message.reply()` to send
+   * the message as a threaded reply. Otherwise, uses `client.im.message.create()`
+   * to send as a new top-level message. Returns the real message_id from the API.
+   *
+   * Consistent with the pattern in feishu-adapter.ts (the normal message path).
+   *
+   * @returns The real message ID from Feishu API, or undefined if unavailable.
+   */
+  private async sendFeishuMessage(params: {
+    chatId: string;
+    threadId?: string;
+    msg_type: string;
+    content: string;
+  }): Promise<string | undefined> {
+    const { chatId, threadId, msg_type, content } = params;
+
+    if (threadId) {
+      // Send as thread reply using the reply API
+      const response = await this.client!.im.message.reply({
+        path: {
+          message_id: threadId,
+        },
+        data: {
+          msg_type,
+          content,
+        },
+      });
+      return response.data?.message_id;
+    }
+
+    // Send as new top-level message
+    const response = await this.client!.im.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: chatId,
+        msg_type,
+        content,
+      },
+    });
+    return response.data?.message_id;
   }
 
   protected checkHealth(): boolean {

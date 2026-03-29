@@ -108,7 +108,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
    * Other types are logged as warnings and silently ignored.
    */
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
     if (!this.client) {
       throw new Error('WeChat client not initialized');
     }
@@ -119,7 +119,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         content: message.text,
         contextToken: message.threadId,
       });
-      return;
+      return undefined;
     }
 
     // WeChat doesn't support cards — downgrade to JSON-serialized text
@@ -134,7 +134,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         { chatId: message.chatId, cardLength: cardText.length },
         'Card downgraded to text for WeChat MVP'
       );
-      return;
+      return undefined;
     }
 
     // Unsupported message types
@@ -142,6 +142,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       { type: message.type, chatId: message.chatId },
       'WeChat MVP unsupported message type, ignoring'
     );
+    return undefined;
   }
 
   /**

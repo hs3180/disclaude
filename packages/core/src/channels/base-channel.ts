@@ -143,19 +143,24 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * Send a message through this channel.
    * Delegates to platform-specific implementation.
    *
+   * Issue #1619: Return type changed from Promise<void> to Promise<string | undefined>
+   * to allow callers to obtain the real platform message ID.
+   *
    * @param message - Message to send
+   * @returns The platform message ID if available, undefined otherwise.
    */
-  async sendMessage(message: OutgoingMessage): Promise<void> {
+  async sendMessage(message: OutgoingMessage): Promise<string | undefined> {
     if (!this.isRunning) {
       throw new Error(`Channel ${this.id} is not running (status: ${this._status})`);
     }
 
     try {
-      await this.doSendMessage(message);
+      const messageId = await this.doSendMessage(message);
       logger.debug(
-        { id: this.id, chatId: message.chatId, type: message.type },
+        { id: this.id, chatId: message.chatId, type: message.type, messageId },
         'Message sent'
       );
+      return messageId;
     } catch (error) {
       logger.error(
         { err: error, id: this.id, chatId: message.chatId },
@@ -299,8 +304,11 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
   /**
    * Platform-specific message sending logic.
    * Called by sendMessage() after validation.
+   *
+   * Issue #1619: Return type changed from Promise<void> to Promise<string | undefined>
+   * to allow returning the real platform message ID.
    */
-  protected abstract doSendMessage(message: OutgoingMessage): Promise<void>;
+  protected abstract doSendMessage(message: OutgoingMessage): Promise<string | undefined>;
 
   /**
    * Platform-specific health check.

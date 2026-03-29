@@ -51,11 +51,12 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   }
 
   // eslint-disable-next-line require-await
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
     this.doSendMessageCalls.push(message);
     if (this.shouldFailSend) {
       throw new Error('Send failed');
     }
+    return undefined;
   }
 
   protected checkHealth(): boolean {

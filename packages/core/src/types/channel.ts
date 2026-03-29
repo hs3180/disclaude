@@ -255,8 +255,11 @@ export interface IChannel {
    * Send a message through this channel.
    *
    * @param message - Message to send
+   * @returns The platform message ID if available, undefined otherwise.
+   *          Issue #1619: Enables callers (e.g., sendInteractive) to use
+   *          real message IDs for action prompt matching instead of synthetic IDs.
    */
-  sendMessage(message: OutgoingMessage): Promise<void>;
+  sendMessage(message: OutgoingMessage): Promise<string | undefined>;
 
   /**
    * Start the channel.
