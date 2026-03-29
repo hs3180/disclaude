@@ -39,3 +39,12 @@ export {
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,
 } from './ws-connection-manager.js';
+
+// Trigger Detection (Issue #1229: smart session end)
+export {
+  TriggerDetector,
+  TRIGGER_PHRASES,
+  type TriggerResult,
+  type NoTriggerResult,
+  type TriggerDetectionResult,
+} from './trigger-detector.js';

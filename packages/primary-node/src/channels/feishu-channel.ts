@@ -35,6 +35,7 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  TriggerDetector,
 } from './feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
@@ -159,6 +160,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
 
+  /** Trigger detector for discussion-end phrases (Issue #1229) */
+  private triggerDetector: TriggerDetector;
+
   /**
    * Offline message queue (Issue #1351).
    *
@@ -177,6 +181,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.passiveModeManager = new PassiveModeManager();
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
+    this.triggerDetector = new TriggerDetector();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
 
     // Create message callbacks
@@ -394,6 +399,36 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Handle discussion-end trigger phrase.
+   *
+   * Called after the clean message has been sent. Dissolves the group chat
+   * asynchronously (fire-and-forget) so it never blocks the message flow.
+   *
+   * Issue #1229: Smart session end via trigger phrase detection.
+   *
+   * @param chatId - The chat ID to dissolve.
+   * @param trigger - The parsed trigger result.
+   */
+  private async handleDiscussionEnd(chatId: string, trigger: { reason?: string; summary?: string }): Promise<void> {
+    try {
+      logger.info(
+        { chatId, reason: trigger.reason, hasSummary: !!trigger.summary },
+        'Discussion end detected, dissolving chat',
+      );
+
+      await this.dissolveChat(chatId);
+
+      logger.info({ chatId }, 'Chat dissolved after discussion end trigger');
+    } catch (error) {
+      // Log but never throw — trigger handling is best-effort
+      logger.error(
+        { err: error, chatId, reason: trigger.reason },
+        'Failed to dissolve chat after discussion end trigger',
+      );
+    }
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -407,6 +442,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Check for discussion-end trigger phrases.
+        // Only text messages are checked (per PR #1449 feedback).
+        const triggerResult = this.triggerDetector.detect(message.text || '');
+        const textToSend = triggerResult.detected ? triggerResult.cleanText : (message.text || '');
+
+        // If trigger was the only content, skip sending an empty message
+        if (!textToSend) {
+          logger.info({ chatId: message.chatId, reason: triggerResult.detected ? triggerResult.reason : undefined }, 'Discussion end triggered (empty after strip), dissolving chat');
+          if (triggerResult.detected) {
+            void this.handleDiscussionEnd(message.chatId, triggerResult);
+          }
+          break;
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +463,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // After successful send, handle trigger if detected (fire-and-forget)
+        if (triggerResult.detected) {
+          void this.handleDiscussionEnd(message.chatId, triggerResult);
+        }
         break;
       }
 
