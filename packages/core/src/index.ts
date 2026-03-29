@@ -141,6 +141,17 @@ export {
   BaseAgent,
 } from './agents/base-agent.js';
 
+// Research Mode (Issue #1709: SOUL + cwd + Skill switching)
+export {
+  ResearchModeService,
+  validateTopic,
+  DEFAULT_RESEARCH_SOUL,
+  DEFAULT_RESEARCH_SKILLS,
+  type AgentMode,
+  type ResearchModeConfig,
+  type ModeState,
+} from './agents/research-mode.js';
+
 // Message Builder (Issue #1492: extracted from worker-node to core)
 export {
   MessageBuilder,

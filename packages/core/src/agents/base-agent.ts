@@ -43,6 +43,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** Research mode override (optional, from ResearchModeService) */
+  researchModeExtra?: {
+    cwd?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+  };
 }
 
 /**
@@ -152,18 +158,23 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    // Research mode overrides take precedence over explicit extra settings
+    const effectiveCwd = extra.researchModeExtra?.cwd ?? extra.cwd ?? this.getWorkspaceDir();
+    const effectiveAllowed = extra.researchModeExtra?.allowedTools ?? extra.allowedTools;
+    const effectiveDisallowed = extra.researchModeExtra?.disallowedTools ?? extra.disallowedTools;
+
     const options: AgentQueryOptions = {
-      cwd: extra.cwd ?? this.getWorkspaceDir(),
+      cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       settingSources: ['project'],
     };
 
     // Add allowed/disallowed tools
-    if (extra.allowedTools) {
-      options.allowedTools = extra.allowedTools;
+    if (effectiveAllowed) {
+      options.allowedTools = effectiveAllowed;
     }
-    if (extra.disallowedTools) {
-      options.disallowedTools = extra.disallowedTools;
+    if (effectiveDisallowed) {
+      options.disallowedTools = effectiveDisallowed;
     }
 
     // Add MCP servers (convert to SDK format)
