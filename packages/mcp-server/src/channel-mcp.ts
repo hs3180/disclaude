@@ -18,6 +18,7 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  start_discussion,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { start_discussion } from './tools/start-discussion.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -407,6 +409,56 @@ Use this after creating a group chat (via create_chat) that should be temporary.
     }) => {
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #631: Non-blocking discussion (offline messaging)
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking discussion in a group chat.
+
+Creates a new group chat (or uses an existing one), sends context to trigger ChatAgent,
+and registers it as a temp chat for automatic lifecycle management.
+Returns immediately — does not wait for the discussion to complete.
+
+This is the primary tool for "offline messaging" — the Agent can start a discussion
+without blocking its current work. The discussion runs asynchronously in its own chat.
+
+## Parameters
+- **context**: The context/prompt to send to ChatAgent (required)
+- **chatId**: Use existing chat ID instead of creating new (optional)
+- **topic**: Discussion topic, used as group name when creating new chat (optional)
+- **memberIds**: Members to add when creating a new chat (optional)
+- **expiresAt**: ISO timestamp for temp chat expiry (optional, defaults to 24h)
+- **creatorChatId**: Originating chat ID for notifications (optional)
+
+## Example
+\`\`\`json
+{"context": "用户反复修正同一个指令，可能需要讨论需求变更", "topic": "需求讨论", "memberIds": ["ou_xxx"]}
+\`\`\``,
+    parameters: z.object({
+      context: z.string().describe('The context/prompt to send to ChatAgent (required)'),
+      chatId: z.string().optional().describe('Use existing chat ID instead of creating new'),
+      topic: z.string().optional().describe('Discussion topic (used as group name when creating new chat)'),
+      memberIds: z.array(z.string()).optional().describe('Members to add when creating a new chat'),
+      expiresAt: z.string().optional().describe('ISO timestamp for temp chat expiry (defaults to 24h)'),
+      creatorChatId: z.string().optional().describe('Originating chat ID for notifications'),
+    }),
+    handler: async ({ context, chatId, topic, memberIds, expiresAt, creatorChatId }: {
+      context: string;
+      chatId?: string;
+      topic?: string;
+      memberIds?: string[];
+      expiresAt?: string;
+      creatorChatId?: string;
+    }) => {
+      // Pre-validation
+      if (!context || typeof context !== 'string') {
+        return toolSuccess('⚠️ Invalid context: must be a non-empty string');
+      }
+
+      // start_discussion handles all errors internally and returns { success, message }
+      const result = await start_discussion({ context, chatId, topic, memberIds, expiresAt, creatorChatId });
       return toolSuccess(result.message);
     },
   },

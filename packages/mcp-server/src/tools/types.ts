@@ -102,3 +102,15 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for start_discussion tool.
+ * Issue #631: Non-blocking offline discussion.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
