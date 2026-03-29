@@ -407,17 +407,50 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        // Issue #1742: When mentions are provided, upgrade to post (rich text) format
+        // to support @mention elements that plain text messages cannot include.
+        if (message.mentions && message.mentions.length > 0) {
+          const { buildPostContent } = await import('../platforms/feishu/card-builders/content-builder.js');
+
+          // Build post content with @mention elements followed by text
+          // Issue #1742: Feishu post format requires zh_cn.content as 2D array of elements
+          const elements: Array<Array<{ tag: 'at'; user_id: string } | { tag: 'text'; text: string }>> = [];
+
+          // Add @mention elements first
+          for (const mention of message.mentions) {
+            elements.push([{ tag: 'at', user_id: mention.userId }]);
+          }
+
+          // Add text content
+          if (message.text) {
+            elements.push([{ tag: 'text', text: message.text }]);
+          }
+
+          const postContent = buildPostContent(elements);
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'post',
+              content: postContent,
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, mentionCount: message.mentions.length }, 'Post message (with mentions) sent');
+        } else {
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text || '' }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        }
         break;
       }
 

@@ -26,10 +26,11 @@ export { setMessageSentCallback, getMessageSentCallback };
 async function sendMessageViaIpc(
   chatId: string,
   text: string,
-  threadId?: string
+  threadId?: string,
+  mentions?: Array<{ userId: string; name?: string }>
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendMessage(chatId, text, threadId);
+  return await ipcClient.sendMessage(chatId, text, threadId, mentions);
 }
 
 /**
@@ -38,13 +39,16 @@ async function sendMessageViaIpc(
  * @param params.text - The text content to send
  * @param params.chatId - Target chat ID
  * @param params.parentMessageId - Optional parent message ID for thread reply
+ * @param params.mentions - Optional @mention targets (Issue #1742). When provided,
+ *   the message is automatically upgraded to post (rich text) format with @mention elements.
  */
 export async function send_text(params: {
   text: string;
   chatId: string;
   parentMessageId?: string;
+  mentions?: Array<{ userId: string; name?: string }>;
 }): Promise<SendMessageResult> {
-  const { text, chatId, parentMessageId } = params;
+  const { text, chatId, parentMessageId, mentions } = params;
 
   logger.info({
     chatId,
@@ -79,8 +83,8 @@ export async function send_text(params: {
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
-    const result = await sendMessageViaIpc(chatId, text, parentMessageId);
+    logger.debug({ chatId, parentMessageId, hasMentions: !!mentions }, 'Using IPC for text message');
+    const result = await sendMessageViaIpc(chatId, text, parentMessageId, mentions);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');

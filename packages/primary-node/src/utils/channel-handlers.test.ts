@@ -493,6 +493,7 @@ describe('createChannelApiHandlers', () => {
       type: 'text',
       text: 'Hello IPC',
       threadId: undefined,
+      mentions: undefined,
     });
   });
 
@@ -507,6 +508,23 @@ describe('createChannelApiHandlers', () => {
       type: 'text',
       text: 'Reply',
       threadId: 'thread-123',
+      mentions: undefined,
+    });
+  });
+
+  it('sendMessage should pass mentions to OutgoingMessage (Issue #1742)', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const mentions = [{ userId: 'ou_xxx', name: 'Alice' }];
+    await handlers.sendMessage('chat-001', 'Hello', undefined, mentions);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Hello',
+      threadId: undefined,
+      mentions,
     });
   });
 

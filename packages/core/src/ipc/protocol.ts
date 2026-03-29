@@ -39,6 +39,8 @@ export interface IpcRequestPayloads {
     chatId: string;
     text: string;
     threadId?: string;
+    /** Issue #1742: Optional @mention targets; when present, upgrades to post (rich text) format */
+    mentions?: Array<{ userId: string; name?: string }>;
   };
   sendCard: {
     chatId: string;

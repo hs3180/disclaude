@@ -99,6 +99,14 @@ export interface OutgoingMessage {
 
   /** Error message if task failed (for type 'done') */
   error?: string;
+
+  /**
+   * @mention targets for rich text messages.
+   * Issue #1742: When present with type 'text', the message is automatically
+   * upgraded to post (rich text) format with @mention elements.
+   * Channels that don't support mentions can ignore this field.
+   */
+  mentions?: Array<{ userId: string; name?: string }>;
 }
 
 /**

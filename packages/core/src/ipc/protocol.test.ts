@@ -76,6 +76,19 @@ describe('IPC Protocol', () => {
       };
       expect(sendMessage.payload.threadId).toBe('thread-1');
 
+      // Issue #1742: sendMessage with mentions
+      const sendMessageWithMentions: IpcRequest<'sendMessage'> = {
+        type: 'sendMessage',
+        id: 'req-5b',
+        payload: {
+          chatId: 'chat-1',
+          text: 'Hello',
+          mentions: [{ userId: 'ou_xxx', name: 'Alice' }],
+        },
+      };
+      expect(sendMessageWithMentions.payload.mentions).toHaveLength(1);
+      expect(sendMessageWithMentions.payload.mentions![0].userId).toBe('ou_xxx');
+
       const sendCard: IpcRequest<'sendCard'> = {
         type: 'sendCard',
         id: 'req-6',
