@@ -22,6 +22,7 @@ import {
   type FeishuChatMemberAddedEventData,
   type FeishuP2PChatEnteredEventData,
   type OutgoingMessage,
+  type MentionTarget,
   type ChannelCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
@@ -407,17 +408,33 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        // Issue #1742: When mentions are provided, send as post (rich text) with @mentions
+        if (message.mentions && message.mentions.length > 0) {
+          const postContent = this.buildPostContentWithMentions(message.text || '', message.mentions);
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'post',
+              content: JSON.stringify(postContent),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, mentionCount: message.mentions.length }, 'Post message with mentions sent');
+        } else {
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text || '' }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        }
         break;
       }
 
@@ -534,6 +551,46 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  /**
+   * Build Feishu post (rich text) content with @mentions.
+   *
+   * Constructs the post format required by Feishu API for messages
+   * containing @mentions. The text is split into segments interleaved
+   * with @mention elements.
+   *
+   * Issue #1742: Bot-to-bot @mention conversation support.
+   *
+   * @param text - The message text content
+   * @param mentions - Array of mention targets (open_id + optional display name)
+   * @returns Feishu post content structure
+   */
+  private buildPostContentWithMentions(text: string, mentions: MentionTarget[]): {
+    zh_cn: { title: string; content: Array<Array<Record<string, unknown>>> };
+  } {
+    // Build content segments: text + @mentions interleaved
+    // Start with the text as a plain text segment, then append all @mentions
+    const segments: Array<Record<string, unknown>> = [];
+
+    if (text) {
+      segments.push({ tag: 'text', text });
+    }
+
+    for (const mention of mentions) {
+      segments.push({
+        tag: 'at',
+        user_id: mention.openId,
+        text: mention.name || mention.openId,
+      });
+    }
+
+    return {
+      zh_cn: {
+        title: '',
+        content: [segments],
+      },
+    };
   }
 
   protected checkHealth(): boolean {

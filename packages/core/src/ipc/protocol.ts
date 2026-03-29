@@ -9,6 +9,7 @@
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { FeishuCard } from '../types/platform.js';
+import type { MentionTarget } from '../types/channel.js';
 
 /**
  * IPC request types.
@@ -39,6 +40,8 @@ export interface IpcRequestPayloads {
     chatId: string;
     text: string;
     threadId?: string;
+    /** Issue #1742: Mention targets for @mentioning users/bots */
+    mentions?: MentionTarget[];
   };
   sendCard: {
     chatId: string;

@@ -61,6 +61,19 @@ export interface MessageAttachment {
 }
 
 /**
+ * Mention target for @mentioning users or bots in messages.
+ * Used with send_text to embed @mentions in Feishu post (rich text) messages.
+ *
+ * Issue #1742: Bot-to-bot @mention conversation support.
+ */
+export interface MentionTarget {
+  /** User or bot open_id to @mention */
+  openId: string;
+  /** Display name for the mention (optional, defaults to open_id) */
+  name?: string;
+}
+
+/**
  * Outgoing message content types.
  * - 'text': Text message
  * - 'card': Interactive card (platform-specific)
@@ -81,6 +94,15 @@ export interface OutgoingMessage {
 
   /** Text content (for type 'text') */
   text?: string;
+
+  /**
+   * Mention targets for @mentioning users/bots in text messages.
+   * When provided with type 'text', the message will be sent as a post (rich text)
+   * message with @mentions embedded.
+   *
+   * Issue #1742: Bot-to-bot @mention conversation support.
+   */
+  mentions?: MentionTarget[];
 
   /** Card structure (for type 'card', platform-specific JSON) */
   card?: Record<string, unknown>;

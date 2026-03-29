@@ -85,6 +85,7 @@ export type {
   IncomingMessage,
   OutgoingMessage,
   OutgoingContentType,
+  MentionTarget,
   MessageAttachment,
   ControlCommand,
   ControlCommandType,

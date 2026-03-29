@@ -388,10 +388,11 @@ export class UnixSocketIpcClient {
   async sendMessage(
     chatId: string,
     text: string,
-    threadId?: string
+    threadId?: string,
+    mentions?: Array<{ openId: string; name?: string }>
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('sendMessage', { chatId, text, threadId });
+      return await this.request('sendMessage', { chatId, text, threadId, mentions });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'sendMessage failed');

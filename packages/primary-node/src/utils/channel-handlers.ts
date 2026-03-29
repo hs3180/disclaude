@@ -20,6 +20,7 @@ import {
   type FileRef,
   type ChannelApiHandlers,
   type FeishuCard,
+  type MentionTarget,
 } from '@disclaude/core';
 import type { PilotCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
@@ -240,9 +241,9 @@ export function createChannelApiHandlers(
   const { logger, channelName } = options;
 
   return {
-    sendMessage: async (chatId: string, text: string, threadId?: string) => {
+    sendMessage: async (chatId: string, text: string, threadId?: string, mentions?: MentionTarget[]) => {
       try {
-        await channel.sendMessage({ chatId, type: 'text', text, threadId });
+        await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'IPC handler failed');
         throw error;
