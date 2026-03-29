@@ -26,7 +26,7 @@ import {
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
 } from '@disclaude/core';
-import { InteractionManager, WelcomeService, createFeishuClient, dissolveChat, GroupService } from '../platforms/feishu/index.js';
+import { InteractionManager, WelcomeService, createFeishuClient, dissolveChat, addMembers, removeMembers, getMembers, getBotChats, GroupService } from '../platforms/feishu/index.js';
 import {
   PassiveModeManager,
   MentionDetector,
@@ -392,6 +392,61 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const groupService = new GroupService();
     groupService.unregisterGroup(chatId);
     return { success: true };
+  }
+
+  /**
+   * Add members to a group chat via Feishu API.
+   * Issue #1678: Group member management capability.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member open_ids to add
+   */
+  async addMembers(chatId: string, memberIds: string[]): Promise<{ success: boolean }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    await addMembers(this.client, chatId, memberIds);
+    return { success: true };
+  }
+
+  /**
+   * Remove members from a group chat via Feishu API.
+   * Issue #1678: Group member management capability.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member open_ids to remove
+   */
+  async removeMembers(chatId: string, memberIds: string[]): Promise<{ success: boolean }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    await removeMembers(this.client, chatId, memberIds);
+    return { success: true };
+  }
+
+  /**
+   * List members of a group chat via Feishu API.
+   * Issue #1678: Group member management capability.
+   *
+   * @param chatId - Target chat ID
+   */
+  async listMembers(chatId: string): Promise<{ members: string[] }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    const members = await getMembers(this.client, chatId);
+    return { members };
+  }
+
+  /**
+   * List all chats the bot is in via Feishu API.
+   * Issue #1678: Group member management capability.
+   */
+  async listChats(): Promise<Array<{ chatId: string; name: string }>> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    return await getBotChats(this.client);
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {

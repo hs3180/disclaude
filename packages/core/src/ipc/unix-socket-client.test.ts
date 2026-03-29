@@ -438,6 +438,145 @@ describe('UnixSocketIpcClient', () => {
     });
   });
 
+  describe('addMembers / removeMembers / listMembers / listChats', () => {
+    it('should add members via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          addMembers: vi.fn().mockResolvedValue({ success: true }),
+        },
+      };
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = join(tempDir, `add-members-server-${Date.now()}.ipc`);
+      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
+      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.addMembers('oc_xxx', ['ou_a', 'ou_b']);
+      expect(result.success).toBe(true);
+      expect(mockHandlers.handlers.addMembers).toHaveBeenCalledWith('oc_xxx', ['ou_a', 'ou_b']);
+
+      await client.disconnect();
+      await server.stop();
+    });
+
+    it('should remove members via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          removeMembers: vi.fn().mockResolvedValue({ success: true }),
+        },
+      };
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = join(tempDir, `remove-members-server-${Date.now()}.ipc`);
+      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
+      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.removeMembers('oc_xxx', ['ou_a']);
+      expect(result.success).toBe(true);
+      expect(mockHandlers.handlers.removeMembers).toHaveBeenCalledWith('oc_xxx', ['ou_a']);
+
+      await client.disconnect();
+      await server.stop();
+    });
+
+    it('should list members via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          listMembers: vi.fn().mockResolvedValue({ members: ['ou_a', 'ou_b', 'ou_c'] }),
+        },
+      };
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = join(tempDir, `list-members-server-${Date.now()}.ipc`);
+      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
+      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.listMembers('oc_xxx');
+      expect(result.success).toBe(true);
+      expect(result.members).toEqual(['ou_a', 'ou_b', 'ou_c']);
+      expect(mockHandlers.handlers.listMembers).toHaveBeenCalledWith('oc_xxx');
+
+      await client.disconnect();
+      await server.stop();
+    });
+
+    it('should list chats via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          listChats: vi.fn().mockResolvedValue([
+            { chatId: 'oc_1', name: 'Group 1' },
+            { chatId: 'oc_2', name: 'Group 2' },
+          ]),
+        },
+      };
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = join(tempDir, `list-chats-server-${Date.now()}.ipc`);
+      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
+      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
+      await server.start();
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.listChats();
+      expect(result.success).toBe(true);
+      expect(result.chats).toHaveLength(2);
+      expect(result.chats?.[0].name).toBe('Group 1');
+
+      await client.disconnect();
+      await server.stop();
+    });
+
+    it('should return ipc_unavailable when IPC not available for addMembers', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.addMembers('oc_xxx', ['ou_a']);
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+  });
+
   describe('ping', () => {
     it('should return true when server responds', async () => {
       const serverSocketPath = await startTestServer(tempDir);

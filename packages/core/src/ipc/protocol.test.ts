@@ -145,6 +145,36 @@ describe('IPC Protocol', () => {
       };
       expect(dissolveChat.payload.chatId).toBe('oc_xxx');
     });
+
+    it('should type-check group member management requests (Issue #1678)', () => {
+      const addMembers: IpcRequest<'addMembers'> = {
+        type: 'addMembers',
+        id: 'req-13',
+        payload: { chatId: 'oc_xxx', memberIds: ['ou_a', 'ou_b'] },
+      };
+      expect(addMembers.payload.memberIds).toHaveLength(2);
+
+      const removeMembers: IpcRequest<'removeMembers'> = {
+        type: 'removeMembers',
+        id: 'req-14',
+        payload: { chatId: 'oc_xxx', memberIds: ['ou_a'] },
+      };
+      expect(removeMembers.payload.memberIds).toHaveLength(1);
+
+      const listMembers: IpcRequest<'listMembers'> = {
+        type: 'listMembers',
+        id: 'req-15',
+        payload: { chatId: 'oc_xxx' },
+      };
+      expect(listMembers.payload.chatId).toBe('oc_xxx');
+
+      const listChats: IpcRequest<'listChats'> = {
+        type: 'listChats',
+        id: 'req-16',
+        payload: {},
+      };
+      expect(listChats.payload).toEqual({});
+    });
   });
 
   describe('IpcResponse types', () => {
@@ -213,6 +243,36 @@ describe('IPC Protocol', () => {
         payload: { success: true },
       };
       expect(dissolveResponse.payload?.success).toBe(true);
+    });
+
+    it('should type-check group member management responses (Issue #1678)', () => {
+      const addMembersResponse: IpcResponse<'addMembers'> = {
+        id: 'req-13',
+        success: true,
+        payload: { success: true },
+      };
+      expect(addMembersResponse.payload?.success).toBe(true);
+
+      const listMembersResponse: IpcResponse<'listMembers'> = {
+        id: 'req-15',
+        success: true,
+        payload: { success: true, members: ['ou_a', 'ou_b', 'ou_c'] },
+      };
+      expect(listMembersResponse.payload?.members).toHaveLength(3);
+
+      const listChatsResponse: IpcResponse<'listChats'> = {
+        id: 'req-16',
+        success: true,
+        payload: {
+          success: true,
+          chats: [
+            { chatId: 'oc_1', name: 'Group 1' },
+            { chatId: 'oc_2', name: 'Group 2' },
+          ],
+        },
+      };
+      expect(listChatsResponse.payload?.chats).toHaveLength(2);
+      expect(listChatsResponse.payload?.chats?.[0].name).toBe('Group 1');
     });
   });
 
