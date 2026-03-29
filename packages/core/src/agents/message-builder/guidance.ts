@@ -213,3 +213,59 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Agents run in SDK subprocesses and need to share state
+ * (e.g., GitHub tokens) with the main process via a file-based mechanism.
+ * This guidance makes agents aware of the `.runtime-env` file so they can
+ * read and write shared state for cross-process communication.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Sharing
+
+You have access to a **runtime environment file** (\`.runtime-env\`) in your workspace that enables cross-process state sharing.
+
+### What is it?
+
+The \`.runtime-env\` file stores KEY=VALUE pairs that are shared between processes (e.g., between the main service and your agent subprocess). It is automatically loaded into your environment on startup.
+
+### Reading Variables
+
+Runtime env vars are **already available** in \`process.env\`. You can also read the file directly:
+
+\`\`\`bash
+cat .runtime-env
+\`\`\`
+
+### Known Variables
+
+| Variable | Description | Writer |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub API token | Main process (auto-refreshed) |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp | Main process |
+
+### Writing Variables
+
+To share state with other processes, write KEY=VALUE lines to the file:
+
+\`\`\`
+KEY_NAME=value_here
+ANOTHER_KEY=another_value
+\`\`\`
+
+Use the Write tool or Bash \`echo\` to append entries. Lines starting with \`#\` are comments.
+
+### Security Notes
+
+- **Never** commit \`.runtime-env\` to version control (it is in \`.gitignore\`)
+- Tokens may expire — if \`GH_TOKEN\` fails, inform the user so the main process can refresh it
+- Only write non-sensitive, process-coordination data (avoid storing secrets)`;
+}

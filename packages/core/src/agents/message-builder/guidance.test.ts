@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,43 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment sharing section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Sharing');
+  });
+
+  it('should explain what .runtime-env is', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('cross-process state sharing');
+  });
+
+  it('should mention known variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('already available');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('KEY=VALUE');
+    expect(result).toContain('Write tool');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expire');
+    expect(result).toContain('Never');
   });
 });
