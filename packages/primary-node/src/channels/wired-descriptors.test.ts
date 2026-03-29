@@ -68,6 +68,9 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
       }),
       registerFeishuHandlers: vi.fn(),
       getChatStore: vi.fn().mockReturnValue({}),
+      getCardActionRouter: vi.fn().mockReturnValue({
+        routeCardAction: vi.fn().mockResolvedValue(false),
+      }),
     },
     ...overrides,
   };

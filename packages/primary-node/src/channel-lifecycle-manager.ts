@@ -52,6 +52,10 @@ export interface IPrimaryNodeForSetup {
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
   /** Issue #1703: Get the ChatStore for temp chat lifecycle management */
   getChatStore(): import('@disclaude/core').ChatStore;
+  /** Issue #1629: Get the CardActionRouter for card action routing */
+  getCardActionRouter(): {
+    routeCardAction(message: import('@disclaude/core').CardActionMessage): Promise<boolean>;
+  };
 }
 
 /**

@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1629: CardActionMessage type for resolvedPrompt routing
+  type CardActionMessage,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -177,11 +179,22 @@ export class PrimaryNode extends EventEmitter {
     this.execNodeRegistry.on('node:registered', (nodeId: string) => this.emit('worker:connected', nodeId));
     this.execNodeRegistry.on('node:unregistered', (nodeId: string) => this.emit('worker:disconnected', nodeId));
 
-    // Initialize CardActionRouter
+    // Initialize CardActionRouter (Issue #1629: wired to ExecNodeRegistry)
     this.cardActionRouter = new CardActionRouter({
-      // eslint-disable-next-line require-await
-      sendToRemoteNode: async () => false, // Override in subclass
-      isNodeConnected: () => false,
+      sendToRemoteNode: (nodeId: string, message: CardActionMessage): Promise<boolean> => {
+        const node = this.execNodeRegistry.getNode(nodeId);
+        if (!node?.ws || node.ws.readyState !== 1 /* WebSocket.OPEN */) {
+          return Promise.resolve(false);
+        }
+        try {
+          node.ws.send(JSON.stringify(message));
+          return Promise.resolve(true);
+        } catch (error) {
+          logger.error({ err: error, nodeId }, 'Failed to send card action to remote node');
+          return Promise.resolve(false);
+        }
+      },
+      isNodeConnected: (nodeId: string) => this.execNodeRegistry.isNodeConnected(nodeId),
     });
 
     // Initialize DebugGroupService
@@ -242,6 +255,19 @@ export class PrimaryNode extends EventEmitter {
    */
   getCardActionRouter(): CardActionRouter {
     return this.cardActionRouter;
+  }
+
+  /**
+   * Register a card context for routing callbacks to Worker Nodes.
+   *
+   * Called by WebSocketServerService when a remote Worker Node sends a card
+   * message, so that subsequent card action callbacks can be routed back
+   * to the correct Worker Node.
+   *
+   * Issue #1629: Completes the card action routing wiring.
+   */
+  registerCardContextForRouting(chatId: string, nodeId: string, isRemote: boolean): void {
+    this.cardActionRouter.registerChatContext(chatId, nodeId, isRemote);
   }
 
   /**

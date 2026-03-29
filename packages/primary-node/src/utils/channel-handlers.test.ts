@@ -65,6 +65,9 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
       }),
       registerFeishuHandlers: vi.fn(),
       getChatStore: vi.fn().mockReturnValue({}),
+      getCardActionRouter: vi.fn().mockReturnValue({
+        routeCardAction: vi.fn().mockResolvedValue(false),
+      }),
     },
     callbacks: vi.fn().mockReturnValue({
       sendMessage: vi.fn().mockResolvedValue(undefined),
