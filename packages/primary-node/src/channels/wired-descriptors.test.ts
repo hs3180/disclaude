@@ -14,6 +14,7 @@ import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
+  BUILTIN_WIRED_DESCRIPTORS,
 } from './wired-descriptors.js';
 import type {
   ChannelSetupContext,
@@ -326,6 +327,30 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('BUILTIN_WIRED_DESCRIPTORS (Issue #1638)', () => {
+    it('should include REST and Feishu descriptors', () => {
+      const types = BUILTIN_WIRED_DESCRIPTORS.map(d => d.type);
+      expect(types).toContain('rest');
+      expect(types).toContain('feishu');
+    });
+
+    it('should NOT include WeChat (dynamic registration only)', () => {
+      const types = BUILTIN_WIRED_DESCRIPTORS.map(d => d.type);
+      expect(types).not.toContain('wechat');
+    });
+
+    it('should have exactly 2 built-in descriptors (rest + feishu)', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS).toHaveLength(2);
+    });
+
+    it('should have WECHAT_WIRED_DESCRIPTOR available for dynamic registration', () => {
+      // WeChat descriptor is exported for runtime dynamic registration,
+      // but NOT included in BUILTIN_WIRED_DESCRIPTORS (Issue #1638).
+      expect(WECHAT_WIRED_DESCRIPTOR.type).toBe('wechat');
+      expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
     });
   });
 });
