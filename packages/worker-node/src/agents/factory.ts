@@ -101,6 +101,12 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Project context from CLAUDE.md (Issue #1506).
+   * When provided, the agent will include project-specific guidelines
+   * in its prompt context.
+   */
+  projectContext?: string;
 }
 
 /**
@@ -186,6 +192,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        projectContext: options.projectContext,
       };
 
       return new Pilot(config);
@@ -230,6 +237,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      projectContext: options.projectContext,
     };
 
     return new Pilot(config);
@@ -268,6 +276,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      projectContext: options.projectContext,
     };
 
     return new Pilot(config);

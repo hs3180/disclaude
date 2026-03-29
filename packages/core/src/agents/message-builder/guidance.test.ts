@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,48 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectContextGuidance()).toBe('');
+    expect(buildProjectContextGuidance(undefined)).toBe('');
+  });
+
+  it('should return formatted section when context is provided', () => {
+    const claudeMdContent = '# Project Rules\n- Use TypeScript\n- Follow conventional commits';
+    const result = buildProjectContextGuidance(claudeMdContent);
+
+    expect(result).toContain('Project Context (CLAUDE.md)');
+    expect(result).toContain('Follow these conventions carefully');
+    expect(result).toContain('# Project Rules');
+    expect(result).toContain('Use TypeScript');
+    expect(result).toContain('Follow conventional commits');
+  });
+
+  it('should include the source note about CLAUDE.md', () => {
+    const result = buildProjectContextGuidance('some content');
+
+    expect(result).toContain('loaded from the target project\'s CLAUDE.md file');
+    expect(result).toContain('coding standards');
+  });
+
+  it('should handle multiline CLAUDE.md content', () => {
+    const multilineContent = `# Architecture
+
+## Backend
+- Node.js with TypeScript
+- Express for HTTP
+
+## Frontend
+- React with TypeScript
+- Tailwind CSS`;
+    const result = buildProjectContextGuidance(multilineContent);
+
+    expect(result).toContain('Architecture');
+    expect(result).toContain('Backend');
+    expect(result).toContain('Frontend');
+    expect(result).toContain('Node.js with TypeScript');
   });
 });

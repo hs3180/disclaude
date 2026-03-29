@@ -91,3 +91,8 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// CLAUDE.md Loader (Issue #1506)
+export {
+  loadClaudeMd,
+} from './claude-md-loader.js';

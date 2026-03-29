@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, project context)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +49,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Project context guidance (Issue #1506)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -130,6 +132,9 @@ export class MessageBuilder {
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
+    // Project context from CLAUDE.md (Issue #1506)
+    const projectContextSection = buildProjectContextGuidance(msg.projectContext);
+
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
@@ -155,6 +160,9 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+    if (projectContextSection) {
+      sections.push(projectContextSection);
     }
 
     if (toolsSection) {

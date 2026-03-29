@@ -81,6 +81,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
+  // Project context from CLAUDE.md (Issue #1506)
+  private readonly projectContext?: string;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -101,6 +104,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Store project context from CLAUDE.md (Issue #1506)
+    this.projectContext = config.projectContext;
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -306,6 +312,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
         text: userInput.content,
         messageId,
         senderOpenId,
+        projectContext: this.projectContext,
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -391,6 +398,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
+      projectContext: this.projectContext,
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -493,9 +501,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    // Issue #1506: Include project context from CLAUDE.md
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      projectContext: this.projectContext,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

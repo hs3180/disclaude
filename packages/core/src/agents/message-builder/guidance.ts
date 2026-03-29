@@ -213,3 +213,35 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the project context guidance section from CLAUDE.md content.
+ *
+ * Issue #1506: When an agent is working on a development project,
+ * the project's CLAUDE.md provides conventions, coding standards,
+ * and development guidelines that should be followed.
+ *
+ * @param projectContext - CLAUDE.md content string, or undefined to skip
+ * @returns Formatted project context section, or empty string if no context
+ */
+export function buildProjectContextGuidance(projectContext?: string): string {
+  if (!projectContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+You are working on a project that provides the following guidelines via CLAUDE.md.
+**Follow these conventions carefully** when making code changes, writing commits, or performing any development tasks:
+
+${projectContext}
+
+---
+
+> **Important**: The above project context was loaded from the target project's CLAUDE.md file.
+> Respect the project's coding standards, commit conventions, and architectural preferences.`;
+}

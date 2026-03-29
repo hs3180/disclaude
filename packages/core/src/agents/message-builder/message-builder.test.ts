@@ -508,4 +508,72 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context section when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '# Rules\n- Use TypeScript',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('# Rules');
+      expect(result).toContain('Use TypeScript');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        projectContext: '# Rules\n- Use TypeScript',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('/reset');
+    });
+
+    it('should place project context after post-history section', () => {
+      const options: MessageBuilderOptions = {
+        buildPostHistory: () => '## Post History\nSome content',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        projectContext: '# Project\nGuidelines here',
+      }, 'chat-456');
+
+      const postHistoryIdx = result.indexOf('Post History');
+      const projectContextIdx = result.indexOf('Project Context (CLAUDE.md)');
+      expect(projectContextIdx).toBeGreaterThan(postHistoryIdx);
+    });
+
+    it('should place project context before tools section', () => {
+      const options: MessageBuilderOptions = {
+        buildToolsSection: () => '- custom_tool',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        projectContext: '# Project\nGuidelines here',
+      }, 'chat-456');
+
+      const projectContextIdx = result.indexOf('Project Context (CLAUDE.md)');
+      const toolsIdx = result.indexOf('## Tools');
+      expect(toolsIdx).toBeGreaterThan(projectContextIdx);
+    });
+  });
 });

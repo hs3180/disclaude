@@ -41,7 +41,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { createLogger, type ChatAgent } from '@disclaude/core';
+import { createLogger, loadClaudeMd, type ChatAgent } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
 import type { PilotCallbacks } from './pilot/index.js';
 
@@ -108,6 +108,12 @@ export interface SubagentOptions {
   onProgress?: (message: string) => void;
   /** Optional sender OpenId for scheduled tasks */
   senderOpenId?: string;
+  /**
+   * Optional project directory for loading CLAUDE.md (Issue #1506).
+   * When provided, the SubagentManager will attempt to load CLAUDE.md
+   * from this directory and pass it as project context to the agent.
+   */
+  projectDir?: string;
 }
 
 /**
@@ -269,10 +275,27 @@ export class SubagentManager {
       throw new Error(`Subagent handle not found: ${subagentId}`);
     }
 
+    // Issue #1506: Load CLAUDE.md from project directory if provided
+    let projectContext: string | undefined;
+    if (options.projectDir) {
+      try {
+        projectContext = await loadClaudeMd(options.projectDir);
+        if (projectContext) {
+          logger.info(
+            { subagentId, projectDir: options.projectDir, contextLength: projectContext.length },
+            'Loaded CLAUDE.md project context for schedule subagent'
+          );
+        }
+      } catch (err) {
+        logger.warn({ err, subagentId, projectDir: options.projectDir }, 'Failed to load CLAUDE.md, continuing without project context');
+      }
+    }
+
     // Create agent using factory
     const agent = AgentFactory.createScheduleAgent(
       options.chatId,
-      options.callbacks
+      options.callbacks,
+      { projectContext }
     );
 
     this.inMemoryAgents.set(subagentId, agent);
@@ -323,10 +346,27 @@ export class SubagentManager {
       throw new Error(`Subagent handle not found: ${subagentId}`);
     }
 
+    // Issue #1506: Load CLAUDE.md from project directory if provided
+    let projectContext: string | undefined;
+    if (options.projectDir) {
+      try {
+        projectContext = await loadClaudeMd(options.projectDir);
+        if (projectContext) {
+          logger.info(
+            { subagentId, projectDir: options.projectDir, contextLength: projectContext.length },
+            'Loaded CLAUDE.md project context for task subagent'
+          );
+        }
+      } catch (err) {
+        logger.warn({ err, subagentId, projectDir: options.projectDir }, 'Failed to load CLAUDE.md, continuing without project context');
+      }
+    }
+
     // Create agent using factory
     const agent = AgentFactory.createTaskAgent(
       options.chatId,
-      options.callbacks
+      options.callbacks,
+      { projectContext }
     );
 
     this.inMemoryAgents.set(subagentId, agent);

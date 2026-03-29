@@ -100,6 +100,13 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Project context from CLAUDE.md (Issue #1506).
+   * When provided, the Pilot will include project-specific guidelines
+   * in the MessageBuilder context for all messages.
+   */
+  projectContext?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)
