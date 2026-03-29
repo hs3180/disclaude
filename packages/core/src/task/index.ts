@@ -17,3 +17,15 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// ETA Files
+export {
+  getTaskRecordsPath,
+  getEtaRulesPath,
+  getClaudeDir,
+  ensureEtaFiles,
+  readTaskRecords,
+  readEtaRules,
+  appendTaskRecord,
+  updateEtaRules,
+} from './eta-files.js';
