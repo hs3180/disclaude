@@ -1,10 +1,14 @@
 /**
- * Tests for WeChatApiClient (MVP).
+ * Tests for WeChatApiClient.
  *
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1557 - WeChat Channel Dynamic Registration Roadmap (Phase 3.2)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { WeChatApiClient } from './api-client.js';
 
 // Store original fetch
@@ -13,6 +17,7 @@ const originalFetch = globalThis.fetch;
 describe('WeChatApiClient', () => {
   let client: WeChatApiClient;
   let mockFetch: ReturnType<typeof vi.fn>;
+  let tempDir: string;
 
   beforeEach(() => {
     mockFetch = vi.fn();
@@ -21,11 +26,16 @@ describe('WeChatApiClient', () => {
       baseUrl: 'https://ilinkai.weixin.qq.com',
       routeTag: 'test-route',
     });
+    // Create temp directory for test files
+    tempDir = join(tmpdir(), `wechat-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
+    // Clean up temp files
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   describe('constructor', () => {
@@ -393,6 +403,267 @@ describe('WeChatApiClient', () => {
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'test' }))
         .rejects.toThrow('Error code 999');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Media handling tests (Phase 3.2)
+  // ---------------------------------------------------------------------------
+
+  describe('detectMediaType', () => {
+    it('should detect image extensions', () => {
+      expect(client.detectMediaType('photo.jpg')).toBe('image');
+      expect(client.detectMediaType('photo.jpeg')).toBe('image');
+      expect(client.detectMediaType('photo.png')).toBe('image');
+      expect(client.detectMediaType('photo.webp')).toBe('image');
+      expect(client.detectMediaType('photo.gif')).toBe('image');
+      expect(client.detectMediaType('photo.bmp')).toBe('image');
+      expect(client.detectMediaType('photo.tiff')).toBe('image');
+      expect(client.detectMediaType('photo.ico')).toBe('image');
+    });
+
+    it('should detect file extensions', () => {
+      expect(client.detectMediaType('doc.pdf')).toBe('file');
+      expect(client.detectMediaType('doc.docx')).toBe('file');
+      expect(client.detectMediaType('data.csv')).toBe('file');
+      expect(client.detectMediaType('archive.zip')).toBe('file');
+      expect(client.detectMediaType('script.ts')).toBe('file');
+    });
+
+    it('should be case-insensitive', () => {
+      expect(client.detectMediaType('photo.PNG')).toBe('image');
+      expect(client.detectMediaType('photo.JPEG')).toBe('image');
+      expect(client.detectMediaType('document.PDF')).toBe('file');
+    });
+  });
+
+  describe('uploadMedia', () => {
+    it('should upload an image file and return mediaId', async () => {
+      // Create a small test image file
+      const imagePath = join(tempDir, 'test.png');
+      writeFileSync(imagePath, Buffer.alloc(1024)); // 1KB file
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'media-abc-123' })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({ filePath: imagePath });
+
+      expect(result.mediaId).toBe('media-abc-123');
+      expect(result.mediaType).toBe('image');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('uploadmedia'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        })
+      );
+    });
+
+    it('should upload a non-image file as type "file"', async () => {
+      const filePath = join(tempDir, 'test.pdf');
+      writeFileSync(filePath, Buffer.alloc(2048));
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'media-xyz-456' })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({ filePath: filePath });
+
+      expect(result.mediaId).toBe('media-xyz-456');
+      expect(result.mediaType).toBe('file');
+    });
+
+    it('should respect explicit mediaType override', async () => {
+      // Create a .txt file but force image type
+      const filePath = join(tempDir, 'data.bin');
+      writeFileSync(filePath, Buffer.alloc(512));
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'media-override' })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({ filePath, mediaType: 'image' });
+
+      expect(result.mediaType).toBe('image');
+    });
+
+    it('should throw for oversized image (>10MB)', async () => {
+      // Create a file that exceeds the image limit
+      const imagePath = join(tempDir, 'large.png');
+      writeFileSync(imagePath, Buffer.alloc(10 * 1024 * 1024 + 1)); // 10MB + 1 byte
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({ filePath: imagePath }))
+        .rejects.toThrow('File too large for image upload');
+    });
+
+    it('should throw for oversized file (>30MB)', async () => {
+      const filePath = join(tempDir, 'large.pdf');
+      writeFileSync(filePath, Buffer.alloc(30 * 1024 * 1024 + 1)); // 30MB + 1 byte
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({ filePath }))
+        .rejects.toThrow('File too large for file upload');
+    });
+
+    it('should allow 10MB image exactly', async () => {
+      const imagePath = join(tempDir, 'exact-10mb.png');
+      writeFileSync(imagePath, Buffer.alloc(10 * 1024 * 1024));
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'media-exact' })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({ filePath: imagePath });
+      expect(result.mediaId).toBe('media-exact');
+    });
+
+    it('should throw when file does not exist', async () => {
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({ filePath: '/nonexistent/file.png' }))
+        .rejects.toThrow();
+    });
+
+    it('should throw when response lacks media_id', async () => {
+      const filePath = join(tempDir, 'test.png');
+      writeFileSync(filePath, Buffer.alloc(100));
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({ filePath }))
+        .rejects.toThrow('missing media_id in response');
+    });
+
+    it('should include SKRouteTag in upload request', async () => {
+      const filePath = join(tempDir, 'test.png');
+      writeFileSync(filePath, Buffer.alloc(100));
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'media-route' })),
+      });
+
+      client.setToken('bot-token');
+      await client.uploadMedia({ filePath });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders).toHaveProperty('SKRouteTag');
+      expect(callHeaders['SKRouteTag']).toBe('test-route');
+    });
+  });
+
+  describe('sendImage', () => {
+    it('should upload and send image message', async () => {
+      const imagePath = join(tempDir, 'photo.jpg');
+      writeFileSync(imagePath, Buffer.alloc(1024));
+
+      // First call: upload, Second call: send message
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'img-media-id' })),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-1', filePath: imagePath });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // First call should be uploadmedia
+      expect(mockFetch.mock.calls[0][0]).toContain('uploadmedia');
+      // Second call should be sendmessage with image item
+      expect(mockFetch.mock.calls[1][0]).toContain('sendmessage');
+      const sendBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(sendBody.msg.item_list[0].type).toBe(3);
+      expect(sendBody.msg.item_list[0].image_item.media_id).toBe('img-media-id');
+    });
+
+    it('should include contextToken when provided', async () => {
+      const imagePath = join(tempDir, 'photo.png');
+      writeFileSync(imagePath, Buffer.alloc(100));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'img-id' })),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-1', filePath: imagePath, contextToken: 'ctx-abc' });
+
+      const sendBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(sendBody.msg.context_token).toBe('ctx-abc');
+    });
+  });
+
+  describe('sendFile', () => {
+    it('should upload and send file message', async () => {
+      const filePath = join(tempDir, 'report.pdf');
+      writeFileSync(filePath, Buffer.alloc(2048));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'file-media-id' })),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+
+      client.setToken('bot-token');
+      await client.sendFile({ to: 'user-1', filePath: filePath });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // Second call: sendmessage with file item (type 4)
+      const sendBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(sendBody.msg.item_list[0].type).toBe(4);
+      expect(sendBody.msg.item_list[0].file_item.media_id).toBe('file-media-id');
+      expect(sendBody.msg.item_list[0].file_item.file_name).toBe('report.pdf');
+    });
+
+    it('should include contextToken when provided', async () => {
+      const filePath = join(tempDir, 'doc.pdf');
+      writeFileSync(filePath, Buffer.alloc(100));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0, media_id: 'file-id' })),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+
+      client.setToken('bot-token');
+      await client.sendFile({ to: 'user-1', filePath, contextToken: 'thread-1' });
+
+      const sendBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(sendBody.msg.context_token).toBe('thread-1');
     });
   });
 });

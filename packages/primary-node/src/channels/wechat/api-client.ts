@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -9,19 +9,26 @@
  * API Endpoints:
  * - GET  ilink/bot/get_bot_qrcode      - Generate login QR code
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
- * - POST ilink/bot/sendmessage         - Send a message
+ * - POST ilink/bot/sendmessage         - Send a message (text, image, file)
+ * - POST ilink/bot/uploadmedia         - Upload media file (CDN)
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1557 - WeChat Channel Dynamic Registration Roadmap (Phase 3.2)
  */
 
 import { createLogger } from '@disclaude/core';
+import { readFileSync, statSync } from 'node:fs';
+import { basename, extname } from 'node:path';
 
 const logger = createLogger('WeChatApiClient');
 
 /** Default timeout for regular API requests (milliseconds). */
 const DEFAULT_API_TIMEOUT_MS = 15_000;
+
+/** Timeout for file upload requests (milliseconds). */
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 /** Long-poll timeout for QR status / getUpdates (milliseconds). */
 const LONG_POLL_TIMEOUT_MS = 35_000;
@@ -29,10 +36,36 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/** Maximum file size for image uploads (10 MB). */
+const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+
+/** Maximum file size for file uploads (30 MB). */
+const MAX_FILE_SIZE_BYTES = 30 * 1024 * 1024;
+
+/** Image file extensions recognized by WeChat CDN. */
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.ico',
+]);
+
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * Media type for CDN upload.
+ */
+export type MediaType = 'image' | 'file';
+
+/**
+ * Result of a media upload operation.
+ */
+export interface MediaUploadResult {
+  /** Media ID returned by CDN, used to reference the uploaded file */
+  mediaId: string;
+  /** Media type that was uploaded */
+  mediaType: MediaType;
+}
+
+/**
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, text messaging, and media handling.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -211,8 +244,184 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Media endpoints (POST, with auth headers)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a media file to WeChat CDN.
+   *
+   * POST /ilink/bot/uploadmedia (multipart/form-data)
+   *
+   * @param params - Upload parameters
+   * @returns Upload result with mediaId for use in sendImage/sendFile
+   */
+  async uploadMedia(params: {
+    /** Absolute path to the file to upload */
+    filePath: string;
+    /** Media type override; auto-detected from extension if omitted */
+    mediaType?: MediaType;
+  }): Promise<MediaUploadResult> {
+    const { filePath, mediaType: explicitType } = params;
+
+    // Validate file exists and check size
+    const stats = statSync(filePath);
+    const ext = extname(filePath).toLowerCase();
+    const fileName = basename(filePath);
+    const detectedType: MediaType = explicitType ?? (IMAGE_EXTENSIONS.has(ext) ? 'image' : 'file');
+    const maxSize = detectedType === 'image' ? MAX_IMAGE_SIZE_BYTES : MAX_FILE_SIZE_BYTES;
+
+    if (stats.size > maxSize) {
+      const maxMB = maxSize / (1024 * 1024);
+      throw new Error(
+        `File too large for ${detectedType} upload: ${stats.size} bytes (max ${maxMB}MB)`
+      );
+    }
+
+    // Build multipart/form-data request
+    const fileBuffer = readFileSync(filePath);
+    const formData = new FormData();
+    formData.append('media', new Blob([fileBuffer]), fileName);
+    formData.append('type', detectedType);
+
+    const url = `${this.baseUrl}/ilink/bot/uploadmedia`;
+
+    // Build auth headers (without Content-Type — fetch sets it with boundary for FormData)
+    const headers: Record<string, string> = {
+      'AuthorizationType': 'ilink_bot_token',
+      'X-WECHAT-UIN': this.randomWechatUin(),
+    };
+
+    if (this.token?.trim()) {
+      headers['Authorization'] = `Bearer ${this.token.trim()}`;
+    }
+    if (this.routeTag) {
+      headers['SKRouteTag'] = this.routeTag;
+    }
+
+    logger.info({ filePath, mediaType: detectedType, size: stats.size }, 'Uploading media to CDN');
+
+    const data = await this.fetchJson<{ media_id?: string }>(url, {
+      method: 'POST',
+      headers,
+      body: formData as unknown as string,
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+
+    if (!data.media_id) {
+      throw new Error('Media upload failed: missing media_id in response');
+    }
+
+    logger.info({ mediaId: data.media_id, mediaType: detectedType }, 'Media uploaded successfully');
+    return { mediaId: data.media_id, mediaType: detectedType };
+  }
+
+  /**
+   * Send an image message.
+   *
+   * Convenience method that uploads the image to CDN then sends it.
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    /** Target user/chat ID */
+    to: string;
+    /** Absolute path to the image file */
+    filePath: string;
+    /** Thread context token (optional) */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, filePath, contextToken } = params;
+    const upload = await this.uploadMedia({ filePath, mediaType: 'image' });
+    await this.sendMediaMessage({
+      to,
+      mediaId: upload.mediaId,
+      mediaType: 'image',
+      fileName: basename(filePath),
+      contextToken,
+    });
+    logger.debug({ to, mediaId: upload.mediaId }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message.
+   *
+   * Convenience method that uploads the file to CDN then sends it.
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    /** Target user/chat ID */
+    to: string;
+    /** Absolute path to the file */
+    filePath: string;
+    /** Thread context token (optional) */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, filePath, contextToken } = params;
+    const upload = await this.uploadMedia({ filePath, mediaType: 'file' });
+    await this.sendMediaMessage({
+      to,
+      mediaId: upload.mediaId,
+      mediaType: 'file',
+      fileName: basename(filePath),
+      contextToken,
+    });
+    logger.debug({ to, mediaId: upload.mediaId }, 'File message sent');
+  }
+
+  /**
+   * Detect media type from file extension.
+   *
+   * @param filePath - Path to the file
+   * @returns 'image' if the extension is a known image type, 'file' otherwise
+   */
+  detectMediaType(filePath: string): MediaType {
+    const ext = extname(filePath).toLowerCase();
+    return IMAGE_EXTENSIONS.has(ext) ? 'image' : 'file';
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Send a media message (image or file) using a pre-uploaded mediaId.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * Image items use `{ type: 3, image_item: { media_id } }`.
+   * File items use  `{ type: 4, file_item: { media_id, file_name } }`.
+   */
+  private async sendMediaMessage(params: {
+    to: string;
+    mediaId: string;
+    mediaType: MediaType;
+    fileName: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, mediaId, mediaType, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    // Build media item based on type
+    const mediaItem = mediaType === 'image'
+      ? { type: 3, image_item: { media_id: mediaId } }
+      : { type: 4, file_item: { media_id: mediaId, file_name: fileName } };
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [mediaItem],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+  }
 
   /**
    * Make an authenticated POST request to the API.

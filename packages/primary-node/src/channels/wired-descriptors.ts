@@ -255,8 +255,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  *
  * MVP limitations:
  * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
- * - sendFile: not supported (logs warning only)
- * - No message listening / long polling (outbound-only bot)
+ * - No message listening / long polling (covered by PR #1747 Phase 3.1)
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
@@ -269,7 +268,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
   defaultCapabilities: {
     supportsCard: false,
     supportsThread: false,
-    supportsFile: false,
+    supportsFile: true,
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,

@@ -1,20 +1,20 @@
 /**
- * WeChat Channel Implementation (MVP).
+ * WeChat Channel Implementation.
  *
- * Minimal channel implementation supporting:
+ * Channel implementation supporting:
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
+ * - Image and file sending via CDN upload (ilink/bot/uploadmedia)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
- * Not included in MVP (future issues):
+ * Not yet implemented (future issues):
  * - Message listening / long polling (getupdates)
- * - Media handling (CDN upload)
  * - Typing indicator
- * - Unit tests
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1557 - WeChat Channel Dynamic Registration Roadmap (Phase 3.2)
  */
 
 import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities } from '@disclaude/core';
@@ -28,11 +28,12 @@ const logger = createLogger('WeChatChannel');
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
 /**
- * WeChat Channel - MVP implementation.
+ * WeChat Channel implementation.
  *
  * Provides WeChat (Tencent ilink) bot integration with:
  * - QR code authentication on start
  * - Text message sending
+ * - Image and file sending via CDN upload
  *
  * Extends BaseChannel for lifecycle management and handler registration.
  */
@@ -105,7 +106,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
+   * Supports 'text', 'card' (downgraded to JSON text), and 'file' types.
    * Other types are logged as warnings and silently ignored.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
@@ -132,15 +133,34 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       });
       logger.debug(
         { chatId: message.chatId, cardLength: cardText.length },
-        'Card downgraded to text for WeChat MVP'
+        'Card downgraded to text for WeChat'
       );
+      return;
+    }
+
+    // File (image or document) — upload to CDN and send
+    if (message.type === 'file' && message.filePath) {
+      const mediaType = this.client.detectMediaType(message.filePath);
+      if (mediaType === 'image') {
+        await this.client.sendImage({
+          to: message.chatId,
+          filePath: message.filePath,
+          contextToken: message.threadId,
+        });
+      } else {
+        await this.client.sendFile({
+          to: message.chatId,
+          filePath: message.filePath,
+          contextToken: message.threadId,
+        });
+      }
       return;
     }
 
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
   }
 
@@ -156,17 +176,17 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text and file (image/document) sending via CDN upload.
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
