@@ -26,6 +26,7 @@ import {
   send_interactive_message,
 } from './index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { getChatIdValidationError } from './utils/chat-id-validator.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -313,6 +314,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format before making IPC calls
+        const textChatIdError = getChatIdValidationError(toolArgs.chatId);
+        if (textChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${textChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_text({
           text: toolArgs.text,
@@ -362,6 +375,18 @@ Example:
             id,
             result: {
               content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+        // Issue #1641: Validate chatId format before making IPC calls
+        const cardChatIdError = getChatIdValidationError(chatId);
+        if (cardChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${cardChatIdError}` }],
               isError: true,
             },
           };
@@ -444,6 +469,18 @@ Example:
             },
           };
         }
+        // Issue #1641: Validate chatId format before making IPC calls
+        const interactiveChatIdError = getChatIdValidationError(chatId);
+        if (interactiveChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${interactiveChatIdError}` }],
+              isError: true,
+            },
+          };
+        }
 
         const result = await send_interactive_message({
           question: question as string,
@@ -479,6 +516,18 @@ Example:
             id,
             result: {
               content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+        // Issue #1641: Validate chatId format before making IPC calls
+        const fileChatIdError = getChatIdValidationError(toolArgs.chatId);
+        if (fileChatIdError) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: `⚠️ ${fileChatIdError}` }],
               isError: true,
             },
           };
