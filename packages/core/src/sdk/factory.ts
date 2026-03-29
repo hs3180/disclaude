@@ -8,6 +8,7 @@
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
+import { AcpProvider, type AcpProviderConfig } from './providers/acp/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
 import { setupAgentsInWorkspace } from '../utils/agents-setup.js';
 import { createLogger } from '../utils/logger.js';
@@ -191,4 +192,38 @@ export function isProviderAvailable(type: ProviderType): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 注册 ACP Provider
+ *
+ * 通过 ACP 传输配置注册 ACP Provider，支持通过标准化协议
+ * 连接任何 ACP 兼容的 Agent 服务端。
+ *
+ * @param config - ACP Provider 配置（传输层配置和可选名称）
+ * @param type - Provider 类型名称，默认 'acp'
+ *
+ * @example
+ * ```typescript
+ * // 注册 OpenAI ACP Server
+ * registerAcpProvider({
+ *   transport: {
+ *     type: 'stdio',
+ *     command: 'npx',
+ *     args: ['openai-acp-server'],
+ *     env: { OPENAI_API_KEY: 'sk-...' },
+ *   },
+ *   name: 'openai',
+ * }, 'openai');
+ * ```
+ */
+export function registerAcpProvider(
+  config: AcpProviderConfig,
+  type: ProviderType = 'acp'
+): void {
+  registerProvider(type, () => new AcpProvider(config));
+  createLogger('ProviderFactory').info(
+    { type, transportConfig: config.transport },
+    'ACP provider registered'
+  );
 }
