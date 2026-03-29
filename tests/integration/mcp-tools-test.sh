@@ -31,6 +31,35 @@ register_cleanup
 
 TEST_FILE_PATH="workspace/mcp-test-file.txt"
 
+# Check if Feishu credentials are available for integration tests.
+# Returns: 0 if credentials are configured, 1 otherwise.
+check_feishu_credentials() {
+    # Check environment variables first
+    if [ -n "$FEISHU_APP_ID" ] && [ -n "$FEISHU_APP_SECRET" ]; then
+        return 0
+    fi
+
+    # Check config file for feishu credentials
+    local config_file="${PROJECT_ROOT}/disclaude.config.yaml"
+    if [ ! -f "$config_file" ]; then
+        config_file="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
+    fi
+
+    if [ -f "$config_file" ]; then
+        # Extract appId and appSecret from feishu section using grep/sed
+        local app_id app_secret
+        app_id=$(grep -E '^\s+appId\s*:' "$config_file" 2>/dev/null | head -1 | sed 's/.*appId\s*:\s*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+        app_secret=$(grep -E '^\s+appSecret\s*:' "$config_file" 2>/dev/null | head -1 | sed 's/.*appSecret\s*:\s*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+
+        if [ -n "$app_id" ] && [ "$app_id" != "your_feishu_app_id_here" ] && \
+           [ -n "$app_secret" ] && [ "$app_secret" != "your_feishu_app_secret_here" ]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 create_test_file() {
     local workspace_dir="$PROJECT_ROOT/workspace"
     mkdir -p "$workspace_dir"
@@ -66,6 +95,15 @@ test_send_text_tool() {
 
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
+
+    # Skip test if Feishu credentials are not configured.
+    # Without real credentials, the tool returns an error and the Agent
+    # enters diagnostic mode, making multiple tool calls that exceed the
+    # test timeout. See Issue #1634.
+    if ! check_feishu_credentials; then
+        skip_test "send_file tool test skipped: Feishu credentials not configured (FEISHU_APP_ID/FEISHU_APP_SECRET)"
+        return 0
+    fi
 
     create_test_file
 

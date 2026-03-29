@@ -56,6 +56,7 @@ NC='\033[0m' # No Color
 # =============================================================================
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # =============================================================================
 # Logging Functions
@@ -77,6 +78,15 @@ log_fail() {
 
 log_skip() {
     echo -e "${YELLOW}[SKIP]${NC} $1"
+}
+
+# Skip current test with reason (increments skip counter)
+# Usage: skip_test "reason message"
+# Returns: 0 (always succeeds, so test framework doesn't count as failure)
+skip_test() {
+    log_skip "$1"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+    return 0
 }
 
 log_warn() {
@@ -906,11 +916,18 @@ print_summary() {
     echo "=========================================="
 
     if [ $TESTS_FAILED -eq 0 ]; then
-        log_info "All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
+        local summary="All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
+        if [ $TESTS_SKIPPED -gt 0 ]; then
+            summary="$summary, $TESTS_SKIPPED skipped"
+        fi
+        log_info "$summary"
         echo "=========================================="
         exit 0
     else
         log_error "$TESTS_FAILED test(s) failed"
+        if [ $TESTS_SKIPPED -gt 0 ]; then
+            log_info "$TESTS_SKIPPED test(s) skipped"
+        fi
         echo "=========================================="
         show_server_logs
         exit 1
