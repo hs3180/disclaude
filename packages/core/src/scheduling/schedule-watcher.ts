@@ -216,6 +216,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        soul: frontmatter['soul'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +268,10 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    // Issue #1315: Write per-task SOUL.md path
+    if (task.soul) {
+      frontmatter.push(`soul: "${task.soul}"`);
     }
 
     frontmatter.push('---', '');

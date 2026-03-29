@@ -294,6 +294,25 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Soul configuration section.
+ *
+ * Controls the SOUL.md personality injection system.
+ * When configured, the SOUL.md file content is loaded and injected
+ * as a system prompt append to all agents.
+ *
+ * @see Issue #1315
+ */
+export interface SoulConfig {
+  /** Path to SOUL.md file (supports tilde ~ expansion) */
+  path?: string;
+  /**
+   * Maximum file size in bytes (default: 32768 = 32KB).
+   * Files exceeding this limit are skipped with a warning.
+   */
+  maxSize?: number;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -322,6 +341,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Soul/personality injection configuration (Issue #1315) */
+  soul?: SoulConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

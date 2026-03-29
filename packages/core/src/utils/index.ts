@@ -91,3 +91,8 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Soul Loader (Issue #1315)
+export {
+  loadSoulContent,
+} from './soul-loader.js';

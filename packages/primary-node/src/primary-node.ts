@@ -51,6 +51,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1315: SOUL.md personality injection
+  loadSoulContent,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
@@ -471,12 +473,26 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass systemPromptAppend for SOUL.md personality injection
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), {
+          ...(model && { model }),
+          ...(systemPromptAppend && { systemPromptAppend }),
+        });
       },
       callbacks: schedulerCallbacks,
     });
+
+    // Issue #1315: Load global SOUL.md content once at startup
+    const soulConfig = Config.getSoulConfig();
+    const globalSoulContent = soulConfig.path
+      ? loadSoulContent(soulConfig.path, soulConfig.maxSize)
+      : null;
+
+    if (globalSoulContent) {
+      logger.info('Global SOUL.md loaded for scheduled task personality injection');
+    }
 
     // Initialize Scheduler
     this.scheduler = new Scheduler({
@@ -484,6 +500,7 @@ export class PrimaryNode extends EventEmitter {
       cooldownManager: this.cooldownManager,
       callbacks: schedulerCallbacks,
       executor,
+      globalSoulContent,
     });
 
     // Initialize file watcher for hot reload

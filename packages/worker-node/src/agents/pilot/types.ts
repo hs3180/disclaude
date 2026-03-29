@@ -100,6 +100,14 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional system prompt to append for personality injection.
+   * Loaded from SOUL.md and passed through to SDK options.
+   *
+   * Issue #1315: SOUL.md personality injection system.
+   */
+  systemPromptAppend?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)
