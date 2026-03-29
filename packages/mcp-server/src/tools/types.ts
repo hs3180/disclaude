@@ -102,3 +102,37 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Temp chat summary as returned by list_temp_chats.
+ * Issue #1703: Temp chat lifecycle management.
+ */
+export interface TempChatSummary {
+  chatId: string;
+  createdAt: string;
+  expiresAt: string;
+  creatorChatId?: string;
+  responded: boolean;
+}
+
+/**
+ * Result type for list_temp_chats tool.
+ * Issue #1703: Temp chat lifecycle management.
+ */
+export interface ListTempChatsResult {
+  success: boolean;
+  message: string;
+  chats?: TempChatSummary[];
+  error?: string;
+}
+
+/**
+ * Result type for mark_chat_responded tool.
+ * Issue #1703: Temp chat lifecycle management.
+ */
+export interface MarkChatRespondedResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+

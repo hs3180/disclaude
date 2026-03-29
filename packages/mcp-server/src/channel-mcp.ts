@@ -18,6 +18,8 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  list_temp_chats,
+  mark_chat_responded,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +34,8 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { list_temp_chats } from './tools/list-temp-chats.js';
+export { mark_chat_responded } from './tools/mark-chat-responded.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -407,6 +411,59 @@ Use this after creating a group chat (via create_chat) that should be temporary.
     }) => {
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1703: Temp chat lifecycle management — list and mark operations
+  {
+    name: 'list_temp_chats',
+    description: `List all tracked temporary chats and their status.
+
+Returns an array of temp chat records including:
+- **chatId**: The tracked chat ID
+- **createdAt**: When the chat was registered
+- **expiresAt**: When the chat will expire
+- **responded**: Whether the user has already responded
+
+Use this to check which temp chats are active, expired, or responded.`,
+    parameters: z.object({}),
+    handler: async () => {
+      // list_temp_chats handles all errors internally and returns { success, message }
+      const result = await list_temp_chats();
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'mark_chat_responded',
+    description: `Mark a temporary chat as responded by a user.
+
+This prevents the lifecycle service from auto-dissolving the chat when it expires.
+Call this after a user interacts with a temp chat (e.g., clicks a button on an interactive card).
+
+## Parameters
+- **chatId**: The temp chat ID to update (required)
+- **selectedValue**: The action value the user selected (required)
+- **responder**: The open_id of the user who responded (required)
+- **repliedAt**: ISO timestamp of the response (optional, defaults to now)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "selectedValue": "approve", "responder": "ou_yyy"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The temp chat ID to mark as responded'),
+      selectedValue: z.string().describe('The action value the user selected'),
+      responder: z.string().describe('The open_id of the user who responded'),
+      repliedAt: z.string().optional().describe('ISO timestamp of the response (defaults to now)'),
+    }),
+    handler: async ({ chatId, selectedValue, responder, repliedAt }: {
+      chatId: string;
+      selectedValue: string;
+      responder: string;
+      repliedAt?: string;
+    }) => {
+      // mark_chat_responded handles all errors internally and returns { success, message }
+      const result = await mark_chat_responded({ chatId, selectedValue, responder, repliedAt });
       return toolSuccess(result.message);
     },
   },

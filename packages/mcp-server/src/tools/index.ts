@@ -14,6 +14,9 @@ export type {
   CreateChatResult,
   DissolveChatResult,
   RegisterTempChatResult,
+  ListTempChatsResult,
+  TempChatSummary,
+  MarkChatRespondedResult,
 } from './types.js';
 
 // Shared utilities
@@ -40,6 +43,8 @@ export { dissolve_chat } from './dissolve-chat.js';
 
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
+export { list_temp_chats } from './list-temp-chats.js';
+export { mark_chat_responded } from './mark-chat-responded.js';
 
 // Interactive Message
 export {
