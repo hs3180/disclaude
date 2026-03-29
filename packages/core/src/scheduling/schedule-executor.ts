@@ -12,8 +12,8 @@
  * createScheduleExecutor(agentFactory) => TaskExecutor
  *
  * Scheduler uses TaskExecutor to execute tasks:
- *   executor(chatId, prompt, userId)
- *     -> agentFactory(chatId, callbacks)
+ *   executor(chatId, prompt, userId, model, soul)
+ *     -> agentFactory(chatId, callbacks, model, soul)
  *       -> agent.executeOnce(chatId, prompt, undefined, userId)
  *         -> agent.dispose()
  * ```
@@ -45,12 +45,14 @@ export interface ScheduleAgent {
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
+ * @param soul - Optional per-task SOUL.md path for personality override (Issue #1315)
  * @returns A ScheduleAgent instance (caller must dispose)
  */
 export type ScheduleAgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
-  model?: string
+  model?: string,
+  soul?: string
 ) => ScheduleAgent;
 
 /**
@@ -81,8 +83,8 @@ export interface ScheduleExecutorOptions {
  * ```typescript
  * // In Primary Node or Worker Node:
  * const executor = createScheduleExecutor({
- *   agentFactory: (chatId, callbacks) => {
- *     return AgentFactory.createScheduleAgent(chatId, callbacks);
+ *   agentFactory: (chatId, callbacks, model, soul) => {
+ *     return AgentFactory.createScheduleAgent(chatId, callbacks, { model, soul });
  *   },
  *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
  * });
@@ -97,10 +99,11 @@ export interface ScheduleExecutorOptions {
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
   const { agentFactory, callbacks } = options;
 
-  return async (chatId: string, prompt: string, userId?: string, model?: string): Promise<void> => {
+  return async (chatId: string, prompt: string, userId?: string, model?: string, soul?: string): Promise<void> => {
     // Create a short-lived agent for this execution
     // Issue #1338: Pass model override for per-task model selection
-    const agent = agentFactory(chatId, callbacks, model);
+    // Issue #1315: Pass soul path for per-task personality override (Critical #1 fix)
+    const agent = agentFactory(chatId, callbacks, model, soul);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks

@@ -41,4 +41,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional per-task SOUL.md personality override.
+   * When set, the schedule agent will load personality from this path
+   * instead of the global soul configuration.
+   * Defined in schedule markdown frontmatter (e.g., `soul: "~/.disclaude/souls/code-reviewer.md"`).
+   *
+   * Issue #1315: SOUL.md Agent personality/behavior definition system.
+   */
+  soul?: string;
 }

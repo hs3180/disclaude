@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -483,5 +484,16 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get SOUL.md personality configuration.
+   * Controls Agent personality/behavior definition.
+   * @see Issue #1315
+   *
+   * @returns SoulConfig or undefined if not configured
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    return fileConfigOnly.soul;
   }
 }

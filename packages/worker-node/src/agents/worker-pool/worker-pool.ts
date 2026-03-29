@@ -430,7 +430,8 @@ export class WorkerPool {
 
     try {
       // Create agent for task execution
-      const agent = AgentFactory.createTaskAgent(task.chatId, this.callbacks);
+      // Issue #1315: createTaskAgent is now async
+      const agent = await AgentFactory.createTaskAgent(task.chatId, this.callbacks);
 
       // Execute task
       await agent.executeOnce(

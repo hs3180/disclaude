@@ -197,8 +197,9 @@ export interface WorkerNodeDependencies {
   createChatAgent: ChatAgentFactory;
 
   /** Factory to create ScheduleAgent instances (for Scheduler).
-   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent. */
-  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent.
+   *  Issue #1315: Now returns Promise<ChatAgent> for async soul loading. */
+  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent | Promise<ChatAgent>;
 
   /** Logger instance */
   logger: Logger;

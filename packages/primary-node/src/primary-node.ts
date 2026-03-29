@@ -471,9 +471,10 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass soul path for per-task personality override + async factory
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, soul) => {
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), { model, soul });
       },
       callbacks: schedulerCallbacks,
     });

@@ -100,6 +100,15 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * System prompt append content for personality injection.
+   * When set, this text is appended to the Claude SDK system prompt
+   * via the `systemPrompt.append` mechanism.
+   *
+   * Issue #1315: SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

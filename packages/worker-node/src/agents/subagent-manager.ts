@@ -270,7 +270,8 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createScheduleAgent(
+    // Issue #1315: createScheduleAgent is now async
+    const agent = await AgentFactory.createScheduleAgent(
       options.chatId,
       options.callbacks
     );
@@ -324,7 +325,8 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createTaskAgent(
+    // Issue #1315: createTaskAgent is now async
+    const agent = await AgentFactory.createTaskAgent(
       options.chatId,
       options.callbacks
     );

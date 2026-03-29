@@ -355,8 +355,9 @@ export class WorkerNode {
       // Provide the executor function for dependency injection
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
         // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+        // Issue #1315: createScheduleAgent may return Promise for async soul loading
         const callbacks = createCallbacks(chatId);
-        const agent = this.deps.createScheduleAgent(chatId, callbacks);
+        const agent = await this.deps.createScheduleAgent(chatId, callbacks);
 
         try {
           await agent.executeOnce(chatId, prompt, undefined, userId);
