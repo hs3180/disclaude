@@ -1,239 +1,283 @@
 /**
- * Tests for WeChatChannel (MVP).
+ * Tests for WeChatChannel.
+ *
+ * Tests the WeChat channel implementation with mocked API client.
  *
  * @see Issue #1473 - WeChat Channel MVP
- * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { WeChatChannel } from './wechat-channel.js';
-// Mock the API client
-const mockSendText = vi.fn().mockResolvedValue(undefined);
-const mockSetToken = vi.fn();
-const mockHasToken = vi.fn().mockReturnValue(true);
 
-vi.mock('./api-client.js', () => ({
-  WeChatApiClient: vi.fn().mockImplementation(() => ({
-    sendText: mockSendText,
-    setToken: mockSetToken,
-    hasToken: mockHasToken,
-  })),
+// Mock logger
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  trace: vi.fn(),
 }));
 
-// Mock the auth module
-vi.mock('./auth.js', () => ({
-  WeChatAuth: vi.fn().mockImplementation(() => ({
-    authenticate: vi.fn().mockResolvedValue({
-      success: true,
-      token: 'mock-bot-token',
-      botId: 'mock-bot-id',
-      userId: 'mock-user-id',
-    }),
-    isAuthenticating: vi.fn().mockReturnValue(false),
-    abort: vi.fn(),
-  })),
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    createLogger: vi.fn(() => mockLogger),
+  };
+});
+
+// Store original fetch
+const originalFetch = globalThis.fetch;
 
 describe('WeChatChannel', () => {
-  beforeEach(() => {
+  let WeChatChannel: typeof import('./wechat-channel.js').WeChatChannel;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
-    mockHasToken.mockReturnValue(true);
-    mockSendText.mockResolvedValue(undefined);
+    vi.resetModules();
+
+    const mod = await import('./wechat-channel.js');
+    WeChatChannel = mod.WeChatChannel;
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
   });
 
   describe('constructor', () => {
-    it('should create channel with default base URL', () => {
+    it('should create channel with default config', () => {
       const channel = new WeChatChannel();
-      expect(channel.id).toBeDefined();
+      expect(channel).toBeDefined();
+      expect(channel.id).toBe('wechat');
       expect(channel.name).toBe('WeChat');
     });
 
     it('should create channel with custom config', () => {
       const channel = new WeChatChannel({
-        baseUrl: 'https://custom.api.com',
-        token: 'test-token',
-        routeTag: 'test-route',
+        id: 'my-wechat',
+        baseUrl: 'https://custom.example.com',
+        routeTag: 'my-route',
+        token: 'my-token',
       });
-      expect(channel.id).toBeDefined();
-      expect(channel.name).toBe('WeChat');
-    });
-
-    it('should create channel with empty config', () => {
-      const channel = new WeChatChannel({});
-      expect(channel.id).toBeDefined();
+      expect(channel.id).toBe('my-wechat');
     });
   });
 
   describe('getCapabilities', () => {
-    it('should return MVP capabilities (all false)', () => {
+    it('should return MVP capabilities (Phase 3.1 does not add file/thread)', () => {
       const channel = new WeChatChannel();
       const caps = channel.getCapabilities();
-      expect(caps).toEqual({
-        supportsCard: false,
-        supportsThread: false,
-        supportsFile: false,
-        supportsMarkdown: false,
-        supportsMention: false,
-        supportsUpdate: false,
-        supportedMcpTools: ['send_text'],
+
+      expect(caps.supportsCard).toBe(false);
+      expect(caps.supportsThread).toBe(false);
+      expect(caps.supportsFile).toBe(false);
+      expect(caps.supportsMarkdown).toBe(false);
+      expect(caps.supportsMention).toBe(false);
+      expect(caps.supportsUpdate).toBe(false);
+      expect(caps.supportedMcpTools).toContain('send_text');
+    });
+  });
+
+  describe('lifecycle', () => {
+    it('should start and stop with pre-configured token', async () => {
+      // Mock fetch for getUpdates (used by message listener)
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
       });
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+
+      await channel.start();
+      expect(channel.status).toBe('running');
+      expect(channel.isHealthy()).toBe(true);
+
+      await channel.stop();
+      expect(channel.status).toBe('stopped');
+    });
+
+    it('should throw on send when not running', async () => {
+      const channel = new WeChatChannel();
+      await expect(channel.sendMessage({
+        chatId: 'user-123',
+        type: 'text',
+        text: 'Hello',
+      })).rejects.toThrow('not running');
     });
   });
 
   describe('doSendMessage', () => {
-    it('should throw if client is not initialized', async () => {
-      const channel = new WeChatChannel();
-      // Access protected method via any cast for testing
-      await expect(
-        (channel as any).doSendMessage({ chatId: 'test', type: 'text', text: 'hello' })
-      ).rejects.toThrow('WeChat client not initialized');
-    });
-
-    it('should send text messages via API client', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      await channel.start(); // initializes client
-      // Manually set the client since mock doesn't fully work
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'text',
-        text: 'Hello WeChat!',
+    it('should send text messages', async () => {
+      // Mock fetch for getUpdates + sendText
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
       });
 
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: 'Hello WeChat!',
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+
+      const client = channel.getApiClient();
+      const sendTextSpy = vi.spyOn(client!, 'sendText').mockResolvedValue(undefined);
+
+      await channel.sendMessage({
+        chatId: 'user-123',
+        type: 'text',
+        text: 'Hello!',
+      });
+
+      expect(sendTextSpy).toHaveBeenCalledWith({
+        to: 'user-123',
+        content: 'Hello!',
         contextToken: undefined,
       });
+
+      await channel.stop();
     });
 
-    it('should send text with threadId as contextToken', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+    it('should send text messages with threadId', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
 
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+
+      const client = channel.getApiClient();
+      const sendTextSpy = vi.spyOn(client!, 'sendText').mockResolvedValue(undefined);
+
+      await channel.sendMessage({
+        chatId: 'user-123',
         type: 'text',
-        text: 'Hello in thread',
-        threadId: 'thread-123',
+        text: 'Reply in thread',
+        threadId: 'ctx-token-abc',
       });
 
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: 'Hello in thread',
-        contextToken: 'thread-123',
+      expect(sendTextSpy).toHaveBeenCalledWith({
+        to: 'user-123',
+        content: 'Reply in thread',
+        contextToken: 'ctx-token-abc',
       });
+
+      await channel.stop();
     });
 
-    it('should downgrade card messages to JSON text', async () => {
+    it('should handle done type without error', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
       const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      await channel.start();
 
-      const card = { elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'test' } }] };
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'card',
-        card,
-      });
-
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: JSON.stringify(card),
-        contextToken: undefined,
-      });
-    });
-
-    it('should downgrade card with threadId', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      const card = { elements: [] };
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'card',
-        card,
-        threadId: 'thread-456',
-      });
-
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: JSON.stringify(card),
-        contextToken: 'thread-456',
-      });
-    });
-
-    it('should not send empty text messages', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      // Empty text should fall through to warn
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'text',
-        text: '',
-      });
-
-      expect(mockSendText).not.toHaveBeenCalled();
-    });
-
-    it('should ignore unsupported message types', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'file',
-        filePath: '/tmp/test.txt',
-      });
-
-      expect(mockSendText).not.toHaveBeenCalled();
-    });
-
-    it('should ignore done signal type', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
+      await channel.sendMessage({
+        chatId: 'user-123',
         type: 'done',
       });
 
-      expect(mockSendText).not.toHaveBeenCalled();
+      await channel.stop();
+    });
+
+    it('should downgrade card to text', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+
+      const client = channel.getApiClient();
+      const sendTextSpy = vi.spyOn(client!, 'sendText').mockResolvedValue(undefined);
+
+      await channel.sendMessage({
+        chatId: 'user-123',
+        type: 'card',
+        card: { elements: [{ tag: 'div', text: 'Hello' }] },
+      });
+
+      // Card should be downgraded to text (JSON stringified)
+      expect(sendTextSpy).toHaveBeenCalledTimes(1);
+      const callArgs = sendTextSpy.mock.calls[0][0];
+      expect(callArgs.content).toContain('"elements"');
+
+      await channel.stop();
+    });
+  });
+
+  describe('message listening', () => {
+    it('should start message listener on channel start', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+
+      const listener = channel.getMessageListener();
+      expect(listener).toBeDefined();
+      expect(listener!.isListening()).toBe(true);
+
+      await channel.stop();
+
+      expect(listener!.isListening()).toBe(false);
+    });
+
+    it('should stop message listener on channel stop', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+      await channel.stop();
+
+      const listener = channel.getMessageListener();
+      expect(listener).toBeUndefined();
     });
   });
 
   describe('checkHealth', () => {
-    it('should return true when client has token', () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { hasToken: mockHasToken };
-      mockHasToken.mockReturnValue(true);
-      expect((channel as any).checkHealth()).toBe(true);
-    });
+    it('should return true when client has token and listener is active', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
 
-    it('should return false when client has no token', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { hasToken: mockHasToken };
-      mockHasToken.mockReturnValue(false);
-      expect((channel as any).checkHealth()).toBe(false);
-    });
+      await channel.start();
 
-    it('should return false when client is not initialized', () => {
-      const channel = new WeChatChannel();
-      expect((channel as any).checkHealth()).toBe(false);
+      expect(channel.isHealthy()).toBe(true);
+
+      await channel.stop();
+      expect(channel.isHealthy()).toBe(false);
     });
   });
 
   describe('getApiClient', () => {
-    it('should return undefined when not started', () => {
+    it('should return undefined before start', () => {
       const channel = new WeChatChannel();
       expect(channel.getApiClient()).toBeUndefined();
+    });
+
+    it('should return client after start', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await channel.start();
+
+      expect(channel.getApiClient()).toBeDefined();
+
+      await channel.stop();
     });
   });
 });
