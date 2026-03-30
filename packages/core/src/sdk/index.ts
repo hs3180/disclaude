@@ -13,6 +13,12 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── acp/                     # ACP 协议基础设施 (Issue #1333)
+ * │   ├── types.ts             # 协议类型定义
+ * │   ├── json-rpc.ts          # JSON-RPC 2.0 消息处理
+ * │   ├── transport.ts         # 传输层 (stdio/SSE)
+ * │   ├── connection.ts        # 连接管理
+ * │   └── acp.test.ts          # 单元测试
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -131,3 +137,51 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP 协议导出 (Issue #1333)
+// ============================================================================
+
+export type {
+  // JSON-RPC 2.0
+  JsonRpcId,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse,
+  JsonRpcError,
+  JsonRpcErrorResponse,
+  JsonRpcResponse,
+  JsonRpcMessage,
+
+  // ACP 类型
+  AcpMethod,
+  AcpTaskStatus,
+  AcpTransportType,
+  AcpCapabilities,
+  AcpInitializeParams,
+  AcpInitializeResult,
+  AcpContentBlock,
+  AcpStdioTransportConfig,
+  AcpSseTransportConfig,
+  AcpTransportConfig,
+  AcpConnectionConfig,
+  AcpConnectionState,
+} from './acp/index.js';
+
+export {
+  AcpErrorCodes,
+  AcpMethods,
+  AcpNotifications,
+  isJsonRpcResponse,
+  JsonRpcMessageParser,
+  createRequest as createJsonRpcRequest,
+  createSuccessResponse as createJsonRpcSuccessResponse,
+  createErrorResponse as createJsonRpcErrorResponse,
+  createAcpError,
+  serializeMessage as serializeJsonRpcMessage,
+  validateJsonRpcMessage,
+  isErrorResponse as isJsonRpcErrorResponse,
+  extractError as extractJsonRpcError,
+  StdioTransport,
+  createTransport as createAcpTransport,
+  AcpConnection,
+} from './acp/index.js';
