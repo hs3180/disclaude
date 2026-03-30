@@ -395,4 +395,109 @@ describe('WeChatApiClient', () => {
         .rejects.toThrow('Error code 999');
     });
   });
+
+  describe('getUpdates', () => {
+    it('should poll for updates via POST', async () => {
+      const updates = [
+        {
+          msg_id: 'msg-1',
+          from_user_id: 'user-123',
+          to_user_id: 'bot-456',
+          message_type: 1,
+          item_list: [{ type: 1, text_item: { text: 'Hello!' } }],
+          create_time: 1_700_000_000,
+        },
+      ];
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          update_list: updates,
+        })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].msg_id).toBe('msg-1');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        })
+      );
+    });
+
+    it('should return empty array on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      const result = await client.getUpdates();
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when update_list is missing', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+      expect(result).toEqual([]);
+    });
+
+    it('should pass timeout in request body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates({ timeout: 20_000 });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.timeout).toBe(20);
+    });
+
+    it('should use default timeout when not specified', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates();
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.timeout).toBe(35); // 35000ms / 1000 = 35s
+    });
+
+    it('should re-throw non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('bot-token');
+      await expect(client.getUpdates()).rejects.toThrow('Network error');
+    });
+
+    it('should include auth headers', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates();
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders).toHaveProperty('X-WECHAT-UIN');
+      expect(callHeaders['X-WECHAT-UIN']).toMatch(/^[A-Za-z0-9+/=]+$/);
+    });
+  });
 });

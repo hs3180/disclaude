@@ -17,6 +17,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatGetUpdatesResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -213,6 +214,44 @@ export class WeChatApiClient {
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Long-poll for incoming messages (getUpdates).
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Uses long-polling with a configurable timeout (default 35s).
+   * Returns an array of updates (may be empty on timeout).
+   *
+   * @param options - Poll options
+   * @returns Array of incoming message updates
+   */
+  async getUpdates(options: {
+    /** Long-poll timeout in milliseconds (default: 35000) */
+    timeout?: number;
+  } = {}): Promise<WeChatGetUpdatesResponse['update_list']> {
+    const timeout = options.timeout ?? LONG_POLL_TIMEOUT_MS;
+
+    const body = {
+      timeout: Math.floor(timeout / 1000),
+    };
+
+    try {
+      const data = await this.postJson<WeChatGetUpdatesResponse>(
+        'ilink/bot/getupdates',
+        body
+      );
+
+      return data.update_list ?? [];
+    } catch (error) {
+      // Timeout during long polling is normal — return empty
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out, returning empty');
+        return [];
+      }
+      throw error;
+    }
+  }
 
   /**
    * Make an authenticated POST request to the API.
