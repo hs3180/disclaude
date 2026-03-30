@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -9,14 +9,16 @@
  * API Endpoints:
  * - GET  ilink/bot/get_bot_qrcode      - Generate login QR code
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
- * - POST ilink/bot/sendmessage         - Send a message
- * - POST ilink/bot/getupdates          - Long-poll for incoming messages
+ * - POST ilink/bot/sendmessage         - Send a message (text, image, file)
+ * - POST ilink/bot/upload              - Upload media to CDN
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatCdnUploadResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -29,10 +31,13 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/** Maximum file size for CDN upload (20MB). */
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and media handling.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -208,6 +213,187 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  /**
+   * Send an image message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    to: string;
+    imageUrl: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, imageUrl, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, imageUrl }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    to: string;
+    fileUrl: string;
+    fileName?: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, fileUrl, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 3, file_item: { url: fileUrl, file_name: fileName } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+  }
+
+  /**
+   * Upload a file to WeChat CDN.
+   *
+   * POST /ilink/bot/upload
+   *
+   * Uses multipart/form-data to upload binary file content.
+   * Returns CDN URL and file key for use in sendImage/sendFile.
+   *
+   * @param params - Upload parameters
+   * @returns CDN URL and file key of the uploaded file
+   */
+  async uploadMedia(params: {
+    /** File content as Buffer */
+    fileData: Buffer;
+    /** File name (with extension) */
+    fileName: string;
+    /** MIME type (inferred from extension if not provided) */
+    mimeType?: string;
+  }): Promise<{ url: string; fileKey: string }> {
+    const { fileData, fileName, mimeType } = params;
+
+    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(
+        `File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES})`
+      );
+    }
+
+    const url = `${this.baseUrl}/ilink/bot/upload`;
+    const resolvedMimeType = mimeType ?? this.inferMimeType(fileName);
+    const headers = this.buildAuthHeaders('');
+    headers['Content-Type'] = resolvedMimeType;
+    // Remove Content-Length — set automatically by FormData boundary
+    delete headers['Content-Length'];
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
+
+    try {
+      const formData = new FormData();
+      formData.append(
+        'file',
+        new Blob([fileData], { type: resolvedMimeType }),
+        fileName,
+      );
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'AuthorizationType': headers['AuthorizationType'],
+          'Authorization': headers['Authorization'] ?? '',
+          'X-WECHAT-UIN': headers['X-WECHAT-UIN'],
+          ...(this.routeTag ? { 'SKRouteTag': this.routeTag } : {}),
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'Upload failed');
+        throw new Error(`WeChat upload error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatCdnUploadResponse;
+
+      if (data.ret !== undefined && data.ret !== 0) {
+        const errMsg = data.err_msg || `Error code ${data.ret}`;
+        throw new Error(`WeChat upload error [${data.ret}]: ${errMsg}`);
+      }
+
+      if (!data.url || !data.file_key) {
+        throw new Error('Upload response missing url or file_key');
+      }
+
+      logger.info({ fileName, url: data.url, fileKey: data.file_key }, 'File uploaded to CDN');
+      return { url: data.url, fileKey: data.file_key };
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+  }
+
+  /**
+   * Infer MIME type from file extension.
+   */
+  private inferMimeType(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const mimeMap: Record<string, string> = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp',
+      ico: 'image/x-icon',
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ppt: 'application/vnd.ms-powerpoint',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      txt: 'text/plain',
+      csv: 'text/csv',
+      json: 'application/json',
+      xml: 'application/xml',
+      zip: 'application/zip',
+      mp3: 'audio/mpeg',
+      mp4: 'video/mp4',
+    };
+    return mimeMap[ext] ?? 'application/octet-stream';
   }
 
   // ---------------------------------------------------------------------------
