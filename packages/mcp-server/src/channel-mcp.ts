@@ -21,6 +21,7 @@ import {
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
 // Re-export
@@ -44,6 +45,15 @@ export {
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
+}
+
+/**
+ * Return a tool error result.
+ * Issue #1641: Use isError: true so the agent knows the operation failed,
+ * instead of the previous misleading toolSuccess for validation errors.
+ */
+function toolError(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+  return { content: [{ type: 'text', text }], isError: true };
 }
 
 export const channelTools = {
@@ -156,11 +166,16 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       chatId: string;
       parentMessageId?: string;
     }) => {
+      // Issue #1641: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
       try {
         const result = await send_text({ text, chatId, parentMessageId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
-        return toolSuccess(`⚠️ Text send failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -208,24 +223,25 @@ For interactive cards with button click handlers, use send_interactive instead.
       // Issue #1355: Pre-validation to prevent message sending on invalid params
       // Validate card type
       if (!card || typeof card !== 'object' || Array.isArray(card)) {
-        return toolSuccess(`⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`);
+        return toolError(`Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`);
       }
 
       // Validate card structure
       if (!isValidFeishuCard(card)) {
-        return toolSuccess(`⚠️ Invalid card structure: ${getCardValidationError(card)}`);
+        return toolError(`Invalid card structure: ${getCardValidationError(card)}`);
       }
 
-      // Validate chatId
-      if (!chatId || typeof chatId !== 'string') {
-        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+      // Issue #1641: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
       try {
         const result = await send_card({ card, chatId, parentMessageId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
-        return toolSuccess(`⚠️ Card send failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -291,20 +307,23 @@ For display-only cards, use send_card instead.
     }) => {
       // Issue #1355: Pre-validation to prevent message sending on invalid params
       if (!question || typeof question !== 'string') {
-        return toolSuccess('⚠️ Invalid question: must be a non-empty string');
+        return toolError('Invalid question: must be a non-empty string');
       }
       if (!Array.isArray(options) || options.length === 0) {
-        return toolSuccess('⚠️ Invalid options: must be a non-empty array');
+        return toolError('Invalid options: must be a non-empty array');
       }
-      if (!chatId || typeof chatId !== 'string') {
-        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+
+      // Issue #1641: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
       try {
         const result = await send_interactive({ question, options, chatId, title, context, actionPrompts, parentMessageId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
-        return toolSuccess(`⚠️ Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(`Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
@@ -313,11 +332,16 @@ For display-only cards, use send_card instead.
     description: 'Send a file to a chat.',
     parameters: z.object({ filePath: z.string(), chatId: z.string() }),
     handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
+      // Issue #1641: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
       try {
         const result = await send_file({ filePath, chatId });
-        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
-        return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
