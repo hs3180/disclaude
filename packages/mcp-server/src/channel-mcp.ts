@@ -18,6 +18,10 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  add_chat_members,
+  remove_chat_members,
+  get_chat_members,
+  list_chats,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +36,10 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { add_chat_members } from './tools/add-chat-members.js';
+export { remove_chat_members } from './tools/remove-chat-members.js';
+export { get_chat_members } from './tools/get-chat-members.js';
+export { list_chats } from './tools/list-chats.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -407,6 +415,105 @@ Use this after creating a group chat (via create_chat) that should be temporary.
     }) => {
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
+      return toolSuccess(result.message);
+    },
+  },
+  // Issue #1678: Group member management tools
+  {
+    name: 'add_chat_members',
+    description: `Add members to an existing group chat.
+
+The specified members will be added to the group chat. They will receive
+permissions and be able to participate in the chat like other members.
+
+## Parameters
+- **chatId**: The chat ID to add members to
+- **memberIds**: Array of member IDs to add (platform-specific format)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx", "ou_yyy"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to add members to'),
+      memberIds: z.array(z.string()).describe('Array of member IDs to add (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      // add_chat_members handles all errors internally and returns { success, message }
+      const result = await add_chat_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'remove_chat_members',
+    description: `Remove members from an existing group chat.
+
+The specified members will be removed from the group chat and lose
+access. They can be added back later if needed.
+
+## Parameters
+- **chatId**: The chat ID to remove members from
+- **memberIds**: Array of member IDs to remove (platform-specific format)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx", "ou_yyy"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to remove members from'),
+      memberIds: z.array(z.string()).describe('Array of member IDs to remove (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      // remove_chat_members handles all errors internally and returns { success, message }
+      const result = await remove_chat_members({ chatId, memberIds });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'get_chat_members',
+    description: `Get the list of members in a group chat.
+
+Returns all current members of the group chat. Useful for checking
+who is in the group before performing actions.
+
+## Parameters
+- **chatId**: The chat ID to get members for
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('The chat ID to get members for'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      // get_chat_members handles all errors internally and returns { success, message }
+      const result = await get_chat_members({ chatId });
+      if (result.success && result.members) {
+        return toolSuccess(`${result.message}\nMembers: ${result.members.join(', ')}`);
+      }
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'list_chats',
+    description: `List all group chats the bot is in.
+
+Returns all chats where the bot is a member, including chat ID and name.
+Useful for discovering available chats before performing operations.
+
+## Example
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      // list_chats handles all errors internally and returns { success, message }
+      const result = await list_chats();
+      if (result.success && result.chats) {
+        const chatList = result.chats.map(c => `- ${c.name} (${c.chatId})`).join('\n');
+        return toolSuccess(`${result.message}\n${chatList}`);
+      }
       return toolSuccess(result.message);
     },
   },

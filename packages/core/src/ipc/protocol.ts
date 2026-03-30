@@ -27,7 +27,12 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Group member management (Issue #1678)
+  | 'addChatMembers'
+  | 'removeChatMembers'
+  | 'getChatMembers'
+  | 'listChats';
 
 /**
  * IPC request payload types.
@@ -90,6 +95,19 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Group member management (Issue #1678)
+  addChatMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  removeChatMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  getChatMembers: {
+    chatId: string;
+  };
+  listChats: Record<string, never>;
 }
 
 /**
@@ -139,6 +157,24 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Group member management (Issue #1678)
+  addChatMembers: {
+    success: boolean;
+  };
+  removeChatMembers: {
+    success: boolean;
+  };
+  getChatMembers: {
+    success: boolean;
+    members?: string[];
+  };
+  listChats: {
+    success: boolean;
+    chats?: Array<{
+      chatId: string;
+      name: string;
+    }>;
   };
 }
 

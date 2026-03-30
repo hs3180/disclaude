@@ -14,6 +14,10 @@ export type {
   CreateChatResult,
   DissolveChatResult,
   RegisterTempChatResult,
+  AddChatMembersResult,
+  RemoveChatMembersResult,
+  GetChatMembersResult,
+  ListChatsResult,
 } from './types.js';
 
 // Shared utilities
@@ -40,6 +44,12 @@ export { dissolve_chat } from './dissolve-chat.js';
 
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
+
+// Group member management (Issue #1678)
+export { add_chat_members } from './add-chat-members.js';
+export { remove_chat_members } from './remove-chat-members.js';
+export { get_chat_members } from './get-chat-members.js';
+export { list_chats } from './list-chats.js';
 
 // Interactive Message
 export {

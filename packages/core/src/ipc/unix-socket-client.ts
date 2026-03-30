@@ -633,6 +633,114 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Group member management operations (Issue #1678)
+  // ============================================================================
+
+  /**
+   * Add members to a chat via IPC.
+   * Issue #1678: Platform-agnostic member addition.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Array of member IDs to add (platform decides ID format)
+   */
+  async addChatMembers(
+    chatId: string,
+    memberIds: string[]
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('addChatMembers', { chatId, memberIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'addChatMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Remove members from a chat via IPC.
+   * Issue #1678: Platform-agnostic member removal.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Array of member IDs to remove (platform decides ID format)
+   */
+  async removeChatMembers(
+    chatId: string,
+    memberIds: string[]
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('removeChatMembers', { chatId, memberIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'removeChatMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Get members of a chat via IPC.
+   * Issue #1678: Platform-agnostic member listing.
+   *
+   * @param chatId - Target chat ID
+   */
+  async getChatMembers(
+    chatId: string
+  ): Promise<{ success: boolean; members?: string[]; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('getChatMembers', { chatId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'getChatMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * List all chats the bot is in via IPC.
+   * Issue #1678: Platform-agnostic chat listing.
+   */
+  async listChats(): Promise<{ success: boolean; chats?: Array<{ chatId: string; name: string }>; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('listChats', {});
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error }, 'listChats failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

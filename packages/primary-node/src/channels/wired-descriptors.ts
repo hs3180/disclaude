@@ -201,6 +201,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       dissolveChat: (chatId: string) => {
         return feishuChannel.dissolveChat(chatId);
       },
+      // Issue #1678: Group member management handlers
+      addChatMembers: (chatId: string, memberIds: string[]) => {
+        return feishuChannel.addChatMembers(chatId, memberIds);
+      },
+      removeChatMembers: (chatId: string, memberIds: string[]) => {
+        return feishuChannel.removeChatMembers(chatId, memberIds);
+      },
+      getChatMembers: (chatId: string) => {
+        return feishuChannel.getChatMembers(chatId);
+      },
+      listChats: () => {
+        return feishuChannel.listChats();
+      },
       // Issue #1703: Temp chat lifecycle management handlers
       registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => {
         const chatStore = context.primaryNode.getChatStore();
