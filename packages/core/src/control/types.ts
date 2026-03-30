@@ -36,6 +36,8 @@ export interface ControlHandlerContext {
     reset(chatId: string): void;
     /** Issue #1349: Stop current query without resetting session */
     stop(chatId: string): boolean;
+    /** Issue #1709: Dispose and remove agent to force recreation with new cwd */
+    disposeAgent?(chatId: string): void;
   };
 
   /** 节点相关能力 */
@@ -50,6 +52,15 @@ export interface ControlHandlerContext {
   passiveMode?: {
     isEnabled(chatId: string): boolean;
     setEnabled(chatId: string, enabled: boolean): void;
+  };
+
+  /** Research 模式管理（可选，Issue #1709） */
+  researchMode?: {
+    isEnabled(chatId: string): boolean;
+    getTopic(chatId: string): string | undefined;
+    getResearchCwd(chatId: string): string | undefined;
+    enable(chatId: string, topic: string): string | undefined;
+    disable(chatId: string): void;
   };
 
   /** 日志记录器 */

@@ -78,6 +78,12 @@ export {
   setupSkillsInWorkspace,
 } from './skills-setup.js';
 
+// Research Setup (Issue #1709)
+export {
+  setupResearchWorkspace,
+} from './research-setup.js';
+export type { ResearchSetupResult } from './research-setup.js';
+
 // Agents Setup (Issue #1410)
 export {
   setupAgentsInWorkspace,

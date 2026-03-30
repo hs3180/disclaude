@@ -58,6 +58,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /** The chatId this Pilot is bound to (Issue #644) */
   private readonly boundChatId: string;
 
+  /** Optional cwd override for research mode (Issue #1709) */
+  private readonly cwdOverride?: string;
+
   private readonly callbacks: PilotCallbacks;
 
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
@@ -87,6 +90,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+
+    // Issue #1709: Store cwd override for research mode
+    this.cwdOverride = config.cwd;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -378,9 +384,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1709: Pass cwd override for research mode
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.cwdOverride && { cwd: this.cwdOverride }),
     });
 
     // Get capabilities for message building
@@ -581,13 +589,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1709: Pass cwd override for research mode
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.cwdOverride && { cwd: this.cwdOverride }),
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, cwd: this.cwdOverride, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
       'Starting SDK query with message channel'
     );
 

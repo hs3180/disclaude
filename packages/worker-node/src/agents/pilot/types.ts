@@ -100,6 +100,16 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Override working directory for SDK invocation.
+   *
+   * When provided, the Pilot will use this directory instead of the
+   * default workspace directory when creating SDK options. This enables
+   * features like Research mode (Issue #1709) where the agent operates
+   * in a dedicated research workspace.
+   */
+  cwd?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

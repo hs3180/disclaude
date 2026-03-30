@@ -30,6 +30,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { ResearchModeManager } from './channels/research-mode.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -163,8 +164,11 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1709: Research mode cwd resolver for per-chat workspace switching
+  const researchModeManager = new ResearchModeManager();
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    cwdResolver: (chatId: string) => researchModeManager.getResearchCwd(chatId),
   });
 
   // Create unified control handler context
@@ -172,12 +176,20 @@ async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string) => agentPool.reset(chatId),
       stop: (chatId: string) => agentPool.stop(chatId),
+      disposeAgent: (chatId: string) => agentPool.disposeAgent(chatId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),
       getExecNodes: () => primaryNode.getExecNodeRegistry().getNodes(),
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
+    },
+    researchMode: {
+      isEnabled: (chatId: string) => researchModeManager.isEnabled(chatId),
+      getTopic: (chatId: string) => researchModeManager.getTopic(chatId),
+      getResearchCwd: (chatId: string) => researchModeManager.getResearchCwd(chatId),
+      enable: (chatId: string, topic: string) => researchModeManager.enable(chatId, topic),
+      disable: (chatId: string) => researchModeManager.disable(chatId),
     },
     logger,
   };

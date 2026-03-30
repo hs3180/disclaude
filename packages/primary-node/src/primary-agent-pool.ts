@@ -19,6 +19,7 @@ import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/wo
  *
  * Issue #1499: Allows injecting channel-specific MessageBuilderOptions
  * at pool creation time.
+ * Issue #1709: Allows injecting per-chat cwd resolver for research mode.
  */
 export interface PrimaryAgentPoolOptions {
   /**
@@ -31,6 +32,19 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional per-chat cwd resolver.
+   *
+   * When provided, called for each chatId when creating a new agent.
+   * Returns the cwd override for that chat, or undefined to use default.
+   *
+   * Issue #1709: Used by ResearchModeManager to provide research workspace cwd.
+   *
+   * @param chatId - Chat ID to resolve cwd for
+   * @returns Absolute path to use as cwd, or undefined for default workspace
+   */
+  cwdResolver?: (chatId: string) => string | undefined;
 }
 
 /**
@@ -50,6 +64,8 @@ export class PrimaryAgentPool {
   /**
    * Get or create a ChatAgent instance for the given chatId.
    *
+   * Issue #1709: Resolves per-chat cwd override via cwdResolver option.
+   *
    * @param chatId - Chat ID to get/create agent for
    * @param callbacks - Callbacks for sending messages (required for new agents)
    * @returns ChatAgent instance
@@ -57,8 +73,11 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
+      // Issue #1709: Resolve per-chat cwd override (e.g., research mode)
+      const cwd = this.options.cwdResolver?.(chatId);
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        ...(cwd && { cwd }),
       });
       this.agents.set(chatId, agent);
     }
@@ -75,6 +94,25 @@ export class PrimaryAgentPool {
     const agent = this.agents.get(chatId);
     if (agent) {
       agent.reset(chatId, keepContext);
+    }
+  }
+
+  /**
+   * Dispose and remove the ChatAgent for a chatId.
+   *
+   * Unlike reset(), this completely removes the agent from the pool.
+   * The next message will create a new agent via getOrCreateChatAgent().
+   *
+   * Issue #1709: Used when toggling research mode to ensure the new
+   * agent is created with the correct cwd.
+   *
+   * @param chatId - Chat ID to dispose and remove
+   */
+  disposeAgent(chatId: string): void {
+    const agent = this.agents.get(chatId);
+    if (agent) {
+      agent.dispose();
+      this.agents.delete(chatId);
     }
   }
 

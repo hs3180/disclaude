@@ -101,6 +101,11 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Override working directory for SDK invocation.
+   * Issue #1709: Research mode uses a dedicated research workspace.
+   */
+  cwd?: string;
 }
 
 /**
@@ -186,6 +191,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        ...(options.cwd && { cwd: options.cwd }),
       };
 
       return new Pilot(config);
