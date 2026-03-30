@@ -228,6 +228,13 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  // Issue #1710: Research state file management
+  ResearchFileManager,
+  parseResearchMd,
+  type ResearchState,
+  type ResearchFinding,
+  type ResearchResource,
+  type ResearchFileManagerConfig,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

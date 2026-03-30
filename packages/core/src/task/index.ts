@@ -17,3 +17,13 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Research Files (Issue #1710)
+export {
+  ResearchFileManager,
+  parseResearchMd,
+  type ResearchState,
+  type ResearchFinding,
+  type ResearchResource,
+  type ResearchFileManagerConfig,
+} from './research-files.js';
