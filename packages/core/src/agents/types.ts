@@ -249,6 +249,12 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * System prompt append content.
+   * When set, this content is appended to the agent's system prompt.
+   * Used for SOUL personality injection (Issue #1315).
+   */
+  systemPromptAppend?: string;
 }
 
 /**

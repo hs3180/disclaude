@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1315: SOUL personality
+  loadSoulFile,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -441,6 +443,19 @@ export class PrimaryNode extends EventEmitter {
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
 
+    // Issue #1315: Load global SOUL personality at startup
+    const soulConfig = Config.getSoulConfig();
+    const globalSoulAppend = soulConfig.path
+      ? loadSoulFile(soulConfig.path)?.content
+      : undefined;
+
+    if (globalSoulAppend) {
+      logger.info(
+        { soulPath: soulConfig.path, contentLength: globalSoulAppend.length },
+        'Global SOUL personality loaded',
+      );
+    }
+
     // Initialize CooldownManager
     this.cooldownManager = new CooldownManager({ cooldownDir });
 
@@ -471,9 +486,19 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass global SOUL personality content (per-task soul overrides in executor)
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        // Per-task soul (from systemPromptAppend) overrides global soul
+        const effectiveSoul = systemPromptAppend ?? globalSoulAppend;
+        return AgentFactory.createScheduleAgent(
+          chatId,
+          toPilotCallbacks(callbacks),
+          {
+            ...(model ? { model } : {}),
+            ...(effectiveSoul ? { systemPromptAppend: effectiveSoul } : {}),
+          },
+        );
       },
       callbacks: schedulerCallbacks,
     });

@@ -97,6 +97,12 @@ export interface AgentCreateOptions {
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
   /**
+   * System prompt append content.
+   * When set, this content is appended to the agent's system prompt.
+   * Used for SOUL personality injection (Issue #1315).
+   */
+  systemPromptAppend?: string;
+  /**
    * Channel-specific MessageBuilder options.
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
@@ -128,6 +134,7 @@ export class AgentFactory {
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
+      systemPromptAppend: options.systemPromptAppend,
     };
   }
 

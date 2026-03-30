@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -445,6 +446,17 @@ export class Config {
    */
   static isAgentTeamsEnabled(): boolean {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
+  }
+
+  /**
+   * Get SOUL personality configuration.
+   * Returns the soul config section from disclaude.config.yaml.
+   * @see Issue #1315
+   *
+   * @returns Soul configuration object
+   */
+  static getSoulConfig(): SoulConfig {
+    return fileConfigOnly.soul || {};
   }
 
   /**
