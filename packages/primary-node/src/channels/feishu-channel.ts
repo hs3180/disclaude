@@ -35,6 +35,7 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  detectAndStripDiscussionEnd,
 } from './feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
@@ -394,6 +395,31 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Handle discussion end: dissolve the chat and clean up.
+   *
+   * Issue #1229: Called after sending the final message when a
+   * [DISCUSSION_END] trigger is detected in an outgoing text message.
+   * Runs as fire-and-forget — errors are logged but never thrown.
+   *
+   * @param chatId - Chat ID to dissolve
+   * @param reason - Optional reason (e.g., "timeout", "abandoned", "summary=...")
+   */
+  private async handleDiscussionEnd(chatId: string, reason?: string): Promise<void> {
+    try {
+      logger.info(
+        { chatId, reason: reason ?? 'normal' },
+        'Dissolving chat due to discussion end trigger',
+      );
+      await this.dissolveChat(chatId);
+    } catch (error) {
+      logger.error(
+        { err: error, chatId, reason },
+        'Failed to dissolve chat after discussion end trigger',
+      );
+    }
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -407,6 +433,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Detect discussion end trigger in outgoing text messages.
+        // If found, strip the trigger and dissolve the chat after sending.
+        let textToSend = message.text || '';
+        const endResult = detectAndStripDiscussionEnd(textToSend);
+        if (endResult.detected) {
+          textToSend = endResult.cleanText;
+          logger.info(
+            { chatId: message.chatId, reason: endResult.reason ?? 'normal' },
+            'Discussion end trigger detected, will dissolve chat after sending',
+          );
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +452,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // Issue #1229: Fire-and-forget chat dissolution after trigger detected.
+        if (endResult.detected) {
+          void this.handleDiscussionEnd(message.chatId, endResult.reason);
+        }
         break;
       }
 
