@@ -91,3 +91,9 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Project Context (Issue #1506)
+export {
+  readProjectClaudeMd,
+  MAX_PROJECT_CONTEXT_SIZE,
+} from './project-context.js';

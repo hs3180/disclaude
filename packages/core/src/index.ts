@@ -149,6 +149,8 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectAwarenessGuidance,
+  buildProjectContextGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,

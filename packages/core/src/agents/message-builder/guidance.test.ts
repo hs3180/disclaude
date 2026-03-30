@@ -12,6 +12,8 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +110,69 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectAwarenessGuidance', () => {
+  it('should include project context awareness section', () => {
+    const result = buildProjectAwarenessGuidance();
+    expect(result).toContain('Project Context Awareness');
+    expect(result).toContain('CLAUDE.md');
+  });
+
+  it('should instruct to check for CLAUDE.md after cloning', () => {
+    const result = buildProjectAwarenessGuidance();
+    expect(result).toContain('clone');
+    expect(result).toContain('download');
+    expect(result).toContain('project root');
+  });
+
+  it('should mention following project conventions', () => {
+    const result = buildProjectAwarenessGuidance();
+    expect(result).toContain('Coding standards');
+    expect(result).toContain('Build');
+    expect(result).toContain('test');
+    expect(result).toContain('commit message');
+  });
+
+  it('should include graceful fallback for missing CLAUDE.md', () => {
+    const result = buildProjectAwarenessGuidance();
+    expect(result).toContain('fallback');
+    expect(result).toContain('general best practices');
+  });
+
+  it('should include example workflow', () => {
+    const result = buildProjectAwarenessGuidance();
+    expect(result).toContain('Example Workflow');
+    expect(result).toContain('Clone the project');
+    expect(result).toContain('Check');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should return empty string when no content is provided', () => {
+    expect(buildProjectContextGuidance('', '/some/path')).toBe('');
+    expect(buildProjectContextGuidance('  ', '/some/path')).toBe('');
+    expect(buildProjectContextGuidance(undefined as unknown as string, '/some/path')).toBe('');
+  });
+
+  it('should include the CLAUDE.md content in formatted section', () => {
+    const content = '# My Project\n\nUse TypeScript strict mode.';
+    const result = buildProjectContextGuidance(content, '/tmp/my-project');
+
+    expect(result).toContain('Project Context');
+    expect(result).toContain('/tmp/my-project');
+    expect(result).toContain('Use TypeScript strict mode');
+  });
+
+  it('should include convention compliance instruction', () => {
+    const result = buildProjectContextGuidance('# Some content', '/path');
+    expect(result).toContain('Convention Compliance');
+    expect(result).toContain('MUST comply');
+  });
+
+  it('should reference the source path', () => {
+    const result = buildProjectContextGuidance('content', '/home/user/project');
+    expect(result).toContain('/home/user/project');
   });
 });

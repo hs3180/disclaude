@@ -213,3 +213,97 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the project awareness guidance section.
+ *
+ * Issue #1506: Instructs the agent to check for CLAUDE.md in the target
+ * project's directory after cloning/downloading it. The agent should read
+ * and follow the project's conventions defined in CLAUDE.md.
+ *
+ * This is a behavioral guidance section — it tells the agent WHAT to do
+ * (check for CLAUDE.md after cloning a project), without injecting any
+ * specific CLAUDE.md content. This approach aligns with the issue's
+ * requirement that the agent should detect CLAUDE.md from the project's
+ * own directory (not workspace root) after finding/downloading the project.
+ *
+ * @returns Formatted project awareness guidance section
+ */
+export function buildProjectAwarenessGuidance(): string {
+  return `
+
+---
+
+## Project Context Awareness (CLAUDE.md)
+
+**IMPORTANT: When working on a development project, always check for \`CLAUDE.md\` at the project root.**
+
+When you clone, download, or navigate into a development project directory:
+
+1. **Check for \`CLAUDE.md\`**: Look for a \`CLAUDE.md\` file at the project root
+2. **Read and follow**: If found, read it carefully and follow ALL conventions it defines:
+   - Project structure and architecture
+   - Coding standards and style guidelines
+   - Build, test, and deployment commands
+   - Git commit message conventions
+   - Any project-specific development rules
+3. **Apply consistently**: Ensure all code changes, commits, and PRs comply with the project's CLAUDE.md
+4. **Graceful fallback**: If no \`CLAUDE.md\` exists, proceed with general best practices
+
+### Why This Matters
+
+\`CLAUDE.md\` is the project's development contract. Following it ensures:
+- Code changes match the project's existing patterns
+- Tests use the project's preferred framework and conventions
+- Commits and PRs follow the project's contribution guidelines
+- Your work integrates seamlessly with the project's workflow
+
+### Example Workflow
+
+\`\`\`
+1. Clone the project to a directory
+2. Check: does the project root have CLAUDE.md?
+3. If YES → Read it and adapt your approach
+4. If NO  → Proceed with general best practices
+5. Throughout your work, follow the CLAUDE.md conventions
+\`\`\``;
+}
+
+/**
+ * Build the project context section from CLAUDE.md content.
+ *
+ * Issue #1506: Formats CLAUDE.md content as a project context section
+ * that can be included in the agent prompt. This is intended for use
+ * when programmatically loading CLAUDE.md (e.g., via sub-agent or
+ * pre-processing step).
+ *
+ * Note: This function formats content for direct inclusion in the prompt.
+ * The primary mechanism is the behavioral guidance (buildProjectAwarenessGuidance),
+ * which instructs the agent to read CLAUDE.md itself. This function serves
+ * as infrastructure for future sub-agent based project understanding.
+ *
+ * @param claudeMdContent - Raw CLAUDE.md file content
+ * @param source - Description of the source (e.g., project directory path)
+ * @returns Formatted project context section, or empty string if no content
+ */
+export function buildProjectContextGuidance(claudeMdContent: string, source: string): string {
+  if (!claudeMdContent || !claudeMdContent.trim()) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+The following is the \`CLAUDE.md\` from the target project at \`${source}\`.
+Follow these conventions for all development work on this project:
+
+${claudeMdContent}
+
+---
+
+**Convention Compliance**: All code changes, test additions, commit messages,
+and PR descriptions MUST comply with the conventions defined above.`;
+}

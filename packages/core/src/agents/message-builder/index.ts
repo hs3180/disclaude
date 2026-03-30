@@ -23,4 +23,6 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectAwarenessGuidance,
+  buildProjectContextGuidance,
 } from './guidance.js';

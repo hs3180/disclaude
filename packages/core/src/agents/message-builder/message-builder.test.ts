@@ -85,6 +85,25 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should include project awareness guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context Awareness');
+      expect(result).toContain('CLAUDE.md');
+    });
+
+    it('should not include project awareness guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context Awareness');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -506,6 +525,62 @@ describe('MessageBuilder', () => {
       const historyIdx = result.indexOf('Recent Chat History');
       const outputFormatIdx = result.indexOf('Output Format Requirements');
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
+    });
+  });
+
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '## Project Context\nThis project uses strict TypeScript.',
+      }, 'chat-456');
+
+      expect(result).toContain('strict TypeScript');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should place project context before user message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'My question here',
+        messageId: 'msg-123',
+        projectContext: '## Project Context\nSome project info.',
+      }, 'chat-456');
+
+      const projectCtxIdx = result.indexOf('Some project info');
+      const userMessageIdx = result.indexOf('--- User Message ---');
+      expect(userMessageIdx).toBeGreaterThan(projectCtxIdx);
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        projectContext: '## Project Context\nSome project info.',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Some project info');
+    });
+
+    it('should include both project context and project awareness guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '## Project Context\nUse Prettier for formatting.',
+      }, 'chat-456');
+
+      // Programmatic project context
+      expect(result).toContain('Use Prettier for formatting');
+      // Behavioral guidance
+      expect(result).toContain('Project Context Awareness');
     });
   });
 });

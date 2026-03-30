@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectAwarenessGuidance,
 } from './guidance.js';
 
 /**
@@ -137,6 +138,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const projectAwarenessGuidance = buildProjectAwarenessGuidance();
 
     // Compose all sections
     const sections: string[] = [];
@@ -146,6 +148,12 @@ export class MessageBuilder {
     }
 
     sections.push(metadataParts.join('\n'));
+
+    // Project context section (Issue #1506): Include programmatically loaded
+    // CLAUDE.md content before history sections so the agent has project context early
+    if (msg.projectContext) {
+      sections.push(msg.projectContext);
+    }
 
     if (persistedHistorySection) {
       sections.push(persistedHistorySection);
@@ -164,6 +172,7 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+    sections.push(projectAwarenessGuidance);
 
     const preamble = sections.join('\n');
 
