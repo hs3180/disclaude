@@ -29,6 +29,7 @@ import {
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -535,6 +536,10 @@ export class MessageHandler {
               }
             }
           }
+        } else if (msgType === 'interactive') {
+          // Issue #1711: Extract text content from quoted interactive/card messages
+          const parsed = JSON.parse(msgContent);
+          quotedText = extractCardTextContent(parsed);
         } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
