@@ -32,6 +32,8 @@ import type { MessageData, MessageBuilderContext, MessageBuilderOptions } from '
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextSection,
+  buildProjectContextAwarenessGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -127,6 +129,9 @@ export class MessageBuilder {
     const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
 
+    // Project context section (Issue #1506)
+    const projectContextSection = buildProjectContextSection(msg.projectContext);
+
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
@@ -134,6 +139,7 @@ export class MessageBuilder {
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
     // Core guidance sections (framework-agnostic)
+    const projectContextAwareness = buildProjectContextAwarenessGuidance();
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
@@ -153,6 +159,9 @@ export class MessageBuilder {
     if (chatHistorySection) {
       sections.push(chatHistorySection);
     }
+    if (projectContextSection) {
+      sections.push(projectContextSection);
+    }
     if (postHistory) {
       sections.push(postHistory);
     }
@@ -161,6 +170,7 @@ export class MessageBuilder {
       sections.push(`\n---\n\n## Tools\n${toolsSection}`);
     }
 
+    sections.push(projectContextAwareness);
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);

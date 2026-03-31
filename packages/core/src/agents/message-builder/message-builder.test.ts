@@ -199,6 +199,85 @@ describe('MessageBuilder', () => {
     });
   });
 
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context section when projectContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules\n- Use strict TypeScript',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('# Project Rules');
+      expect(result).toContain('Use strict TypeScript');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should include project context awareness guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context Awareness');
+      expect(result).toContain('CLAUDE.md');
+    });
+
+    it('should not include project context awareness for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context Awareness');
+    });
+
+    it('should not include project context section for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/analyze',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should place project context section after history sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'History...',
+        projectContext: 'Project rules...',
+      }, 'chat-456');
+
+      const historyIdx = result.indexOf('Recent Chat History');
+      const projectCtxIdx = result.indexOf('Project Context (CLAUDE.md)');
+      const outputFormatIdx = result.indexOf('Output Format Requirements');
+      expect(projectCtxIdx).toBeGreaterThan(historyIdx);
+      expect(outputFormatIdx).toBeGreaterThan(projectCtxIdx);
+    });
+
+    it('should include both project context section and awareness guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug',
+        messageId: 'msg-123',
+        projectContext: '# Rules\n- Use strict mode',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('Project Context Awareness');
+      expect(result).toContain('# Rules');
+    });
+  });
+
   describe('buildEnhancedContent - attachments', () => {
     it('should include attachment info when attachments are provided', () => {
       const attachments = [{

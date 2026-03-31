@@ -180,6 +180,87 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the project context section from pre-loaded CLAUDE.md content.
+ *
+ * Issue #1506: When the caller has already loaded CLAUDE.md from a project
+ * directory, this function formats it as a prompt section so the agent
+ * can use the project's coding conventions, structure, and requirements.
+ *
+ * @param projectContext - Pre-loaded CLAUDE.md content, or undefined to skip
+ * @returns Formatted project context section, or empty string if no context
+ */
+export function buildProjectContextSection(projectContext?: string): string {
+  if (!projectContext) {
+    return '';
+  }
+
+  // Truncate extremely large context to prevent token bloat (32KB limit)
+  const MAX_CONTEXT_LENGTH = 32 * 1024;
+  const truncatedContext = projectContext.length > MAX_CONTEXT_LENGTH
+    ? projectContext.slice(0, MAX_CONTEXT_LENGTH) + '\n\n... (truncated, original was ' + projectContext.length + ' bytes)'
+    : projectContext;
+
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+The following content was loaded from the target project's CLAUDE.md file.
+It contains project-specific conventions, structure guidelines, and development
+requirements. You MUST follow these conventions when making code changes.
+
+${truncatedContext}
+
+---
+
+`;
+}
+
+/**
+ * Build the project context awareness guidance section.
+ *
+ * Issue #1506: Instructs the agent to proactively check for CLAUDE.md
+ * when working on a development task in a project directory.
+ *
+ * Unlike the pre-loaded project context section (buildProjectContextSection),
+ * this guidance tells the agent to discover and read CLAUDE.md on its own
+ * when it enters a new project directory for development work.
+ *
+ * @returns Formatted project context awareness guidance section
+ */
+export function buildProjectContextAwarenessGuidance(): string {
+  return `
+
+---
+
+## Project Context Awareness
+
+**IMPORTANT: When working on a development task in a project directory, check for CLAUDE.md.**
+
+When you clone, download, or enter a project directory to perform development work
+(fixing bugs, implementing features, refactoring, etc.), you should:
+
+1. **Check for CLAUDE.md** at the root of the project directory
+2. **If found, read it** using the Read tool to understand:
+   - Project structure and architecture
+   - Coding conventions and style guidelines
+   - Build, test, and deployment instructions
+   - Commit message conventions
+   - Any project-specific rules or constraints
+3. **Follow the conventions** specified in CLAUDE.md when making changes
+4. **If not found**, proceed with standard best practices
+
+### Examples
+
+**❌ Wrong Approach:**
+> Cloning the repo and immediately making code changes without checking for project conventions.
+
+**✅ Correct Approach:**
+> After cloning the repo, check if CLAUDE.md exists at the project root. If it does, read it first to understand the project's conventions before making any changes.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
