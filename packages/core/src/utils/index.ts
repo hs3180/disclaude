@@ -91,3 +91,29 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Research State (Issue #1710)
+export {
+  sanitizeTopicName,
+  renderResearchMarkdown,
+  parseResearchMarkdown,
+  initResearchState,
+  initResearchTopic,
+  loadResearchState,
+  researchStateExists,
+  updateResearchState,
+  addFinding,
+  addQuestion,
+  resolveQuestion,
+  setConclusion,
+  cleanupResearchState,
+  fsOps as researchStateFsOps,
+} from './research-state.js';
+export type {
+  ResearchFinding,
+  ResearchQuestion,
+  ResearchState,
+  InitResearchStateOptions,
+  UpdateResearchStateOptions,
+  InitResult,
+} from './research-state.js';
