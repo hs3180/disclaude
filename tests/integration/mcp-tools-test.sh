@@ -8,10 +8,17 @@
 #   ./tests/integration/mcp-tools-test.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 120 for tool execution)
-#   --port PORT         REST API port (default: 3099)
-#   --verbose           Enable verbose output
-#   --dry-run           Show test plan without executing
+#   --timeout SECONDS       Request timeout (default: 120 for tool execution)
+#   --send-file-timeout SECONDS  Timeout for send_file test (default: 180, env: SEND_FILE_TIMEOUT)
+#   --port PORT             REST API port (default: 3099)
+#   --verbose               Enable verbose output
+#   --dry-run               Show test plan without executing
+#
+# Environment variables:
+#   SEND_FILE_TIMEOUT   Override timeout for send_file test (default: 180)
+#                       Increased from default to handle Agent diagnostic
+#                       behavior when platform credentials are unavailable
+#                       (Issue #1634)
 #
 
 set -e
@@ -20,9 +27,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-120}"
+SEND_FILE_TIMEOUT="${SEND_FILE_TIMEOUT:-180}"
+
+# Pre-process custom arguments before passing to common parser
+_COMMON_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --send-file-timeout)
+            SEND_FILE_TIMEOUT="$2"
+            shift 2
+            ;;
+        *)
+            _COMMON_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
 
 source "$SCRIPT_DIR/common.sh"
-parse_common_args "$@"
+parse_common_args "${_COMMON_ARGS[@]}"
 register_cleanup
 
 # =============================================================================
@@ -69,12 +92,25 @@ test_send_file_tool() {
 
     create_test_file
 
+    # Issue #1634: Increase timeout for send_file test.
+    # When the tool fails (no real platform credentials in test env),
+    # the Agent may enter diagnostic mode with multiple tool calls.
+    # Use a longer timeout to accommodate this behavior.
+    local _saved_timeout="$TIMEOUT"
+    TIMEOUT="${SEND_FILE_TIMEOUT:-180}"
+
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    # Issue #1634: Use explicit prompt to prevent Agent from entering
+    # diagnostic mode when the tool returns an error. Without this,
+    # the Agent runs multiple rounds of tool calls (ls, diagnostics)
+    # which can exceed the default 120s timeout.
+    assert_sync_chat_ok "请使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。重要：如果工具返回错误，请直接告诉我错误信息即可，不要尝试诊断问题或执行其他工具。" "$chat_id" || {
+        TIMEOUT="$_saved_timeout"
         cleanup_test_file
         return 1
     }
 
+    TIMEOUT="$_saved_timeout"
     cleanup_test_file
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
