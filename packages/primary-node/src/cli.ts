@@ -24,6 +24,7 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  setRuntimeContext,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -117,6 +118,16 @@ async function main(): Promise<void> {
   // Apply config env vars to process.env so main-process components can access them
   // Must be called AFTER setLoadedConfig() to ensure config is available
   applyGlobalEnv();
+
+  // Set runtime context so agents can access config via dependency injection
+  // instead of relying solely on process.env (Issue #1839)
+  setRuntimeContext({
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => ({ sdkDebug: Config.getLoggingConfig().sdkDebug }),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+  });
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
