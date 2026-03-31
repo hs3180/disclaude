@@ -213,3 +213,47 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory singletons
+ * from the main process are not accessible. A `.runtime-env` file in the
+ * workspace directory enables cross-process state sharing between the main
+ * process (MCP servers, scheduled tasks) and the agent subprocess.
+ *
+ * This guidance helps the agent discover and leverage the runtime-env
+ * mechanism for reading and writing shared state.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvAwarenessGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+Your runtime shares state with other processes via a **\`.runtime-env\`** file in the workspace directory. This file uses simple \`KEY=VALUE\` format (one per line, \`#\` comments supported).
+
+### How to Read
+
+Environment variables from \`.runtime-env\` are automatically loaded into \`process.env\` when your agent starts. You can also read the file directly using the Read tool on \`{workspace}/.runtime-env\`.
+
+### How to Write
+
+Use the Write tool to update \`{workspace}/.runtime-env\` with \`KEY=VALUE\` lines. Other processes and future agent sessions will see your changes.
+
+### Common Variables
+
+| Variable | Description | Writer |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub App installation access token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601, 1h lifetime) | \`github-jwt-auth\` skill |
+
+### Usage Notes
+
+- When a GitHub operation fails with authentication errors, the \`GH_TOKEN\` may have expired — trigger the \`github-jwt-auth\` skill to refresh it
+- Do not store sensitive data that should not persist to disk
+- The \`.runtime-env\` file is in \`.gitignore\` and will not be committed`;
+}

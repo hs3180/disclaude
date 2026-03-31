@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvAwarenessGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +49,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Runtime environment awareness guidance (Issue #1371)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -137,6 +139,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const runtimeEnvAwarenessGuidance = buildRuntimeEnvAwarenessGuidance();
 
     // Compose all sections
     const sections: string[] = [];
@@ -164,6 +167,7 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+    sections.push(runtimeEnvAwarenessGuidance);
 
     const preamble = sections.join('\n');
 
