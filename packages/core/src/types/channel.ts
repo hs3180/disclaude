@@ -99,6 +99,14 @@ export interface OutgoingMessage {
 
   /** Error message if task failed (for type 'done') */
   error?: string;
+
+  /**
+   * Mention targets for @mentioning users/bots in the message.
+   * When present with type 'text', the channel should upgrade to
+   * rich text format (e.g., Feishu post) to include @mentions.
+   * Issue #1742: Bot-to-bot @mention support.
+   */
+  mentions?: Array<{ id: string; name?: string }>;
 }
 
 /**

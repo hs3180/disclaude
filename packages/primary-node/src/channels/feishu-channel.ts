@@ -407,17 +407,34 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        // Issue #1742: When mentions are present, use post (rich text) format
+        // to support <at user_id="xxx"> mention tags.
+        if (message.mentions && message.mentions.length > 0) {
+          const postContent = this.buildPostContent(message.text || '', message.mentions);
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'post',
+              content: JSON.stringify(postContent),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, mentionCount: message.mentions.length }, 'Post message sent with mentions');
+        } else {
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text || '' }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        }
         break;
       }
 
@@ -661,6 +678,72 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getWsMetrics(): ReturnType<WsConnectionManager['getMetrics']> | undefined {
     return this.wsConnectionManager?.getMetrics();
+  }
+
+  /**
+   * Build Feishu post (rich text) content with @mention tags.
+   * Issue #1742: Supports bot-to-bot @mention by using post format.
+   *
+   * Feishu post format:
+   * {
+   *   "title": "...",
+   *   "content": [[
+   *     { "tag": "text", "text": "Hello " },
+   *     { "tag": "at", "user_id": "ou_xxx" }
+   *   ]]
+   * }
+   *
+   * @param text - The text content (may contain {name} placeholders for mentions)
+   * @param mentions - List of mention targets with id and optional name
+   * @returns Feishu post content object
+   */
+  private buildPostContent(
+    text: string,
+    mentions: Array<{ id: string; name?: string }>
+  ): { title: string; content: Array<Array<Record<string, unknown>>> } {
+    // Build post content segments
+    // Replace {name} placeholders in text with <at> tags
+    const segments: Array<Record<string, unknown>> = [];
+    let remainingText = text;
+
+    for (const mention of mentions) {
+      const mentionName = mention.name || mention.id;
+      const placeholder = `{${mentionName}}`;
+
+      const idx = remainingText.indexOf(placeholder);
+      if (idx >= 0) {
+        // Add text before the placeholder
+        if (idx > 0) {
+          segments.push({ tag: 'text', text: remainingText.slice(0, idx) });
+        }
+        // Add @mention tag
+        segments.push({ tag: 'at', user_id: mention.id });
+        remainingText = remainingText.slice(idx + placeholder.length);
+      }
+    }
+
+    // Add remaining text
+    if (remainingText) {
+      segments.push({ tag: 'text', text: remainingText });
+    }
+
+    // If no placeholders were found, append all mentions at the beginning
+    if (segments.length === 1 && !remainingText.startsWith(text)) {
+      const allSegments: Array<Record<string, unknown>> = [];
+      for (const mention of mentions) {
+        allSegments.push({ tag: 'at', user_id: mention.id });
+      }
+      allSegments.push({ tag: 'text', text });
+      return {
+        title: '',
+        content: [allSegments],
+      };
+    }
+
+    return {
+      title: '',
+      content: [segments],
+    };
   }
 
   /**
