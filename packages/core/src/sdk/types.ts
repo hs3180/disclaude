@@ -192,6 +192,12 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt append text (Issue #1315).
+   * When set, this content is appended to the default system prompt.
+   * Used for SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 }
 
 // ============================================================================

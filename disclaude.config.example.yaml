@@ -255,6 +255,29 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# SOUL.md Personality Configuration (Issue #1315)
+# -----------------------------------------------------------------------------
+# SOUL.md defines the AI agent's core personality, behavior rules, and style.
+# The content is appended to the system prompt for all agent sessions.
+# Supports tilde (~) expansion for home directory paths.
+#
+# Example:
+# soul:
+#   path: "~/.disclaude/SOUL.md"
+
+# =============================================================================
+# Notes
+# =============================================================================
+# Environment variables defined here will be passed to all agent processes.
+# Useful for API keys, feature flags, or other configuration.
+env:
+  # Example: Custom API key
+  # CUSTOM_API_KEY: "your_key_here"
+
+  # Example: Enable debug mode
+  # DEBUG: "false"
+
 # =============================================================================
 # Notes
 # =============================================================================

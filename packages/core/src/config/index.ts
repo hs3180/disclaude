@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -483,5 +484,16 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get SOUL.md personality configuration.
+   * Returns the soul config section from disclaude.config.yaml.
+   * @see Issue #1315
+   *
+   * @returns Soul configuration object (empty if not configured)
+   */
+  static getSoulConfig(): SoulConfig {
+    return fileConfigOnly.soul || {};
   }
 }

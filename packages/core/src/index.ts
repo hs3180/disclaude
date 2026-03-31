@@ -165,6 +165,14 @@ export {
   readSkillContent,
 } from './skills/index.js';
 
+// SOUL.md personality module (Issue #1315)
+export {
+  loadSoulFile,
+  resolveSoulPath,
+  SOUL_MAX_SIZE_BYTES,
+  type SoulLoadResult,
+} from './soul/index.js';
+
 // Conversation module (Issue #1041)
 export {
   MessageQueue,
