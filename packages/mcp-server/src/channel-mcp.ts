@@ -18,7 +18,11 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  get_task_status,
+  register_task,
+  update_task_progress,
+  complete_task,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -44,6 +48,16 @@ export {
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
+}
+
+/**
+ * Format elapsed time in milliseconds to human-readable string.
+ */
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+  return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
 }
 
 export const channelTools = {
@@ -408,6 +422,176 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // ============================================================================
+  // Issue #857: Task progress tracking tools
+  // - register_task: Register a new task for progress tracking
+  // - update_task_progress: Update progress of a running task
+  // - complete_task: Mark a task as completed
+  // - get_task_status: Query task progress information
+  // ============================================================================
+  {
+    name: 'register_task',
+    description: `Register a new task for progress tracking.
+
+Creates a task entry in the shared TaskContext. Use this when starting a complex
+or long-running task so that progress can be monitored.
+
+## Parameters
+- **taskId**: Unique task identifier (required)
+- **description**: Human-readable task description (required)
+- **chatId**: Chat ID where the task was initiated (optional)
+- **totalEstimatedSteps**: Estimated number of steps (optional)
+
+## Example
+\`\`\`json
+{"taskId": "fix-123", "description": "Fix bug in auth module", "chatId": "oc_xxx", "totalEstimatedSteps": 5}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Unique task identifier'),
+      description: z.string().describe('Human-readable task description'),
+      chatId: z.string().optional().describe('Chat ID where the task was initiated'),
+      totalEstimatedSteps: z.number().optional().describe('Estimated number of steps'),
+    }),
+    handler: async ({ taskId, description, chatId, totalEstimatedSteps }: {
+      taskId: string;
+      description: string;
+      chatId?: string;
+      totalEstimatedSteps?: number;
+    }) => {
+      const result = await register_task({ taskId, description, chatId, totalEstimatedSteps });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'update_task_progress',
+    description: `Update progress for a running task.
+
+Updates the current step and optionally adds structured steps for detailed tracking.
+The task is automatically marked as 'running' on first progress update.
+
+## Parameters
+- **taskId**: Task identifier (required)
+- **currentStep**: Description of the current step (optional)
+- **addStep**: Add a new structured step by name (optional)
+- **updateStepName**: Name of a step to update status (optional)
+- **updateStepStatus**: New status for the step: pending/running/completed/failed (optional)
+- **status**: Change task status: pending/running/completed/failed/cancelled (optional)
+- **error**: Error message (when status is 'failed')
+- **totalEstimatedSteps**: Update estimated steps count (optional)
+
+## Example
+\`\`\`json
+{"taskId": "fix-123", "currentStep": "Running tests...", "addStep": "Run tests"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier'),
+      currentStep: z.string().optional().describe('Description of the current step'),
+      addStep: z.string().optional().describe('Add a new step (name)'),
+      updateStepName: z.string().optional().describe('Name of step to update'),
+      updateStepStatus: z.enum(['pending', 'running', 'completed', 'failed']).optional().describe('New step status'),
+      status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']).optional().describe('Change task status'),
+      error: z.string().optional().describe('Error message (when status is failed)'),
+      totalEstimatedSteps: z.number().optional().describe('Update estimated steps count'),
+    }),
+    handler: async ({ taskId, currentStep, addStep, updateStepName, updateStepStatus, status, error, totalEstimatedSteps }: {
+      taskId: string;
+      currentStep?: string;
+      addStep?: string;
+      updateStepName?: string;
+      updateStepStatus?: 'pending' | 'running' | 'completed' | 'failed';
+      status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+      error?: string;
+      totalEstimatedSteps?: number;
+    }) => {
+      const result = await update_task_progress({
+        taskId,
+        currentStep,
+        addStep,
+        updateStepName,
+        updateStepStatus,
+        status,
+        error,
+        totalEstimatedSteps,
+      });
+      return toolSuccess(result.message);
+    },
+  },
+  {
+    name: 'complete_task',
+    description: `Mark a task as completed.
+
+Removes the task from the running tasks list and records completion time.
+
+## Parameters
+- **taskId**: Task identifier (required)
+- **result**: Optional completion message
+
+## Example
+\`\`\`json
+{"taskId": "fix-123", "result": "Bug fixed, all tests passing"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier'),
+      result: z.string().optional().describe('Optional completion message'),
+    }),
+    handler: async ({ taskId, result }: { taskId: string; result?: string }) => {
+      const resultMsg = await complete_task({ taskId, result });
+      return toolSuccess(resultMsg.message);
+    },
+  },
+  {
+    name: 'get_task_status',
+    description: `Query task progress information from the shared TaskContext.
+
+Returns detailed status for specific tasks or a summary of all tasks.
+Used by Reporter Agents to monitor running tasks.
+
+## Parameters
+- **taskId**: Query a specific task (optional)
+- **chatId**: Filter tasks by chat ID (optional)
+- **includeCompleted**: Include completed/failed tasks (default: true)
+
+## Example
+\`\`\`json
+{"taskId": "fix-123"}
+\`\`\`
+
+\`\`\`json
+{}
+\`\`\` (returns all running tasks)`,
+    parameters: z.object({
+      taskId: z.string().optional().describe('Query a specific task by ID'),
+      chatId: z.string().optional().describe('Filter tasks by chat ID'),
+      includeCompleted: z.boolean().optional().describe('Include completed/failed tasks (default: true)'),
+    }),
+    handler: async ({ taskId, chatId, includeCompleted }: {
+      taskId?: string;
+      chatId?: string;
+      includeCompleted?: boolean;
+    }) => {
+      const result = await get_task_status({ taskId, chatId, includeCompleted });
+      if (!result.success) {
+        return toolSuccess(`⚠️ ${result.message}`);
+      }
+      // Format output
+      const lines: string[] = [];
+      if (result.tasks.length > 0) {
+        for (const task of result.tasks) {
+          lines.push(`**${task.description}** [${task.status}]`);
+          lines.push(`  Current: ${task.currentStep}`);
+          lines.push(`  Progress: ${task.progress}% (${task.stepsCompleted}/${task.stepsTotal} steps)`);
+          lines.push(`  Elapsed: ${formatElapsed(task.elapsedTime)}`);
+          if (task.error) {
+            lines.push(`  Error: ${task.error}`);
+          }
+          lines.push('');
+        }
+      }
+      lines.push(`---`);
+      lines.push(`Total: ${result.summary.total} | Running: ${result.summary.running} | Completed: ${result.summary.completed} | Failed: ${result.summary.failed}`);
+      return toolSuccess(lines.join('\n'));
     },
   },
 ];

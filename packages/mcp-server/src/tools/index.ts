@@ -14,6 +14,8 @@ export type {
   CreateChatResult,
   DissolveChatResult,
   RegisterTempChatResult,
+  TaskStatusResult,
+  TaskProgressResult,
 } from './types.js';
 
 // Shared utilities
@@ -52,3 +54,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Task progress tracking (Issue #857)
+export { get_task_status } from './task-status.js';
+export { register_task, update_task_progress, complete_task } from './task-progress.js';

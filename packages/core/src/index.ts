@@ -221,6 +221,7 @@ export {
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,
+  TaskMessageType,
 } from './task/index.js';
 
 export {
@@ -228,6 +229,22 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  // Issue #857: Task progress tracking
+  TaskContext,
+  getTaskContext,
+  initTaskContext,
+  resetTaskContext,
+} from './task/index.js';
+
+export type {
+  // Issue #857: Task progress tracking types
+  TaskProgress,
+  TaskProgressStatus,
+  TaskStep,
+  RegisterTaskOptions,
+  UpdateProgressOptions,
+  TaskContextEventType,
+  TaskContextEvent,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

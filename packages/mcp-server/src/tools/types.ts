@@ -102,3 +102,44 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for get_task_status tool.
+ * Issue #857: Task progress tracking.
+ */
+export interface TaskStatusResult {
+  success: boolean;
+  message: string;
+  tasks: Array<{
+    taskId: string;
+    description: string;
+    status: string;
+    currentStep: string;
+    progress: number;
+    elapsedTime: number;
+    startedAt?: string;
+    completedAt?: string;
+    error?: string;
+    stepsCompleted: number;
+    stepsTotal: number;
+  }>;
+  summary: {
+    total: number;
+    pending: number;
+    running: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+  };
+}
+
+/**
+ * Result type for task progress management tools.
+ * Issue #857: Task progress tracking.
+ */
+export interface TaskProgressResult {
+  success: boolean;
+  message: string;
+  taskId?: string;
+  status?: string;
+}
+
