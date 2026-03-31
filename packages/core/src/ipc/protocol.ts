@@ -24,6 +24,11 @@ export type IpcRequestType =
   // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
   | 'createChat'
   | 'dissolveChat'
+  // Member management (Issue #1678: add/remove/list members + list chats)
+  | 'addMembers'
+  | 'removeMembers'
+  | 'listMembers'
+  | 'listChats'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -74,6 +79,19 @@ export interface IpcRequestPayloads {
   dissolveChat: {
     chatId: string;
   };
+  // Member management (Issue #1678)
+  addMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  removeMembers: {
+    chatId: string;
+    memberIds: string[];
+  };
+  listMembers: {
+    chatId: string;
+  };
+  listChats: Record<string, never>;
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {
     chatId: string;
@@ -120,6 +138,24 @@ export interface IpcResponsePayloads {
   };
   dissolveChat: {
     success: boolean;
+  };
+  // Member management (Issue #1678)
+  addMembers: {
+    success: boolean;
+  };
+  removeMembers: {
+    success: boolean;
+  };
+  listMembers: {
+    success: boolean;
+    members?: string[];
+  };
+  listChats: {
+    success: boolean;
+    chats?: Array<{
+      chatId: string;
+      name: string;
+    }>;
   };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {
