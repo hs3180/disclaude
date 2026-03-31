@@ -30,6 +30,10 @@ export default defineConfig({
       'node_modules/',
       'dist/',
       '**/workspace/**',
+      // Feishu integration tests — gated by FEISHU_INTEGRATION_TEST env var
+      // Run separately via: npm run test:feishu
+      // @see Issue #1626
+      '**/__tests__/integration/**',
     ],
     env: {
       NODE_ENV: 'test',
