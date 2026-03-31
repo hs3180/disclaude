@@ -309,3 +309,24 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Research module (Issue #1339: Report template rendering)
+export {
+  ReportRenderer,
+  getBuiltinTemplate,
+  getAllBuiltinTemplates,
+  isBuiltinTemplate,
+  listBuiltinTemplateTypes,
+  type ResearchReport,
+  type ResearchFinding,
+  type ResearchResource,
+  type ResearchReportMetadata,
+  type ResearchOutline,
+  type ResearchOutlineSection,
+  type ReportTemplate,
+  type TemplateVariable,
+  type BuiltinTemplateType,
+  type RenderContext,
+  type RenderResult,
+  type RendererOptions,
+} from './research/index.js';
