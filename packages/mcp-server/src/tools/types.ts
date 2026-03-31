@@ -102,3 +102,15 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for start_discussion tool.
+ * Issue #631: 离线提问 - Agent 不阻塞工作的留言机制.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  topic?: string;
+  error?: string;
+}
+

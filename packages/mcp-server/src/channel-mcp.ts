@@ -18,6 +18,7 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  start_discussion,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { start_discussion } from './tools/start-discussion.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -408,6 +410,83 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #631: Offline discussion - non-blocking discussion initiation
+  {
+    name: 'start_discussion',
+    description: `Start an offline discussion in a group chat (non-blocking).
+
+Creates a new group chat (or uses an existing one), sends the discussion context
+as a message, and optionally registers the chat for automatic lifecycle management.
+Returns immediately without waiting for a response.
+
+**Use cases:**
+- Agent discovers a topic that needs human discussion
+- Non-blocking user interaction: Agent continues working while users discuss
+- Cross-chat coordination: Create a discussion space for specific topics
+
+**Prerequisites:**
+- Either \`chatId\` (use existing group) or \`members\`/\`topic\` (create new group)
+- \`context\` is always required — this is the discussion content
+
+## Parameters
+- **chatId**: Use an existing group chat ID (optional)
+- **members**: Member IDs for creating a new group chat (optional)
+- **topic**: Discussion topic, used as group name (optional)
+- **context**: Context information to send to the discussion (required)
+- **expiresAt**: ISO timestamp for automatic chat dissolution (optional)
+
+## Type Constraints (IMPORTANT)
+- **context**: MUST be a non-empty string
+- Must provide either \`chatId\` OR (\`members\` and/or \`topic\`)
+
+## Example — Create new discussion group:
+\`\`\`json
+{
+  "topic": "代码格式化策略",
+  "members": ["ou_xxx", "ou_yyy"],
+  "context": "团队需要讨论是否应该自动化代码格式化。请考虑以下方面：1. 格式化工具选择 2. pre-commit hook 集成 3. CI 检查",
+  "expiresAt": "2026-04-01T10:00:00.000Z"
+}
+\`\`\`
+
+## Example — Use existing group:
+\`\`\`json
+{
+  "chatId": "oc_xxx",
+  "topic": "PR Review",
+  "context": "请 review PR #123 的改动，重点关注错误处理逻辑。"
+}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().optional().describe('Use an existing group chat ID'),
+      members: z.array(z.string()).optional().describe('Member IDs for creating a new group chat'),
+      topic: z.string().optional().describe('Discussion topic, used as group name'),
+      context: z.string().describe('Context information to send to the discussion (required)'),
+      expiresAt: z.string().optional().describe('ISO timestamp for automatic chat dissolution (optional)'),
+    }),
+    handler: async ({ chatId, members, topic, context, expiresAt }: {
+      chatId?: string;
+      members?: string[];
+      topic?: string;
+      context: string;
+      expiresAt?: string;
+    }) => {
+      // Pre-validation
+      if (!context || typeof context !== 'string') {
+        return toolSuccess('⚠️ Invalid context: must be a non-empty string');
+      }
+      if (!chatId && !members?.length && !topic) {
+        return toolSuccess('⚠️ Must provide chatId or members/topic to create a new group');
+      }
+
+      try {
+        const result = await start_discussion({ chatId, members, topic, context, expiresAt });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Discussion start failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
