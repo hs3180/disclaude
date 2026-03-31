@@ -26,6 +26,7 @@ import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js'
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
+import type { AgentMode } from '../config/types.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 
 // Re-export BaseAgentConfig for backward compatibility
@@ -152,8 +153,13 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    // Issue #1709: Support mode-aware cwd override
+    // In research mode, use extra.cwd if provided (caller handles research dir resolution)
+    // otherwise fall back to the default workspace directory
+    const effectiveCwd = extra.cwd ?? this.getWorkspaceDir();
+
     const options: AgentQueryOptions = {
-      cwd: extra.cwd ?? this.getWorkspaceDir(),
+      cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       settingSources: ['project'],
     };
@@ -234,6 +240,22 @@ export abstract class BaseAgent implements Disposable {
       return getRuntimeContext().isAgentTeamsEnabled();
     }
     return false;
+  }
+
+  /**
+   * Get the current agent mode from runtime context.
+   * Issue #1709: Research Mode support.
+   *
+   * @returns Current agent mode ('normal' or 'research')
+   */
+  protected getAgentMode(): AgentMode {
+    if (hasRuntimeContext()) {
+      const ctx = getRuntimeContext();
+      if (ctx.getAgentMode) {
+        return ctx.getAgentMode();
+      }
+    }
+    return Config.getAgentMode();
   }
 
   /**

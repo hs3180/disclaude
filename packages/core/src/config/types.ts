@@ -294,6 +294,53 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Agent mode for behavior customization.
+ * - normal: Default mode with standard SOUL, workspace, and all skills
+ * - research: Research mode with research-specific SOUL, isolated directory, and filtered skills
+ *
+ * Issue #1709: Research Mode Phase 1
+ */
+export type AgentMode = 'normal' | 'research';
+
+/**
+ * Research mode configuration (Issue #1709).
+ *
+ * Controls behavior when agent is in research mode:
+ * - SOUL: Loads research-specific CLAUDE.md from research directory
+ * - Working directory: Switches to workspace/research/{topic}/
+ * - Skills: (Phase 2) Loads research-specific skill subset
+ *
+ * All fields are optional - defaults are used when not specified.
+ */
+export interface ResearchConfig {
+  /**
+   * Custom path to research SOUL file (CLAUDE.md).
+   * If not specified, a default research SOUL template is used.
+   */
+  soulFile?: string;
+
+  /**
+   * Base directory for research workspaces.
+   * Defaults to {workspace}/research/
+   */
+  baseDir?: string;
+
+  /**
+   * Research-specific skills to include (Phase 2).
+   * If specified, only these skills will be loaded in research mode.
+   * If not specified, all skills are loaded (same as normal mode).
+   */
+  skills?: string[];
+
+  /**
+   * Enable automatic research state file management (Issue #1710).
+   * When true, RESEARCH.md is created/updated in the research directory.
+   * @default false
+   */
+  enableStateFile?: boolean;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -322,6 +369,10 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Research mode configuration (Issue #1709) */
+  research?: ResearchConfig;
+  /** Agent mode override (Issue #1709) */
+  mode?: AgentMode;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

@@ -23,6 +23,8 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  AgentMode,
+  ResearchConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -483,5 +485,27 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get the agent mode.
+   * Returns the configured agent mode, defaulting to 'normal'.
+   * @see Issue #1709
+   *
+   * @returns Current agent mode
+   */
+  static getAgentMode(): AgentMode {
+    return fileConfigOnly.mode ?? 'normal';
+  }
+
+  /**
+   * Get research mode configuration.
+   * Returns the research configuration section, or defaults.
+   * @see Issue #1709
+   *
+   * @returns Research configuration
+   */
+  static getResearchConfig(): ResearchConfig {
+    return fileConfigOnly.research || {};
   }
 }

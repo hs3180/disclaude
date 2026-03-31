@@ -91,3 +91,18 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Research Mode (Issue #1709)
+export {
+  getResearchBaseDir,
+  getResearchDir,
+  getSoulFilePath,
+  initResearchDir,
+  researchDirExists,
+  cleanupResearchDir,
+  listResearchDirs,
+} from './research-mode.js';
+export type {
+  ResearchDirOptions,
+  ResearchDirResult,
+} from './research-mode.js';

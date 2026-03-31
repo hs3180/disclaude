@@ -17,6 +17,7 @@
  */
 
 import type { AgentMessage, FileRef } from '../types/index.js';
+import type { AgentMode } from '../config/types.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -344,6 +345,12 @@ export interface AgentRuntimeContext {
   getGlobalEnv(): Record<string, string>;
   /** Check if Agent Teams mode is enabled */
   isAgentTeamsEnabled(): boolean;
+  /**
+   * Get the current agent mode.
+   * Issue #1709: Research Mode support.
+   * @returns Current agent mode ('normal' or 'research')
+   */
+  getAgentMode?(): AgentMode;
 
   // Platform adapters (optional - only needed for ChatAgent)
   /** Create MCP server instance for a chatId */

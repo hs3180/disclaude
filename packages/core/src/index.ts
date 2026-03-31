@@ -309,3 +309,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Research Mode utilities (Issue #1709)
+export {
+  getResearchBaseDir,
+  getResearchDir,
+  getSoulFilePath,
+  initResearchDir,
+  researchDirExists,
+  cleanupResearchDir,
+  listResearchDirs,
+  type ResearchDirOptions,
+  type ResearchDirResult,
+} from './utils/research-mode.js';
