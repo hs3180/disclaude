@@ -61,6 +61,7 @@ import { DebugGroupService, getDebugGroupService } from './services/debug-group-
 import { TempChatLifecycleService } from './services/temp-chat-lifecycle-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
+import { getGroupService } from './platforms/feishu/index.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -524,10 +525,31 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Initialize temp chat lifecycle service.
    * Issue #1703: Starts periodic cleanup of expired temp chats.
+   *
+   * Wires up platform-specific cleanup dependencies:
+   * - dissolveChat: lazily resolves Feishu channel at cleanup time
+   * - unregisterGroup: uses GroupService singleton for registry cleanup
    */
   protected initTempChatLifecycle(): void {
+    const groupService = getGroupService();
+
     this.tempChatLifecycleService = new TempChatLifecycleService({
       chatStore: this.chatStore,
+      dissolveChat: async (chatId: string) => {
+        // Lazy resolution: find a channel with dissolveChat at cleanup time,
+        // not at init time (channels may not be registered yet during start()).
+        const channel = this.channelManager.getFirstChannel();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const feishuChannel = channel as any;
+        if (channel && typeof feishuChannel.dissolveChat === 'function') {
+          await feishuChannel.dissolveChat(chatId);
+        } else {
+          logger.warn({ chatId }, 'No channel with dissolveChat available for temp chat cleanup');
+        }
+      },
+      unregisterGroup: (chatId: string) => {
+        return groupService.unregisterGroup(chatId);
+      },
     });
     this.tempChatLifecycleService.start();
     logger.info('Temp chat lifecycle service started');
