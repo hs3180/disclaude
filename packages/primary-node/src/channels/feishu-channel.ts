@@ -31,6 +31,7 @@ import {
   PassiveModeManager,
   MentionDetector,
   WelcomeHandler,
+  detectAndStripTrigger,
   MessageHandler as FeishuMessageHandler,
   messageLogger,
   type MessageCallbacks,
@@ -394,6 +395,24 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Dissolve a managed group chat (created by the bot via GroupService).
+   * Only dissolves groups that are tracked in the group registry.
+   * Silently skips non-managed groups (e.g., user-created groups).
+   *
+   * Issue #1229: Smart session end via trigger phrase detection.
+   *
+   * @param chatId - Chat ID to dissolve
+   */
+  private async dissolveManagedChat(chatId: string): Promise<void> {
+    const groupService = new GroupService();
+    if (!groupService.isManaged(chatId)) {
+      logger.debug({ chatId }, 'Skip dissolve: group is not managed by bot');
+      return;
+    }
+    await this.dissolveChat(chatId);
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -407,6 +426,21 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Detect discussion-end trigger in outgoing text messages.
+        // Strip trigger phrase, send clean text, then dissolve group.
+        const triggerResult = detectAndStripTrigger(message.text || '');
+        const textToSend = triggerResult.detected ? triggerResult.cleanText : (message.text || '');
+
+        // If trigger detected but no clean text remains, skip sending
+        if (triggerResult.detected && !textToSend) {
+          logger.info(
+            { chatId: message.chatId, reason: triggerResult.reason },
+            'Discussion end trigger detected (empty after strip), dissolving group'
+          );
+          await this.dissolveManagedChat(message.chatId);
+          break;
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
@@ -414,10 +448,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           data: {
             receive_id: message.chatId,
             msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            content: JSON.stringify({ text: textToSend }),
           },
         });
         logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+
+        // Issue #1229: After sending clean text, dissolve the managed group.
+        // Fire-and-forget: don't block message flow, log errors silently.
+        if (triggerResult.detected) {
+          logger.info(
+            { chatId: message.chatId, reason: triggerResult.reason, summary: triggerResult.summary },
+            'Discussion end trigger detected, dissolving group after message sent'
+          );
+          this.dissolveManagedChat(message.chatId).catch((err) => {
+            logger.error({ err, chatId: message.chatId }, 'Failed to dissolve group after trigger');
+          });
+        }
         break;
       }
 
