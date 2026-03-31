@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatGetUpdatesResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -30,9 +32,9 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_BOT_TYPE = 3;
 
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and message receiving.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -208,6 +210,74 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Blocks for up to 35 seconds waiting for new messages.
+   * Returns empty array on timeout (normal long-poll behavior).
+   *
+   * @param options - Poll options including optional AbortSignal
+   * @returns Array of new message updates
+   */
+  async getUpdates(options?: { signal?: AbortSignal }): Promise<import('./types.js').WeChatUpdate[]> {
+    const body = { base_info: { channel_version: '0.0.1' } };
+    const bodyStr = JSON.stringify(body);
+    const headers = this.buildAuthHeaders(bodyStr);
+
+    const url = `${this.baseUrl}/ilink/bot/getupdates`;
+    const timeoutMs = LONG_POLL_TIMEOUT_MS;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Link external signal to our controller
+    const onExternalAbort = () => controller.abort();
+    options?.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: bodyStr,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'getUpdates request failed');
+        throw new Error(`WeChat API error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatGetUpdatesResponse;
+
+      // Check for WeChat iLink error format
+      const { ret } = data;
+      if (ret !== undefined && ret !== 0) {
+        const errMsg = (data as Record<string, unknown>).err_msg as string || `Error code ${ret}`;
+        logger.error({ ret, errMsg }, 'getUpdates returned error');
+        throw new Error(`WeChat API error [${ret}]: ${errMsg}`);
+      }
+
+      return data.update_list ?? [];
+    } catch (error) {
+      clearTimeout(timer);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Timeout or external abort — return empty array (normal for long-poll)
+        return [];
+      }
+
+      throw error;
+    } finally {
+      options?.signal?.removeEventListener('abort', onExternalAbort);
+    }
   }
 
   // ---------------------------------------------------------------------------
