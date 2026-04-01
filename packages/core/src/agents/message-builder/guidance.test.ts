@@ -31,6 +31,13 @@ describe('buildChatHistorySection', () => {
     const result = buildChatHistorySection('some context');
     expect(result).toContain('@mentioned in a group chat');
   });
+
+  it('should include empty @mention guidance to answer last question', () => {
+    const result = buildChatHistorySection('some context');
+    expect(result).toContain('If the user\'s message above is empty');
+    expect(result).toContain('proactively answer');
+    expect(result).toContain('pending question');
+  });
 });
 
 describe('buildPersistedHistorySection', () => {
