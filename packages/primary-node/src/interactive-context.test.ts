@@ -41,9 +41,36 @@ describe('InteractiveContextStore', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK' });
       store.register('msg-2', 'chat-1', { ok: 'OK2' });
 
-      // chatId index should point to the latest messageId
+      // chatId index should return the latest context's prompts
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
       expect(store.size).toBe(2);
+    });
+
+    it('should preserve multiple messageIds per chatId', () => {
+      store.register('msg-1', 'chat-1', { action_a: 'Prompt A' });
+      store.register('msg-2', 'chat-1', { action_b: 'Prompt B' });
+      store.register('msg-3', 'chat-1', { action_c: 'Prompt C' });
+
+      // All contexts should still exist
+      expect(store.size).toBe(3);
+      expect(store.getActionPrompts('msg-1')).toEqual({ action_a: 'Prompt A' });
+      expect(store.getActionPrompts('msg-2')).toEqual({ action_b: 'Prompt B' });
+      expect(store.getActionPrompts('msg-3')).toEqual({ action_c: 'Prompt C' });
+    });
+
+    it('should evict oldest entries when exceeding maxEntriesPerChat', () => {
+      const store = new InteractiveContextStore(undefined, 3);
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.register('msg-3', 'chat-1', { c: 'C' });
+      store.register('msg-4', 'chat-1', { d: 'D' });
+
+      // msg-1 should be evicted (oldest)
+      expect(store.getActionPrompts('msg-1')).toBeUndefined();
+      expect(store.getActionPrompts('msg-2')).toBeDefined();
+      expect(store.getActionPrompts('msg-3')).toBeDefined();
+      expect(store.getActionPrompts('msg-4')).toBeDefined();
+      expect(store.size).toBe(3);
     });
   });
 
@@ -137,6 +164,41 @@ describe('InteractiveContextStore', () => {
       const prompt = store.generatePrompt('msg-3', 'chat-1', 'action', undefined);
       expect(prompt).toBe('[用户操作] 选择了action');
     });
+
+    it('should find actionValue across multiple cards in the same chat (Issue #1625)', () => {
+      // Simulate: IPC script sends card A with unique actions
+      store.register('msg-a', 'chat-1', {
+        explain_ai: '请解释人工智能',
+        ai_applications: '请列举AI应用',
+      });
+      // Then Agent sends card B with different actions (overwrites in old impl)
+      store.register('msg-b', 'chat-1', {
+        status: '查看状态',
+        help: '帮助',
+      });
+
+      // User clicks button on card A, but Feishu callback uses real messageId
+      // which doesn't match synthetic msg-a → falls back to chatId
+      const prompt = store.generatePrompt('real_feishu_id', 'chat-1', 'explain_ai');
+      // Should find the action in card A's prompts, not card B's
+      expect(prompt).toBe('请解释人工智能');
+    });
+
+    it('should return undefined when actionValue exists in no card for the chat', () => {
+      store.register('msg-a', 'chat-1', { action_a: 'Prompt A' });
+      store.register('msg-b', 'chat-1', { action_b: 'Prompt B' });
+
+      const prompt = store.generatePrompt('unknown', 'chat-1', 'nonexistent');
+      expect(prompt).toBeUndefined();
+    });
+
+    it('should prefer newer card when multiple cards contain the same actionValue', () => {
+      store.register('msg-old', 'chat-1', { submit: 'Old submit prompt' });
+      store.register('msg-new', 'chat-1', { submit: 'New submit prompt' });
+
+      const prompt = store.generatePrompt('unknown', 'chat-1', 'submit');
+      expect(prompt).toBe('New submit prompt');
+    });
   });
 
   describe('unregister', () => {
@@ -160,8 +222,9 @@ describe('InteractiveContextStore', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK1' });
       store.register('msg-2', 'chat-1', { ok: 'OK2' });
       store.unregister('msg-1');
-      // chatId index should still point to msg-2
+      // chatId index should still return msg-2's prompts
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
+      expect(store.size).toBe(1);
     });
   });
 
