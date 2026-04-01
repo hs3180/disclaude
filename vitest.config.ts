@@ -30,6 +30,10 @@ export default defineConfig({
       'node_modules/',
       'dist/',
       '**/workspace/**',
+      // Feishu integration tests run separately via `npm run test:feishu`
+      // to avoid noise in regular unit test output and to allow
+      // real network access when enabled. See Issue #1626.
+      '**/__tests__/integration/**',
     ],
     env: {
       NODE_ENV: 'test',
@@ -68,6 +72,8 @@ export default defineConfig({
         // Integration-test only modules (require complex setup)
         'src/mcp/feishu-mcp-server.ts',
         'src/nodes/**',
+        // Feishu integration test files (Issue #1626)
+        '**/__tests__/integration/**',
       ],
       thresholds: {
         lines: 70,
