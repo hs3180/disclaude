@@ -80,6 +80,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // First message chat history (Issue #1230)
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
+  private firstMessageHistoryLoadPromise?: Promise<void>;
+
+  // Issue #1863: Buffer for messages that arrive before history loading completes
+  private pendingMessages: Array<{
+    chatId: string;
+    text: string;
+    messageId: string;
+    senderOpenId?: string;
+    attachments?: MessageData['attachments'];
+    chatHistoryContext?: string;
+  }> = [];
+  private historyReady = false;
 
   constructor(config: PilotConfig) {
     super(config);
@@ -216,6 +228,23 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @returns Promise that resolves when history is loaded
    */
   private async loadFirstMessageHistory(): Promise<void> {
+    // Deduplicate: if already loading, wait for the existing promise
+    if (this.firstMessageHistoryLoadPromise) {
+      return this.firstMessageHistoryLoadPromise;
+    }
+
+    this.firstMessageHistoryLoadPromise = this.doLoadFirstMessageHistory();
+    try {
+      await this.firstMessageHistoryLoadPromise;
+    } finally {
+      this.firstMessageHistoryLoadPromise = undefined;
+    }
+  }
+
+  /**
+   * Internal method to perform the actual first message history loading.
+   */
+  private async doLoadFirstMessageHistory(): Promise<void> {
     try {
       this.logger.info(
         { chatId: this.boundChatId },
@@ -250,6 +279,29 @@ export class Pilot extends BaseAgent implements ChatAgent {
         this.boundChatId,
         '⚠️ 加载聊天记录失败，第一条消息可能缺少上下文。',
       ).catch(() => {});
+    }
+  }
+
+  /**
+   * Flush buffered messages that arrived before history was ready.
+   * Issue #1863: Ensures messages are processed with proper history context.
+   */
+  private async flushPendingMessages(): Promise<void> {
+    if (this.pendingMessages.length === 0) return;
+
+    this.logger.info(
+      { chatId: this.boundChatId, count: this.pendingMessages.length },
+      'Flushing pending messages after history load'
+    );
+
+    const messages = [...this.pendingMessages];
+    this.pendingMessages = [];
+
+    for (const msg of messages) {
+      this.processMessageInternal(
+        msg.chatId, msg.text, msg.messageId,
+        msg.senderOpenId, msg.attachments, msg.chatHistoryContext,
+      );
     }
   }
 
@@ -475,6 +527,34 @@ export class Pilot extends BaseAgent implements ChatAgent {
       this.startAgentLoop();
     }
 
+    // Issue #1863: If history is still loading, buffer the message
+    // This prevents the race condition where messages arrive before history is ready
+    if (!this.historyReady) {
+      this.logger.info(
+        { chatId, messageId },
+        'History not ready, buffering message'
+      );
+      this.pendingMessages.push({
+        chatId, text, messageId, senderOpenId, attachments, chatHistoryContext,
+      });
+      return;
+    }
+
+    this.processMessageInternal(chatId, text, messageId, senderOpenId, attachments, chatHistoryContext);
+  }
+
+  /**
+   * Internal message processing after history is confirmed ready.
+   * Issue #1863: Extracted from processMessage to handle race condition buffering.
+   */
+  private processMessageInternal(
+    chatId: string,
+    text: string,
+    messageId: string,
+    senderOpenId?: string,
+    attachments?: MessageData['attachments'],
+    chatHistoryContext?: string
+  ): void {
     // Issue #1230: Attach chat history on first message for new sessions
     // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode)
     let effectiveChatHistoryContext = chatHistoryContext;
@@ -527,22 +607,44 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    * Issue #955: Triggers background loading of persisted chat history.
    * Issue #1230: Triggers background loading of chat history for first message.
+   * Issue #1863: Await history loading before processing messages to fix race condition.
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
 
-    // Issue #955: Trigger background loading of persisted history
-    if (!this.historyLoaded) {
-      this.loadPersistedHistory().catch((err) => {
-        this.logger.error({ err, chatId }, 'Failed to load persisted history in background');
-      });
-    }
+    // Issue #1863: Determine if history loading is needed
+    const needsPersistedHistory = !this.historyLoaded;
+    const needsFirstMessageHistory = !this.firstMessageHistoryLoaded && !!this.callbacks.getChatHistory;
 
-    // Issue #1230: Load chat history for first message context
-    if (!this.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
-      this.loadFirstMessageHistory().catch((err) => {
-        this.logger.error({ err, chatId }, 'Failed to load first message history in background');
+    if (needsPersistedHistory || needsFirstMessageHistory) {
+      // History not ready yet — messages will be buffered until loading completes
+      this.historyReady = false;
+
+      // Start async history loading; set historyReady + flush pending messages when done
+      const historyReadyPromise = (async () => {
+        if (needsPersistedHistory) {
+          await this.loadPersistedHistory().catch((err) => {
+            this.logger.error({ err, chatId }, 'Failed to load persisted history');
+          });
+        }
+        if (needsFirstMessageHistory) {
+          await this.loadFirstMessageHistory().catch((err) => {
+            this.logger.error({ err, chatId }, 'Failed to load first message history');
+          });
+        }
+      })();
+
+      historyReadyPromise.then(() => {
+        this.historyReady = true;
+        this.flushPendingMessages();
+      }).catch(() => {
+        // Even on error, mark as ready to unblock pending messages
+        this.historyReady = true;
+        this.flushPendingMessages();
       });
+    } else {
+      // No history loading needed — messages can proceed immediately
+      this.historyReady = true;
     }
 
     // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
@@ -794,6 +896,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear first message history context (Issue #1230)
     this.firstMessageHistoryContext = undefined;
     this.firstMessageHistoryLoaded = false;
+
+    // Issue #1863: Reset history ready state and clear pending messages
+    this.historyReady = false;
+    this.pendingMessages = [];
+    this.firstMessageHistoryLoadPromise = undefined;
 
     // Issue #1213: Reload history only if explicitly requested via keepContext
     if (keepContext) {

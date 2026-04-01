@@ -884,13 +884,12 @@ export class MessageHandler {
       quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
-    // Get chat history context for passive mode
-    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    // Get chat history context for passive mode and P2P chats
+    // Issue #1863: Load history for all chat types, not just passive mode triggers
     let chatHistoryContext: string | undefined;
 
-    if (isPassiveModeTrigger) {
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
-    }
+    // Always load chat history context (for both passive mode group chats and P2P)
+    chatHistoryContext = await this.getChatHistoryContext(chat_id);
 
     // Build metadata
     const metadata: Record<string, unknown> = {};

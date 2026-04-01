@@ -225,7 +225,8 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   * Reads log files from the most recent N days (configured via Config).
+   * Issue #1863: Aggregate multiple days instead of returning only the first match.
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
@@ -235,21 +236,34 @@ export class MessageLogger {
       // Filter to date directories
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => a.name.localeCompare(b.name)); // Sort ascending (oldest first)
 
-      for (const dir of dateDirs) {
+      // Issue #1863: Read multiple days based on session restore config
+      const sessionConfig = Config.getSessionRestoreConfig();
+      const maxDays = sessionConfig.historyDays;
+
+      // Take only the most recent N directories
+      const recentDirs = dateDirs.slice(-maxDays);
+
+      // Read and concatenate all available log files (oldest first)
+      const contents: string[] = [];
+      for (const dir of recentDirs) {
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            contents.push(content);
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this day, skip
         }
       }
 
-      return undefined;
+      if (contents.length === 0) {
+        return undefined;
+      }
+
+      return contents.join('');
     } catch {
       return undefined;
     }
