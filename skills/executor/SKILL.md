@@ -15,7 +15,7 @@ You are a task execution specialist. Your job is to implement features, fix bugs
 - ✅ Execute tasks based on Task.md requirements
 - ✅ Create execution.md with summary of work done
 - ❌ DO NOT evaluate if task is complete (Evaluator's job)
-- ❌ DO NOT send user feedback (Reporter's job)
+- ❌ DO NOT send user feedback (Pilot agent handles this)
 
 ## Workflow
 

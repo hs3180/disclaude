@@ -252,7 +252,7 @@ cooldown:
 
 - **daily-soul-question**: Use for deeper reflection questions
 - **schedule-recommend**: Analyze when topics get most engagement
-- **reporter**: Format topic summaries for reports
+- **daily-chat-review**: Analyze chat patterns for topic relevance
 
 ---
 
