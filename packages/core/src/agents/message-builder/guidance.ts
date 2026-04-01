@@ -213,3 +213,46 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and cannot directly
+ * access in-memory state from the main process. The `.runtime-env` file
+ * mechanism (Issue #1361) enables cross-process state sharing, but agents
+ * need prompt hints to discover and use available variables.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+**IMPORTANT: You have access to shared runtime environment variables via the \`.runtime-env\` file in the workspace directory.**
+
+You run in an SDK subprocess that is separate from the main process. To share state between the main process and your subprocess, the system uses a \`.runtime-env\` file in the workspace directory.
+
+### How It Works
+
+- **Reading**: Runtime env vars are automatically loaded into \`process.env\` at startup. You can also read the \`.runtime-env\` file directly using the Read tool.
+- **Writing**: You can write new variables by appending \`KEY=VALUE\` lines to the \`.runtime-env\` file using the Write tool (one entry per line, \# for comments).
+- **Scope**: These variables are shared across all processes running in the same workspace (main process, MCP servers, other agent subprocesses).
+
+### Common Variables
+
+| Variable | Written By | Purpose |
+|----------|-----------|---------|
+| \`GH_TOKEN\` | github-jwt-auth skill | GitHub App installation access token |
+| \`GH_TOKEN_EXPIRES_AT\` | github-jwt-auth skill | Token expiration timestamp (ISO 8601) |
+
+### Usage Notes
+
+- Check \`GH_TOKEN_EXPIRES_AT\` before making GitHub API calls — if expired, trigger a token refresh
+- Prefer reading from \`process.env\` for variables already loaded at startup
+- Use the Write tool to persist new values for other processes to consume
+- The \`.runtime-env\` file is gitignored and workspace-scoped — it is safe for tokens and credentials
+- Do NOT hardcode tokens or credentials in your responses or code`;
+}
