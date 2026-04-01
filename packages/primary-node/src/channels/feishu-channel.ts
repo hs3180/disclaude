@@ -27,6 +27,7 @@ import {
   attachmentManager,
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient, dissolveChat, GroupService } from '../platforms/feishu/index.js';
+import * as chatOps from '../platforms/feishu/chat-ops.js';
 import {
   PassiveModeManager,
   MentionDetector,
@@ -392,6 +393,62 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const groupService = new GroupService();
     groupService.unregisterGroup(chatId);
     return { success: true };
+  }
+
+  /**
+   * Add members to a group chat via Feishu API.
+   * Issue #1678: Member management capability exposed through IPC handlers.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member open_ids to add
+   */
+  async addMembers(chatId: string, memberIds: string[]): Promise<{ success: boolean; addedCount: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    await chatOps.addMembers(this.client, chatId, memberIds);
+    return { success: true, addedCount: memberIds.length };
+  }
+
+  /**
+   * Remove members from a group chat via Feishu API.
+   * Issue #1678: Member management capability exposed through IPC handlers.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member open_ids to remove
+   */
+  async removeMembers(chatId: string, memberIds: string[]): Promise<{ success: boolean; removedCount: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    await chatOps.removeMembers(this.client, chatId, memberIds);
+    return { success: true, removedCount: memberIds.length };
+  }
+
+  /**
+   * List members of a group chat via Feishu API.
+   * Issue #1678: Member management capability exposed through IPC handlers.
+   *
+   * @param chatId - Target chat ID
+   */
+  async listMembers(chatId: string): Promise<{ success: boolean; memberIds: string[] }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    const memberIds = await chatOps.getMembers(this.client, chatId);
+    return { success: true, memberIds };
+  }
+
+  /**
+   * List all chats the bot is in via Feishu API.
+   * Issue #1678: Chat listing capability exposed through IPC handlers.
+   */
+  async listChats(): Promise<{ success: boolean; chats: Array<{ chatId: string; name: string }> }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    const chats = await chatOps.getBotChats(this.client);
+    return { success: true, chats };
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
