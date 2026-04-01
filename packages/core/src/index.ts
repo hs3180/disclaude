@@ -185,6 +185,13 @@ export {
   type ResolvedTimeoutConfig,
 } from './conversation/index.js';
 
+// SOUL.md personality injection (Issue #1315)
+export {
+  SoulLoader,
+  SOUL_MAX_SIZE_BYTES,
+  type SoulLoadResult,
+} from './soul/index.js';
+
 // Scheduling module (Issue #1041, Issue #1382)
 export {
   CooldownManager,
@@ -212,7 +219,9 @@ export {
   type OnFileChanged,
   type OnFileRemoved,
   // Issue #1382: Unified schedule executor
+  // Issue #1315: Per-task soul support
   createScheduleExecutor,
+  createScheduleExecutorWithSoul,
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,

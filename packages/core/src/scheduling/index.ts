@@ -58,9 +58,10 @@ export {
   type SchedulerOptions,
 } from './scheduler.js';
 
-// Schedule Executor (Issue #1382)
+// Schedule Executor (Issue #1382, Issue #1315)
 export {
   createScheduleExecutor,
+  createScheduleExecutorWithSoul,
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,

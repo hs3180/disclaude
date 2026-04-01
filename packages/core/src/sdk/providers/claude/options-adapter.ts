@@ -61,6 +61,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // SOUL.md personality injection (Issue #1315)
+  if (options.systemPromptAppend) {
+    sdkOptions.systemPromptAppend = options.systemPromptAppend;
+  }
+
   return sdkOptions;
 }
 

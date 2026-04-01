@@ -49,7 +49,7 @@ import {
   Config,
   type ScheduledTask,
   // Issue #1382: Unified schedule executor
-  createScheduleExecutor,
+  createScheduleExecutorWithSoul,
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
@@ -471,9 +471,13 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
-    const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+    // Issue #1315: Use createScheduleExecutorWithSoul for per-task personality injection
+    const executor = createScheduleExecutorWithSoul({
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), {
+          ...(model ? { model } : {}),
+          ...(systemPromptAppend ? { systemPromptAppend } : {}),
+        });
       },
       callbacks: schedulerCallbacks,
     });
