@@ -213,3 +213,64 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, separated from the
+ * main process. A file-based `.runtime-env` mechanism enables cross-process
+ * state sharing. This guidance makes the agent aware of available runtime
+ * environment variables and how to read/write them.
+ *
+ * @returns Formatted runtime-env guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to a **cross-process shared environment** via the \`.runtime-env\` file in your workspace directory. This mechanism allows the main process (MCP servers, skills) and your subprocess to share state.
+
+### How It Works
+
+- Runtime env vars are **automatically loaded into your \`process.env\`** at startup
+- You can also read the file directly: \`{workspace}/.runtime-env\` (KEY=VALUE format)
+- To write new variables, use the Write tool to append to \`.runtime-env\`
+
+### Reading Variables
+
+Variables are pre-loaded — just access them via \`process.env\`:
+\`\`\`bash
+echo $GH_TOKEN
+echo $GH_TOKEN_EXPIRES_AT
+\`\`\`
+
+Or read the file directly if you need to see all available variables:
+\`\`\`bash
+cat .runtime-env
+\`\`\`
+
+### Writing Variables
+
+Use the Write tool to write to \`.runtime-env\` in KEY=VALUE format:
+\`\`\`
+GH_TOKEN=ghs_xxxxxxxxxxxx
+GH_TOKEN_EXPIRES_AT=2026-04-02T12:00:00Z
+\`\`\`
+
+### Known Variables
+
+| Variable | Description | Writer |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub App installation access token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp (ISO 8601) | \`github-jwt-auth\` skill |
+
+### Guidelines
+
+- **Never commit** \`.runtime-env\` to version control (it is git-ignored)
+- **Check expiration** before using tokens — if expired, trigger a refresh via the \`github-jwt-auth\` skill
+- **Do not modify** tokens written by other skills unless you are refreshing them
+- Use this mechanism to share state between skills, MCP servers, and agent turns`;
+}

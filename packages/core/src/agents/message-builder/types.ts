@@ -56,7 +56,7 @@ export interface MessageBuilderContext {
  * The core MessageBuilder handles framework-agnostic content:
  * - Metadata (chatId, messageId, senderId)
  * - History sections (chat history, persisted history)
- * - Guidance sections (next-step, output format, location awareness)
+ * - Guidance sections (next-step, output format, location awareness, runtime-env)
  * - Basic attachment info (file list, paths, MIME types)
  *
  * Channel-specific content:
