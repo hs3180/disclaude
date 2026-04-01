@@ -223,7 +223,10 @@ export abstract class BaseAgent implements Disposable {
     if (hasRuntimeContext()) {
       return getRuntimeContext().getGlobalEnv();
     }
-    return {};
+    // Fallback: read directly from config file
+    // This ensures config env vars reach SDK subprocesses even when
+    // setRuntimeContext() hasn't been called (defense in depth).
+    return Config.getGlobalEnv();
   }
 
   /**
@@ -233,7 +236,8 @@ export abstract class BaseAgent implements Disposable {
     if (hasRuntimeContext()) {
       return getRuntimeContext().isAgentTeamsEnabled();
     }
-    return false;
+    // Fallback: read directly from config file
+    return Config.isAgentTeamsEnabled();
   }
 
   /**
