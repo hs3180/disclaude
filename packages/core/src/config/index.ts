@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -463,6 +464,17 @@ export class Config {
       historyDays: config.historyDays ?? 7,
       maxContextLength: config.maxContextLength ?? 4000,
     };
+  }
+
+  /**
+   * Get SOUL.md configuration.
+   * Returns the soul path from config file, or undefined if not configured.
+   * Issue #1315: SOUL.md personality definition system.
+   *
+   * @returns SoulConfig or undefined
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    return fileConfigOnly.soul;
   }
 
   /**

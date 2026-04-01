@@ -41,4 +41,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional path to a per-task SOUL.md file.
+   * When set, overrides the global SOUL.md for this task.
+   * Supports ~ for home directory (e.g., `soul: "~/.disclaude/souls/code-reviewer.md"`).
+   *
+   * Issue #1315: SOUL.md personality definition system.
+   */
+  soul?: string;
 }

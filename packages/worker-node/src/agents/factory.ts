@@ -101,6 +101,11 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Additional text to append to the system prompt.
+   * Used for SOUL.md personality injection (Issue #1315).
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -128,6 +133,7 @@ export class AgentFactory {
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
+      systemPromptAppend: options.systemPromptAppend,
     };
   }
 

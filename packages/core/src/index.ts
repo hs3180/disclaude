@@ -218,6 +218,12 @@ export {
   type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 
+// SOUL module (Issue #1315: SOUL.md personality definition system)
+export {
+  SoulLoader,
+  type SoulLoadResult,
+} from './soul/index.js';
+
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,

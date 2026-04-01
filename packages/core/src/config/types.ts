@@ -294,6 +294,17 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * SOUL.md configuration section (Issue #1315).
+ *
+ * Defines the path to a SOUL.md personality definition file.
+ * The file content is loaded at startup and appended to the Agent's system prompt.
+ */
+export interface SoulConfig {
+  /** Path to the SOUL.md file (supports ~ for home directory) */
+  path?: string;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -324,6 +335,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** SOUL.md personality definition (Issue #1315) */
+  soul?: SoulConfig;
 }
 
 /**
