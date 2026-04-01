@@ -407,17 +407,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        // Issue #1742: When mentions are provided, upgrade to post (rich text) format
+        // to support @mention tags. Feishu's plain text format does not support mentions.
+        if (message.mentions && message.mentions.length > 0) {
+          const postContent = this.buildPostContent(message.text || '', message.mentions);
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'post',
+              content: JSON.stringify({
+                zh_cn: {
+                  title: '',
+                  content: postContent,
+                },
+              }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, mentionCount: message.mentions.length }, 'Post message (with mentions) sent');
+        } else {
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text || '' }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        }
         break;
       }
 
@@ -687,6 +709,42 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       { chatId: message.chatId, type: message.type, queueSize: this.offlineQueue.length },
       'Message queued (WebSocket reconnecting)',
     );
+  }
+
+  /**
+   * Build Feishu post (rich text) content with @mention support.
+   *
+   * Issue #1742: Generates the content structure for msg_type: 'post' messages
+   * that include @mention tags. Feishu's post format uses a 2D array of content
+   * rows, where each row is an array of tag objects.
+   *
+   * @param text - The text message content
+   * @param mentions - Array of mention targets with openId and optional display name
+   * @returns Feishu post content structure (2D array of tag rows)
+   */
+  private buildPostContent(
+    text: string,
+    mentions: Array<{ openId: string; name?: string }>
+  ): Array<Array<Record<string, unknown>>> {
+    const content: Array<Array<Record<string, unknown>>> = [];
+
+    // Build mention tags
+    const mentionTags = mentions.map((mention) => ({
+      tag: 'at',
+      user_id: mention.openId,
+    }));
+
+    // Build text tag
+    const textTag: Record<string, unknown> = { tag: 'text', text };
+
+    // Combine: mentions first, then text (matching Feishu convention)
+    if (mentionTags.length > 0) {
+      content.push([...mentionTags, textTag]);
+    } else {
+      content.push([textTag]);
+    }
+
+    return content;
   }
 
   /**

@@ -141,23 +141,34 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
 - **text**: The text content to send (string)
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
+- **mentions**: Optional, array of users to @mention. Each item has \`openId\` (user's open_id) and optional \`name\` (display name). When provided, the message is automatically upgraded to rich text format to support @mentions.
 
 ## Example
 \`\`\`json
 {"text": "Hello, world!", "chatId": "oc_xxx"}
+\`\`\`
+
+## Example with @mentions
+\`\`\`json
+{"text": "Please review this", "chatId": "oc_xxx", "mentions": [{"openId": "ou_xxx", "name": "Bot A"}]}
 \`\`\``,
     parameters: z.object({
       text: z.string().describe('The text content to send'),
       chatId: z.string().describe('Target chat ID'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      mentions: z.array(z.object({
+        openId: z.string().describe('User open_id to @mention'),
+        name: z.string().optional().describe('Display name for the mention'),
+      })).optional().describe('Optional array of users to @mention (openId required, name optional)'),
     }),
-    handler: async ({ text, chatId, parentMessageId }: {
+    handler: async ({ text, chatId, parentMessageId, mentions }: {
       text: string;
       chatId: string;
       parentMessageId?: string;
+      mentions?: Array<{ openId: string; name?: string }>;
     }) => {
       try {
-        const result = await send_text({ text, chatId, parentMessageId });
+        const result = await send_text({ text, chatId, parentMessageId, mentions });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Text send failed: ${error instanceof Error ? error.message : String(error)}`);
