@@ -508,4 +508,204 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - edge cases', () => {
+    it('should handle empty text message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '',
+        messageId: 'msg-empty',
+      }, 'chat-456');
+
+      expect(result).toContain('chat-456');
+      expect(result).toContain('msg-empty');
+      expect(result).toContain('--- User Message ---');
+      expect(result).toContain('Output Format Requirements');
+    });
+
+    it('should handle message with special characters and unicode', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '你好世界 🌍 <html>&amp;</html>',
+        messageId: 'msg-unicode',
+      }, 'chat-456');
+
+      expect(result).toContain('你好世界 🌍');
+      expect(result).toContain('<html>&amp;</html>');
+    });
+
+    it('should handle multiline user message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Line 1\nLine 2\nLine 3',
+        messageId: 'msg-multi',
+      }, 'chat-456');
+
+      expect(result).toContain('Line 1\nLine 2\nLine 3');
+    });
+
+    it('should handle message without messageId', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+      }, 'chat-456');
+
+      expect(result).toContain('chat-456');
+      expect(result).toContain('Hello');
+    });
+
+    it('should handle attachment with size 0', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'empty.txt',
+        mimeType: 'text/plain',
+        size: 0,
+        localPath: '/tmp/empty.txt',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('empty.txt');
+      // size=0 is falsy, so sizeInfo is empty - no KB display
+      expect(result).not.toContain('KB');
+    });
+
+    it('should handle attachment with very large size (MB)', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'large.zip',
+        mimeType: 'application/zip',
+        size: 52428800, // 50 MB
+        localPath: '/tmp/large.zip',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('large.zip');
+      expect(result).toContain('51200.0 KB');
+    });
+
+    it('should handle attachment without mimeType', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'unknown',
+        size: 100,
+        localPath: '/tmp/unknown',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('unknown');
+      expect(result).toContain('MIME type: unknown');
+    });
+
+    it('should handle empty attachments array', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [],
+      }, 'chat-456');
+
+      expect(result).not.toContain('Attachments');
+      expect(result).not.toContain('file(s)');
+    });
+
+    it('should not call buildSkillCommandExtra for regular messages', () => {
+      const buildSkillCommandExtra = vi.fn(() => 'Extra');
+      const options: MessageBuilderOptions = { buildSkillCommandExtra };
+      const builder = new MessageBuilder(options);
+
+      builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildSkillCommandExtra).not.toHaveBeenCalled();
+    });
+
+    it('should handle text starting with spaces but not slash', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '   Hello world',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // Leading spaces should not make it a skill command
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Hello world');
+    });
+
+    it('should combine all channel extensions correctly', () => {
+      const options: MessageBuilderOptions = {
+        buildHeader: () => '## Header\nPlatform context.',
+        buildPostHistory: () => '## Post History\n@ mention info.',
+        buildToolsSection: () => '- tool1\n- tool2',
+        buildAttachmentExtra: () => '## Image Hint\nAnalyze image.',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [{
+          id: 'att-1',
+          fileName: 'img.png',
+          mimeType: 'image/png',
+          size: 500,
+          localPath: '/tmp/img.png',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        }],
+      }, 'chat-456');
+
+      expect(result).toContain('## Header');
+      expect(result).toContain('Platform context.');
+      expect(result).toContain('## Post History');
+      expect(result).toContain('@ mention info.');
+      expect(result).toContain('## Tools');
+      expect(result).toContain('tool1');
+      expect(result).toContain('Image Hint');
+      expect(result).toContain('Analyze image.');
+    });
+
+    it('should use card template when capabilities not provided (undefined !== false)', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // When capabilities is undefined, supportsCard !== false is true → card template
+      expect(result).toContain('Next Steps After Response');
+      expect(result).toContain('actionPrompts');
+    });
+
+    it('should place header before metadata', () => {
+      const options: MessageBuilderOptions = {
+        buildHeader: () => 'HEADER_MARKER',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const headerIdx = result.indexOf('HEADER_MARKER');
+      const metadataIdx = result.indexOf('Chat ID');
+      expect(headerIdx).toBeLessThan(metadataIdx);
+    });
+  });
 });
