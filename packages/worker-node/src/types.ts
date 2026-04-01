@@ -29,6 +29,7 @@ export interface ChatAgent {
 
   /**
    * Process a message from a user.
+   * Issue #1863: Changed to async to await history loading before building content.
    */
   processMessage(
     chatId: string,
@@ -37,7 +38,7 @@ export interface ChatAgent {
     senderOpenId?: string,
     attachments?: FileRef[],
     chatHistoryContext?: string
-  ): void;
+  ): Promise<void>;
 
   /**
    * Execute a one-shot query (for CLI and scheduled tasks).
@@ -116,6 +117,8 @@ export interface PilotCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  /** Issue #1863: Get chat history for session restoration and first-message context */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**

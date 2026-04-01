@@ -542,7 +542,8 @@ export class WorkerNode {
             };
 
             const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
-            agent?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext);
+            agent?.processMessage(chatId, prompt, messageId, senderOpenId, attachments, chatHistoryContext)
+              .catch((err) => this.deps.logger.error({ err, chatId }, 'processMessage failed for prompt'));
           } catch (error) {
             const err = error as Error;
             this.deps.logger.error({ err, chatId }, 'Execution failed');
@@ -638,7 +639,7 @@ export class WorkerNode {
                 userId,
                 undefined, // no attachments
                 undefined  // no chat history context
-              );
+              ).catch((err) => this.deps.logger.error({ err, chatId }, 'processMessage failed for card action'));
               this.deps.logger.debug({ chatId, cardMessageId }, 'Card action processed by agent');
             }
           } else {

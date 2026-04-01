@@ -35,6 +35,12 @@ import type { WiredContext } from '../channel-lifecycle-manager.js';
 export interface ChannelCallbacksOptions {
   /** Whether to send a 'done' signal on task completion (REST sync mode) */
   sendDoneSignal?: boolean;
+  /**
+   * Get chat history context for session restoration and first-message context.
+   * Issue #1863: Wired from MessageLogger.getChatHistory for channels that
+   * support persistent message logging.
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -121,6 +127,8 @@ export function createChannelCallbacksFactory(
         async (chatId: string) => {
           logger.info({ chatId }, 'Task completed');
         },
+    // Issue #1863: Wire getChatHistory callback for session restoration
+    getChatHistory: options?.getChatHistory,
   });
 }
 
@@ -170,7 +178,8 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      // Issue #1863: processMessage is now async — await to ensure history context is loaded
+      await agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

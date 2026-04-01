@@ -430,12 +430,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /**
    * Process a message with the AI agent.
    *
-   * This method is non-blocking - it pushes the message to the channel and returns immediately.
-   * The message will be processed by the SDK via the channel's generator.
+   * This method pushes the message to the channel for processing by the SDK.
+   * Issue #1863: Made async to await history loading before building message content,
+   * fixing a race condition where the first message was pushed before history was loaded.
    *
    * Issue #644: Only accepts messages for the bound chatId.
    * Issue #857: Triggers async complexity analysis for progress tracking.
-   * Issue #1230: Attachs chat history on first message for new sessions.
+   * Issue #1230: Attaches chat history on first message for new sessions.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
@@ -444,14 +445,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
    */
-  processMessage(
+  async processMessage(
     chatId: string,
     text: string,
     messageId: string,
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
     chatHistoryContext?: string
-  ): void {
+  ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
       this.logger.error(
@@ -473,6 +474,17 @@ export class Pilot extends BaseAgent implements ChatAgent {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+    }
+
+    // Issue #1863: Await history loading before building content to fix race condition.
+    // Previously, loadPersistedHistory() and loadFirstMessageHistory() were fire-and-forget
+    // in startAgentLoop(), and processMessage() immediately checked the (not-yet-loaded)
+    // history context, resulting in the first message having no history.
+    if (!this.historyLoaded && this.callbacks.getChatHistory) {
+      await this.loadPersistedHistory();
+    }
+    if (!this.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
+      await this.loadFirstMessageHistory();
     }
 
     // Issue #1230: Attach chat history on first message for new sessions

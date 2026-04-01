@@ -53,7 +53,8 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
     channel: createMockChannel(),
     agentPool: {
       getOrCreateChatAgent: vi.fn().mockReturnValue({
-        processMessage: vi.fn(),
+        // Issue #1863: processMessage is now async
+        processMessage: vi.fn().mockResolvedValue(undefined),
       }),
     },
     controlHandler: vi.fn(),
@@ -214,6 +215,26 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  it('should NOT include getChatHistory when not provided', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger);
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('should include getChatHistory when provided in options', async () => {
+    const mockGetHistory = vi.fn().mockResolvedValue('history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    expect(typeof callbacks.getChatHistory).toBe('function');
+
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetHistory).toHaveBeenCalledWith('chat-001');
+    expect(result).toBe('history content');
+  });
 });
 
 // ============================================================================
@@ -367,14 +388,12 @@ describe('createDefaultMessageHandler', () => {
     );
   });
 
-  it('should send error message when agent.processMessage throws', async () => {
+  it('should send error message when agent.processMessage rejects', async () => {
     const handler = createDefaultMessageHandler(channel, context, {
       channelName: 'Test channel',
     });
     const mockAgent = {
-      processMessage: vi.fn().mockImplementation(() => {
-        throw new Error('Agent exploded');
-      }),
+      processMessage: vi.fn().mockRejectedValue(new Error('Agent exploded')),
     };
     (context.agentPool.getOrCreateChatAgent as any).mockReturnValue(mockAgent);
 
@@ -394,9 +413,7 @@ describe('createDefaultMessageHandler', () => {
       sendDoneSignal: true,
     });
     const mockAgent = {
-      processMessage: vi.fn().mockImplementation(() => {
-        throw new Error('Fail');
-      }),
+      processMessage: vi.fn().mockRejectedValue(new Error('Fail')),
     };
     (context.agentPool.getOrCreateChatAgent as any).mockReturnValue(mockAgent);
 
@@ -417,9 +434,7 @@ describe('createDefaultMessageHandler', () => {
       sendDoneSignal: false,
     });
     const mockAgent = {
-      processMessage: vi.fn().mockImplementation(() => {
-        throw new Error('Fail');
-      }),
+      processMessage: vi.fn().mockRejectedValue(new Error('Fail')),
     };
     (context.agentPool.getOrCreateChatAgent as any).mockReturnValue(mockAgent);
 
@@ -435,14 +450,12 @@ describe('createDefaultMessageHandler', () => {
     });
   });
 
-  it('should handle non-Error exceptions in processMessage', async () => {
+  it('should handle non-Error rejections in processMessage', async () => {
     const handler = createDefaultMessageHandler(channel, context, {
       channelName: 'Test channel',
     });
     const mockAgent = {
-      processMessage: vi.fn().mockImplementation(() => {
-        throw 'string error'; // eslint-disable-line no-throw-literal
-      }),
+      processMessage: vi.fn().mockRejectedValue('string error'),
     };
     (context.agentPool.getOrCreateChatAgent as any).mockReturnValue(mockAgent);
 

@@ -139,6 +139,7 @@ export interface ChatAgent extends Disposable {
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
+   * @returns Promise that resolves when the message has been queued with history context
    */
   processMessage(
     chatId: string,
@@ -147,7 +148,7 @@ export interface ChatAgent extends Disposable {
     senderOpenId?: string,
     attachments?: FileRef[],
     chatHistoryContext?: string
-  ): void;
+  ): Promise<void>;
 
   /**
    * Execute a one-shot query (for CLI and scheduled tasks).

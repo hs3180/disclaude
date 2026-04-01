@@ -55,7 +55,7 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
 function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSetupContext {
   return {
     agentPool: {
-      getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn() }),
+      getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn().mockResolvedValue(undefined) }),
     },
     controlHandler: vi.fn() as unknown as ControlHandler,
     controlHandlerContext: {},

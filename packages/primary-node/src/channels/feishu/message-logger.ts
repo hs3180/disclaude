@@ -225,33 +225,64 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   * Aggregates history across multiple days (newest first), up to the
+   * configured limit from Config.getSessionRestoreConfig().historyDays.
+   *
+   * Issue #1863: Previously only read the most recent day's log file,
+   * causing cross-day conversations to be truncated.
+   *
+   * @param chatId - The chat ID to retrieve history for
+   * @returns Aggregated history string, or undefined if no history found
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
       // Find the most recent log file for this chat
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Filter to date directories
+      // Filter to date directories, sorted descending (newest first)
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => b.name.localeCompare(a.name));
 
-      for (const dir of dateDirs) {
+      // Determine max days to read from config (default: 7)
+      const maxDays = this.getMaxHistoryDays();
+
+      const parts: string[] = [];
+
+      for (let i = 0; i < Math.min(dateDirs.length, maxDays); i++) {
+        const dir = dateDirs[i];
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            parts.push(content);
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this date, try next
         }
       }
 
-      return undefined;
+      if (parts.length === 0) {
+        return undefined;
+      }
+
+      // Reverse so oldest comes first (chronological order)
+      return parts.reverse().join('');
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Get the maximum number of days to read chat history.
+   * Uses Config if available, otherwise defaults to 7 days.
+   */
+  private getMaxHistoryDays(): number {
+    try {
+      return Config.getSessionRestoreConfig().historyDays;
+    } catch {
+      // Config not available (e.g., in tests without mock)
+      return 7;
     }
   }
 

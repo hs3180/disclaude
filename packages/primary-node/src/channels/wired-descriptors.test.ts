@@ -57,7 +57,7 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
 function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSetupContext {
   return {
     agentPool: {
-      getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn() }),
+      getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn().mockResolvedValue(undefined) }),
     },
     controlHandler: vi.fn() as unknown as ControlHandler,
     controlHandlerContext: {},
@@ -271,7 +271,7 @@ describe('WiredChannelDescriptors', () => {
 
     it('should process incoming messages via message handler', async () => {
       const mockChannel = createMockChannel('wechat');
-      const mockAgent = { processMessage: vi.fn() };
+      const mockAgent = { processMessage: vi.fn().mockResolvedValue(undefined) };
       const context = createMockContext({
         agentPool: {
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
@@ -302,7 +302,7 @@ describe('WiredChannelDescriptors', () => {
     it('should handle errors in message processing', async () => {
       const mockChannel = createMockChannel('wechat');
       const error = new Error('Agent processing failed');
-      const mockAgent = { processMessage: vi.fn().mockImplementation(() => { throw error; }) };
+      const mockAgent = { processMessage: vi.fn().mockRejectedValue(error) };
       const context = createMockContext({
         agentPool: {
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
