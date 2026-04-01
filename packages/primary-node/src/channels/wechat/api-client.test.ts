@@ -1,7 +1,8 @@
 /**
- * Tests for WeChatApiClient (MVP).
+ * Tests for WeChatApiClient.
  *
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.2)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -393,6 +394,312 @@ describe('WeChatApiClient', () => {
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'test' }))
         .rejects.toThrow('Error code 999');
+    });
+  });
+
+  describe('sendImage', () => {
+    it('should send image message with CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-123', imageUrl: 'https://cdn.example.com/img.png' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.msg.item_list[0].type).toBe(2);
+      expect(body.msg.item_list[0].image_item.url).toBe('https://cdn.example.com/img.png');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendImage({
+        to: 'user-123',
+        imageUrl: 'https://cdn.example.com/img.png',
+        contextToken: 'ctx-abc',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.msg.context_token).toBe('ctx-abc');
+    });
+
+    it('should generate unique client_id', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-1', imageUrl: 'https://cdn.example.com/a.png' });
+      await client.sendImage({ to: 'user-1', imageUrl: 'https://cdn.example.com/b.png' });
+
+      const body1 = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const body2 = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(body1.msg.client_id).not.toBe(body2.msg.client_id);
+    });
+  });
+
+  describe('sendFile', () => {
+    it('should send file message with CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'document.pdf',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.msg.item_list[0].type).toBe(3);
+      expect(body.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/doc.pdf');
+      expect(body.msg.item_list[0].file_item.file_name).toBe('document.pdf');
+    });
+
+    it('should send file without fileName', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.msg.item_list[0].file_item.file_name).toBeUndefined();
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'document.pdf',
+        contextToken: 'ctx-xyz',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.msg.context_token).toBe('ctx-xyz');
+    });
+  });
+
+  describe('uploadMedia', () => {
+    it('should upload file and return CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file-abc.png',
+          file_key: 'key-123',
+        })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({
+        fileData: Buffer.from('fake-image-data'),
+        fileName: 'test.png',
+        mimeType: 'image/png',
+      });
+
+      expect(result.url).toBe('https://cdn.example.com/file-abc.png');
+      expect(result.fileKey).toBe('key-123');
+    });
+
+    it('should use default MIME type when not provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file.dat',
+          file_key: 'key-456',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.dat',
+      });
+
+      // Verify the request was made
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('upload'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+    });
+
+    it('should throw when file is too large (>20MB)', async () => {
+      client.setToken('bot-token');
+      const hugeBuffer = Buffer.alloc(21 * 1024 * 1024); // 21MB
+
+      await expect(client.uploadMedia({
+        fileData: hugeBuffer,
+        fileName: 'huge.bin',
+      })).rejects.toThrow('File too large');
+    });
+
+    it('should accept file at exactly 20MB', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file-20mb.dat',
+          file_key: 'key-789',
+        })),
+      });
+
+      client.setToken('bot-token');
+      const exactBuffer = Buffer.alloc(20 * 1024 * 1024); // Exactly 20MB
+
+      const result = await client.uploadMedia({
+        fileData: exactBuffer,
+        fileName: 'exact-20mb.dat',
+      });
+
+      expect(result.url).toBe('https://cdn.example.com/file-20mb.dat');
+    });
+
+    it('should throw when response missing url', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          file_key: 'key-only',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw when response missing file_key', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/url-only',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw when upload returns non-zero ret', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 2003,
+          err_msg: 'Upload quota exceeded',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [2003]: Upload quota exceeded');
+    });
+
+    it('should throw when HTTP request fails', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 413,
+        text: () => Promise.resolve('Payload Too Large'),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [413]');
+    });
+
+    it('should include auth headers', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file.png',
+          file_key: 'key-auth',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.png',
+      });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders['AuthorizationType']).toBe('ilink_bot_token');
+      expect(callHeaders['Authorization']).toBe('Bearer bot-token');
+      expect(callHeaders).toHaveProperty('X-WECHAT-UIN');
+    });
+
+    it('should include SKRouteTag when routeTag is set', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file.png',
+          file_key: 'key-route',
+        })),
+      });
+
+      // Client was created with routeTag 'test-route'
+      client.setToken('bot-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.png',
+      });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders['SKRouteTag']).toBe('test-route');
+    });
+
+    it('should abort on timeout', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow();
     });
   });
 });
