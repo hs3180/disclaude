@@ -94,6 +94,14 @@ export interface OutgoingMessage {
   /** Thread root message ID for thread replies */
   threadId?: string;
 
+  /**
+   * Optional list of user/bot open_ids to @mention in the message.
+   * When provided with type 'text', the message is automatically upgraded
+   * to msg_type: 'post' (rich text) to support Feishu @mention format.
+   * Issue #1742: Bot-to-bot @mention support.
+   */
+  mentions?: string[];
+
   /** Task success status (for type 'done') */
   success?: boolean;
 

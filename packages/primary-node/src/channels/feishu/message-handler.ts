@@ -661,11 +661,19 @@ export class MessageHandler {
       return;
     }
 
-    // Ignore bot messages
+    // Ignore bot messages, except when this bot is @mentioned (Issue #1742)
     if (sender?.sender_type === 'app') {
-      logger.debug('Skipped bot message');
-      this.forwardFilteredMessage('bot', message_id, chat_id, content);
-      return;
+      const botMentionedByApp = mentions && mentions.length > 0
+        && this.mentionDetector.isBotMentioned(mentions);
+      if (!botMentionedByApp) {
+        logger.debug('Skipped bot message');
+        this.forwardFilteredMessage('bot', message_id, chat_id, content);
+        return;
+      }
+      logger.info(
+        { messageId: message_id, chatId: chat_id, senderType: sender.sender_type },
+        'Bot message allowed: this bot is @mentioned'
+      );
     }
 
     // Check message age

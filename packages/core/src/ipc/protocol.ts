@@ -39,6 +39,8 @@ export interface IpcRequestPayloads {
     chatId: string;
     text: string;
     threadId?: string;
+    /** Issue #1742: Optional list of user/bot open_ids to @mention */
+    mentions?: string[];
   };
   sendCard: {
     chatId: string;

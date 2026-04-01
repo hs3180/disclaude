@@ -22,14 +22,16 @@ export { setMessageSentCallback, getMessageSentCallback };
  * Send text message via IPC to PrimaryNode's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1088: Improved error handling with detailed error information.
+ * Issue #1742: Add mentions parameter for bot-to-bot @mention support.
  */
 async function sendMessageViaIpc(
   chatId: string,
   text: string,
-  threadId?: string
+  threadId?: string,
+  mentions?: string[]
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendMessage(chatId, text, threadId);
+  return await ipcClient.sendMessage(chatId, text, threadId, mentions);
 }
 
 /**
@@ -38,18 +40,23 @@ async function sendMessageViaIpc(
  * @param params.text - The text content to send
  * @param params.chatId - Target chat ID
  * @param params.parentMessageId - Optional parent message ID for thread reply
+ * @param params.mentions - Optional list of user/bot open_ids to @mention.
+ *   When provided, the message is sent as msg_type 'post' (rich text) to
+ *   support Feishu @mention format. Issue #1742.
  */
 export async function send_text(params: {
   text: string;
   chatId: string;
   parentMessageId?: string;
+  mentions?: string[];
 }): Promise<SendMessageResult> {
-  const { text, chatId, parentMessageId } = params;
+  const { text, chatId, parentMessageId, mentions } = params;
 
   logger.info({
     chatId,
     textPreview: text.substring(0, 100),
     hasParent: !!parentMessageId,
+    mentionCount: mentions?.length,
   }, 'send_text called');
 
   try {
@@ -79,8 +86,8 @@ export async function send_text(params: {
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
-    const result = await sendMessageViaIpc(chatId, text, parentMessageId);
+    logger.debug({ chatId, parentMessageId, mentions }, 'Using IPC for text message');
+    const result = await sendMessageViaIpc(chatId, text, parentMessageId, mentions);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');

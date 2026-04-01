@@ -36,6 +36,7 @@ import {
   type MessageCallbacks,
   WsConnectionManager,
 } from './feishu/index.js';
+import { buildPostContent, type PostElement } from '../platforms/feishu/card-builders/content-builder.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -407,17 +408,52 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        // Issue #1742: When mentions are provided, upgrade to msg_type 'post'
+        // (rich text) to support Feishu @mention format (<at user_id="xxx">).
+        if (message.mentions && message.mentions.length > 0) {
+          const elements: PostElement[][] = [];
+
+          // Build mention elements at the start
+          const mentionRow: PostElement[] = [];
+          for (const userId of message.mentions) {
+            mentionRow.push({ tag: 'at', user_id: userId });
+          }
+          mentionRow.push({ tag: 'text', text: ' ' });
+          elements.push(mentionRow);
+
+          // Add text content
+          if (message.text) {
+            elements.push([{ tag: 'text', text: message.text }]);
+          }
+
+          const postContent = buildPostContent(elements);
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'post',
+              content: postContent,
+            },
+          });
+          logger.debug(
+            { chatId: message.chatId, messageId: response.data?.message_id, mentionCount: message.mentions.length },
+            'Post message with mentions sent'
+          );
+        } else {
+          const response = await this.client.im.message.create({
+            params: {
+              receive_id_type: 'chat_id',
+            },
+            data: {
+              receive_id: message.chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text || '' }),
+            },
+          });
+          logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        }
         break;
       }
 
