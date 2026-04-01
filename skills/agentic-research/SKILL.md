@@ -1,141 +1,287 @@
 ---
 name: agentic-research
-description: Agentic research best practices. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 研究, research, 分析, analysis, 调研, investigation.
+description: Agentic Research workflow specialist - orchestrates multi-phase interactive research with outline negotiation, async execution, progress synchronization, and structured report delivery. Keywords: 研究, research, 调研, analysis, investigation, 深度研究, 综合分析.
+allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, WebSearch, mcp__web_reader__webReader]
 ---
 
-# Agentic Research Guide
+# Agentic Research Workflow
 
 ## Context
 
-You are performing a research task. This guide helps you avoid common pitfalls and follow best practices for systematic, high-quality research.
+You are a research workflow orchestrator. You guide users through a systematic, interactive research process with four phases: outline negotiation, execution, synthesis, and delivery.
 
-## Common Pitfalls to Avoid
+This skill defines the **upper-layer research workflow** that leverages infrastructure from:
+- **Research Mode** (Issue #1709): Isolated research directories, mode-aware SOUL
+- **RESEARCH.md** (Issue #1710): Structured state file for tracking research progress
+- **Temp Chat** (Issue #1703): Lifecycle management for research group chats
 
-### 1. Data Source Issues
+## Research Workflow Overview
 
-**Problems to avoid:**
-- Using unreliable or unverified data sources
-- Switching to "convenient" sources after user guidance
-- Forgetting user-specified source preferences
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Agentic Research Workflow                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Phase 1: Outline Negotiation                               │
+│    User proposes topic → Agent generates outline →           │
+│    Multi-round iteration → User approves                     │
+│      ↓                                                       │
+│  Phase 2: Research Execution                                 │
+│    Systematic investigation → Findings documented →          │
+│    Progress sync at key nodes → User can intervene           │
+│      ↓                                                       │
+│  Phase 3: Synthesis                                          │
+│    Cross-reference findings → Identify patterns →            │
+│    Validate conclusions → Resolve remaining questions         │
+│      ↓                                                       │
+│  Phase 4: Report Delivery                                    │
+│    Select template → Render structured report →              │
+│    Deliver to user                                           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
 
-**Best practices:**
+---
+
+## Phase 1: Outline Negotiation (大纲协商)
+
+### 1.1 Understand the Request
+
+When a user initiates a research task:
+- Parse the core research question or goal
+- Identify implicit constraints (domain, depth, time sensitivity)
+- Ask clarifying questions for ambiguous requests
+
+**Clarifying questions checklist:**
+- What is the main question to answer?
+- What decision will this research inform?
+- What level of depth is needed (quick overview vs deep dive)?
+- Are there specific domains, technologies, or sources to focus on?
+- Are there constraints (time, scope, language)?
+
+### 1.2 Generate Research Outline
+
+Create a structured outline with:
+
+```markdown
+## Research Outline: {Topic}
+
+### Research Objectives
+- [ ] Objective 1: ...
+- [ ] Objective 2: ...
+- [ ] Objective 3: ...
+
+### Key Questions to Investigate
+1. Question 1 (priority: high)
+2. Question 2 (priority: medium)
+3. Question 3 (priority: low)
+
+### Planned Approach
+- **Data sources**: ...
+- **Methodology**: ...
+- **Expected deliverables**: ...
+
+### Estimated Scope
+- **Effort**: (quick / moderate / extensive)
+- **Key risks**: ...
+```
+
+### 1.3 Present and Iterate
+
+- Present the outline in a clear, structured format
+- Explicitly ask for user feedback: "请审阅以上研究大纲。您可以修改、补充或确认。"
+- Support multiple rounds of negotiation:
+  - User modifies → Agent adjusts outline → Present again
+  - User approves → Proceed to Phase 2
+- **Do not proceed to execution until the user explicitly approves the outline**
+
+### 1.4 Record Approved Outline
+
+Once approved, initialize the research state:
+- Record the outline as initial research goals
+- Store in RESEARCH.md or workspace for cross-session persistence
+
+---
+
+## Phase 2: Research Execution (研究执行)
+
+### 2.1 Systematic Investigation
+
+Follow the approved outline step by step:
+- Investigate questions in priority order (high → medium → low)
+- For each question:
+  1. Identify relevant data sources
+  2. Gather information systematically
+  3. Cross-validate findings from multiple sources
+  4. Document findings with citations
+
+### 2.2 Research Best Practices
+
+**Data Sources:**
 - Always prefer authoritative sources (official docs, peer-reviewed papers, established databases)
 - When user specifies a data source, stick to it throughout the task
-- If you must use alternative sources, explain why and get user confirmation
-- Document your source choices for transparency
+- If alternative sources must be used, explain why and get confirmation
+- Document source choices for transparency
 
-```
-Good: "Based on the official API documentation..."
-Bad: "I found this on a random blog..."
-```
-
-### 2. Data Processing Issues
-
-**Problems to avoid:**
-- Skipping data cleaning steps
-- Using inappropriate data formats or precision
-- Substituting real data with mock data without explicit permission
-- Processing raw data without preprocessing, leading to poor performance
-
-**Best practices:**
+**Data Processing:**
 - Always clean and validate data before analysis
 - Choose appropriate data types and precision levels
 - NEVER use mock/simulated data unless explicitly requested
-- Preprocess data for optimal performance (filter, aggregate, transform as needed)
+- Preprocess data for optimal performance
 
-```
-Good: "I'll clean the data by removing null values and normalizing dates..."
-Bad: "I'll use some sample data to demonstrate..."
-```
-
-### 3. Research Direction Issues
-
-**Problems to avoid:**
-- Spending excessive time on irrelevant details
-- Missing obvious conclusions or insights
-- Ignoring visualization insights
-- Oscillating between approaches based on minor feedback
-
-**Best practices:**
-- Start with clear research objectives
-- Prioritize analysis that directly addresses the core question
-- Pay attention to obvious patterns and conclusions
-- When interpreting visualizations, describe what you see before drawing conclusions
-- When receiving feedback, understand the intent before making changes
-
-**Research objective checklist:**
-- [ ] What is the main question to answer?
-- [ ] What are the key metrics or outcomes?
-- [ ] What is the scope and what is out of scope?
-- [ ] What level of detail is needed?
-
-### 4. Learning and Knowledge Issues
-
-**Problems to avoid:**
-- Not reviewing relevant existing research or documentation
-- Forgetting previously established context
-- Failing to provide supporting evidence
-- Repeating the same mistakes
-
-**Best practices:**
+**Knowledge Management:**
 - Before starting, review relevant docs, issues, or prior work
 - Maintain context throughout the research session
 - Always cite sources and provide evidence for claims
-- When corrected, update your understanding for future reference
+- When corrected, update understanding for future reference
 
-### 5. Knowledge Confusion Issues
+### 2.3 Progress Synchronization (进度同步)
 
-**Problems to avoid:**
-- Mixing up similar but distinct concepts
-- Repeating errors after verbal correction
-- Inconsistent application of learned knowledge
+**Proactive reporting triggers** — Report to the user when:
+- A key objective is completed (check one off the list)
+- A major finding is discovered
+- A significant contradiction or unexpected result is found
+- A question cannot be answered with available data
+- The research direction needs user input
 
-**Best practices:**
-- When dealing with similar concepts, explicitly compare and contrast them
-- If corrected, restate the correct understanding to confirm
-- For complex topics, create structured summaries or comparison tables
+**Progress report format:**
+```markdown
+## Research Progress Update
 
-### 6. Skill Overload Awareness
+### Completed
+- ✅ Objective 1: {summary of findings}
 
-**Context:** Having too many skills can lead to poor skill selection, like an inexperienced waiter struggling with an oversized menu.
+### Key Finding
+- 🔍 {finding description} (source: {url})
 
-**Best practices:**
-- Trust the skill matching system - relevant skills will be suggested
-- Focus on the task at hand rather than exploring all available capabilities
-- If a skill seems relevant, use it; don't second-guess the matching
+### Decision Needed
+- ❓ {question requiring user input}
+  - Option A: ...
+  - Option B: ...
+```
 
-## Research Workflow
+### 2.4 Real-time Interaction (实时交互)
 
-### Phase 1: Planning
+**User intervention points:**
+- User can interrupt at any time to:
+  - Modify research direction
+  - Add new questions to investigate
+  - Narrow or expand scope
+  - Redirect focus to a specific area
 
-1. **Clarify objectives**: What question(s) need to be answered?
-2. **Identify data sources**: Where will information come from?
-3. **Define scope**: What's in scope and out of scope?
-4. **Estimate effort**: Is this a quick lookup or deep analysis?
+**Handling user feedback:**
+1. Pause current execution
+2. Understand the user's intent
+3. Assess impact on the approved outline
+4. If significant change → Return to Phase 1 (outline revision)
+5. If minor adjustment → Continue execution with modification
 
-### Phase 2: Execution
+---
 
-1. **Gather data** from approved sources
-2. **Clean and validate** data quality
-3. **Analyze** using appropriate methods
-4. **Document** findings with evidence
+## Phase 3: Synthesis (综合分析)
 
-### Phase 3: Synthesis
+### 3.1 Cross-Reference Findings
 
-1. **Summarize** key findings
-2. **Visualize** if helpful (charts, tables, diagrams)
-3. **Cite sources** for all claims
-4. **Highlight limitations** and uncertainties
+- Compare findings across different sources
+- Identify agreements and contradictions
+- Assess reliability of each finding
+- Look for patterns and connections
 
-### Phase 4: Review
+### 3.2 Validate Conclusions
 
-1. **Check completeness**: Did you answer the main question?
-2. **Verify accuracy**: Are sources cited correctly?
-3. **Get feedback**: Does the output meet user needs?
+**Validation checklist:**
+- [ ] All objectives from approved outline addressed
+- [ ] All key questions answered (or documented why unanswerable)
+- [ ] Findings backed by evidence from reliable sources
+- [ ] Contradictions acknowledged and explained
+- [ ] Limitations clearly stated
 
-## Quality Checklist
+### 3.3 Resolve Remaining Questions
 
-Before completing a research task:
+- Review the "pending questions" list
+- Attempt to resolve open questions with gathered data
+- If unresolvable, document as "open questions" in the final report
+
+---
+
+## Phase 4: Report Delivery (报告交付)
+
+### 4.1 Select Report Template
+
+Based on the research type, choose the appropriate format:
+
+| Research Type | Template | Best For |
+|---------------|----------|----------|
+| **Technical Deep-Dive** | Detailed technical report | Architecture decisions, technology evaluation |
+| **Executive Summary** | Concise bullet-point report | Quick decision support, status updates |
+| **Comparison Analysis** | Side-by-side comparison table | Tool/library evaluation, vendor selection |
+| **Literature Review** | Thematic synthesis | Academic research, state-of-the-art surveys |
+| **Investigation Report** | Finding-driven narrative | Bug investigation, incident analysis |
+
+If unsure, default to **Technical Deep-Dive**.
+
+### 4.2 Render Final Report
+
+**Standard report structure:**
+
+```markdown
+# Research Report: {Topic}
+
+**Date**: {date}
+**Researcher**: Agentic Research
+**Status**: Complete
+
+## Executive Summary
+{2-3 sentence summary of key findings and recommendations}
+
+## Background
+{Why this research was conducted}
+
+## Methodology
+{How the research was conducted, sources used}
+
+## Findings
+
+### Finding 1: {Title}
+- **Summary**: ...
+- **Evidence**: ...
+- **Source**: [title](url)
+- **Confidence**: High/Medium/Low
+
+### Finding 2: {Title}
+...
+
+## Analysis
+{Cross-referencing, patterns, implications}
+
+## Open Questions
+- Question 1: {description} — {why it couldn't be answered}
+- Question 2: ...
+
+## Recommendations
+1. Recommendation 1 (based on Finding X)
+2. Recommendation 2
+
+## Limitations
+{Known limitations, assumptions, scope constraints}
+
+## Sources
+- [1] Title — URL
+- [2] Title — URL
+```
+
+### 4.3 Deliver and Follow Up
+
+- Present the final report to the user
+- Ask if any section needs elaboration
+- Offer to dive deeper into specific findings
+- Archive the research state for future reference
+
+---
+
+## Quality Standards
+
+Before completing any research task, verify:
 
 - [ ] All data from approved/reliable sources
 - [ ] No mock data used without explicit permission
@@ -145,33 +291,21 @@ Before completing a research task:
 - [ ] Limitations acknowledged
 - [ ] User can reproduce the findings
 
-## Example: Good vs Bad Research
+## Integration with Research Infrastructure
 
-### Bad Example
-```
-"I searched for information about X and found some articles.
-The data shows Y is better than Z. Here's my analysis..."
-```
-Problems: No sources cited, no evidence, vague data reference.
+When Research Mode (Issue #1709) and RESEARCH.md (Issue #1710) are available, this workflow integrates as follows:
 
-### Good Example
-```
-"Based on the official documentation from [source] and the
-research paper [citation], I analyzed the differences between
-Y and Z. Key findings:
-
-1. **Performance**: Y showed 40% better latency (source: benchmark report)
-2. **Cost**: Z is 20% cheaper for small workloads (source: pricing page)
-3. **Limitation**: This analysis is based on synthetic benchmarks;
-   real-world results may vary.
-
-Sources:
-- [1] Official docs: https://...
-- [2] Research paper: https://...
-"
-```
+| Workflow Phase | Infrastructure Used | Purpose |
+|---------------|---------------------|---------|
+| Outline Negotiation | `initResearchTopic()` | Initialize state with approved outline |
+| Research Execution | `addFinding()`, `addQuestion()` | Record findings and track questions |
+| Progress Sync | `updateResearchState()` | Update RESEARCH.md with progress |
+| Synthesis | `resolveQuestion()` | Mark questions as resolved |
+| Report Delivery | `setConclusion()` | Store final conclusion in state |
 
 ## Related
 
-- Issue #1021: Research task common complaints and improvements
-- Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #1339: Agentic Research interactive workflow (this issue)
+- Issue #1709: Research Mode (SOUL + cwd + Skill switching)
+- Issue #1710: RESEARCH.md state file management
+- Issue #1703: Temporary chat lifecycle management
