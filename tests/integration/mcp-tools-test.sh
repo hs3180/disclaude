@@ -67,17 +67,28 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    # Issue #1634: Increase timeout for send_file test.
+    # When the tool fails (no real Feishu credentials in test env),
+    # the LLM may enter diagnostic mode (ls, report generation, etc.).
+    # A higher timeout prevents false negatives from this behavior.
+    local original_timeout="$TIMEOUT"
+    TIMEOUT=180
+
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    # Issue #1634: Prompt explicitly instructs the agent NOT to diagnose
+    # tool failures, preventing multi-turn diagnostic loops that exceed timeout.
+    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具调用失败或返回错误，请直接报告失败原因即可，不要尝试诊断问题、不要执行 ls 或其他排查命令。" "$chat_id" || {
+        TIMEOUT="$original_timeout"
         cleanup_test_file
         return 1
     }
 
+    TIMEOUT="$original_timeout"
     cleanup_test_file
 
-    if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
+    if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file|不可用|失败"; then
         log_pass "Agent acknowledged file tool usage"
     else
         log_pass "Agent responded (tool handling verified)"

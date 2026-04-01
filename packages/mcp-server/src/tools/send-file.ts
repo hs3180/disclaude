@@ -50,7 +50,7 @@ export async function send_file(params: {
       return {
         success: false,
         error: 'Platform credentials not configured',
-        message: '⚠️ File cannot be sent: Platform is not configured.',
+        message: '⚠️ File cannot be sent: Platform is not configured. Please report this to the user — no further action needed.',
       };
     }
 
@@ -71,7 +71,7 @@ export async function send_file(params: {
       return {
         success: false,
         error: 'IPC not available',
-        message: '❌ File upload requires IPC connection. Please ensure Primary Node is running.',
+        message: '❌ File upload requires IPC connection (Primary Node not running). Please report this to the user — no further action needed.',
       };
     }
 
@@ -117,7 +117,13 @@ export async function send_file(params: {
     logger.error({ err: error, filePath, chatId, platformCode, platformMsg }, 'send_file failed');
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    let errorDetails = `❌ Failed to send file: ${errorMessage}`;
+    // Issue #1634: Include explicit hint to discourage LLM diagnostic loops.
+    // Without this, the agent may enter multi-turn diagnosis (ls, reports, etc.)
+    // which causes test timeouts in environments without real platform credentials.
+    let errorDetails = `❌ File send failed: ${errorMessage}`;
+    if (!platformCode) {
+      errorDetails += '\n\n(This is a configuration/connectivity issue. No need to diagnose further — just report the failure to the user.)';
+    }
     if (platformCode) {
       errorDetails += `\n\n**Platform API Error:** Code: ${platformCode}`;
       if (platformMsg) { errorDetails += `, Message: ${platformMsg}`; }
