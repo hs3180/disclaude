@@ -18,7 +18,9 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  list_tasks,
+  get_task_status,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -408,6 +410,92 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #857: Task status tracking for independent reporting Agent
+  {
+    name: 'list_tasks',
+    description: `List all tasks in the workspace with their current status.
+
+Returns an array of tasks sorted by last activity (most recent first).
+Each task includes: taskId, title, status (pending/running/completed/failed),
+iteration count, creation time, and last activity time.
+
+Status detection:
+- **completed**: final_result.md exists
+- **failed**: failed.md exists
+- **running**: running.lock exists
+- **pending**: task.md exists (not yet started)
+
+## Example
+\`\`\`json
+{"list_tasks": {}}
+\`\`\``,
+    parameters: z.object({}).describe('No parameters required'),
+    handler: async () => {
+      const result = await list_tasks();
+      if (!result.success) {
+        return toolSuccess(`⚠️ ${result.message}`);
+      }
+      const summary = result.tasks.map(t =>
+        `- [${t.status}] ${t.title} (${t.iterations} iterations, last: ${t.lastActivity || 'N/A'})`
+      ).join('\n');
+      return toolSuccess(result.tasks.length > 0
+        ? `Found ${result.tasks.length} task(s):\n${summary}`
+        : result.message);
+    },
+  },
+  {
+    name: 'get_task_status',
+    description: `Get detailed status of a specific task.
+
+Returns comprehensive information about a task including:
+- Task metadata (ID, title, status, creation time)
+- Iteration count and last activity time
+- Full task.md content (task specification)
+- Final result (if completed)
+- Failure reason (if failed)
+- Latest evaluation content (if available)
+
+Use this tool to monitor task progress and provide status updates to users.
+
+## Parameters
+- **taskId**: Task directory name (required)
+
+## Example
+\`\`\`json
+{"taskId": "msg_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task directory name (the ID shown in list_tasks)'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      if (!taskId || typeof taskId !== 'string') {
+        return toolSuccess('⚠️ Invalid taskId: must be a non-empty string');
+      }
+      const result = await get_task_status(taskId);
+      if (!result.success) {
+        return toolSuccess(`⚠️ ${result.message}`);
+      }
+      const lines: string[] = [];
+      lines.push(`Task: ${result.task?.title || taskId}`);
+      lines.push(`Status: ${result.task?.status || 'unknown'}`);
+      lines.push(`Iterations: ${result.task?.iterations ?? 0}`);
+      lines.push(`Created: ${result.task?.created || 'N/A'}`);
+      lines.push(`Last Activity: ${result.task?.lastActivity || 'N/A'}`);
+      if (result.task?.chatId) {
+        lines.push(`Chat ID: ${result.task.chatId}`);
+      }
+      if (result.finalResult) {
+        lines.push(`\n--- Final Result ---\n${result.finalResult}`);
+      }
+      if (result.failureReason) {
+        lines.push(`\n--- Failure Reason ---\n${result.failureReason}`);
+      }
+      if (result.latestEvaluation) {
+        lines.push(`\n--- Latest Evaluation ---\n${result.latestEvaluation}`);
+      }
+      return toolSuccess(lines.join('\n'));
     },
   },
 ];

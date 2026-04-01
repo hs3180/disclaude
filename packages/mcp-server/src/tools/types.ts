@@ -102,3 +102,50 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Task status information.
+ * Issue #857: Task status tracking for independent reporting Agent.
+ */
+export type TaskStatusValue = 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
+
+export interface TaskInfo {
+  /** Task directory name (sanitized ID) */
+  taskId: string;
+  /** Task title extracted from task.md */
+  title: string;
+  /** Current task status */
+  status: TaskStatusValue;
+  /** Number of iteration directories */
+  iterations: number;
+  /** Task creation timestamp */
+  created?: string;
+  /** Chat ID associated with the task */
+  chatId?: string;
+  /** Last activity timestamp */
+  lastActivity?: string;
+}
+
+/**
+ * Result type for list_tasks tool.
+ * Issue #857: List all tasks with their status.
+ */
+export interface ListTasksResult {
+  success: boolean;
+  message: string;
+  tasks: TaskInfo[];
+}
+
+/**
+ * Result type for get_task_status tool.
+ * Issue #857: Get detailed status of a specific task.
+ */
+export interface TaskStatusResult {
+  success: boolean;
+  message: string;
+  task?: TaskInfo;
+  taskContent?: string;
+  finalResult?: string;
+  failureReason?: string;
+  latestEvaluation?: string;
+}
+

@@ -24,6 +24,8 @@ import {
   send_text,
   send_card,
   send_interactive_message,
+  list_tasks,
+  get_task_status,
 } from './index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -284,6 +286,28 @@ Example:
                 required: ['filePath', 'chatId'],
               },
             },
+            {
+              name: 'list_tasks',
+              description: 'List all tasks in the workspace with their current status. Returns tasks sorted by last activity.',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            {
+              name: 'get_task_status',
+              description: 'Get detailed status of a specific task including metadata, iterations, and content.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  taskId: {
+                    type: 'string',
+                    description: 'Task directory name (the ID shown in list_tasks)',
+                  },
+                },
+                required: ['taskId'],
+              },
+            },
           ],
         },
       };
@@ -493,6 +517,43 @@ Example:
           id,
           result: {
             content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : `⚠️ ${result.message}` }],
+          },
+        };
+      } else if (toolName === 'list_tasks') {
+        const result = await list_tasks();
+        const text = result.success
+          ? (result.tasks.length > 0
+              ? `Found ${result.tasks.length} task(s):\n${result.tasks.map(t => `- [${t.status}] ${t.title} (${t.iterations} iterations)`).join('\n')}`
+              : result.message)
+          : `⚠️ ${result.message}`;
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text' as const, text }],
+          },
+        };
+      } else if (toolName === 'get_task_status') {
+        const taskId = toolArgs.taskId as string | undefined;
+        if (!taskId || typeof taskId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid taskId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+        const result = await get_task_status(taskId);
+        const text = result.success
+          ? `Task: ${result.task?.title || taskId}\nStatus: ${result.task?.status}\nIterations: ${result.task?.iterations ?? 0}\nCreated: ${result.task?.created || 'N/A'}\nLast Activity: ${result.task?.lastActivity || 'N/A'}`
+          : `⚠️ ${result.message}`;
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text' as const, text }],
           },
         };
       } else {

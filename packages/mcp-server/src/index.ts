@@ -53,6 +53,10 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 
+// Tools - Task Status (Issue #857)
+export { list_tasks, get_task_status, detectTaskStatus } from './tools/task-status.js';
+export type { TaskStatus } from './tools/task-status.js';
+
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 

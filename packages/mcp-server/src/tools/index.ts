@@ -14,6 +14,10 @@ export type {
   CreateChatResult,
   DissolveChatResult,
   RegisterTempChatResult,
+  TaskStatusResult,
+  ListTasksResult,
+  TaskInfo,
+  TaskStatusValue,
 } from './types.js';
 
 // Shared utilities
@@ -52,3 +56,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Task status (Issue #857)
+export { list_tasks, get_task_status, detectTaskStatus } from './task-status.js';
+export type { TaskStatus } from './task-status.js';
