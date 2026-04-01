@@ -18,6 +18,7 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  start_discussion,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { start_discussion } from './tools/start-discussion.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -408,6 +410,59 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #631: Offline discussion - non-blocking discussion starter
+  {
+    name: 'start_discussion',
+    description: `Start a non-blocking discussion in a group chat.
+
+Creates a new group chat (or uses an existing one) and sends context to a ChatAgent.
+The tool returns immediately after sending, allowing the agent to continue working.
+This is the core tool for "offline questioning" — the agent leaves a message for humans
+without blocking its current workflow.
+
+## Parameters
+- **context**: The discussion context/prompt to send (required)
+- **chatId**: Use an existing chat ID (optional, creates new if omitted)
+- **topic**: Discussion topic for group name (optional, used when creating new chat)
+- **memberIds**: Initial member IDs for new group (optional)
+- **registerTemp**: Whether to register as temp chat (default: true)
+
+## Behavior
+- If chatId is provided: sends context to existing chat
+- If chatId is omitted: creates new group, sends context, optionally registers as temp chat
+- Returns immediately (non-blocking)
+
+## Example
+\`\`\`json
+{"context": "I noticed repeated commands about X. Let's discuss the best approach.", "topic": "X Discussion", "memberIds": ["ou_xxx"]}
+\`\`\``,
+    parameters: z.object({
+      context: z.string().describe('The discussion context/prompt to send to the ChatAgent'),
+      chatId: z.string().optional().describe('Use an existing chat ID (optional, creates new group if omitted)'),
+      topic: z.string().optional().describe('Discussion topic for group name (used when creating new chat)'),
+      memberIds: z.array(z.string()).optional().describe('Initial member IDs for new group (optional)'),
+      registerTemp: z.boolean().optional().describe('Whether to register as temp chat for lifecycle management (default: true)'),
+    }),
+    handler: async ({ context, chatId, topic, memberIds, registerTemp }: {
+      context: string;
+      chatId?: string;
+      topic?: string;
+      memberIds?: string[];
+      registerTemp?: boolean;
+    }) => {
+      // Pre-validation
+      if (!context || typeof context !== 'string') {
+        return toolSuccess('⚠️ Invalid context: must be a non-empty string');
+      }
+
+      try {
+        const result = await start_discussion({ context, chatId, topic, memberIds, registerTemp });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Start discussion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
