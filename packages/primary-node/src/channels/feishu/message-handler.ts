@@ -876,6 +876,18 @@ export class MessageHandler {
         return;
       }
 
+      // Issue #1868: Fallback /passive handling when controlHandler is unavailable.
+      // Prevents the command from falling through to the AI agent,
+      // which would hallucinate a confirmation without actually changing state.
+      if (cmd === 'passive') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '⏳ 被动模式功能尚在开发中，敬请期待。',
+        });
+        return;
+      }
+
     }
 
     // Get quoted/replied message context if this is a reply

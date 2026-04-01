@@ -157,7 +157,10 @@ describe('createControlHandler', () => {
     const result = await handler(command);
 
     expect(result.success).toBe(false);
-    expect(result.message).toBeUndefined();
+    // Issue #1868: Error responses must include a message to prevent commands
+    // from falling through to the AI agent (which would hallucinate a response)
+    expect(result.message).toBeDefined();
+    expect(result.message).toContain('命令执行失败');
     expect(result.error).toContain('Command failed');
     expect(result.error).toContain('Agent pool unavailable');
   });

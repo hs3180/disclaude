@@ -28,9 +28,11 @@ export function createControlHandler(
       return await handler(command, context);
     } catch (error) {
       context.logger?.error({ error, command }, 'Command handler error');
+      const errorMsg = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        error: `Command failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `❌ 命令执行失败: ${errorMsg}`,
+        error: `Command failed: ${errorMsg}`,
       };
     }
   };
