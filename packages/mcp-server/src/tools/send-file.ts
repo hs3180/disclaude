@@ -24,7 +24,7 @@ async function uploadFileViaIpc(
   const ipcClient = getIpcClient();
   const result = await ipcClient.uploadFile(chatId, filePath);
   if (!result.success) {
-    throw new Error('Failed to upload file via IPC');
+    throw new Error('Failed to upload file via IPC: upload request was rejected (possible cause: missing or invalid platform credentials)');
   }
   return {
     fileKey: result.fileKey ?? '',

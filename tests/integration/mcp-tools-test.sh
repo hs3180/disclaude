@@ -67,15 +67,22 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    # Issue #1634: send_file may fail in test env (no IPC/credentials),
+    # causing Agent to enter diagnostic mode. Allow extra time for this.
+    local saved_timeout="$TIMEOUT"
+    TIMEOUT=180
+
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用或失败，请直接简要说明原因即可，不要进行额外诊断或文件检查。" "$chat_id" || {
         cleanup_test_file
+        TIMEOUT="$saved_timeout"
         return 1
     }
 
     cleanup_test_file
+    TIMEOUT="$saved_timeout"
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
         log_pass "Agent acknowledged file tool usage"
