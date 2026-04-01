@@ -68,6 +68,8 @@ export default defineConfig({
         // Integration-test only modules (require complex setup)
         'src/mcp/feishu-mcp-server.ts',
         'src/nodes/**',
+        // Feishu integration tests (Issue #1626: skipped by default)
+        '**/__tests__/integration/**',
       ],
       thresholds: {
         lines: 70,
