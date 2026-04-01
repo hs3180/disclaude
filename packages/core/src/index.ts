@@ -309,3 +309,15 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Research State File (Issue #1710 - RESEARCH.md research state tracking)
+export {
+  ResearchStateFile,
+  type ResearchStateInitOptions,
+  type ResearchStateInitResult,
+  type ResearchFinding,
+  type ResearchQuestion,
+  type ResearchState,
+  type AddFindingOptions,
+  type AddResourceOptions,
+} from './agents/research-state.js';
