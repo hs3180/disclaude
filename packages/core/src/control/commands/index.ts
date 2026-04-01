@@ -7,6 +7,7 @@ import { handleStop } from './stop.js';
 import { handleListNodes } from './list-nodes.js';
 import { handleShowDebug, handleClearDebug } from './debug.js';
 import { handlePassive } from './passive.js';
+import { handleResearch } from './research.js';
 import {
   handleListGroup,
   handleCreateGroup,
@@ -28,6 +29,8 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'show-debug', handler: handleShowDebug, description: '显示 Debug 组' },
   { type: 'clear-debug', handler: handleClearDebug, description: '清除 Debug 组' },
   { type: 'passive', handler: handlePassive, description: '切换被动模式' },
+  // Research mode control (Issue #1709)
+  { type: 'research', handler: handleResearch, description: '切换研究模式 (/research <主题>)' },
   { type: 'list-group', handler: handleListGroup, description: '列出群组' },
   { type: 'create-group', handler: handleCreateGroup, description: '创建群组' },
   { type: 'add-group-member', handler: handleAddGroupMember, description: '添加群组成员' },

@@ -6,6 +6,7 @@
 
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
+import type { ResearchModeManager } from '../agents/research-mode.js';
 
 /**
  * 执行节点信息
@@ -51,6 +52,12 @@ export interface ControlHandlerContext {
     isEnabled(chatId: string): boolean;
     setEnabled(chatId: string, enabled: boolean): void;
   };
+
+  /**
+   * Research mode manager (Issue #1709).
+   * Optional — only available when research mode feature is enabled.
+   */
+  researchMode?: ResearchModeManager;
 
   /** 日志记录器 */
   logger?: Logger;

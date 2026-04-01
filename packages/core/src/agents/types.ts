@@ -224,6 +224,32 @@ export function isDisposable(obj: unknown): obj is Disposable {
 export type AgentProvider = 'anthropic' | 'glm';
 
 /**
+ * Agent operating mode.
+ *
+ * - `normal`: Default conversational mode with standard SOUL and workspace.
+ * - `research`: Isolated research mode with dedicated SOUL, cwd, and skill subset.
+ *
+ * @see Issue #1709 - Research Mode Phase 1
+ */
+export type AgentMode = 'normal' | 'research';
+
+/**
+ * Research mode state tracking per chatId.
+ *
+ * @see Issue #1709 - Research Mode Phase 1
+ */
+export interface ResearchModeState {
+  /** Current mode */
+  mode: AgentMode;
+  /** Research topic name (only in research mode) */
+  topic?: string;
+  /** Research working directory absolute path */
+  researchDir?: string;
+  /** Timestamp when research mode was activated */
+  activatedAt?: number;
+}
+
+/**
  * Base configuration for all agents.
  *
  * This is the unified configuration interface that all agents use.

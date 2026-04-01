@@ -484,4 +484,33 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get research mode configuration.
+   * Controls behavior when agent enters research mode.
+   * @see Issue #1709
+   *
+   * @returns Research mode configuration with defaults
+   */
+  static getResearchConfig(): {
+    dir: string;
+    soulTemplate?: string;
+  } {
+    const config = fileConfigOnly.agent?.research;
+    return {
+      dir: config?.dir || 'research',
+      soulTemplate: config?.soulTemplate,
+    };
+  }
+
+  /**
+   * Get the absolute path for a research topic directory.
+   *
+   * @param topic - Research topic name
+   * @returns Absolute path to the research directory
+   */
+  static getResearchDir(topic: string): string {
+    const researchConfig = this.getResearchConfig();
+    return path.resolve(this.getWorkspaceDir(), researchConfig.dir, topic);
+  }
 }

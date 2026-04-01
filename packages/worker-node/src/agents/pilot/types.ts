@@ -5,7 +5,7 @@
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, ResearchModeManager } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -100,6 +100,15 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Research mode manager instance.
+   * When provided, the Pilot can operate in research mode with a dedicated
+   * working directory and SOUL. The /research command uses this manager.
+   *
+   * Issue #1709 - Research Mode Phase 1.
+   */
+  researchModeManager?: ResearchModeManager;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

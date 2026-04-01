@@ -87,6 +87,8 @@ export {
   type UserInput as AgentUserInput,
   type ChatAgent,
   type AgentProvider,
+  type AgentMode,
+  type ResearchModeState,
   type BaseAgentConfig,
   type ChatAgentConfig,
   type AgentConfig,
@@ -140,6 +142,12 @@ export {
   type QueryStreamResult,
   BaseAgent,
 } from './agents/base-agent.js';
+
+// Research Mode Manager (Issue #1709)
+export {
+  ResearchModeManager,
+  type EnterResearchResult,
+} from './agents/research-mode.js';
 
 // Message Builder (Issue #1492: extracted from worker-node to core)
 export {

@@ -41,7 +41,7 @@ export interface SdkOptionsExtra {
   disallowedTools?: string[];
   /** MCP servers configuration */
   mcpServers?: Record<string, unknown>;
-  /** Custom working directory */
+  /** Custom working directory (overrides default workspace dir) */
   cwd?: string;
 }
 

@@ -40,6 +40,33 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * Research mode configuration.
+   * Controls the behavior when an agent enters research mode.
+   * @see Issue #1709
+   */
+  research?: ResearchModeConfig;
+}
+
+/**
+ * Research mode configuration.
+ *
+ * Defines how research mode behaves, including directory layout
+ * and SOUL template settings.
+ *
+ * @see Issue #1709 - Research Mode Phase 1
+ */
+export interface ResearchModeConfig {
+  /**
+   * Directory name for research workspace (relative to workspace dir).
+   * Default: 'research'
+   */
+  dir?: string;
+  /**
+   * Path to custom CLAUDE.md template for research mode.
+   * If not specified, a built-in default is used.
+   */
+  soulTemplate?: string;
 }
 
 /**

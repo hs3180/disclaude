@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, ResearchModeManager, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
@@ -81,12 +81,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
+  // Research mode manager (Issue #1709)
+  private readonly researchModeManager?: ResearchModeManager;
+
   constructor(config: PilotConfig) {
     super(config);
 
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+
+    // Issue #1709: Store research mode manager if provided
+    this.researchModeManager = config.researchModeManager;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -378,9 +384,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1709: Use research mode cwd if in research mode
+    const researchCwd = this.researchModeManager?.getResearchDir(chatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(researchCwd && { cwd: researchCwd }),
     });
 
     // Get capabilities for message building
@@ -581,13 +590,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1709: Use research mode cwd if in research mode
+    const researchCwd = this.researchModeManager?.getResearchDir(this.boundChatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(researchCwd && { cwd: researchCwd }),
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools, researchCwd },
       'Starting SDK query with message channel'
     );
 
