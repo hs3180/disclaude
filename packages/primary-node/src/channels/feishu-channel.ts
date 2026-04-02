@@ -40,6 +40,18 @@ import {
 const logger = createLogger('FeishuChannel');
 
 /**
+ * Regex to match discussion end trigger phrases in outgoing text messages.
+ *
+ * Supported formats (from Issue #1229):
+ * - `[DISCUSSION_END]`        — normal end
+ * - `[DISCUSSION_END:timeout]` — timeout end
+ * - `[DISCUSSION_END:abandoned]` — abandoned end
+ *
+ * The trigger is stripped from the message before delivery to users.
+ */
+export const DISCUSSION_END_TRIGGER = /\[DISCUSSION_END(?::[a-zA-Z_]+)?\]/;
+
+/**
  * Extract chat ID from various Feishu event data formats.
  *
  * Handles different event types with different data structures:
@@ -392,6 +404,76 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const groupService = new GroupService();
     groupService.unregisterGroup(chatId);
     return { success: true };
+  }
+
+  /**
+   * Override sendMessage to detect discussion end trigger phrases.
+   *
+   * Issue #1229: Smart Discussion End.
+   * When the agent includes `[DISCUSSION_END]` (or variants like
+   * `[DISCUSSION_END:timeout]`) in an outgoing text message:
+   * 1. Strip the trigger from the message text
+   * 2. Send the cleaned message to the chat
+   * 3. Fire-and-forget dissolve the group (only managed groups)
+   */
+  async sendMessage(message: OutgoingMessage): Promise<void> {
+    // Only check text messages for trigger phrases
+    if (message.type === 'text' && message.text) {
+      const triggerMatch = message.text.match(DISCUSSION_END_TRIGGER);
+      if (triggerMatch) {
+        const chatId = message.chatId;
+        const cleanedText = message.text.replace(DISCUSSION_END_TRIGGER, '').trim();
+
+        logger.info(
+          { chatId, trigger: triggerMatch[0] },
+          'Discussion end trigger detected, will dissolve group after sending'
+        );
+
+        // Send the cleaned message (without the trigger)
+        await super.sendMessage({ ...message, text: cleanedText });
+
+        // Fire-and-forget: dissolve the group after a short delay
+        // to ensure the final message is delivered first
+        void this.handleDiscussionEnd(chatId);
+        return;
+      }
+    }
+
+    // No trigger detected — pass through to normal flow
+    await super.sendMessage(message);
+  }
+
+  /**
+   * Handle discussion end: dissolve the group chat if it's managed by the bot.
+   *
+   * Safety guards:
+   * - Only dissolves groups tracked in GroupService (bot-created groups)
+   * - Errors are logged but never thrown (fire-and-forget pattern)
+   *
+   * @param chatId - Chat ID to dissolve
+   */
+  private async handleDiscussionEnd(chatId: string): Promise<void> {
+    try {
+      // Wait briefly to ensure the final message is delivered
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const groupService = new GroupService();
+      if (!groupService.isManaged(chatId)) {
+        logger.debug({ chatId }, 'Discussion end triggered but chat is not managed by bot, skipping dissolution');
+        return;
+      }
+
+      const groupInfo = groupService.getGroup(chatId);
+      logger.info(
+        { chatId, groupName: groupInfo?.name },
+        'Dissolving managed group after discussion end trigger'
+      );
+
+      await this.dissolveChat(chatId);
+      logger.info({ chatId }, 'Discussion ended: group dissolved successfully');
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to handle discussion end (non-fatal)');
+    }
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
