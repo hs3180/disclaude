@@ -18,6 +18,10 @@ import {
   create_chat,
   dissolve_chat,
   register_temp_chat,
+  add_members,
+  remove_members,
+  list_members,
+  list_chats,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -32,6 +36,10 @@ export { send_file } from './tools/send-file.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { add_members } from './tools/add-members.js';
+export { remove_members } from './tools/remove-members.js';
+export { list_members } from './tools/list-members.js';
+export { list_chats } from './tools/list-chats.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -408,6 +416,121 @@ Use this after creating a group chat (via create_chat) that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #1678: Group member management
+  {
+    name: 'add_members',
+    description: `Add members to a group chat.
+
+The bot adds specified members to an existing group chat.
+
+## Parameters
+- **chatId**: Target group chat ID
+- **memberIds**: Array of member IDs to add (platform decides ID format, e.g., open_id for Feishu)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx", "ou_yyy"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+      memberIds: z.array(z.string()).describe('Member IDs to add (platform decides ID format)'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      if (!chatId || typeof chatId !== 'string') {
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+      }
+      if (!Array.isArray(memberIds) || memberIds.length === 0) {
+        return toolSuccess('⚠️ Invalid memberIds: must be a non-empty array');
+      }
+      try {
+        const result = await add_members({ chatId, memberIds });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ add_members failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'remove_members',
+    description: `Remove members from a group chat.
+
+The bot removes specified members from an existing group chat.
+
+## Parameters
+- **chatId**: Target group chat ID
+- **memberIds**: Array of member IDs to remove
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "memberIds": ["ou_xxx"]}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+      memberIds: z.array(z.string()).describe('Member IDs to remove'),
+    }),
+    handler: async ({ chatId, memberIds }: { chatId: string; memberIds: string[] }) => {
+      if (!chatId || typeof chatId !== 'string') {
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+      }
+      if (!Array.isArray(memberIds) || memberIds.length === 0) {
+        return toolSuccess('⚠️ Invalid memberIds: must be a non-empty array');
+      }
+      try {
+        const result = await remove_members({ chatId, memberIds });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ remove_members failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'list_members',
+    description: `List all members of a group chat.
+
+Returns the list of member IDs in the specified group chat.
+
+## Parameters
+- **chatId**: Target group chat ID
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID'),
+    }),
+    handler: async ({ chatId }: { chatId: string }) => {
+      if (!chatId || typeof chatId !== 'string') {
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+      }
+      try {
+        const result = await list_members({ chatId });
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ list_members failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'list_chats',
+    description: `List all group chats the bot is in.
+
+Returns the list of all group chats where the bot is a member, including chat IDs and names.
+
+## Example
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      try {
+        const result = await list_chats();
+        return toolSuccess(result.message);
+      } catch (error) {
+        return toolSuccess(`⚠️ list_chats failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

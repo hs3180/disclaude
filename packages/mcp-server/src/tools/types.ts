@@ -102,3 +102,50 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for add_members tool.
+ * Issue #1678: Group member management.
+ */
+export interface AddMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  addedCount?: number;
+  error?: string;
+}
+
+/**
+ * Result type for remove_members tool.
+ * Issue #1678: Group member management.
+ */
+export interface RemoveMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  removedCount?: number;
+  error?: string;
+}
+
+/**
+ * Result type for list_members tool.
+ * Issue #1678: Group member management.
+ */
+export interface ListMembersResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  members?: string[];
+  error?: string;
+}
+
+/**
+ * Result type for list_chats tool.
+ * Issue #1678: Group member management.
+ */
+export interface ListChatsResult {
+  success: boolean;
+  message: string;
+  chats?: Array<{ chatId: string; name: string }>;
+  error?: string;
+}
+

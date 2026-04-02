@@ -548,6 +548,114 @@ export class UnixSocketIpcClient {
   }
 
   // ============================================================================
+  // Group member management (Issue #1678: add/remove/list members + list chats)
+  // ============================================================================
+
+  /**
+   * Add members to a group chat via IPC.
+   * Issue #1678: Group member management.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member IDs to add (platform decides ID format)
+   */
+  async addMembers(
+    chatId: string,
+    memberIds: string[]
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('addMembers', { chatId, memberIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'addMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Remove members from a group chat via IPC.
+   * Issue #1678: Group member management.
+   *
+   * @param chatId - Target chat ID
+   * @param memberIds - Member IDs to remove
+   */
+  async removeMembers(
+    chatId: string,
+    memberIds: string[]
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('removeMembers', { chatId, memberIds });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'removeMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * List members of a group chat via IPC.
+   * Issue #1678: Group member management.
+   *
+   * @param chatId - Target chat ID
+   */
+  async listMembers(
+    chatId: string
+  ): Promise<{ success: boolean; members?: string[]; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('listMembers', { chatId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'listMembers failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * List all chats the bot is in via IPC.
+   * Issue #1678: Group member management.
+   */
+  async listChats(): Promise<{ success: boolean; chats?: Array<{ chatId: string; name: string }>; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('listChats', {});
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error }, 'listChats failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  // ============================================================================
   // Temporary chat lifecycle management (Issue #1703)
   // ============================================================================
 

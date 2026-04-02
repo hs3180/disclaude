@@ -43,6 +43,10 @@ function createMockHandlersContainer(overrides?: Partial<ChannelApiHandlers>): C
       }),
       createChat: vi.fn().mockResolvedValue({ chatId: 'oc_new_group', name: 'Test Group' }),
       dissolveChat: vi.fn().mockResolvedValue({ success: true }),
+      addMembers: vi.fn().mockResolvedValue({ success: true }),
+      removeMembers: vi.fn().mockResolvedValue({ success: true }),
+      listMembers: vi.fn().mockResolvedValue({ success: true, members: ['ou_a', 'ou_b'] }),
+      listChats: vi.fn().mockResolvedValue({ success: true, chats: [{ chatId: 'oc_1', name: 'Group A' }] }),
       ...overrides,
     },
   };
@@ -474,6 +478,198 @@ describe('createInteractiveMessageHandler', () => {
 
       expect(response.success).toBe(false);
       expect(response.error).toContain('Channel API handlers not available');
+    });
+  });
+
+  // ----- addMembers (Issue #1678) -----
+  describe('addMembers request', () => {
+    it('should call handler.addMembers with correct args', async () => {
+      const request = createRequest('addMembers', 'req-add-1', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a', 'ou_b'],
+      });
+      const response = await handler(request);
+
+      expect(container.handlers!.addMembers).toHaveBeenCalledWith('oc_group', ['ou_a', 'ou_b']);
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true });
+    });
+
+    it('should return error when addMembers not supported', async () => {
+      const noAddContainer: ChannelHandlersContainer = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          // addMembers intentionally omitted
+        },
+      };
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noAddContainer);
+      const request = createRequest('addMembers', 'req-add-2', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a'],
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('addMembers not supported');
+    });
+
+    it('should return error when addMembers throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        addMembers: vi.fn().mockRejectedValue(new Error('Permission denied')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('addMembers', 'req-add-3', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a'],
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Permission denied');
+    });
+  });
+
+  // ----- removeMembers (Issue #1678) -----
+  describe('removeMembers request', () => {
+    it('should call handler.removeMembers with correct args', async () => {
+      const request = createRequest('removeMembers', 'req-rm-1', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a'],
+      });
+      const response = await handler(request);
+
+      expect(container.handlers!.removeMembers).toHaveBeenCalledWith('oc_group', ['ou_a']);
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true });
+    });
+
+    it('should return error when removeMembers not supported', async () => {
+      const noRemoveContainer: ChannelHandlersContainer = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+        },
+      };
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noRemoveContainer);
+      const request = createRequest('removeMembers', 'req-rm-2', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a'],
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('removeMembers not supported');
+    });
+
+    it('should return error when removeMembers throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        removeMembers: vi.fn().mockRejectedValue(new Error('Not a group owner')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('removeMembers', 'req-rm-3', {
+        chatId: 'oc_group',
+        memberIds: ['ou_a'],
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Not a group owner');
+    });
+  });
+
+  // ----- listMembers (Issue #1678) -----
+  describe('listMembers request', () => {
+    it('should call handler.listMembers and return members', async () => {
+      const request = createRequest('listMembers', 'req-lm-1', {
+        chatId: 'oc_group',
+      });
+      const response = await handler(request);
+
+      expect(container.handlers!.listMembers).toHaveBeenCalledWith('oc_group');
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, members: ['ou_a', 'ou_b'] });
+    });
+
+    it('should return error when listMembers not supported', async () => {
+      const noListContainer: ChannelHandlersContainer = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+        },
+      };
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noListContainer);
+      const request = createRequest('listMembers', 'req-lm-2', {
+        chatId: 'oc_group',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('listMembers not supported');
+    });
+
+    it('should return error when listMembers throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        listMembers: vi.fn().mockRejectedValue(new Error('Chat not found')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('listMembers', 'req-lm-3', {
+        chatId: 'oc_group',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Chat not found');
+    });
+  });
+
+  // ----- listChats (Issue #1678) -----
+  describe('listChats request', () => {
+    it('should call handler.listChats and return chats', async () => {
+      const request = createRequest('listChats', 'req-lc-1', {});
+      const response = await handler(request);
+
+      expect(container.handlers!.listChats).toHaveBeenCalled();
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({
+        success: true,
+        chats: [{ chatId: 'oc_1', name: 'Group A' }],
+      });
+    });
+
+    it('should return error when listChats not supported', async () => {
+      const noListContainer: ChannelHandlersContainer = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+        },
+      };
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noListContainer);
+      const request = createRequest('listChats', 'req-lc-2', {});
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('listChats not supported');
+    });
+
+    it('should return error when listChats throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        listChats: vi.fn().mockRejectedValue(new Error('API rate limited')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('listChats', 'req-lc-3', {});
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('API rate limited');
     });
   });
 
