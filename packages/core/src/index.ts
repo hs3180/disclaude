@@ -149,10 +149,18 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Mode Manager (Issue #1709: research mode framework)
+export {
+  ModeManager,
+  type ModeState,
+  type ModeSwitchResult,
+} from './agents/mode-manager.js';
 
 // Skills module (Issue #430)
 export {

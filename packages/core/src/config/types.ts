@@ -287,6 +287,50 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Agent operating mode.
+ * - normal: Default mode for everyday conversation
+ * - research: Isolated research space with dedicated SOUL, cwd, and skill set
+ * @see Issue #1709
+ */
+export type AgentMode = 'normal' | 'research';
+
+/**
+ * Research mode configuration (Issue #1709).
+ *
+ * Controls the behavior when agent switches to research mode:
+ * - SOUL: Dedicated research behavior rules
+ * - Working directory: Isolated research workspace
+ * - Skills: Research-focused skill subset (Phase 2)
+ */
+export interface ResearchModeConfig {
+  /** Enable research mode feature (default: false) */
+  enabled?: boolean;
+  /**
+   * Research-specific SOUL skill name.
+   * Loaded via skill finder when switching to research mode.
+   * @default 'research-mode'
+   */
+  soulSkill?: string;
+  /**
+   * Working directory pattern for research mode.
+   * Supports `{topic}` placeholder replaced at switch time.
+   * Resolved relative to workspace directory.
+   * @default 'research/{topic}'
+   */
+  cwdPattern?: string;
+  /**
+   * Skills to include in research mode (Phase 2).
+   * Empty or undefined = all skills (same as normal mode).
+   */
+  skills?: string[];
+  /**
+   * Additional tools to disallow in research mode.
+   * Appended to the base disallowedTools list.
+   */
+  disallowedTools?: string[];
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -322,6 +366,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Research mode configuration (Issue #1709) */
+  researchMode?: ResearchModeConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

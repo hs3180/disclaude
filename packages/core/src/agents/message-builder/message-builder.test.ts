@@ -508,4 +508,77 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - research mode (Issue #1709)', () => {
+    it('should not include research mode guidance in normal mode', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Research Mode');
+    });
+
+    it('should include research mode guidance when mode state is research', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456', undefined, {
+        mode: 'research',
+        topic: 'AI Safety',
+        cwd: '/workspace/research/AI-Safety',
+        switchedAt: new Date(),
+      });
+
+      expect(result).toContain('Research Mode');
+      expect(result).toContain('AI Safety');
+      expect(result).toContain('/workspace/research/AI-Safety');
+    });
+
+    it('should include research behavior rules in research mode', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456', undefined, {
+        mode: 'research',
+        topic: 'test',
+        cwd: '/tmp/research',
+        switchedAt: new Date(),
+      });
+
+      expect(result).toContain('Research Behavior Rules');
+      expect(result).toContain('Focus on Research');
+    });
+
+    it('should use custom SOUL content when available', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456', undefined, {
+        mode: 'research',
+        topic: 'test',
+        cwd: '/tmp/research',
+        switchedAt: new Date(),
+        soulContent: '## Custom Rules\nCustom behavior here.',
+      });
+
+      expect(result).toContain('Custom Rules');
+      expect(result).toContain('Custom behavior here.');
+      expect(result).not.toContain('Research Behavior Rules');
+    });
+
+    it('should not include research guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-456', undefined, {
+        mode: 'research',
+        topic: 'test',
+        cwd: '/tmp/research',
+        switchedAt: new Date(),
+      });
+
+      expect(result).not.toContain('Research Mode');
+    });
+  });
 });

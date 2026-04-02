@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,55 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildResearchModeGuidance', () => {
+  it('should include Research Mode header', () => {
+    const result = buildResearchModeGuidance({ topic: 'test', cwd: '/tmp/research' });
+    expect(result).toContain('Research Mode');
+  });
+
+  it('should include the research topic when provided', () => {
+    const result = buildResearchModeGuidance({ topic: 'AI safety', cwd: '/tmp/research' });
+    expect(result).toContain('AI safety');
+  });
+
+  it('should include the working directory', () => {
+    const result = buildResearchModeGuidance({ topic: 'test', cwd: '/workspace/research/ai' });
+    expect(result).toContain('/workspace/research/ai');
+  });
+
+  it('should include research behavior rules when no soul content', () => {
+    const result = buildResearchModeGuidance({ topic: 'test', cwd: '/tmp' });
+    expect(result).toContain('Research Behavior Rules');
+    expect(result).toContain('Focus on Research');
+    expect(result).toContain('Source Citation');
+  });
+
+  it('should use custom SOUL content when provided', () => {
+    const customSoul = '## Custom Rules\nBe thorough and precise.';
+    const result = buildResearchModeGuidance({ topic: 'test', cwd: '/tmp', soulContent: customSoul });
+    expect(result).toContain('Custom Rules');
+    expect(result).toContain('Be thorough and precise.');
+    expect(result).not.toContain('Research Behavior Rules');
+  });
+
+  it('should include mode switch commands', () => {
+    const result = buildResearchModeGuidance({ topic: 'test', cwd: '/tmp' });
+    expect(result).toContain('/mode normal');
+    expect(result).toContain('/research');
+  });
+
+  it('should handle missing topic gracefully', () => {
+    const result = buildResearchModeGuidance({ cwd: '/tmp' });
+    expect(result).toContain('Research Mode');
+    expect(result).toContain('No specific topic set');
+  });
+
+  it('should handle all empty options', () => {
+    const result = buildResearchModeGuidance({});
+    expect(result).toContain('Research Mode');
+    expect(result).toContain('default');
   });
 });

@@ -35,7 +35,9 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
 } from './guidance.js';
+import type { ModeState } from '../mode-manager.js';
 
 /**
  * Message builder for agent prompts.
@@ -48,6 +50,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Research mode guidance (Issue #1709)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -59,16 +62,29 @@ export class MessageBuilder {
   }
 
   /**
+   * Set the current mode state for context-aware message building.
+   * Called externally (e.g., by Pilot) when mode changes.
+   *
+   * @param modeState - Current mode state, or undefined for normal mode
+   */
+  setModeState(_modeState?: ModeState): void {
+    // Mode state is applied in buildEnhancedContent via the mode parameter.
+    // This method exists for future extension (e.g., caching mode-specific content).
+  }
+
+  /**
    * Build enhanced content with context.
    *
    * @param msg - Message data
    * @param chatId - Chat ID for context
    * @param capabilities - Channel capabilities for tool filtering
+   * @param modeState - Current agent mode state (Issue #1709)
    */
   buildEnhancedContent(
     msg: MessageData,
     chatId: string,
-    capabilities?: ChannelCapabilities
+    capabilities?: ChannelCapabilities,
+    modeState?: ModeState
   ): string {
     const isSkillCommand = msg.text.trimStart().startsWith('/');
     const ctx: MessageBuilderContext = { msg, chatId, capabilities, isSkillCommand };
@@ -77,7 +93,7 @@ export class MessageBuilder {
       return this.buildSkillCommandContent(ctx);
     }
 
-    return this.buildRegularContent(ctx);
+    return this.buildRegularContent(ctx, modeState);
   }
 
   /**
@@ -108,7 +124,7 @@ export class MessageBuilder {
    * Regular messages get the full context including history,
    * channel-specific sections, and guidance.
    */
-  private buildRegularContent(ctx: MessageBuilderContext): string {
+  private buildRegularContent(ctx: MessageBuilderContext, modeState?: ModeState): string {
     const { msg, chatId, capabilities } = ctx;
 
     // Channel-specific header (e.g., "You are responding in a Feishu chat.")
@@ -138,6 +154,15 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
+    // Research mode guidance (Issue #1709)
+    const researchModeGuidance = modeState?.mode === 'research'
+      ? buildResearchModeGuidance({
+          topic: modeState.topic,
+          cwd: modeState.cwd,
+          soulContent: modeState.soulContent,
+        })
+      : '';
+
     // Compose all sections
     const sections: string[] = [];
 
@@ -164,6 +189,9 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+    if (researchModeGuidance) {
+      sections.push(researchModeGuidance);
+    }
 
     const preamble = sections.join('\n');
 

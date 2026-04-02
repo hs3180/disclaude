@@ -213,3 +213,71 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the research mode guidance section.
+ *
+ * Issue #1709: When the agent is in research mode, inject research-specific
+ * behavior rules and guidelines into the prompt.
+ *
+ * This guidance supplements (or replaces, if soulContent is provided) the
+ * default SOUL behavior, creating an isolated research environment.
+ *
+ * @param options - Research mode context
+ * @returns Formatted research mode guidance section, or empty string if not in research mode
+ */
+export function buildResearchModeGuidance(options: {
+  topic?: string;
+  cwd?: string;
+  soulContent?: string;
+}): string {
+  const { topic, cwd, soulContent } = options;
+
+  // If custom SOUL content is available, use it as the primary guidance
+  if (soulContent) {
+    return `
+
+---
+
+## Research Mode 🔬
+
+You are currently in **Research Mode**.
+
+${soulContent}
+
+---
+
+**Research Context:**
+- **Topic**: ${topic || 'Not specified'}
+- **Working Directory**: \`${cwd || 'default'}\`
+- **Commands**: \`/mode normal\` to exit research mode
+`;
+  }
+
+  // Default research mode guidance when no SOUL is loaded
+  return `
+
+---
+
+## Research Mode 🔬
+
+You are currently in **Research Mode** — an isolated research environment.
+
+### Research Behavior Rules
+
+1. **Focus on Research**: Prioritize thorough investigation, analysis, and synthesis of information
+2. **Working Directory**: All file operations should be within the research working directory (\`${cwd || 'default'}\`)
+3. **Source Citation**: Always cite sources and provide references for findings
+4. **Structured Output**: Organize findings with clear sections, summaries, and conclusions
+5. **Save Progress**: Save research notes and findings to files in the working directory
+
+### Topic
+${topic ? `Your current research topic is: **${topic}**` : 'No specific topic set.'}
+
+### Commands
+- \`/mode normal\` — Return to normal conversation mode
+- \`/research <new topic>\` — Switch to a different research topic
+
+---
+`;
+}

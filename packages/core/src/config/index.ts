@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ResearchModeConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -482,6 +483,27 @@ export class Config {
       idleMinutes: timeoutConfig.idleMinutes ?? 30,
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+    };
+  }
+
+  /**
+   * Get research mode configuration.
+   * Controls agent behavior when switched to research mode.
+   * @see Issue #1709
+   *
+   * @returns Research mode configuration with defaults, or null if disabled
+   */
+  static getResearchModeConfig(): ResearchModeConfig & { enabled: true } | null {
+    const config = fileConfigOnly.researchMode;
+    if (!config || config.enabled === false) {
+      return null;
+    }
+    return {
+      enabled: true,
+      soulSkill: config.soulSkill ?? 'research-mode',
+      cwdPattern: config.cwdPattern ?? 'research/{topic}',
+      skills: config.skills,
+      disallowedTools: config.disallowedTools,
     };
   }
 }
