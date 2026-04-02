@@ -120,6 +120,13 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
+  // OpenAI configuration (from config file or environment variable)
+          // @see Issue #1333
+          static readonly OPENAI_API_KEY = fileConfigOnly.openai?.apiKey || process.env.OPENAI_API_KEY || '';
+          static readonly OPENAI_MODEL = fileConfigOnly.openai?.model || '';
+          static readonly OPENAI_COMMAND = fileConfigOnly.openai?.command || '';
+          static readonly OPENAI_ARGS = fileConfigOnly.openai?.args || undefined;
+
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
@@ -286,6 +293,15 @@ export class Config {
           message: 'agent.model is required when using Anthropic provider',
         });
       }
+    } else if (provider === 'openai') {
+      // User explicitly chose OpenAI - validate OpenAI config
+      // @see Issue #1333
+      if (!this.OPENAI_API_KEY) {
+        errors.push({
+          field: 'OPENAI_API_KEY',
+          message: 'OPENAI_API_KEY is required when agent.provider is "openai". Set openai.apiKey in config or OPENAI_API_KEY env var',
+        });
+      }
     } else if (this.GLM_API_KEY) {
       // No explicit provider, but GLM is configured in config file - validate GLM
       if (!this.GLM_MODEL) {
@@ -306,7 +322,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set glm.apiKey, openai.apiKey in disclaude.config.yaml, or set ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable',
       });
     }
 
@@ -335,10 +351,24 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
-    provider: 'anthropic' | 'glm';
+    provider: 'anthropic' | 'glm' | 'openai';
   } {
     // Validate required configuration first
     this.validateRequiredConfig();
+
+    // Check for explicit provider selection
+    const explicitProvider = fileConfigOnly.agent?.provider;
+
+    // If explicitly set to OpenAI, return OpenAI config
+    // @see Issue #1333
+    if (explicitProvider === 'openai') {
+      logger.debug({ provider: 'OpenAI', model: this.OPENAI_MODEL || 'default' }, 'Using OpenAI provider via ACP');
+      return {
+        apiKey: this.OPENAI_API_KEY,
+        model: this.OPENAI_MODEL,
+        provider: 'openai',
+      };
+    }
 
     // Prefer GLM if configured
     if (this.GLM_API_KEY) {

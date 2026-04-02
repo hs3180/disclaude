@@ -25,7 +25,7 @@ workspace:
 # -----------------------------------------------------------------------------
 agent:
   # API provider preference
-  # Options: anthropic, glm
+  # Options: anthropic, glm, openai
   provider: "glm"
 
   # Model to use for AI operations
@@ -117,6 +117,30 @@ glm:
 
   # API base URL (usually no need to change)
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# -----------------------------------------------------------------------------
+# OpenAI API Configuration (via ACP Protocol)
+# -----------------------------------------------------------------------------
+# Uses OpenAI's Codex CLI as an ACP-compatible agent subprocess.
+# Requires: codex CLI installed (npm install -g @openai/codex)
+# @see Issue #1333
+# openai:
+#   # API key (or set OPENAI_API_KEY env var)
+#   apiKey: "your_openai_api_key_here"
+#
+#   # Model to use (e.g., o4-mini, gpt-4.1)
+#   # Passed to codex subprocess via OPENAI_MODEL env var
+#   model: "o4-mini"
+#
+#   # Custom agent command (default: "codex")
+#   # command: "/usr/local/bin/codex"
+#
+#   # Custom agent arguments (default: ["--full-auto"])
+#   # args: ["--full-auto", "--model", "o4-mini"]
+#
+#   # Additional environment variables for the agent process
+#   # env:
+#   #   CUSTOM_VAR: "value"
 
 # -----------------------------------------------------------------------------
 # Logging Configuration

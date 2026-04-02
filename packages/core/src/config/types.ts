@@ -25,8 +25,8 @@ export interface WorkspaceConfig {
  * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -74,6 +74,27 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+}
+
+/**
+ * OpenAI API configuration section.
+ *
+ * When using OpenAI provider, the Codex CLI is used via ACP protocol.
+ * OPENAI_API_KEY must be available (from config or environment variable).
+ *
+ * @see Issue #1333
+ */
+export interface OpenAIConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier for OpenAI (e.g., 'o4-mini', 'gpt-4.1') */
+  model?: string;
+  /** Custom agent command (overrides default 'codex') */
+  command?: string;
+  /** Custom agent arguments (overrides default '--full-auto') */
+  args?: string[];
+  /** Additional environment variables for the agent process */
+  env?: Record<string, string>;
 }
 
 /**
@@ -312,6 +333,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings (Codex CLI via ACP) */
+  openai?: OpenAIConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

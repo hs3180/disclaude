@@ -20,13 +20,16 @@
  *     │   ├── provider.ts
  *     │   ├── message-adapter.ts
  *     │   └── options-adapter.ts
- *     └── acp/                 # ACP 协议实现
+ *     ├── acp/                 # ACP 协议实现
+ *     │   ├── index.ts
+ *     │   ├── provider.ts
+ *     │   ├── connection.ts
+ *     │   ├── message-adapter.ts
+ *     │   ├── options-adapter.ts
+ *     │   └── types.ts
+ *     └── openai/              # OpenAI Provider preset
  *         ├── index.ts
- *         ├── provider.ts
- *         ├── connection.ts
- *         ├── message-adapter.ts
- *         ├── options-adapter.ts
- *         └── types.ts
+ *         └── provider.ts
  * ```
  *
  * ## 使用示例
@@ -123,6 +126,7 @@ export type {
 
 export { ClaudeSDKProvider } from './providers/index.js';
 export { ACPProvider } from './providers/index.js';
+export { OpenAIProvider } from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出
