@@ -41,8 +41,18 @@ describe('InteractiveContextStore', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK' });
       store.register('msg-2', 'chat-1', { ok: 'OK2' });
 
-      // chatId index should point to the latest messageId
+      // chatId index should return the most recent context's prompts
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
+      expect(store.size).toBe(2);
+    });
+
+    it('should append to chatId index instead of overwriting (fixes #1625)', () => {
+      store.register('card-a', 'chat-1', { action_a: 'Card A prompt' });
+      store.register('card-b', 'chat-1', { action_b: 'Card B prompt' });
+
+      // Both contexts should still exist
+      expect(store.getActionPrompts('card-a')).toEqual({ action_a: 'Card A prompt' });
+      expect(store.getActionPrompts('card-b')).toEqual({ action_b: 'Card B prompt' });
       expect(store.size).toBe(2);
     });
   });
@@ -75,6 +85,90 @@ describe('InteractiveContextStore', () => {
       store.unregister('msg-1');
 
       expect(store.getActionPromptsByChatId('chat-1')).toBeUndefined();
+    });
+
+    it('should return most recent prompts even when older contexts exist', () => {
+      store.register('card-a', 'chat-1', { old_action: 'Old prompt' });
+      store.register('card-b', 'chat-1', { new_action: 'New prompt' });
+
+      // getActionPromptsByChatId always returns the most recent
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ new_action: 'New prompt' });
+    });
+  });
+
+  describe('findActionPromptsByActionValue', () => {
+    it('should find prompts in an older context when the newest does not contain the action (fixes #1625)', () => {
+      // Scenario: Script sends card A, then Agent sends card B in the same chat
+      store.register('card-a', 'chat-1', { explain_ai: 'Tell me about AI', ai_history: 'AI history' });
+      store.register('card-b', 'chat-1', { confirm: 'Confirmed' });
+
+      // User clicks card A's "explain_ai" button — most recent (card-b) doesn't have it
+      const found = store.findActionPromptsByActionValue('chat-1', 'explain_ai');
+      expect(found).toEqual({ explain_ai: 'Tell me about AI', ai_history: 'AI history' });
+    });
+
+    it('should prefer the newest context when both contain the actionValue', () => {
+      store.register('card-a', 'chat-1', { ok: 'Card A OK' });
+      store.register('card-b', 'chat-1', { ok: 'Card B OK' });
+
+      const found = store.findActionPromptsByActionValue('chat-1', 'ok');
+      expect(found).toEqual({ ok: 'Card B OK' });
+    });
+
+    it('should return undefined when no context contains the actionValue', () => {
+      store.register('card-a', 'chat-1', { action_a: 'A' });
+      store.register('card-b', 'chat-1', { action_b: 'B' });
+
+      expect(store.findActionPromptsByActionValue('chat-1', 'non_existent')).toBeUndefined();
+    });
+
+    it('should return undefined for non-existent chatId', () => {
+      expect(store.findActionPromptsByActionValue('non-existent', 'any')).toBeUndefined();
+    });
+  });
+
+  describe('generatePrompt with multiple coexisting cards (fixes #1625)', () => {
+    it('should resolve action from older card when newest does not contain the actionValue', () => {
+      // Card A (script): synthetic messageId, registered first
+      store.register('interactive_chat1_1000', 'chat-1', {
+        explain_ai: '[用户操作] 用户选择了「解释AI」',
+        ai_applications: '[用户操作] 用户选择了「AI应用」',
+      });
+
+      // Card B (Agent): different actionValues, registered after card A
+      store.register('interactive_chat1_2000', 'chat-1', {
+        confirm: '[用户操作] 用户确认了操作',
+        cancel: '[用户操作] 用户取消了操作',
+      });
+
+      // User clicks card A's "explain_ai" button with real Feishu messageId
+      // 1. Exact match fails (real messageId ≠ synthetic)
+      // 2. chatId fallback returns card B (most recent) → no "explain_ai" → fallback
+      // 3. findActionPromptsByActionValue finds card A which has "explain_ai"
+      const prompt = store.generatePrompt('real_feishu_msg_id', 'chat-1', 'explain_ai', '解释AI');
+      expect(prompt).toBe('[用户操作] 用户选择了「解释AI」');
+    });
+
+    it('should still resolve from newest card when actionValue exists there', () => {
+      store.register('card-a', 'chat-1', { old_action: 'Old' });
+      store.register('card-b', 'chat-1', { new_action: 'New' });
+
+      const prompt = store.generatePrompt('unknown_msg_id', 'chat-1', 'new_action', 'New');
+      expect(prompt).toBe('New');
+    });
+
+    it('should handle three or more coexisting cards correctly', () => {
+      store.register('card-1', 'chat-1', { action_1: 'Card 1' });
+      store.register('card-2', 'chat-1', { action_2: 'Card 2' });
+      store.register('card-3', 'chat-1', { action_3: 'Card 3' });
+
+      // Should find action_1 even though cards 2 and 3 are newer
+      const prompt = store.generatePrompt('real_msg', 'chat-1', 'action_1');
+      expect(prompt).toBe('Card 1');
+
+      // Should find action_3 from the newest card
+      const prompt3 = store.generatePrompt('real_msg', 'chat-1', 'action_3');
+      expect(prompt3).toBe('Card 3');
     });
   });
 
@@ -160,8 +254,9 @@ describe('InteractiveContextStore', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK1' });
       store.register('msg-2', 'chat-1', { ok: 'OK2' });
       store.unregister('msg-1');
-      // chatId index should still point to msg-2
+      // chatId index should still have msg-2
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
+      expect(store.size).toBe(1);
     });
   });
 
@@ -191,6 +286,48 @@ describe('InteractiveContextStore', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK' });
       expect(store.cleanupExpired()).toBe(0);
       expect(store.size).toBe(1);
+    });
+
+    it('should prune chatId index after cleaning expired contexts', () => {
+      const shortMaxAge = 100;
+      const store = new InteractiveContextStore(shortMaxAge);
+
+      store.register('old-1', 'chat-1', { a: 'A' });
+      store.register('old-2', 'chat-1', { b: 'B' });
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          store.register('new-1', 'chat-1', { c: 'C' });
+          const cleaned = store.cleanupExpired();
+          expect(cleaned).toBe(2);
+          expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
+          resolve();
+        }, 150);
+      });
+    });
+  });
+
+  describe('LRU eviction (MAX_ENTRIES_PER_CHAT)', () => {
+    it('should evict oldest entry when limit is exceeded', () => {
+      // MAX_ENTRIES_PER_CHAT = 10; register 11 contexts for the same chat
+      for (let i = 0; i < 11; i++) {
+        store.register(`msg-${i}`, 'chat-1', { action: `Prompt ${i}` });
+      }
+
+      // Only 10 should remain (msg-0 evicted)
+      expect(store.size).toBe(10);
+      expect(store.getActionPrompts('msg-0')).toBeUndefined();
+      expect(store.getActionPrompts('msg-10')).toBeDefined();
+    });
+
+    it('should allow re-registering same messageId (dedup)', () => {
+      store.register('msg-1', 'chat-1', { a: 'First' });
+      store.register('msg-2', 'chat-1', { b: 'Second' });
+      store.register('msg-1', 'chat-1', { a: 'Updated' }); // re-register
+
+      // msg-1 should be moved to the end (most recent)
+      expect(store.size).toBe(2);
+      expect(store.getActionPrompts('msg-1')).toEqual({ a: 'Updated' });
     });
   });
 
