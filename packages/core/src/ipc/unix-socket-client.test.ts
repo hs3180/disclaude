@@ -376,68 +376,6 @@ describe('UnixSocketIpcClient', () => {
     });
   });
 
-  describe('createChat / dissolveChat', () => {
-    it('should create chat via IPC', async () => {
-      const mockHandlers = {
-        handlers: {
-          sendMessage: vi.fn().mockResolvedValue(undefined),
-          sendCard: vi.fn().mockResolvedValue(undefined),
-          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
-          sendInteractive: vi.fn().mockResolvedValue({}),
-          createChat: vi.fn().mockResolvedValue({ chatId: 'oc_new', name: 'New Group' }),
-          dissolveChat: vi.fn().mockResolvedValue({ success: true }),
-        },
-      };
-      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
-      const serverSocketPath = join(tempDir, `chat-server-${Date.now()}.ipc`);
-      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
-      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
-      await server.start();
-
-      const client = new UnixSocketIpcClient({
-        socketPath: serverSocketPath,
-        timeout: 2000,
-        maxRetries: 1,
-      });
-
-      const result = await client.createChat('Test Group', 'Description', ['ou_a']);
-      expect(result.success).toBe(true);
-      expect(result.chatId).toBe('oc_new');
-
-      await client.disconnect();
-      await server.stop();
-    });
-
-    it('should dissolve chat via IPC', async () => {
-      const mockHandlers = {
-        handlers: {
-          sendMessage: vi.fn().mockResolvedValue(undefined),
-          sendCard: vi.fn().mockResolvedValue(undefined),
-          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
-          sendInteractive: vi.fn().mockResolvedValue({}),
-          dissolveChat: vi.fn().mockResolvedValue({ success: true }),
-        },
-      };
-      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
-      const serverSocketPath = join(tempDir, `dissolve-server-${Date.now()}.ipc`);
-      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
-      const server = new UnixSocketIpcServer(handler, { socketPath: serverSocketPath });
-      await server.start();
-
-      const client = new UnixSocketIpcClient({
-        socketPath: serverSocketPath,
-        timeout: 2000,
-        maxRetries: 1,
-      });
-
-      const result = await client.dissolveChat('oc_old');
-      expect(result.success).toBe(true);
-
-      await client.disconnect();
-      await server.stop();
-    });
-  });
-
   describe('ping', () => {
     it('should return true when server responds', async () => {
       const serverSocketPath = await startTestServer(tempDir);

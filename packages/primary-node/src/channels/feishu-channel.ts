@@ -26,7 +26,7 @@ import {
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
 } from '@disclaude/core';
-import { InteractionManager, WelcomeService, createFeishuClient, dissolveChat, GroupService } from '../platforms/feishu/index.js';
+import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
 import {
   PassiveModeManager,
   MentionDetector,
@@ -349,49 +349,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     attachmentManager.cleanupOldAttachments();
 
     logger.info('FeishuChannel stopped');
-  }
-
-  /**
-   * Create a group chat via Feishu API.
-   * Issue #1546: Group management capability exposed through IPC handlers.
-   *
-   * Note: `description` is accepted for API compatibility but not supported
-   * by the Feishu CreateGroup API — it will be silently ignored.
-   *
-   * @param name - Group name (optional, auto-generated if not provided)
-   * @param _description - Group description (not supported by Feishu, ignored)
-   * @param memberIds - Initial member IDs (open_id format)
-   */
-  async createChat(
-    name?: string,
-    _description?: string,
-    memberIds?: string[]
-  ): Promise<{ chatId: string; name: string }> {
-    if (!this.client) {
-      throw new Error('Feishu client not initialized');
-    }
-    const groupService = new GroupService();
-    const groupInfo = await groupService.createGroup(this.client, {
-      topic: name,
-      members: memberIds,
-    });
-    return { chatId: groupInfo.chatId, name: groupInfo.name };
-  }
-
-  /**
-   * Dissolve a group chat via Feishu API.
-   * Issue #1546: Group management capability exposed through IPC handlers.
-   *
-   * @param chatId - Chat ID to dissolve
-   */
-  async dissolveChat(chatId: string): Promise<{ success: boolean }> {
-    if (!this.client) {
-      throw new Error('Feishu client not initialized');
-    }
-    await dissolveChat(this.client, chatId);
-    const groupService = new GroupService();
-    groupService.unregisterGroup(chatId);
-    return { success: true };
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
