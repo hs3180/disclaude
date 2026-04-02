@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, loadRuntimeEnv, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
@@ -107,6 +107,21 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
   protected getAgentName(): string {
     return 'Pilot';
+  }
+
+  /**
+   * Get runtime env variable keys for prompt guidance (Issue #1371).
+   *
+   * Loads the current runtime-env keys from the workspace so the agent
+   * knows which shared environment variables are available.
+   */
+  private getRuntimeEnvKeys(): string[] {
+    try {
+      const envVars = loadRuntimeEnv(this.getWorkspaceDir());
+      return Object.keys(envVars);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -306,6 +321,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
         text: userInput.content,
         messageId,
         senderOpenId,
+        runtimeEnvKeys: this.getRuntimeEnvKeys(),
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -391,6 +407,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
+      runtimeEnvKeys: this.getRuntimeEnvKeys(),
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -493,9 +510,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    // Issue #1371: Include runtime-env keys for agent awareness
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      runtimeEnvKeys: this.getRuntimeEnvKeys(),
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

@@ -213,3 +213,41 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime environment variables
+ * shared between the main process and the agent subprocess via `.runtime-env`.
+ * This helps the agent understand what shared state is available and how to
+ * interact with it.
+ *
+ * @param runtimeEnvKeys - List of runtime env variable keys, or undefined to skip
+ * @returns Formatted runtime env guidance section, or empty string if no keys
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvKeys?: string[]): string {
+  if (!runtimeEnvKeys || runtimeEnvKeys.length === 0) {
+    return '';
+  }
+
+  const keyList = runtimeEnvKeys.map((key) => `- \`${key}\``).join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following runtime environment variables are available to you. These are shared between the main process and your agent subprocess via a \`.runtime-env\` file in the workspace directory. They are already loaded into your subprocess environment.
+
+### Available Variables
+
+${keyList}
+
+### Usage Notes
+
+- These variables are automatically available as environment variables in your subprocess (e.g., \`process.env.GH_TOKEN\`)
+- If you need to share state back to the main process or other agents, you can write to the \`.runtime-env\` file in the workspace directory using the Write tool
+- Format: \`KEY=VALUE\` per line (one entry per line, \`#\` for comments)
+- **Do NOT expose sensitive values** (tokens, secrets) in your responses to users`;
+}

@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,32 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no keys are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance([])).toBe('');
+  });
+
+  it('should include section header and available variables', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN', 'GH_TOKEN_EXPIRES_AT']);
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('`GH_TOKEN`');
+    expect(result).toContain('`GH_TOKEN_EXPIRES_AT`');
+  });
+
+  it('should explain how to use the variables', () => {
+    const result = buildRuntimeEnvGuidance(['FOO']);
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('process.env');
+    expect(result).toContain('Write tool');
+  });
+
+  it('should warn about not exposing sensitive values', () => {
+    const result = buildRuntimeEnvGuidance(['SECRET_KEY']);
+    expect(result).toContain('Do NOT expose sensitive values');
   });
 });
