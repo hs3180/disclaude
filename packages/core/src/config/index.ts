@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectsConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -435,6 +436,16 @@ export class Config {
    */
   static getDebugConfig(): DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
+  }
+
+  /**
+   * Get projects configuration for knowledge base and instructions.
+   * @see Issue #1916
+   *
+   * @returns Projects configuration, or undefined if not configured
+   */
+  static getProjectsConfig(): ProjectsConfig | undefined {
+    return fileConfigOnly.projects;
   }
 
   /**

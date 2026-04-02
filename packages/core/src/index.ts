@@ -309,3 +309,18 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module - knowledge base and instructions (Issue #1916)
+export {
+  ProjectManager,
+  buildProjectContextSection,
+  SUPPORTED_EXTENSIONS,
+  DEFAULT_MAX_KNOWLEDGE_CHARS,
+} from './project/index.js';
+
+export type {
+  ProjectConfig,
+  ProjectsConfig,
+  KnowledgeFileEntry,
+  ProjectContext,
+} from './config/types.js';

@@ -287,6 +287,61 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Single project configuration for knowledge base and instructions.
+ * Implements Claude Projects-like functionality using CLAUDE.md + file system.
+ * @see Issue #1916
+ */
+export interface ProjectConfig {
+  /** Path to CLAUDE.md file for project-level instructions (relative to workspace or absolute) */
+  instructionsPath?: string;
+  /** List of directory paths to use as knowledge base sources */
+  knowledge?: string[];
+}
+
+/**
+ * Projects configuration section.
+ * Maps project names to their configuration.
+ * The "default" project is used when no project is explicitly selected.
+ * @see Issue #1916
+ */
+export interface ProjectsConfig {
+  /** Named project configurations */
+  [projectName: string]: ProjectConfig;
+}
+
+/**
+ * Knowledge base file entry with metadata.
+ * @see Issue #1916
+ */
+export interface KnowledgeFileEntry {
+  /** File path (absolute) */
+  path: string;
+  /** File name */
+  name: string;
+  /** File content (text) */
+  content: string;
+  /** File size in bytes */
+  size: number;
+  /** File extension */
+  extension: string;
+}
+
+/**
+ * Project context containing loaded instructions and knowledge.
+ * @see Issue #1916
+ */
+export interface ProjectContext {
+  /** Project name */
+  name: string;
+  /** Project instructions content (from CLAUDE.md or similar) */
+  instructions?: string;
+  /** Loaded knowledge base files */
+  knowledgeFiles: KnowledgeFileEntry[];
+  /** Total character count of all loaded content */
+  totalChars: number;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -306,6 +361,8 @@ export interface DisclaudeConfig {
   workspace?: WorkspaceConfig;
   /** Agent/AI model settings */
   agent?: AgentConfig;
+  /** Project configuration for knowledge base and instructions (Issue #1916) */
+  projects?: ProjectsConfig;
   /** Feishu platform settings */
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */

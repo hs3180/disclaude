@@ -14,6 +14,7 @@
  * MessageBuilder (core)
  *   ├── Metadata (chatId, messageId, senderId)
  *   ├── History sections (chat history, persisted history)
+ *   ├── Project section (knowledge base, instructions) (Issue #1916)
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
@@ -36,6 +37,7 @@ import {
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
+import { buildProjectContextSection } from '../../project/context-builder.js';
 
 /**
  * Message builder for agent prompts.
@@ -130,6 +132,10 @@ export class MessageBuilder {
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
+    // Project knowledge base section (Issue #1916)
+    const projectSection = this.options.buildProjectSection?.(ctx)
+      || (msg.projectContext ? buildProjectContextSection(msg.projectContext) : '');
+
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
@@ -155,6 +161,10 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+
+    if (projectSection) {
+      sections.push(projectSection);
     }
 
     if (toolsSection) {

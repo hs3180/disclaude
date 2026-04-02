@@ -10,6 +10,7 @@
 
 import type { FileRef } from '../../types/file.js';
 import type { ChannelCapabilities } from '../../types/channel.js';
+import type { ProjectContext } from '../../config/types.js';
 
 /**
  * Message data for building enhanced content.
@@ -30,6 +31,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Project context for knowledge base and instructions (Issue #1916) */
+  projectContext?: ProjectContext;
 }
 
 /**
@@ -105,4 +108,14 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Build project knowledge base section.
+   * Inserted after history sections and before guidance.
+   * If not provided, MessageBuilder will use projectContext from MessageData
+   * and build the section automatically.
+   *
+   * @see Issue #1916
+   */
+  buildProjectSection?: (ctx: MessageBuilderContext) => string;
 }
