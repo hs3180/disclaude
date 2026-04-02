@@ -29,6 +29,7 @@ import {
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -489,9 +490,11 @@ export class MessageHandler {
   /**
    * Get quoted/replied message content.
    *
-   * Supports text, post, image, file, and media message types.
+   * Supports text, post, interactive, image, file, and media message types.
    * For image/file/media, downloads the file and returns both a text prompt
    * and a structured MessageAttachment so the agent can access the file.
+   * For interactive cards, extracts user-visible text using extractCardTextContent.
+   * Issue #1711: Added support for interactive (card) message type.
    */
   private async getQuotedMessageContext(parentId: string): Promise<QuotedMessageResult | undefined> {
     if (!this.client) {
@@ -534,6 +537,14 @@ export class MessageHandler {
                 }
               }
             }
+          }
+        } else if (msgType === 'interactive') {
+          // Issue #1711: Extract text content from quoted interactive card messages
+          try {
+            const parsed = JSON.parse(msgContent);
+            quotedText = extractCardTextContent(parsed);
+          } catch {
+            // If parsing fails, fall through to return undefined
           }
         } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
