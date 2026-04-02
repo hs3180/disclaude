@@ -479,7 +479,6 @@ describe('createChannelApiHandlers', () => {
     expect(typeof handlers.uploadFile).toBe('function');
     // Should NOT include Feishu-specific methods
     expect((handlers as any).sendInteractive).toBeUndefined();
-    expect((handlers as any).createChat).toBeUndefined();
   });
 
   it('sendMessage should delegate to channel.sendMessage with text type', async () => {
@@ -606,7 +605,6 @@ describe('createChannelApiHandlers', () => {
     const fullHandlers = {
       ...baseHandlers,
       sendInteractive: vi.fn().mockResolvedValue({ messageId: 'synth-123' }),
-      createChat: vi.fn().mockResolvedValue({ chatId: 'new-chat', name: 'New' }),
     };
 
     // Base handler still works

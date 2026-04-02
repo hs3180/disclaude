@@ -210,7 +210,7 @@ export interface ChannelApiHandlersOptions {
  * Extracts the shared IPC handler pattern (sendMessage, sendCard, uploadFile)
  * that was previously duplicated in each channel descriptor's setup() method.
  * Callers can spread the result and add channel-specific handlers
- * (sendInteractive, createChat, dissolveChat, etc.) on top.
+ * (sendInteractive, registerTempChat, etc.) on top.
  *
  * This unifies the IPC handler creation with the same `channel.sendMessage()`
  * delegation pattern used by `createChannelCallbacksFactory`.
@@ -228,7 +228,7 @@ export interface ChannelApiHandlersOptions {
  * const fullHandlers: ChannelApiHandlers = {
  *   ...baseHandlers,
  *   sendInteractive: async (chatId, params) => { ... },
- *   createChat: (name) => feishuChannel.createChat(name),
+ *   registerTempChat: (chatId) => { ... },
  * };
  * context.primaryNode.registerFeishuHandlers(fullHandlers);
  * ```

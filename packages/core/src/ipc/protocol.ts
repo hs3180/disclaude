@@ -21,9 +21,6 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
-  // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
-  | 'createChat'
-  | 'dissolveChat'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -65,15 +62,6 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
-  // Group management (Issue #1546)
-  createChat: {
-    name?: string;
-    description?: string;
-    memberIds?: string[];
-  };
-  dissolveChat: {
-    chatId: string;
-  };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {
     chatId: string;
@@ -111,15 +99,6 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
-  };
-  // Group management (Issue #1546)
-  createChat: {
-    success: boolean;
-    chatId?: string;
-    name?: string;
-  };
-  dissolveChat: {
-    success: boolean;
   };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {

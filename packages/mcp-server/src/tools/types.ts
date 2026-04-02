@@ -70,27 +70,6 @@ export interface SendInteractiveResult {
 }
 
 /**
- * Result type for create_chat tool.
- */
-export interface CreateChatResult {
-  success: boolean;
-  message: string;
-  chatId?: string;
-  name?: string;
-  error?: string;
-}
-
-/**
- * Result type for dissolve_chat tool.
- */
-export interface DissolveChatResult {
-  success: boolean;
-  message: string;
-  chatId?: string;
-  error?: string;
-}
-
-/**
  * Result type for register_temp_chat tool.
  * Issue #1703: Temp chat lifecycle management.
  */
