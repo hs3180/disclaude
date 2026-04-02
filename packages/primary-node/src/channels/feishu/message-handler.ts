@@ -661,11 +661,22 @@ export class MessageHandler {
       return;
     }
 
-    // Ignore bot messages
+    // Issue #1742: Allow bot messages when they @mention the current bot.
+    // Previously, ALL bot messages were filtered to prevent infinite loops.
+    // Now we check if the bot message contains a mention of our bot, and if so,
+    // allow it through for inter-bot communication.
     if (sender?.sender_type === 'app') {
-      logger.debug('Skipped bot message');
-      this.forwardFilteredMessage('bot', message_id, chat_id, content);
-      return;
+      const botMentionedByAnotherBot = this.mentionDetector.isBotMentioned(mentions);
+      if (botMentionedByAnotherBot) {
+        logger.info(
+          { messageId: message_id, chatId: chat_id },
+          'Bot message with @mention to our bot — allowing through (Issue #1742)'
+        );
+      } else {
+        logger.debug('Skipped bot message (not mentioning our bot)');
+        this.forwardFilteredMessage('bot', message_id, chat_id, content);
+        return;
+      }
     }
 
     // Check message age

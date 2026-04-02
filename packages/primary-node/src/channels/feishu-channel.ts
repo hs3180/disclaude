@@ -407,17 +407,64 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1742: When mentions are provided, use msg_type "post" (rich text)
+        // to render @mentions. Plain text (msg_type "text") does not support @mentions.
+        const hasMentions = message.mentions && message.mentions.length > 0;
+        const msgType = hasMentions ? 'post' : 'text';
+        let content: string;
+
+        if (hasMentions) {
+          // Build Feishu post format with @mention tags
+          // Each paragraph is an array of inline elements (text/at tags)
+          const postContent: Array<Array<Record<string, unknown>>> = [[]];
+
+          // Build text with interspersed @mention tags
+          let remainingText = message.text || '';
+          for (const mention of message.mentions!) {
+            // Find the mention name in the text (if present) or just append
+            const mentionTag = `@${mention.name || mention.id}`;
+            const idx = remainingText.indexOf(mentionTag);
+
+            if (idx >= 0) {
+              // Text before the mention
+              if (idx > 0) {
+                postContent[0].push({ tag: 'text', text: remainingText.substring(0, idx) });
+              }
+              // The @mention tag
+              postContent[0].push({ tag: 'at', user_id: mention.id });
+              remainingText = remainingText.substring(idx + mentionTag.length);
+            } else {
+              // Mention name not found in text, append at mention at the end
+              postContent[0].push({ tag: 'at', user_id: mention.id });
+            }
+          }
+
+          // Remaining text after all mentions
+          if (remainingText) {
+            postContent[0].push({ tag: 'text', text: remainingText });
+          }
+
+          content = JSON.stringify({
+            zh_cn: {
+              title: '',
+              content: postContent,
+            },
+          });
+        } else {
+          content = JSON.stringify({ text: message.text || '' });
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
           },
           data: {
             receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            msg_type: msgType,
+            content,
           },
         });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        logger.debug({ chatId: message.chatId, msgType, messageId: response.data?.message_id }, 'Text message sent');
         break;
       }
 

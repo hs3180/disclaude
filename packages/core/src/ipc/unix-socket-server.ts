@@ -34,7 +34,11 @@ export type IpcRequestHandler = (request: IpcRequest) => Promise<IpcResponse>;
  * Platform-specific implementations (Feishu, Slack, etc.) extend this interface.
  */
 export interface ChannelApiHandlers {
-  sendMessage: (chatId: string, text: string, threadId?: string) => Promise<void>;
+  /**
+   * Send a text message.
+   * Issue #1742: Added optional mentions for inter-bot @mention support.
+   */
+  sendMessage: (chatId: string, text: string, threadId?: string, mentions?: Array<{ id: string; name?: string }>) => Promise<void>;
   sendCard: (
     chatId: string,
     card: FeishuCard,
@@ -128,10 +132,10 @@ export function createInteractiveMessageHandler(
               error: 'Channel API handlers not available',
             };
           }
-          const { chatId, text, threadId } =
+          const { chatId, text, threadId, mentions } =
             request.payload as IpcRequestPayloads['sendMessage'];
           try {
-            await handlers.sendMessage(chatId, text, threadId);
+            await handlers.sendMessage(chatId, text, threadId, mentions);
             return { id: request.id, success: true, payload: { success: true } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

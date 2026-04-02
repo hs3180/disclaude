@@ -240,9 +240,10 @@ export function createChannelApiHandlers(
   const { logger, channelName } = options;
 
   return {
-    sendMessage: async (chatId: string, text: string, threadId?: string) => {
+    // Issue #1742: Added optional mentions for inter-bot @mention support
+    sendMessage: async (chatId: string, text: string, threadId?: string, mentions?: Array<{ id: string; name?: string }>) => {
       try {
-        await channel.sendMessage({ chatId, type: 'text', text, threadId });
+        await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'IPC handler failed');
         throw error;

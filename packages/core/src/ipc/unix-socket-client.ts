@@ -384,14 +384,16 @@ export class UnixSocketIpcClient {
   /**
    * Send a text message via IPC.
    * Issue #1088: Return detailed error information for better troubleshooting.
+   * Issue #1742: Added optional mentions for inter-bot @mention support.
    */
   async sendMessage(
     chatId: string,
     text: string,
-    threadId?: string
+    threadId?: string,
+    mentions?: Array<{ id: string; name?: string }>
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('sendMessage', { chatId, text, threadId });
+      return await this.request('sendMessage', { chatId, text, threadId, mentions });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'sendMessage failed');

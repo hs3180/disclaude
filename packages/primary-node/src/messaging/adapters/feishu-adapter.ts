@@ -120,11 +120,48 @@ export class FeishuAdapter implements IChannelAdapter {
     const { content } = message;
 
     switch (content.type) {
-      case 'text':
+      case 'text': {
+        // Issue #1742: When mentions are provided, use msg_type "post" (rich text)
+        // to render @mentions. Plain text (msg_type "text") does not support @mentions.
+        if (content.mentions && content.mentions.length > 0) {
+          const postContent: Array<Array<Record<string, unknown>>> = [[]];
+          let remainingText = content.text;
+
+          for (const mention of content.mentions) {
+            const mentionTag = `@${mention.name || mention.id}`;
+            const idx = remainingText.indexOf(mentionTag);
+
+            if (idx >= 0) {
+              if (idx > 0) {
+                postContent[0].push({ tag: 'text', text: remainingText.substring(0, idx) });
+              }
+              postContent[0].push({ tag: 'at', user_id: mention.id });
+              remainingText = remainingText.substring(idx + mentionTag.length);
+            } else {
+              postContent[0].push({ tag: 'at', user_id: mention.id });
+            }
+          }
+
+          if (remainingText) {
+            postContent[0].push({ tag: 'text', text: remainingText });
+          }
+
+          return {
+            msg_type: 'post',
+            content: JSON.stringify({
+              zh_cn: {
+                title: '',
+                content: postContent,
+              },
+            }),
+          };
+        }
+
         return {
           msg_type: 'text',
           content: JSON.stringify({ text: content.text }),
         };
+      }
 
       case 'markdown':
         return {

@@ -36,12 +36,30 @@
 // ============================================================================
 
 /**
+ * Mention target for @mention in messages.
+ * Issue #1742: Support inter-bot @mention conversations.
+ */
+export interface MessageMention {
+  /** User/bot ID to mention (platform-specific, e.g. open_id for Feishu) */
+  id: string;
+  /** Display name for the mention (optional) */
+  name?: string;
+}
+
+/**
  * Text content - Plain text message.
  */
 export interface TextContent {
   type: 'text';
   /** Plain text content */
   text: string;
+  /**
+   * Optional mention targets for @mention rendering.
+   * When provided, the adapter may upgrade to rich text format
+   * to support @mention rendering (e.g. Feishu post messages).
+   * Issue #1742: Support inter-bot @mention conversations.
+   */
+  mentions?: MessageMention[];
 }
 
 /**

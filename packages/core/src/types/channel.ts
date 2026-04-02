@@ -70,6 +70,17 @@ export interface MessageAttachment {
 export type OutgoingContentType = 'text' | 'card' | 'file' | 'done';
 
 /**
+ * Mention target for @mention in messages.
+ * Issue #1742: Support inter-bot @mention conversations.
+ */
+export interface MessageMention {
+  /** User/bot ID to mention (platform-specific, e.g. open_id for Feishu) */
+  id: string;
+  /** Display name for the mention (optional) */
+  name?: string;
+}
+
+/**
  * Outgoing message to be sent through a channel.
  */
 export interface OutgoingMessage {
@@ -99,6 +110,14 @@ export interface OutgoingMessage {
 
   /** Error message if task failed (for type 'done') */
   error?: string;
+
+  /**
+   * Mention targets for @mention in text messages.
+   * When provided, text messages may be upgraded to rich text format
+   * to support @mention rendering (e.g. Feishu post messages).
+   * Issue #1742: Support inter-bot @mention conversations.
+   */
+  mentions?: MessageMention[];
 }
 
 /**
