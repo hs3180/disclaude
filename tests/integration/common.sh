@@ -826,6 +826,77 @@ main_test_suite() {
 }
 
 # =============================================================================
+# Platform Credential Checks
+# =============================================================================
+
+# Check if Feishu credentials are configured in the config file or environment.
+# Returns: 0 if both appId and appSecret are available, 1 otherwise.
+#
+# Checks in order:
+#   1. FEISHU_APP_ID / FEISHU_APP_SECRET environment variables
+#   2. feishu.appId / feishu.appSecret in disclaude.config.yaml
+has_feishu_credentials() {
+    # Check environment variables first
+    if [ -n "$FEISHU_APP_ID" ] && [ -n "$FEISHU_APP_SECRET" ]; then
+        return 0
+    fi
+
+    # Check config file
+    local config_file="${PROJECT_ROOT}/disclaude.config.yaml"
+    if [ -f "$config_file" ]; then
+        local app_id=""
+        local app_secret=""
+
+        # Parse the config file looking for feishu.appId and feishu.appSecret
+        # Supports both top-level and nested YAML formats:
+        #   feishu:
+        #     appId: "xxx"
+        #     appSecret: "xxx"
+        local in_feishu=false
+        while IFS= read -r line; do
+            # Strip inline comments (but not inside quoted strings)
+            local stripped
+            stripped=$(echo "$line" | sed 's/#.*//' 2>/dev/null)
+
+            # Skip empty lines and comment-only lines
+            case "$stripped" in
+                *"feishu"*) in_feishu=true ;;
+            esac
+
+            # Detect feishu section start (e.g., "feishu:" or "  feishu:")
+            case "$stripped" in
+                *"feishu:"*) in_feishu=true; continue ;;
+            esac
+
+            # Exit feishu section on new top-level key
+            if $in_feishu; then
+                case "$stripped" in
+                    [!\ ]*) in_feishu=false ;;
+                esac
+            fi
+
+            if $in_feishu; then
+                case "$stripped" in
+                    *"appId:"*)
+                        # Extract value after "appId:", strip quotes and whitespace
+                        app_id=$(echo "$stripped" | sed 's/.*appId:[[:space:]]*//' | sed 's/^["\x27]//' | sed 's/["\x27][[:space:]]*$//' | sed 's/[[:space:]]*$//')
+                        ;;
+                    *"appSecret:"*)
+                        app_secret=$(echo "$stripped" | sed 's/.*appSecret:[[:space:]]*//' | sed 's/^["\x27]//' | sed 's/["\x27][[:space:]]*$//' | sed 's/[[:space:]]*$//')
+                        ;;
+                esac
+            fi
+        done < "$config_file"
+
+        if [ -n "$app_id" ] && [ -n "$app_secret" ]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# =============================================================================
 # Common Test Functions
 # =============================================================================
 

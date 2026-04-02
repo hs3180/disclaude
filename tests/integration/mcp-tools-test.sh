@@ -67,10 +67,18 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    # Issue #1634: Skip send_file test when Feishu credentials are not configured.
+    # Without credentials, the tool returns an error and the agent enters diagnostic
+    # mode (running ls, generating reports, etc.), exceeding the 120s timeout.
+    if ! has_feishu_credentials; then
+        log_skip "send_file tool test skipped (Feishu credentials not configured)"
+        return 0
+    fi
+
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    assert_sync_chat_ok "请使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。只需调用工具并报告结果，不要诊断或排查问题。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
@@ -103,7 +111,7 @@ test_tool_result_format() {
 
 declare_test "Health check" test_health_check "fast" "Verify server is running"
 declare_test "send_text tool" test_send_text_tool "ai" "Agent calls send_text tool"
-declare_test "send_file tool" test_send_file_tool "ai" "Agent calls send_file tool with test file"
+declare_test "send_file tool" test_send_file_tool "ai" "Agent calls send_file tool (skipped without Feishu credentials)"
 declare_test "Tool result format" test_tool_result_format "ai" "Validate tool result formatting"
 
 main_test_suite "Integration Test: MCP Tools"
