@@ -171,7 +171,14 @@ Sources:
 "
 ```
 
-## Related
+## Related Skills
 
+- **`agentic-research-workflow`**: Interactive research session orchestrator — defines the full lifecycle with outline negotiation, progress updates, and real-time user interaction. **Use this skill for conducting interactive research sessions.**
+- `research-mode` (Issue #1709): Research mode behavior rules (SOUL)
+- `research-state` (Issue #1710): RESEARCH.md maintenance instructions
+
+## Related Issues
+
+- Issue #1339: Agentic Research interactive workflow (upper-layer use case)
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
