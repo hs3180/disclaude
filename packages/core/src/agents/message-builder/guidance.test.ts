@@ -31,6 +31,13 @@ describe('buildChatHistorySection', () => {
     const result = buildChatHistorySection('some context');
     expect(result).toContain('@mentioned in a group chat');
   });
+
+  it('should include guidance for empty @mention proactive answering', () => {
+    const result = buildChatHistorySection('User: What is TypeScript?\nBot: [idle]');
+    expect(result).toContain('empty');
+    expect(result).toContain('proactively answer');
+    expect(result).toContain('last question');
+  });
 });
 
 describe('buildPersistedHistorySection', () => {
