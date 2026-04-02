@@ -35,6 +35,11 @@ import type { WiredContext } from '../channel-lifecycle-manager.js';
 export interface ChannelCallbacksOptions {
   /** Whether to send a 'done' signal on task completion (REST sync mode) */
   sendDoneSignal?: boolean;
+  /**
+   * Callback to retrieve chat history for a chat.
+   * Used by Pilot for session restoration and first-message context (Issue #1863).
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -121,6 +126,9 @@ export function createChannelCallbacksFactory(
         async (chatId: string) => {
           logger.info({ chatId }, 'Task completed');
         },
+    ...(options?.getChatHistory && {
+      getChatHistory: options.getChatHistory,
+    }),
   });
 }
 

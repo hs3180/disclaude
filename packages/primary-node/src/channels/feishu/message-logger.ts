@@ -225,31 +225,44 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   * Aggregates log files across multiple days (up to historyDays config),
+   * returning history in chronological order (oldest first).
+   *
+   * Issue #1863: Changed from single-day to multi-day aggregation.
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
-      // Find the most recent log file for this chat
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Filter to date directories
+      // Filter to date directories, sorted ascending (oldest first)
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => a.name.localeCompare(b.name));
 
-      for (const dir of dateDirs) {
+      // Take the most recent N directories based on historyDays config
+      const maxDays = Config.getSessionRestoreConfig().historyDays;
+      const recentDirs = dateDirs.slice(-maxDays);
+
+      // Read and collect content from each day
+      const parts: string[] = [];
+      for (const dir of recentDirs) {
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            parts.push(content.trim());
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this date, skip
         }
       }
 
-      return undefined;
+      if (parts.length === 0) {
+        return undefined;
+      }
+
+      // Join with separator in chronological order
+      return parts.join('\n\n---\n\n');
     } catch {
       return undefined;
     }
