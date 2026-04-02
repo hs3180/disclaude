@@ -123,7 +123,6 @@ Agent implementations using the Template Method pattern:
 
 - **`evaluator.ts`** - Task completion evaluation
 - **`executor.ts`** - Task execution with progress reporting
-- **`reporter.ts`** - Progress reporting to user
 
 #### `src/task/` - Task Orchestration
 
