@@ -102,3 +102,15 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for start_discussion tool.
+ * Issue #631: Offline discussion - Agent leaves messages without blocking work.
+ */
+export interface StartDiscussionResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  name?: string;
+  error?: string;
+}
+
