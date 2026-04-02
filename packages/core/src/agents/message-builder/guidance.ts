@@ -213,3 +213,56 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the research mode guidance section.
+ *
+ * Issue #1710: Provides instructions for the agent to maintain RESEARCH.md
+ * during research sessions. This guidance is injected when the agent is
+ * operating in research mode.
+ *
+ * @param researchStateContent - Optional current content of RESEARCH.md
+ *   for the agent to review existing state
+ * @returns Formatted research mode guidance section
+ */
+export function buildResearchModeGuidance(researchStateContent?: string): string {
+  const stateSection = researchStateContent
+    ? `\n### Current Research State (RESEARCH.md)\n\n${researchStateContent}\n`
+    : '';
+
+  return `
+
+---
+
+## Research Mode
+
+You are currently in **Research Mode**. A RESEARCH.md file tracks your research progress in the working directory.
+
+### RESEARCH.md Maintenance Rules
+
+You **MUST** update RESEARCH.md after each significant interaction:
+
+1. **New finding**: Add to "已收集的信息" section with source and key content
+2. **New question**: Add to "待调查的问题" as an unchecked item \`- [ ] question\`
+3. **Resolved question**: Change \`- [ ]\` to \`- [x]\` in "待调查的问题"
+4. **New resource**: Add to "相关资源" as a markdown link \`- [name](url)\`
+
+### Section Guidelines
+
+| Section | When to Update | Format |
+|---------|---------------|--------|
+| 研究目标 | Research start | Checklist \`- [ ] goal\` |
+| 已收集的信息 | After each finding | Subsection with source + content |
+| 待调查的问题 | New questions arise | Checklist \`- [ ] question\` |
+| 研究结论 | Research complete | Multi-line summary |
+| 相关资源 | Found useful resources | Markdown link list |
+
+### Important
+
+- **Always** read RESEARCH.md at the start of each research interaction
+- **Always** update RESEARCH.md before ending your response
+- Keep findings concise and factual — cite sources when available
+- Mark questions as resolved promptly when you find answers
+- When research is complete, write a clear conclusion summarizing all findings
+${stateSection}`;
+}

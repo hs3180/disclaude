@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,47 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildResearchModeGuidance', () => {
+  it('should include research mode header and maintenance rules', () => {
+    const result = buildResearchModeGuidance();
+    expect(result).toContain('Research Mode');
+    expect(result).toContain('RESEARCH.md');
+    expect(result).toContain('Maintenance Rules');
+  });
+
+  it('should include section guidelines table', () => {
+    const result = buildResearchModeGuidance();
+    expect(result).toContain('已收集的信息');
+    expect(result).toContain('待调查的问题');
+    expect(result).toContain('研究结论');
+    expect(result).toContain('相关资源');
+  });
+
+  it('should include instructions to read and update RESEARCH.md', () => {
+    const result = buildResearchModeGuidance();
+    expect(result).toContain('read RESEARCH.md');
+    expect(result).toContain('update RESEARCH.md');
+  });
+
+  it('should not include current state section when no content provided', () => {
+    const result = buildResearchModeGuidance();
+    expect(result).not.toContain('Current Research State');
+  });
+
+  it('should include current state section when content is provided', () => {
+    const stateContent = '# AI Safety\n## 已收集的信息\n### Finding 1\n- Content here';
+    const result = buildResearchModeGuidance(stateContent);
+    expect(result).toContain('Current Research State (RESEARCH.md)');
+    expect(result).toContain(stateContent);
+  });
+
+  it('should handle empty string state content same as undefined', () => {
+    const resultEmpty = buildResearchModeGuidance('');
+    const resultUndefined = buildResearchModeGuidance(undefined);
+    expect(resultEmpty).not.toContain('Current Research State');
+    expect(resultEmpty).toBe(resultUndefined);
   });
 });
