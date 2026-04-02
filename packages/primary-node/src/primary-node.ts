@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1315: SOUL.md personality injection
+  SoulLoader,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -467,13 +469,31 @@ export class PrimaryNode extends EventEmitter {
       },
     };
 
+    // Issue #1315: Load global SOUL.md at startup
+    const soulConfig = Config.getSoulConfig();
+    let globalSoulAppend: string | undefined;
+    if (soulConfig.path) {
+      const soulLoader = new SoulLoader(soulConfig.path);
+      const soulResult = await soulLoader.load();
+      if (soulResult) {
+        globalSoulAppend = soulResult.content;
+        logger.info({ path: soulResult.resolvedPath, sizeBytes: soulResult.sizeBytes }, 'Global SOUL.md loaded');
+      }
+    }
+
     // Issue #1382: Use unified createScheduleExecutor
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass global soul content as systemPromptAppend; per-task soul overrides it
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId: string, callbacks: SchedulerCallbacks, model?: string, systemPromptAppend?: string) => {
+        // Per-task soul (systemPromptAppend from executor) overrides global soul
+        const effectiveSoul = systemPromptAppend ?? globalSoulAppend;
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), {
+          ...(model ? { model } : {}),
+          ...(effectiveSoul ? { systemPromptAppend: effectiveSoul } : {}),
+        });
       },
       callbacks: schedulerCallbacks,
     });

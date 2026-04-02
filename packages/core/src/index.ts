@@ -309,3 +309,10 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md module - Agent personality/behavior definition (Issue #1315)
+export {
+  SoulLoader,
+  SOUL_MAX_SIZE_BYTES,
+  type SoulLoadResult,
+} from './soul/index.js';

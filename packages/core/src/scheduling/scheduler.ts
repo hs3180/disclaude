@@ -57,8 +57,15 @@ export interface SchedulerCallbacks {
  * @param prompt - The task prompt to execute
  * @param userId - Optional user ID for context
  * @param model - Optional model override for this task (Issue #1338)
+ * @param soulPath - Optional path to per-task SOUL.md file (Issue #1315)
  */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string) => Promise<void>;
+export type TaskExecutor = (
+  chatId: string,
+  prompt: string,
+  userId?: string,
+  model?: string,
+  soulPath?: string,
+) => Promise<void>;
 
 /**
  * Scheduler options.
@@ -297,7 +304,8 @@ ${task.prompt}`;
 
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      // Issue #1315: Pass soul path for per-task personality
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.soul);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

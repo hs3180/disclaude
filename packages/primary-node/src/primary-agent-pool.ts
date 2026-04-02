@@ -31,6 +31,13 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Global SOUL.md content to inject into all agents' system prompts.
+   * Loaded at startup from the configured soul.path in disclaude.config.yaml.
+   *
+   * Issue #1315: SOUL.md personality injection.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -59,6 +66,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        systemPromptAppend: this.options.systemPromptAppend,
       });
       this.agents.set(chatId, agent);
     }
