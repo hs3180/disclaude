@@ -155,6 +155,16 @@ describe('WiredChannelDescriptors', () => {
       expect(callbacks.onDone).toBeDefined();
     });
 
+    it('should wire getChatHistory callback in Feishu callbacks (Issue #1863)', () => {
+      const mockChannel = createMockChannel('feishu');
+      const context = createMockContext();
+      const callbacksFactory = FEISHU_WIRED_DESCRIPTOR.createCallbacks(mockChannel, context);
+      const callbacks = callbacksFactory('test-chat');
+
+      expect(callbacks.getChatHistory).toBeDefined();
+      expect(typeof callbacks.getChatHistory).toBe('function');
+    });
+
     it('should create message handler with attachment extraction', () => {
       const mockChannel = createMockChannel('feishu');
       const context = createMockContext();

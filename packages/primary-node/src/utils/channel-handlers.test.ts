@@ -214,6 +214,39 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  it('should include getChatHistory in callbacks when provided', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue('history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      sendDoneSignal: false,
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    expect(typeof callbacks.getChatHistory).toBe('function');
+
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetChatHistory).toHaveBeenCalledWith('chat-001');
+    expect(result).toBe('history content');
+  });
+
+  it('should NOT include getChatHistory in callbacks when not provided', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      sendDoneSignal: false,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('getChatHistory should propagate errors from the callback', async () => {
+    const mockGetChatHistory = vi.fn().mockRejectedValue(new Error('DB connection failed'));
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+
+    await expect(callbacks.getChatHistory!('chat-001')).rejects.toThrow('DB connection failed');
+  });
 });
 
 // ============================================================================
