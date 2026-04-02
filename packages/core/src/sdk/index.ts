@@ -15,11 +15,18 @@
  * ├── factory.ts               # Provider 工厂
  * └── providers/
  *     ├── index.ts
- *     └── claude/              # Claude SDK 实现
+ *     ├── claude/              # Claude SDK 实现
+ *     │   ├── index.ts
+ *     │   ├── provider.ts
+ *     │   ├── message-adapter.ts
+ *     │   └── options-adapter.ts
+ *     └── acp/                 # ACP 协议实现
  *         ├── index.ts
  *         ├── provider.ts
+ *         ├── connection.ts
  *         ├── message-adapter.ts
- *         └── options-adapter.ts
+ *         ├── options-adapter.ts
+ *         └── types.ts
  * ```
  *
  * ## 使用示例
@@ -115,6 +122,7 @@ export type {
 // ============================================================================
 
 export { ClaudeSDKProvider } from './providers/index.js';
+export { ACPProvider } from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出
