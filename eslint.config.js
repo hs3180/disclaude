@@ -24,13 +24,41 @@ export default [
       'workspace/**',
       '*.config.js',
       '*.config.ts',
+      '*.config.*.ts',
       'dedupe-records/**',
       'logs/**',
       'long-tasks/**',
     ],
   },
   {
+    // Integration test files: non-project-aware parsing
+    // These files import from dist/ packages and are not part of the main tsconfig project
+    files: ['tests/integration/feishu/**/*.ts'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      parser: tsParser,
+    },
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+    },
+    rules: {
+      'no-console': 'off',
+      'prefer-const': 'error',
+      'no-var': 'error',
+      'semi': ['error', 'always'],
+      'quotes': ['error', 'single', { avoidEscape: true }],
+      'no-duplicate-imports': 'error',
+      'prefer-arrow-callback': 'error',
+      'prefer-template': 'error',
+      'no-throw-literal': 'error',
+      'curly': ['error', 'all'],
+      'eqeqeq': ['error', 'always'],
+    },
+  },
+  {
     files: ['**/*.ts', '**/*.tsx'],
+    ignores: ['tests/integration/feishu/**'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
