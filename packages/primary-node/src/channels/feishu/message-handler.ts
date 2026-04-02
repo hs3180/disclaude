@@ -876,6 +876,50 @@ export class MessageHandler {
         return;
       }
 
+      // Issue #1868: Fallback /passive handling when controlHandler is unavailable.
+      // Without this, /passive falls through to the LLM agent which hallucinates
+      // a confirmation message without actually changing the passive mode state.
+      if (cmd === 'passive') {
+        const [rawArg] = args;
+        if (rawArg === 'on') {
+          this.passiveModeManager.setPassiveModeDisabled(chat_id, false);
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '🔕 被动模式已开启（仅在@我时响应）',
+          });
+          return;
+        }
+        if (rawArg === 'off') {
+          this.passiveModeManager.setPassiveModeDisabled(chat_id, true);
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '🔔 被动模式已关闭（响应所有消息）',
+          });
+          return;
+        }
+        if (rawArg !== undefined) {
+          await this.callbacks.sendMessage({
+            chatId: chat_id,
+            type: 'text',
+            text: '⚠️ 无效参数。用法: `/passive [on|off]`',
+          });
+          return;
+        }
+        // Toggle when no args provided
+        const currentlyDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
+        this.passiveModeManager.setPassiveModeDisabled(chat_id, !currentlyDisabled);
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: currentlyDisabled
+            ? '🔕 被动模式已开启（仅在@我时响应）'
+            : '🔔 被动模式已关闭（响应所有消息）',
+        });
+        return;
+      }
+
     }
 
     // Get quoted/replied message context if this is a reply
