@@ -57,10 +57,6 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
-  /** Create a group chat (optional platform capability) */
-  createChat?: (name?: string, description?: string, memberIds?: string[]) => Promise<{ chatId: string; name: string }>;
-  /** Dissolve a group chat (optional platform capability) */
-  dissolveChat?: (chatId: string) => Promise<{ success: boolean }>;
   /** Register a temp chat for lifecycle tracking (Issue #1703) */
   registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
@@ -216,61 +212,6 @@ export function createInteractiveMessageHandler(
             }
 
             return { id: request.id, success: true, payload: { success: true, ...result } };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { id: request.id, success: false, error: errorMessage };
-          }
-        }
-
-        // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
-        case 'createChat': {
-          const handlers = channelHandlersContainer?.handlers;
-          if (!handlers) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'Channel API handlers not available',
-            };
-          }
-          if (!handlers.createChat) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'createChat not supported by this channel',
-            };
-          }
-          const { name, description, memberIds } =
-            request.payload as IpcRequestPayloads['createChat'];
-          try {
-            const result = await handlers.createChat(name, description, memberIds);
-            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId, name: result.name } };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { id: request.id, success: false, error: errorMessage };
-          }
-        }
-
-        case 'dissolveChat': {
-          const handlers = channelHandlersContainer?.handlers;
-          if (!handlers) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'Channel API handlers not available',
-            };
-          }
-          if (!handlers.dissolveChat) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'dissolveChat not supported by this channel',
-            };
-          }
-          const { chatId } =
-            request.payload as IpcRequestPayloads['dissolveChat'];
-          try {
-            const result = await handlers.dissolveChat(chatId);
-            return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

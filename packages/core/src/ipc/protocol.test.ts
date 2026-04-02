@@ -117,34 +117,6 @@ describe('IPC Protocol', () => {
       expect(sendInteractive.payload.options[0].type).toBe('primary');
       expect(sendInteractive.payload.actionPrompts?.confirm).toBe('User confirmed');
     });
-
-    it('should type-check group management requests (Issue #1546)', () => {
-      const createChat: IpcRequest<'createChat'> = {
-        type: 'createChat',
-        id: 'req-10',
-        payload: {
-          name: 'PR Review Group',
-          description: 'Review discussion',
-          memberIds: ['ou_xxx', 'ou_yyy'],
-        },
-      };
-      expect(createChat.payload.name).toBe('PR Review Group');
-      expect(createChat.payload.memberIds).toHaveLength(2);
-
-      const createChatMinimal: IpcRequest<'createChat'> = {
-        type: 'createChat',
-        id: 'req-11',
-        payload: {},
-      };
-      expect(createChatMinimal.payload.name).toBeUndefined();
-
-      const dissolveChat: IpcRequest<'dissolveChat'> = {
-        type: 'dissolveChat',
-        id: 'req-12',
-        payload: { chatId: 'oc_xxx' },
-      };
-      expect(dissolveChat.payload.chatId).toBe('oc_xxx');
-    });
   });
 
   describe('IpcResponse types', () => {
@@ -196,23 +168,6 @@ describe('IPC Protocol', () => {
       };
       expect(interactiveResponse.payload?.success).toBe(true);
       expect(interactiveResponse.payload?.messageId).toBe('om_interactive');
-    });
-
-    it('should type-check group management responses (Issue #1546)', () => {
-      const createResponse: IpcResponse<'createChat'> = {
-        id: 'req-10',
-        success: true,
-        payload: { success: true, chatId: 'oc_new', name: 'PR Review' },
-      };
-      expect(createResponse.payload?.chatId).toBe('oc_new');
-      expect(createResponse.payload?.name).toBe('PR Review');
-
-      const dissolveResponse: IpcResponse<'dissolveChat'> = {
-        id: 'req-12',
-        success: true,
-        payload: { success: true },
-      };
-      expect(dissolveResponse.payload?.success).toBe(true);
     });
   });
 

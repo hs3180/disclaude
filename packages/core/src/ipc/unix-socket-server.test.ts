@@ -5,7 +5,7 @@
  *
  * Tests cover:
  * - createInteractiveMessageHandler: all request types (ping, sendMessage, sendCard,
- *   uploadFile, sendInteractive, createChat, dissolveChat), error paths, missing handlers
+ *   uploadFile, sendInteractive), error paths, missing handlers
  * - UnixSocketIpcServer: start/stop lifecycle, connection handling, message routing
  */
 
@@ -41,8 +41,6 @@ function createMockHandlersContainer(overrides?: Partial<ChannelApiHandlers>): C
         messageId: 'interactive_msg_1',
         actionPrompts: { opt1: 'Option 1 selected' },
       }),
-      createChat: vi.fn().mockResolvedValue({ chatId: 'oc_new_group', name: 'Test Group' }),
-      dissolveChat: vi.fn().mockResolvedValue({ success: true }),
       ...overrides,
     },
   };
@@ -378,102 +376,6 @@ describe('createInteractiveMessageHandler', () => {
 
       expect(response.success).toBe(false);
       expect(response.error).toBe('Card build failed');
-    });
-  });
-
-  // ----- createChat -----
-  describe('createChat request', () => {
-    it('should call handler.createChat with correct args', async () => {
-      const request = createRequest('createChat', 'req-17', {
-        name: 'Test Group',
-        description: 'Test description',
-        memberIds: ['ou_a', 'ou_b'],
-      });
-      const response = await handler(request);
-
-      expect(container.handlers!.createChat).toHaveBeenCalledWith('Test Group', 'Test description', ['ou_a', 'ou_b']);
-      expect(response.success).toBe(true);
-      expect(response.payload).toEqual({
-        success: true,
-        chatId: 'oc_new_group',
-        name: 'Test Group',
-      });
-    });
-
-    it('should return error when createChat not supported', async () => {
-      const noCreateContainer: ChannelHandlersContainer = {
-        handlers: {
-          sendMessage: vi.fn().mockResolvedValue(undefined),
-          sendCard: vi.fn().mockResolvedValue(undefined),
-          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
-          sendInteractive: vi.fn().mockResolvedValue({}),
-          // createChat intentionally omitted
-        },
-      };
-      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noCreateContainer);
-      const request = createRequest('createChat', 'req-18', {
-        name: 'Test',
-      });
-      const response = await errorHandler(request);
-
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('createChat not supported');
-    });
-
-    it('should return error when handlers not available', async () => {
-      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
-        handlers: undefined,
-      });
-      const request = createRequest('createChat', 'req-19', { name: 'Test' });
-      const response = await handlerNoHandlers(request);
-
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('Channel API handlers not available');
-    });
-  });
-
-  // ----- dissolveChat -----
-  describe('dissolveChat request', () => {
-    it('should call handler.dissolveChat with correct args', async () => {
-      const request = createRequest('dissolveChat', 'req-20', {
-        chatId: 'oc_to_dissolve',
-      });
-      const response = await handler(request);
-
-      expect(container.handlers!.dissolveChat).toHaveBeenCalledWith('oc_to_dissolve');
-      expect(response.success).toBe(true);
-      expect(response.payload).toEqual({ success: true });
-    });
-
-    it('should return error when dissolveChat not supported', async () => {
-      const noDissolveContainer: ChannelHandlersContainer = {
-        handlers: {
-          sendMessage: vi.fn().mockResolvedValue(undefined),
-          sendCard: vi.fn().mockResolvedValue(undefined),
-          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
-          sendInteractive: vi.fn().mockResolvedValue({}),
-          // dissolveChat intentionally omitted
-        },
-      };
-      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noDissolveContainer);
-      const request = createRequest('dissolveChat', 'req-21', {
-        chatId: 'oc_to_dissolve',
-      });
-      const response = await errorHandler(request);
-
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('dissolveChat not supported');
-    });
-
-    it('should return error when handlers not available', async () => {
-      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
-        handlers: undefined,
-      });
-      const request = createRequest('dissolveChat', 'req-22', { chatId: 'oc_xxx' });
-      const response = await handlerNoHandlers(request);
-
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('Channel API handlers not available');
     });
   });
 
