@@ -14,6 +14,7 @@ export type {
   CreateChatResult,
   DissolveChatResult,
   RegisterTempChatResult,
+  UploadImageResult,
 } from './types.js';
 
 // Shared utilities
@@ -33,6 +34,9 @@ export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
+
+// Upload Image (Issue #1919)
+export { upload_image } from './upload-image.js';
 
 // Group management (Issue #1546)
 export { create_chat } from './create-chat.js';

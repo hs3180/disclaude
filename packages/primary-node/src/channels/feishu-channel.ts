@@ -394,6 +394,58 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return { success: true };
   }
 
+  /**
+   * Upload an image to Feishu and return its image_key.
+   * Issue #1919: Used by upload_image MCP tool for card embedding.
+   *
+   * Unlike sendMessage which sends the image as a standalone message,
+   * this method only uploads the image and returns the key so it can
+   * be embedded in card elements.
+   *
+   * @param _chatId - Target chat ID (accepted for API consistency, not used for upload)
+   * @param filePath - Path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   */
+  async uploadImage(_chatId: string, filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const { size: fileSize } = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Validate image extension
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    // Validate file size (10MB limit per Feishu API)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ filePath, fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully for card embedding');
+
+    return { imageKey, fileName, fileSize };
+  }
+
   protected async doSendMessage(message: OutgoingMessage): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized');
@@ -561,6 +613,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }

@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   create_chat,
   dissolve_chat,
   register_temp_chat,
@@ -29,6 +30,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { create_chat } from './tools/create-chat.js';
 export { dissolve_chat } from './tools/dissolve-chat.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
@@ -121,6 +123,15 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return an image_key for embedding in card messages.',
+    parameters: {
+      type: 'object',
+      properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
+      required: ['filePath', 'chatId'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -318,6 +329,48 @@ For display-only cards, use send_card instead.
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Image upload for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image and return an image_key for embedding in card messages.
+
+Unlike send_file (which sends the image as a standalone message), this tool
+only uploads the image and returns its image_key. Use the returned key in
+card img elements to embed images directly within cards.
+
+## Parameters
+- **filePath**: Path to the image file (supports: jpg, jpeg, png, webp, gif, tiff, bmp, ico; max 10MB)
+- **chatId**: Target chat ID (for validation)
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png", "chatId": "oc_xxx"}
+\`\`\`
+
+## Usage Flow
+1. Call upload_image to get an image_key
+2. Use the image_key in send_card's img element:
+   \`{ "tag": "img", "img_key": "img_v3_xxx" }\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file'),
+      chatId: z.string().describe('Target chat ID (for validation)'),
+    }),
+    handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
+      if (!filePath || typeof filePath !== 'string') {
+        return toolSuccess('⚠️ Invalid filePath: must be a non-empty string');
+      }
+      if (!chatId || typeof chatId !== 'string') {
+        return toolSuccess('⚠️ Invalid chatId: must be a non-empty string');
+      }
+
+      try {
+        const result = await upload_image({ filePath, chatId });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

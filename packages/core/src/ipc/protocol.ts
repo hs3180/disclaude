@@ -19,6 +19,8 @@ export type IpcRequestType =
   | 'sendMessage'
   | 'sendCard'
   | 'uploadFile'
+  // Image upload for card embedding (Issue #1919)
+  | 'uploadImage'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
   // Group management (Issue #1546: create_chat / dissolve_chat MCP tools)
@@ -50,6 +52,11 @@ export interface IpcRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+  };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    chatId: string;
+    filePath: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
@@ -106,6 +113,14 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
+  };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {

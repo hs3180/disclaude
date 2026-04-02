@@ -37,6 +37,11 @@ function createMockHandlersContainer(overrides?: Partial<ChannelApiHandlers>): C
         fileName: 'test.pdf',
         fileSize: 1024,
       }),
+      uploadImage: vi.fn().mockResolvedValue({
+        imageKey: 'img_v3_chart123',
+        fileName: 'chart.png',
+        fileSize: 2048,
+      }),
       sendInteractive: vi.fn().mockResolvedValue({
         messageId: 'interactive_msg_1',
         actionPrompts: { opt1: 'Option 1 selected' },
@@ -272,6 +277,76 @@ describe('createInteractiveMessageHandler', () => {
 
       expect(response.success).toBe(false);
       expect(response.error).toBe('File too large');
+    });
+  });
+
+  // ----- uploadImage (Issue #1919) -----
+  describe('uploadImage request', () => {
+    it('should call handler.uploadImage and return image_key', async () => {
+      const request = createRequest('uploadImage', 'req-img-1', {
+        chatId: 'chat-1',
+        filePath: '/path/to/chart.png',
+      });
+      const response = await handler(request);
+
+      expect(container.handlers!.uploadImage).toHaveBeenCalledWith('chat-1', '/path/to/chart.png');
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({
+        success: true,
+        imageKey: 'img_v3_chart123',
+        fileName: 'chart.png',
+        fileSize: 2048,
+      });
+    });
+
+    it('should return error when uploadImage not supported', async () => {
+      const noUploadContainer: ChannelHandlersContainer = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({}),
+          // uploadImage intentionally omitted
+        },
+      };
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, noUploadContainer);
+      const request = createRequest('uploadImage', 'req-img-2', {
+        chatId: 'chat-1',
+        filePath: '/path/to/chart.png',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('uploadImage not supported');
+    });
+
+    it('should return error when uploadImage throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockRejectedValue(new Error('Image too large')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('uploadImage', 'req-img-3', {
+        chatId: 'chat-1',
+        filePath: '/path/to/chart.png',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Image too large');
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('uploadImage', 'req-img-4', {
+        chatId: 'chat-1',
+        filePath: '/path/to/chart.png',
+      });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
     });
   });
 
