@@ -130,36 +130,64 @@ fi
 Or when an agent/schedule needs to initiate a user interaction:
 
 ```bash
-# Create chat directory if not exists
-mkdir -p workspace/chats
+# ⚠️ Step 1: Validate chat ID (MANDATORY — prevents path traversal)
+# Apply Chat ID Validation BEFORE any file operations
+id="{id}"
+if ! echo "$id" | grep -qE '^[a-zA-Z0-9._-]+$'; then
+  echo "ERROR: Invalid chat ID '$id' — only [a-zA-Z0-9._-] allowed"
+  exit 1
+fi
+chat_dir=$(cd workspace/chats && pwd)
+chat_file=$(realpath -m "${chat_dir}/${id}.json" 2>/dev/null)
+if [[ "$chat_file" != "${chat_dir}/"* ]]; then
+  echo "ERROR: Path traversal detected for chat ID '$id'"
+  exit 1
+fi
 
-# Write chat file
-cat > workspace/chats/{id}.json << 'EOF'
+# ⚠️ Step 2: Check uniqueness (TOCTOU-safe with flock)
+mkdir -p workspace/chats
+exec 9>"${chat_file}.lock"
+if ! flock -n 9; then
+  echo "ERROR: Chat $id is being created by another process"
+  exit 1
+fi
+if [ -f "$chat_file" ]; then
+  echo "ERROR: Chat $id already exists"
+  exec 9>&-
+  exit 1
+fi
+
+# Step 3: Write chat file (atomic write via mktemp + mv)
+tmpfile=$(mktemp "${chat_file}.XXXXXX")
+cat > "$tmpfile" << EOF
 {
-  "id": "{id}",
+  "id": "$id",
   "status": "pending",
   "chatId": null,
-  "createdAt": "2026-03-24T10:00:00Z",
+  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "activatedAt": null,
-  "expiresAt": "2026-03-25T10:00:00Z",
+  "expiresAt": "{expiresAt}",
   "createGroup": {
-    "name": "Chat Title",
-    "members": ["ou_xxx"]
+    "name": "{group_name}",
+    "members": [{members_json}]
   },
-  "context": {},
+  "context": {context_json},
   "response": null,
   "activationAttempts": 0,
   "lastActivationError": null,
   "failedAt": null
 }
 EOF
+mv "$tmpfile" "$chat_file"
+exec 9>&-
 ```
 
 **Validation**:
-- `id` must be unique (check existing files first)
-- `id` must pass the [Chat ID Validation](#-chat-id-validation-all-operations) check
-- `members` must be a non-empty array of valid open IDs
+- `id` must pass the [Chat ID Validation](#-chat-id-validation-all-operations) check **before any file I/O** (see Step 1 above)
+- `id` must be unique (checked under flock to prevent TOCTOU race)
+- `members` must be a non-empty array of valid open IDs (`ou_xxxxx` format)
 - `expiresAt` must be after `createdAt`
+- File written atomically via `mktemp` + `mv` (prevents partial writes on crash)
 
 ### 2. Query Chat
 
@@ -168,7 +196,13 @@ EOF
 Apply [Chat ID Validation](#-chat-id-validation-all-operations), then:
 
 ```bash
+# Acquire shared lock to prevent reading during concurrent writes
+exec 9>"${chat_file}.lock"
+flock -s 9  # shared lock — multiple readers OK, blocks writers
+
 cat "$chat_file"
+
+exec 9>&-
 ```
 
 Display chat status in readable format:
@@ -236,6 +270,13 @@ Display in table format:
 5. Update the chat:
 
 ```bash
+# Acquire exclusive lock to prevent concurrent writes (Schedule may be updating this file)
+exec 9>"${chat_file}.lock"
+if ! flock -n 9; then
+  echo "ERROR: Chat $id is being modified by another process"
+  exit 1
+fi
+
 # Update chat with response using jq (atomic write)
 tmpfile=$(mktemp "${chat_file}.XXXXXX")
 jq --arg msg "{user_message}" \
@@ -247,6 +288,8 @@ jq --arg msg "{user_message}" \
        "repliedAt": $ts
      }' "$chat_file" > "$tmpfile" \
   && mv "$tmpfile" "$chat_file"
+
+exec 9>&-
 ```
 
 **Note**: After updating the chat, the **consumer** (PR Scanner, offline questioner, etc.) is responsible for polling the chat file and taking downstream action. This skill does NOT execute callbacks.
