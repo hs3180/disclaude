@@ -188,6 +188,66 @@ When you need to present structured data (status, metrics, analysis results, etc
  *
  * @returns Formatted location awareness guidance section
  */
+/**
+ * Build the project context guidance section.
+ *
+ * Issue #1506: Instructs the agent to check for CLAUDE.md in the project
+ * directory when handling development tasks. Rather than injecting CLAUDE.md
+ * content at startup (rejected in PR #1513), this provides behavioral guidance
+ * so the agent dynamically reads project-specific instructions using its tools.
+ *
+ * Key design decisions:
+ * - CLAUDE.md source: project's own directory (not workspace root)
+ * - Loading timing: after navigating to the project (not at agent startup)
+ * - Loading method: agent uses Read tool on demand (not prompt injection)
+ *
+ * @returns Formatted project context guidance section
+ */
+export function buildProjectContextGuidance(): string {
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+**IMPORTANT: When working on code in a project directory, check for project-specific instructions.**
+
+When you perform development tasks (code changes, bug fixes, feature implementations, refactoring, etc.) in a specific project directory:
+
+1. **Check for CLAUDE.md**: After navigating to the project directory (via \`cd\` or when the task specifies a project path), check if a \`CLAUDE.md\` file exists in that directory.
+
+2. **Read and follow**: If \`CLAUDE.md\` exists, use the **Read** tool to read it. Follow the project conventions, coding standards, architecture guidelines, and development constraints defined in that file.
+
+3. **Re-check on directory change**: If you change to a different project directory during the task, re-check for \`CLAUDE.md\` in the new directory — each project may have its own instructions.
+
+4. **Graceful degradation**: If no \`CLAUDE.md\` is found, proceed with general best practices. Do not halt or report an error.
+
+### Examples
+
+**✅ Correct Approach:**
+> "I see this project has a CLAUDE.md. Let me read it first to understand the project's coding conventions and architecture before making changes."
+
+**❌ Wrong Approach:**
+> Proceeding with changes without checking if the project has specific guidelines in CLAUDE.md.
+
+### When This Applies
+
+- Cloning and working on a repository
+- Modifying code in any project directory
+- Running tests or builds in a project
+- Creating PRs or commits for a project
+- Any task that involves reading or writing project source code`;
+}
+
+/**
+ * Build the location awareness guidance section.
+ *
+ * Issue #1198: The agent runs on a server that is physically separate
+ * from the user's terminal. Therefore, the agent should NOT attempt to
+ * infer the user's physical location through system information.
+ *
+ * @returns Formatted location awareness guidance section
+ */
 export function buildLocationAwarenessGuidance(): string {
   return `
 

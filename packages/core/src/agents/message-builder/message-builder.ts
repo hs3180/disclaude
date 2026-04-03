@@ -34,6 +34,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildProjectContextGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -47,6 +48,7 @@ import {
  * - Chat history context
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
+ * - Project context guidance (Issue #1506)
  * - Location awareness guidance (Issue #1198)
  *
  * Channel-specific content is injected via the options callbacks.
@@ -136,6 +138,7 @@ export class MessageBuilder {
     // Core guidance sections (framework-agnostic)
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
+    const projectContextGuidance = buildProjectContextGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -163,6 +166,7 @@ export class MessageBuilder {
 
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
+    sections.push(projectContextGuidance);
     sections.push(locationAwarenessGuidance);
 
     const preamble = sections.join('\n');

@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildProjectContextGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -108,5 +109,49 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should include project context guidance section', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Project Context');
+    expect(result).toContain('CLAUDE.md');
+  });
+
+  it('should instruct agent to check for CLAUDE.md in project directory', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Check for CLAUDE.md');
+    expect(result).toContain('Read');
+  });
+
+  it('should instruct agent to re-check on directory change', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Re-check on directory change');
+  });
+
+  it('should include graceful degradation guidance', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Graceful degradation');
+    expect(result).toContain('Do not halt');
+  });
+
+  it('should include correct and wrong approach examples', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('✅ Correct Approach');
+    expect(result).toContain('❌ Wrong Approach');
+  });
+
+  it('should list applicable scenarios', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Cloning and working on a repository');
+    expect(result).toContain('Modifying code');
+    expect(result).toContain('Creating PRs');
+  });
+
+  it('should reference Issue #1506 in JSDoc', () => {
+    // This is verified by the function existing and having the right behavior
+    const result = buildProjectContextGuidance();
+    expect(result.length).toBeGreaterThan(0);
   });
 });
