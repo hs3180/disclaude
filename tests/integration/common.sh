@@ -56,6 +56,7 @@ NC='\033[0m' # No Color
 # =============================================================================
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # =============================================================================
 # Logging Functions
@@ -77,6 +78,7 @@ log_fail() {
 
 log_skip() {
     echo -e "${YELLOW}[SKIP]${NC} $1"
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
 }
 
 log_warn() {
@@ -412,6 +414,46 @@ make_sync_request() {
     fi
 
     make_request "POST" "/api/chat/sync" "$body"
+}
+
+# =============================================================================
+# Environment Prerequisite Checks
+# =============================================================================
+
+# Check if Feishu credentials are configured for platform-dependent tests.
+# Checks both environment variables and config file(s).
+# Useful for skipping tests that require real Feishu platform access
+# (e.g., send_file, send_text) in CI environments without credentials.
+#
+# Returns: 0 if non-placeholder credentials are available, 1 if not
+check_feishu_env() {
+    # Check environment variables first (highest priority)
+    if [ -n "$FEISHU_APP_ID" ] && [ "$FEISHU_APP_ID" != "your_feishu_app_id_here" ] && \
+       [ -n "$FEISHU_APP_SECRET" ] && [ "$FEISHU_APP_SECRET" != "your_feishu_app_secret_here" ]; then
+        return 0
+    fi
+
+    # Check config files for non-placeholder credentials
+    local config_files=()
+    if [ -n "$CONFIG_PATH" ] && [ -f "$CONFIG_PATH" ]; then
+        config_files+=("$CONFIG_PATH")
+    fi
+    if [ -f "$PROJECT_ROOT/disclaude.config.yaml" ]; then
+        config_files+=("$PROJECT_ROOT/disclaude.config.yaml")
+    fi
+
+    local cfg
+    for cfg in "${config_files[@]}"; do
+        # Extract appId value from YAML config (handles "appId: value" format)
+        local app_id
+        app_id=$(grep -E '^\s+appId:' "$cfg" 2>/dev/null | head -1 \
+            | sed 's/.*appId:[[:space:]]*//' | tr -d '"' | tr -d "'" | xargs 2>/dev/null)
+        if [ -n "$app_id" ] && [ "$app_id" != "your_feishu_app_id_here" ]; then
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 # =============================================================================
@@ -906,11 +948,18 @@ print_summary() {
     echo "=========================================="
 
     if [ $TESTS_FAILED -eq 0 ]; then
-        log_info "All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
+        if [ $TESTS_SKIPPED -gt 0 ]; then
+            log_info "All tests passed! ($TESTS_PASSED passed, $TESTS_SKIPPED skipped)"
+        else
+            log_info "All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
+        fi
         echo "=========================================="
         exit 0
     else
         log_error "$TESTS_FAILED test(s) failed"
+        if [ $TESTS_SKIPPED -gt 0 ]; then
+            log_info "$TESTS_SKIPPED test(s) skipped"
+        fi
         echo "=========================================="
         show_server_logs
         exit 1

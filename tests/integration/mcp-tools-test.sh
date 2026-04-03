@@ -54,8 +54,16 @@ cleanup_test_file() {
 test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
+    # Skip if Feishu environment is not configured.
+    # send_text also requires credentials/IPC; without them the agent may
+    # enter diagnostic mode causing timeout (same pattern as send_file, #1634).
+    if ! check_feishu_env; then
+        log_skip "send_text test skipped: Feishu credentials not configured (set FEISHU_APP_ID/FEISHU_APP_SECRET or configure in config file)"
+        return 0
+    fi
+
     local chat_id="test-mcp-send-text-$$"
-    assert_sync_chat_ok "请尝试使用 send_text 工具发送消息 'Hello from MCP test' 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || return 1
+    assert_sync_chat_ok "请尝试使用 send_text 工具发送消息 'Hello from MCP test' 到当前聊天。如果工具返回错误，请直接告诉我错误信息，不要尝试诊断或排查问题。" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送"; then
         log_pass "Agent acknowledged tool usage"
@@ -67,10 +75,18 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    # Issue #1634: Skip if Feishu environment is not configured.
+    # Without credentials/IPC, send_file returns an error and the agent
+    # enters diagnostic mode (ls, diagnostics, etc.), causing timeout.
+    if ! check_feishu_env; then
+        log_skip "send_file test skipped: Feishu credentials not configured (set FEISHU_APP_ID/FEISHU_APP_SECRET or configure in config file)"
+        return 0
+    fi
+
     create_test_file
 
     local chat_id="test-mcp-send-file-$$"
-    assert_sync_chat_ok "请尝试使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || {
+    assert_sync_chat_ok "请使用 send_file 工具发送文件 $TEST_FILE_PATH 到当前聊天。如果工具返回错误，请直接告诉我错误信息，不要尝试诊断或排查问题。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
