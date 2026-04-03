@@ -26,10 +26,11 @@ export { setMessageSentCallback, getMessageSentCallback };
 async function sendMessageViaIpc(
   chatId: string,
   text: string,
-  threadId?: string
+  threadId?: string,
+  mentions?: Array<{ userId: string; name?: string }>
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendMessage(chatId, text, threadId);
+  return await ipcClient.sendMessage(chatId, text, threadId, mentions);
 }
 
 /**
@@ -38,18 +39,22 @@ async function sendMessageViaIpc(
  * @param params.text - The text content to send
  * @param params.chatId - Target chat ID
  * @param params.parentMessageId - Optional parent message ID for thread reply
+ * @param params.mentions - Optional @mentions for inter-bot communication (Issue #1742)
  */
 export async function send_text(params: {
   text: string;
   chatId: string;
   parentMessageId?: string;
+  /** @mentions to include in the message (Issue #1742: inter-bot communication) */
+  mentions?: Array<{ userId: string; name?: string }>;
 }): Promise<SendMessageResult> {
-  const { text, chatId, parentMessageId } = params;
+  const { text, chatId, parentMessageId, mentions } = params;
 
   logger.info({
     chatId,
     textPreview: text.substring(0, 100),
     hasParent: !!parentMessageId,
+    hasMentions: !!mentions && mentions.length > 0,
   }, 'send_text called');
 
   try {
@@ -79,8 +84,8 @@ export async function send_text(params: {
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
-    const result = await sendMessageViaIpc(chatId, text, parentMessageId);
+    logger.debug({ chatId, parentMessageId, hasMentions: !!mentions }, 'Using IPC for text message');
+    const result = await sendMessageViaIpc(chatId, text, parentMessageId, mentions);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');

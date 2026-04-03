@@ -36,6 +36,8 @@ export interface IpcRequestPayloads {
     chatId: string;
     text: string;
     threadId?: string;
+    /** @mentions for inter-bot communication (Issue #1742) */
+    mentions?: Array<{ userId: string; name?: string }>;
   };
   sendCard: {
     chatId: string;

@@ -99,6 +99,9 @@ export interface OutgoingMessage {
 
   /** Error message if task failed (for type 'done') */
   error?: string;
+
+  /** @mentions for the message (Issue #1742: inter-bot communication) */
+  mentions?: Array<{ userId: string; name?: string }>;
 }
 
 /**

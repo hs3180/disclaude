@@ -364,17 +364,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1742: When mentions are provided, send as post (rich text) format
+        // to support @mentioning users/bots in the message
+        const hasMentions = message.mentions && message.mentions.length > 0;
+        const msgType = hasMentions ? 'post' : 'text';
+        let msgContent: string;
+
+        if (hasMentions) {
+          // Build post content: mentions as <at> tags followed by text
+          const segments: Array<Record<string, unknown>> = [];
+          for (const mention of message.mentions ?? []) {
+            segments.push({
+              tag: 'at',
+              user_id: mention.userId,
+              ...(mention.name && { text: mention.name }),
+            });
+          }
+          segments.push({
+            tag: 'text',
+            text: message.text || '',
+          });
+          msgContent = JSON.stringify({
+            title: '',
+            content: [segments],
+          });
+        } else {
+          msgContent = JSON.stringify({ text: message.text || '' });
+        }
+
         const response = await this.client.im.message.create({
           params: {
             receive_id_type: 'chat_id',
           },
           data: {
             receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            msg_type: msgType,
+            content: msgContent,
           },
         });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
+        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, msgType, hasMentions }, 'Text message sent');
         break;
       }
 

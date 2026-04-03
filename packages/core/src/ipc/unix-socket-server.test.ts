@@ -103,7 +103,7 @@ describe('createInteractiveMessageHandler', () => {
       });
       const response = await handler(request);
 
-      expect(container.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello World', 'thread-1');
+      expect(container.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello World', 'thread-1', undefined);
       expect(response).toEqual({
         id: 'req-3',
         success: true,
@@ -162,7 +162,21 @@ describe('createInteractiveMessageHandler', () => {
       });
       const response = await handler(request);
 
-      expect(container.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined);
+      expect(container.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined, undefined);
+      expect(response.success).toBe(true);
+    });
+
+    it('should pass mentions to handler (Issue #1742)', async () => {
+      const request = createRequest('sendMessage', 'req-5d', {
+        chatId: 'chat-1',
+        text: 'Hello',
+        mentions: [{ userId: 'ou_bot1', name: 'Bot A' }],
+      });
+      const response = await handler(request);
+
+      expect(container.handlers!.sendMessage).toHaveBeenCalledWith(
+        'chat-1', 'Hello', undefined, [{ userId: 'ou_bot1', name: 'Bot A' }],
+      );
       expect(response.success).toBe(true);
     });
   });
@@ -624,7 +638,7 @@ describe('UnixSocketIpcServer', () => {
 
       const parsed = JSON.parse(response) as IpcResponse;
       expect(parsed.success).toBe(true);
-      expect(mockHandlers.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello via socket', undefined);
+      expect(mockHandlers.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello via socket', undefined, undefined);
 
       await server.stop();
     });

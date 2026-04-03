@@ -43,7 +43,7 @@ async function handleMessage(message: unknown) {
             tools: [
               {
                 name: 'send_text',
-                description: 'Send a plain text message to a chat.',
+                description: 'Send a plain text message to a chat. Supports @mentions for inter-bot communication.',
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -58,6 +58,18 @@ async function handleMessage(message: unknown) {
                     parentMessageId: {
                       type: 'string',
                       description: 'Optional parent message ID for thread replies.',
+                    },
+                    mentions: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          userId: { type: 'string', description: 'open_id of the user/bot to mention' },
+                          name: { type: 'string', description: 'Display name for the mention' },
+                        },
+                        required: ['userId'],
+                      },
+                      description: 'Optional @mentions to include in the message.',
                     },
                   },
                   required: ['text', 'chatId'],
@@ -161,7 +173,7 @@ async function handleMessage(message: unknown) {
         const { name, arguments: toolArgs } = callParams;
 
         if (name === 'send_text') {
-          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string };
+          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string; mentions?: Array<{ userId: string; name?: string }> };
           const result = await send_text(args);
 
           return {
