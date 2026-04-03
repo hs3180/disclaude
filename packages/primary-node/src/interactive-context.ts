@@ -34,6 +34,9 @@ export interface InteractiveContext {
   createdAt: number;
 }
 
+/** Maximum number of message entries to keep per chatId in the LRU index */
+const MAX_ENTRIES_PER_CHAT = 10;
+
 /**
  * InteractiveContextStore - Manages interactive message contexts.
  *
@@ -42,18 +45,22 @@ export interface InteractiveContext {
  *
  * Supports two lookup strategies:
  * 1. By messageId (exact match)
- * 2. By chatId (returns the most recent context for a chat, used as fallback
+ * 2. By chatId (iterates through recent contexts for a chat, used as fallback
  *    when the real Feishu messageId doesn't match the synthetic messageId used
  *    during registration)
+ *
+ * The chatId index uses an LRU-style array per chat to support multiple
+ * interactive cards coexisting in the same chat (fixes #1625).
  */
 export class InteractiveContextStore {
   private readonly contexts = new Map<string, InteractiveContext>();
 
   /**
-   * Index: chatId → most recent messageId.
+   * Index: chatId → messageId[] (ordered oldest to newest).
    * Used for chatId-based fallback lookup when the exact messageId is unknown.
+   * Kept to MAX_ENTRIES_PER_CHAT entries per chatId via LRU eviction.
    */
-  private readonly chatIdIndex = new Map<string, string>();
+  private readonly chatIdIndex = new Map<string, string[]>();
 
   /** Maximum age for contexts before cleanup (default: 24 hours) */
   private readonly maxAge: number;
@@ -64,6 +71,9 @@ export class InteractiveContextStore {
 
   /**
    * Register action prompts for a message.
+   *
+   * Appends the messageId to the chatId index (with dedup and LRU eviction)
+   * so that multiple interactive cards can coexist in the same chat (#1625).
    *
    * @param messageId - Message ID (from Feishu or synthetic)
    * @param chatId - Chat ID where the card was sent
@@ -77,11 +87,17 @@ export class InteractiveContextStore {
       createdAt: Date.now(),
     });
 
-    // Update chatId index to point to the latest messageId for this chat
-    this.chatIdIndex.set(chatId, messageId);
+    // Append to chatId index (dedup + LRU eviction)
+    const existing = this.chatIdIndex.get(chatId) ?? [];
+    const filtered = existing.filter((id) => id !== messageId);
+    filtered.push(messageId);
+    if (filtered.length > MAX_ENTRIES_PER_CHAT) {
+      filtered.splice(0, filtered.length - MAX_ENTRIES_PER_CHAT);
+    }
+    this.chatIdIndex.set(chatId, filtered);
 
     logger.debug(
-      { messageId, chatId, actions: Object.keys(actionPrompts) },
+      { messageId, chatId, actions: Object.keys(actionPrompts), indexSize: filtered.length },
       'Action prompts registered'
     );
   }
@@ -98,28 +114,47 @@ export class InteractiveContextStore {
   }
 
   /**
-   * Get action prompts by chatId (returns the most recent context for a chat).
+   * Get action prompts by chatId.
    *
    * This is a fallback lookup for card action callbacks where the real Feishu
    * messageId doesn't match the synthetic messageId used during registration.
    *
+   * If `actionValue` is provided, searches from newest to oldest to find the
+   * first context that contains a matching action value (#1625).
+   * If `actionValue` is not provided, returns the most recent context's prompts.
+   *
    * @param chatId - Chat ID to look up
+   * @param actionValue - Optional action value to match against
    * @returns Action prompt map, or undefined if not found
    */
-  getActionPromptsByChatId(chatId: string): ActionPromptMap | undefined {
-    const messageId = this.chatIdIndex.get(chatId);
-    if (!messageId) {
+  getActionPromptsByChatId(chatId: string, actionValue?: string): ActionPromptMap | undefined {
+    const messageIds = this.chatIdIndex.get(chatId);
+    if (!messageIds || messageIds.length === 0) {
       return undefined;
     }
 
-    const context = this.contexts.get(messageId);
-    if (!context) {
-      // Stale index entry, clean up
-      this.chatIdIndex.delete(chatId);
+    if (actionValue !== undefined) {
+      // Search from newest to oldest for a context containing this actionValue
+      for (let i = messageIds.length - 1; i >= 0; i--) {
+        const context = this.contexts.get(messageIds[i]);
+        if (context && context.actionPrompts[actionValue]) {
+          return context.actionPrompts;
+        }
+      }
       return undefined;
     }
 
-    return context.actionPrompts;
+    // No actionValue: return the most recent context's prompts
+    for (let i = messageIds.length - 1; i >= 0; i--) {
+      const context = this.contexts.get(messageIds[i]);
+      if (context) {
+        return context.actionPrompts;
+      }
+    }
+
+    // All entries are stale, clean up
+    this.chatIdIndex.delete(chatId);
+    return undefined;
   }
 
   /**
@@ -146,9 +181,9 @@ export class InteractiveContextStore {
     // Try exact messageId lookup first
     let prompts = this.getActionPrompts(messageId);
 
-    // Fallback to chatId-based lookup
+    // Fallback to chatId-based lookup (with actionValue for multi-card matching)
     if (!prompts) {
-      prompts = this.getActionPromptsByChatId(chatId);
+      prompts = this.getActionPromptsByChatId(chatId, actionValue);
     }
 
     if (!prompts) {
@@ -195,10 +230,16 @@ export class InteractiveContextStore {
   unregister(messageId: string): boolean {
     const context = this.contexts.get(messageId);
     const removed = this.contexts.delete(messageId);
-    if (removed) {
-      // Clean up chatId index if it points to this messageId
-      if (context && this.chatIdIndex.get(context.chatId) === messageId) {
-        this.chatIdIndex.delete(context.chatId);
+    if (removed && context) {
+      // Remove this messageId from the chatId index array
+      const index = this.chatIdIndex.get(context.chatId);
+      if (index) {
+        const filtered = index.filter((id) => id !== messageId);
+        if (filtered.length === 0) {
+          this.chatIdIndex.delete(context.chatId);
+        } else {
+          this.chatIdIndex.set(context.chatId, filtered);
+        }
       }
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
@@ -214,14 +255,26 @@ export class InteractiveContextStore {
     const now = Date.now();
     let cleaned = 0;
 
+    const expiredChatIds = new Set<string>();
+
     for (const [messageId, context] of this.contexts) {
       if (now - context.createdAt > this.maxAge) {
         this.contexts.delete(messageId);
-        // Clean up chatId index
-        if (this.chatIdIndex.get(context.chatId) === messageId) {
-          this.chatIdIndex.delete(context.chatId);
-        }
+        expiredChatIds.add(context.chatId);
         cleaned++;
+      }
+    }
+
+    // Clean up expired messageIds from chatId index arrays
+    for (const chatId of expiredChatIds) {
+      const index = this.chatIdIndex.get(chatId);
+      if (index) {
+        const filtered = index.filter((id) => this.contexts.has(id));
+        if (filtered.length === 0) {
+          this.chatIdIndex.delete(chatId);
+        } else {
+          this.chatIdIndex.set(chatId, filtered);
+        }
       }
     }
 
