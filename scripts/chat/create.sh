@@ -25,6 +25,7 @@ if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$'; then
   exit 1
 fi
 
+mkdir -p workspace/chats
 CHAT_DIR=$(cd workspace/chats && pwd)
 CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
@@ -101,7 +102,6 @@ while [ "$_i" -lt "$MEMBER_COUNT" ]; do
 done
 
 # ---- Step 5: Check uniqueness (TOCTOU-safe with flock) ----
-mkdir -p workspace/chats
 exec 9>"${CHAT_FILE}.lock"
 if ! flock -n 9; then
   echo "ERROR: Chat $CHAT_ID is being created by another process"
