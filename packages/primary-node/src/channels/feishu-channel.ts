@@ -518,8 +518,65 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Unlike sendMessage with type 'file', this is a pure upload operation
+   * that does NOT send any message. The returned image_key can be used
+   * in card img elements for embedding images in interactive cards.
+   *
+   * Issue #1919: Enables Agent to embed images in card messages.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file invalid, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Validate image format
+    const supportedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!supportedExtensions.includes(ext)) {
+      throw new Error(
+        `Unsupported image format: ${ext}. Supported: ${supportedExtensions.join(', ')}`
+      );
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+
+    // Validate file size (10MB limit for Feishu image API)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ filePath, fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+
+    return { imageKey, fileName, fileSize };
   }
 
   // Delegate passive mode methods to PassiveModeManager

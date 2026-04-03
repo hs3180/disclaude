@@ -95,6 +95,15 @@ describe('IPC Protocol', () => {
       expect(uploadFile.payload.filePath).toBe('/path/to/file.pdf');
     });
 
+    it('should type-check uploadImage request (Issue #1919)', () => {
+      const uploadImage: IpcRequest<'uploadImage'> = {
+        type: 'uploadImage',
+        id: 'req-img-1',
+        payload: { filePath: '/path/to/chart.png' },
+      };
+      expect(uploadImage.payload.filePath).toBe('/path/to/chart.png');
+    });
+
     it('should type-check sendInteractive request', () => {
       const sendInteractive: IpcRequest<'sendInteractive'> = {
         type: 'sendInteractive',
@@ -168,6 +177,19 @@ describe('IPC Protocol', () => {
       };
       expect(interactiveResponse.payload?.success).toBe(true);
       expect(interactiveResponse.payload?.messageId).toBe('om_interactive');
+
+      const uploadImageResponse: IpcResponse<'uploadImage'> = {
+        id: 'req-img-1',
+        success: true,
+        payload: {
+          success: true,
+          imageKey: 'img_v3_abc123',
+          fileName: 'chart.png',
+          fileSize: 204800,
+        },
+      };
+      expect(uploadImageResponse.payload?.imageKey).toBe('img_v3_abc123');
+      expect(uploadImageResponse.payload?.fileName).toBe('chart.png');
     });
   });
 
