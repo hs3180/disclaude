@@ -15,6 +15,7 @@ createdAt: 2026-04-03T00:00:00.000Z
 
 - **Chat 目录**: `workspace/chats/`
 - **执行间隔**: 每 1 分钟
+- **每次最多处理**: 10 个（`CHAT_MAX_PER_RUN` 环境变量可覆盖）
 
 ## 前置依赖
 
@@ -37,215 +38,41 @@ createdAt: 2026-04-03T00:00:00.000Z
 
 ## 执行步骤
 
-### Step 0: 环境检查
-
 ```bash
-# 检查 lark-cli 是否可用
-which lark-cli 2>/dev/null || echo "MISSING:lark-cli"
-
-# 检查 jq 是否可用
-which jq 2>/dev/null || echo "MISSING:jq"
-
-# 检查 flock 是否可用（Linux-only）
-which flock 2>/dev/null || echo "MISSING:flock"
-
-# 检查 timeout 是否可用（Linux-only，macOS 使用 gtimeout）
-which timeout 2>/dev/null || echo "MISSING:timeout"
-
-# 确保 chat 目录存在
-mkdir -p workspace/chats
+bash scripts/schedule/chats-activation.sh
 ```
 
-如果 `lark-cli` 或 `jq` 缺失，发送错误通知到 chatId 并终止执行。
+脚本完整实现了以下逻辑：
+
+### Step 0: 环境检查（fail-fast）
+
+检查 `lark-cli`、`jq`、`flock`、`timeout` 是否可用。**任一缺失则立即终止**（`exit 1`），不继续执行。
 
 ### Step 1: 列出 pending 群聊
 
-```bash
-# 查找所有 pending 状态的群聊（跳过已过期的）
-now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-for f in workspace/chats/*.json; do
-  [ -f "$f" ] || continue
-  # Validate JSON integrity — skip corrupted files
-  jq empty "$f" 2>/dev/null || { echo "WARN: Skipping corrupted file: $f"; continue; }
-  status=$(jq -r '.status' "$f" 2>/dev/null)
-  if [ "$status" = "pending" ]; then
-    # 过期预检：如果 expiresAt 已过，直接标记为 expired，不尝试激活
-    expires=$(jq -r '.expiresAt // empty' "$f" 2>/dev/null)
-    if [ -n "$expires" ]; then
-      # Normalize to UTC Z-suffix for reliable string comparison
-      # Handles both "2026-03-24T10:00:00Z" and "2026-03-24T18:00:00+08:00"
-      expires=$(echo "$expires" | sed 's/+00:00$//; s/\([0-9]\)[+-][0-9][0-9]:[0-9][0-9]$/\1Z/')
-      if [[ "$expires" < "$now_iso" ]]; then
-        echo "INFO: Chat $(jq -r '.id' "$f") expired at $expires (skipping activation)"
-        tmpfile=$(mktemp "${f}.XXXXXX")
-        jq --arg now "$now_iso" '.status = "expired" | .expiredAt = $now' "$f" > "$tmpfile" \
-          && mv "$tmpfile" "$f"
-        continue
-      fi
-    fi
-    echo "$f"
-  fi
-done
-```
-
-如果没有 pending 群聊，终止执行。
+遍历 `workspace/chats/*.json`，查找所有 `status=pending` 的文件：
+- 跳过损坏的 JSON 文件（`jq empty` 校验）
+- **过期预检**: 如果 `expiresAt` 已过期（UTC Z-suffix 格式），直接标记为 `expired`，跳过激活
+- 非 UTC 格式的 `expiresAt` 跳过过期检查（fail-open）
 
 ### Step 2: 激活 pending 群聊
 
-对每个 pending 群聊执行以下操作：
+对每个 pending 群聊：
 
-#### 2.1 读取数据
-
-```bash
-id=$(jq -r '.id' "$f")
-group_name=$(jq -r '.createGroup.name' "$f")
-members=$(jq -r '.createGroup.members | join(",")' "$f")
-attempts=$(jq -r '.activationAttempts // 0' "$f")
-```
-
-#### 2.1.1 输入校验（防注入）
-
-对从 JSON 文件读取的数据做安全校验，防止 Shell 注入：
-
-```bash
-# 校验 group_name：只允许安全字符，截断超长名称
-if ! echo "$group_name" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$'; then
-  echo "ERROR: Invalid group name '$group_name' for chat $id — contains unsafe characters, skipping"
-  continue
-fi
-# 字符级截断（避免 head -c 在 UTF-8 多字节字符中间截断导致乱码）
-group_name=$(echo "$group_name" | cut -c 1-64)
-
-# 校验 members：每个 member 必须符合 ou_xxxxx 格式
-skip_chat=false
-for member in $(echo "$members" | tr ',' ' '); do
-  if ! echo "$member" | grep -qE '^ou_[a-zA-Z0-9]+$'; then
-    echo "ERROR: Invalid member ID '$member' for chat $id — expected ou_xxxxx format, skipping"
-    skip_chat=true
-    break
-  fi
-done
-if [ "$skip_chat" = true ]; then
-  continue
-fi
-```
-
-#### 2.2 使用 flock 防止并发竞态
-
-对每个 chat 文件加排他锁，防止多个 Schedule 实例同时处理同一文件：
-
-```bash
-exec 9>"${f}.lock"
-
-if ! flock -n 9; then
-  echo "INFO: Chat $id is being processed by another instance, skipping"
-  continue
-fi
-
-# 幂等检查：群组是否已创建（Schedule 崩溃恢复场景）
-existing_chat_id=$(jq -r '.chatId // empty' "$f")
-
-if [ -n "$existing_chat_id" ]; then
-  echo "INFO: Chat $id already has chatId=$existing_chat_id, recovering to active"
-  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  tmpfile=$(mktemp "${f}.XXXXXX")
-  jq --arg now "$now" \
-      '.status = "active" | .activatedAt = $now' "$f" > "$tmpfile" \
-    && mv "$tmpfile" "$f"
-  exec 9>&-
-  continue
-fi
-```
-
-#### 2.3 通过 lark-cli 创建群组（带超时保护）
-
-```bash
-# 创建群组 — 分离 stdout 和 stderr（使用 mktemp 避免并发竞争）
-# 30 秒超时保护，防止 lark-cli 挂起阻塞后续 Schedule
-LARK_TIMEOUT=30
-tmp_err=$(mktemp /tmp/lark-cli-err-XXXXXX)
-# 确保 tmp_err 在任何退出路径下都被清理（防止文件泄漏）
-trap 'rm -f "$tmp_err"' EXIT
-
-result=$(timeout $LARK_TIMEOUT lark-cli im +chat-create \
-  --name "$group_name" \
-  --users "$members" 2>"$tmp_err")
-exit_code=$?
-
-if [ $exit_code -ne 0 ]; then
-  if [ $exit_code -eq 124 ]; then
-    error_msg="lark-cli timed out after ${LARK_TIMEOUT}s"
-  else
-    error_msg=$(cat "$tmp_err" 2>/dev/null | head -20)
-  fi
-  echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
-fi
-rm -f "$tmp_err"
-trap - EXIT
-
-chat_id=$(echo "$result" | jq -r '.data.chat_id // empty')
-```
-
-#### 2.4 处理创建结果
-
-```bash
-MAX_RETRIES=5
-now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-new_attempts=$((attempts + 1))
-
-if [ -n "$chat_id" ]; then
-  # ✅ 创建成功 — 更新为 active（临时文件与目标同目录，确保 mv 原子性）
-  tmpfile=$(mktemp "${f}.XXXXXX")
-  jq --arg chat_id "$chat_id" \
-      --arg now "$now" \
-      '.status = "active" |
-       .chatId = $chat_id |
-       .activatedAt = $now |
-       .activationAttempts = 0 |
-       .lastActivationError = null' "$f" > "$tmpfile" \
-    && mv "$tmpfile" "$f"
-else
-  # ❌ 创建失败 — 记录错误并判断是否达到上限
-  error_msg=${error_msg:-$(echo "$result" | head -20)}
-  # 转义换行符，防止破坏 jq JSON 输出
-  error_msg=$(echo "$error_msg" | tr '\n' ' ' | sed 's/  */ /g')
-  echo "ERROR: Failed to create group for chat $id (attempt $new_attempts/$MAX_RETRIES)"
-  echo "$error_msg"
-
-  if [ "$new_attempts" -ge "$MAX_RETRIES" ]; then
-    echo "WARN: Chat $id reached max retries ($MAX_RETRIES), marking as failed"
-    tmpfile=$(mktemp "${f}.XXXXXX")
-    jq --arg now "$now" \
-        --arg error "$error_msg" \
-        '.status = "failed" |
-         .activationAttempts = $new_attempts |
-         .lastActivationError = $error |
-         .failedAt = $now' "$f" > "$tmpfile" \
-      && mv "$tmpfile" "$f"
-    # 释放文件锁
-    exec 9>&-
-    echo "WARN: Chat '$id' activation failed after $MAX_RETRIES retries: $error_msg"
-    continue
-  else
-    tmpfile=$(mktemp "${f}.XXXXXX")
-    jq --arg now "$now" \
-        --arg error "$error_msg" \
-        '.activationAttempts = $new_attempts |
-         .lastActivationError = $error' "$f" > "$tmpfile" \
-      && mv "$tmpfile" "$f"
-  fi
-fi
-
-# 释放文件锁
-exec 9>&-
-```
+1. **读取数据** — 从 JSON 文件提取 `id`、`createGroup.name`、`createGroup.members`、`activationAttempts`
+2. **输入校验** — `group_name` 白名单校验 + UTF-8 字符级截断、`members` `ou_xxxxx` 格式校验
+3. **并发保护** — `flock -n` 排他锁，防止多个 Schedule 实例同时处理同一文件
+4. **幂等恢复** — 检测已有 `chatId`，自动恢复为 `active`（Schedule 崩溃恢复场景）
+5. **创建群组** — 通过 `lark-cli im +chat-create` 创建，30 秒超时保护
+6. **处理结果** — 成功则更新为 `active`，失败则记录错误并在达到 5 次上限后标记为 `failed`
+7. **限流保护** — 每次执行最多处理 10 个（可通过 `CHAT_MAX_PER_RUN` 环境变量覆盖）
 
 ## 状态转换
 
 | 当前状态 | 条件 | 执行动作 | 新状态 |
 |----------|------|----------|--------|
 | `pending` | chatId 已存在 | 恢复状态（幂等） | `active` |
-| `pending` | `expiresAt` 已过期 | 标记为 expired，跳过激活 | `expired` |
+| `pending` | `expiresAt` 已过期（UTC Z-suffix） | 标记为 expired，跳过激活 | `expired` |
 | `pending` | 群组创建成功 | 创建群组 + 更新状态 | `active` |
 | `pending` | 创建失败且未达上限 | 记录错误 + 递增计数器 | `pending` |
 | `pending` | 创建失败且达上限（5次） | 记录错误 | `failed` |
@@ -254,14 +81,15 @@ exec 9>&-
 
 | 场景 | 处理方式 |
 |------|----------|
-| `lark-cli` 不可用 | 发送通知到 chatId，终止执行 |
+| `lark-cli`/`jq`/`flock`/`timeout` 不可用 | 立即终止执行（exit 1） |
 | 创建群组失败（< 5 次） | 记录错误，递增重试计数器，下次重试 |
 | 创建群组失败（≥ 5 次） | 标记为 `failed`，记录错误信息 |
 | Schedule 崩溃后恢复 | 检测已有 chatId，幂等恢复为 `active` |
-| Chat 文件损坏（非 JSON） | 记录错误，跳过该文件 |
+| Chat 文件损坏（非 JSON） | 记录警告，跳过该文件 |
 | `lark-cli` 超时（> 30s） | 视为创建失败，记录超时错误，进入重试流程 |
 | 并发处理同一文件 | `flock -n` 非阻塞锁，跳过已被其他实例处理的文件 |
 | `pending` 群聊已过期 | 标记为 `expired`，跳过激活，不消耗重试次数 |
+| 非标准 `expiresAt` 格式 | 跳过过期检查（fail-open），不标记为 expired |
 
 ## 注意事项
 
@@ -275,6 +103,7 @@ exec 9>&-
 8. **超时保护**: `lark-cli` 调用设 30 秒超时，防止挂起阻塞后续 Schedule
 9. **失败记录**: 达到重试上限后标记为 `failed` 并记录错误信息，消费方可轮询检测
 10. **过期预检**: 在激活前检查 `expiresAt`，已过期的 pending 群聊直接标记为 `expired`，避免无意义的群组创建
+11. **限流保护**: 每次执行最多处理 10 个群聊（`CHAT_MAX_PER_RUN`），防止积压时 API 限流
 
 ## 验收标准
 
@@ -283,5 +112,6 @@ exec 9>&-
 - [ ] 创建群组失败时不影响其他群聊
 - [ ] 崩溃恢复后不会重复创建群组（幂等性）
 - [ ] 连续失败 5 次后被标记为 failed
-- [ ] 环境依赖缺失时能发送通知
+- [ ] 环境依赖缺失时立即终止执行
 - [ ] 已过期的 pending 群聊被标记为 expired，不尝试创建群组
+- [ ] 每次执行最多处理 10 个群聊，不会 API 限流

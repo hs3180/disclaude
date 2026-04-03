@@ -81,7 +81,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 | `chatId` | No | Group chat ID (filled by Schedule after group creation) |
 | `createdAt` | Yes | ISO 8601 timestamp |
 | `activatedAt` | No | ISO 8601 timestamp (filled by Schedule upon activation) |
-| `expiresAt` | Yes | ISO 8601 timestamp (when chat should expire) |
+| `expiresAt` | Yes | ISO 8601 UTC Z-suffix timestamp (e.g. `2026-03-25T10:00:00Z`) |
 | `createGroup` | Yes | Group creation config with `name` and `members` array |
 | `context` | No | Arbitrary key-value data for consumer use |
 | `response` | No | User response data (filled when user responds in group) |
@@ -103,112 +103,37 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
-### ⚠️ Chat ID Validation (All Operations)
-
-Every operation that takes a `{id}` parameter **MUST** validate it before use:
-
-```bash
-# 1. Reject path traversal and special characters
-if ! echo "$id" | grep -qE '^[a-zA-Z0-9._-]+$'; then
-  echo "ERROR: Invalid chat ID '$id' — only [a-zA-Z0-9._-] allowed"
-  exit 1
-fi
-
-# 2. Resolve to canonical path and verify it stays within chat directory
-chat_dir=$(cd workspace/chats && pwd)
-chat_file=$(realpath -m "${chat_dir}/${id}.json" 2>/dev/null)
-if [[ "$chat_file" != "${chat_dir}/"* ]]; then
-  echo "ERROR: Path traversal detected for chat ID '$id'"
-  exit 1
-fi
-```
+All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), `flock` concurrency safety, and `jq` integrity checks.
 
 ### 1. Create Chat
 
 **Usage**: `/chat create`
 
-Or when an agent/schedule needs to initiate a user interaction:
-
 ```bash
-# ⚠️ Step 1: Validate chat ID (MANDATORY — prevents path traversal)
-# Apply Chat ID Validation BEFORE any file operations
-id="{id}"
-if ! echo "$id" | grep -qE '^[a-zA-Z0-9._-]+$'; then
-  echo "ERROR: Invalid chat ID '$id' — only [a-zA-Z0-9._-] allowed"
-  exit 1
-fi
-chat_dir=$(cd workspace/chats && pwd)
-chat_file=$(realpath -m "${chat_dir}/${id}.json" 2>/dev/null)
-if [[ "$chat_file" != "${chat_dir}/"* ]]; then
-  echo "ERROR: Path traversal detected for chat ID '$id'"
-  exit 1
-fi
-
-# ⚠️ Step 2: Check uniqueness (TOCTOU-safe with flock)
-mkdir -p workspace/chats
-exec 9>"${chat_file}.lock"
-if ! flock -n 9; then
-  echo "ERROR: Chat $id is being created by another process"
-  exit 1
-fi
-if [ -f "$chat_file" ]; then
-  echo "ERROR: Chat $id already exists"
-  exec 9>&-
-  exit 1
-fi
-
-# Step 3: Write chat file (atomic write via mktemp + mv)
-tmpfile=$(mktemp "${chat_file}.XXXXXX")
-cat > "$tmpfile" << EOF
-{
-  "id": "$id",
-  "status": "pending",
-  "chatId": null,
-  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "activatedAt": null,
-  "expiresAt": "{expiresAt}",
-  "createGroup": {
-    "name": "{group_name}",
-    "members": [{members_json}]
-  },
-  "context": {context_json},
-  "response": null,
-  "activationAttempts": 0,
-  "lastActivationError": null,
-  "failedAt": null
-}
-EOF
-mv "$tmpfile" "$chat_file"
-exec 9>&-
+CHAT_ID="pr-123" \
+CHAT_EXPIRES_AT="2026-03-25T10:00:00Z" \
+CHAT_GROUP_NAME="PR #123 Review" \
+CHAT_MEMBERS='["ou_developer"]' \
+CHAT_CONTEXT='{"prNumber": 123}' \
+bash scripts/chat/create.sh
 ```
 
-**Validation**:
-- `id` must pass the [Chat ID Validation](#-chat-id-validation-all-operations) check **before any file I/O** (see Step 1 above)
-- `id` must be unique (checked under flock to prevent TOCTOU race)
-- `members` must be a non-empty array of valid open IDs (`ou_xxxxx` format)
-- `expiresAt` must be after `createdAt`
-- File written atomically via `mktemp` + `mv` (prevents partial writes on crash)
+**Validation** (built into script):
+- `CHAT_ID` must match `^[a-zA-Z0-9._-]+$` and pass path traversal check
+- `CHAT_EXPIRES_AT` must be UTC Z-suffix ISO 8601 format
+- `CHAT_MEMBERS` must be a non-empty JSON array of `ou_xxxxx` open IDs
+- Uniqueness checked under `flock` (TOCTOU-safe)
+- File written atomically via `mktemp` + `mv`
 
 ### 2. Query Chat
 
 **Usage**: `/chat query {id}`
 
-Apply [Chat ID Validation](#-chat-id-validation-all-operations), then:
-
 ```bash
-# Validate JSON integrity before reading
-jq empty "$chat_file" 2>/dev/null || { echo "ERROR: Chat file '$chat_file' is not valid JSON"; exit 1; }
-
-# Acquire shared lock to prevent reading during concurrent writes
-exec 9>"${chat_file}.lock"
-flock -s 9  # shared lock — multiple readers OK, blocks writers
-
-cat "$chat_file"
-
-exec 9>&-
+CHAT_ID="pr-123" bash scripts/chat/query.sh
 ```
 
-Display chat status in readable format:
+Output is the raw JSON chat file. Display in readable format:
 
 ```
 📋 Chat: pr-123
@@ -221,31 +146,14 @@ Display chat status in readable format:
 
 ### 3. List Chats
 
-**Usage**: `/chat list [--status pending|active|expired]`
+**Usage**: `/chat list [--status pending|active|expired|failed]`
 
 ```bash
-# Validate chat directory (protect against symlink attacks)
-# Use subshell cd to resolve path — works regardless of caller's working directory
-chat_dir=$(cd workspace/chats 2>/dev/null && pwd) || { echo "ERROR: workspace/chats directory not found"; exit 1; }
-canonical_dir=$(realpath "$chat_dir")
-
 # List all chats
-ls "$canonical_dir"/*.json 2>/dev/null
+bash scripts/chat/list.sh
 
-# Filter by status (use jq or grep)
-for f in "$canonical_dir"/*.json; do
-  [ -f "$f" ] || continue
-  # Verify file is still within chat directory after symlink resolution
-  file_dir=$(dirname "$(realpath "$f")")
-  if [[ "$file_dir" != "$canonical_dir" ]]; then
-    echo "WARN: Skipping file outside chat directory: $f"
-    continue
-  fi
-  status=$(jq -r '.status' "$f" 2>/dev/null)
-  if [ "$status" = "active" ]; then
-    echo "$f"
-  fi
-done
+# Filter by status
+CHAT_STATUS="active" bash scripts/chat/list.sh
 ```
 
 Display in table format:
@@ -264,62 +172,34 @@ Display in table format:
 
 **Triggered by**: User responds in the group chat (natural conversation).
 
-**Steps**:
-
-1. Identify the chat ID from context (e.g., group name, message context)
-2. Apply [Chat ID Validation](#-chat-id-validation-all-operations)
-3. Read the chat file
-4. Verify status is `active` (not already expired)
-5. Update the chat:
-
 ```bash
-# Validate JSON integrity before writing
-jq empty "$chat_file" 2>/dev/null || { echo "ERROR: Chat file '$chat_file' is not valid JSON"; exit 1; }
-
-# Acquire exclusive lock to prevent concurrent writes (Schedule may be updating this file)
-exec 9>"${chat_file}.lock"
-if ! flock -n 9; then
-  echo "ERROR: Chat $id is being modified by another process"
-  exit 1
-fi
-
-# Update chat with response using jq (atomic write)
-tmpfile=$(mktemp "${chat_file}.XXXXXX")
-jq --arg msg "{user_message}" \
-    --arg responder "{senderOpenId}" \
-    --arg ts "{currentTimestamp}" \
-    '.response = {
-       "content": $msg,
-       "responder": $responder,
-       "repliedAt": $ts
-     }' "$chat_file" > "$tmpfile" \
-  && mv "$tmpfile" "$chat_file"
-
-exec 9>&-
+CHAT_ID="pr-123" \
+CHAT_RESPONSE="Looks good, approve it" \
+CHAT_RESPONDER="ou_developer" \
+bash scripts/chat/response.sh
 ```
+
+**Idempotency**: If a response already exists, the script rejects the write (prevents accidental overwrites).
 
 **Note**: After updating the chat, the **consumer** (PR Scanner, offline questioner, etc.) is responsible for polling the chat file and taking downstream action. This skill does NOT execute callbacks.
 
 ## Lifecycle States
 
 ```
-┌─────────────┐     Schedule activates     ┌─────────────┐
-│   pending   │ ──────────────────────────>│   active    │
-│  等待创建   │     (group created)         │  等待响应   │
-└──────┬──────┘                            └──────┬──────┘
-       │                                          │
-       │  重试 ≥ 5 次             ┌───────────────┼───────────────┐
-       │  (members 无效等)        ▼               │               ▼
-       │                    ┌──────────┐          │         ┌──────────┐
-       └───────────────────>│  failed  │          │         │  expired │
-                            │ 创建失败 │          │         │ 用户已响应│
-                            └──────────┘          │         └──────────┘
-                                                  │               ▲
-                                                  ▼               │
-                                            ┌──────────┐          │
-                                            │  expired │──────────┘
-                                            │ 超时未响应│
-                                            └──────────┘
+                    ┌──────────────┐
+                    │              │
+                    ▼              │
+┌─────────────┐  Schedule     ┌─────────────┐
+│   pending   │ ────────────>│   active    │
+│  等待创建   │  (group       │  等待响应   │
+└──────┬──────┘   created)    └──────┬──────┘
+       │                             │
+       │ 重试 ≥ 5 次                 │ timeout / response
+       ▼                             ▼
+┌──────────┐                  ┌──────────┐
+│  failed  │                  │  expired │
+│ 创建失败 │                  │  已结束   │
+└──────────┘                  └──────────┘
 ```
 
 | Status | Meaning | Trigger | Who Sets |
@@ -358,7 +238,7 @@ workspace/chats/
 - ❌ Send messages to groups (consumer skill's responsibility)
 - ❌ Execute downstream actions based on responses (consumer's responsibility)
 - ❌ Modify chats created by other processes
-- ❌ Create chats without a valid `expiresAt`
+- ❌ Create chats without a valid `expiresAt` (must be UTC Z-suffix)
 - ❌ Use YAML format (always JSON)
 - ❌ Delete chat files manually
 
@@ -372,33 +252,21 @@ workspace/chats/
 | Invalid JSON in chat file | Report error, do not overwrite |
 | Duplicate `id` | Report "Chat {id} already exists" |
 | Invalid chat ID (path traversal) | Report "Invalid chat ID" and reject immediately |
+| Duplicate response | Report "Chat {id} already has a response" and reject |
 | `jq` not available | Use `node -e` as fallback |
+| `flock` not available | Exit with error (Linux-only requirement) |
 
 ## Example: PR Review Chat
 
 ### Agent Creates Chat
 
-```json
-{
-  "id": "pr-123",
-  "status": "pending",
-  "chatId": null,
-  "createdAt": "2026-03-24T10:00:00Z",
-  "activatedAt": null,
-  "expiresAt": "2026-03-24T22:00:00Z",
-  "createGroup": {
-    "name": "PR #123: Fix auth bug",
-    "members": ["ou_developer"]
-  },
-  "context": {
-    "prNumber": 123,
-    "repository": "hs3180/disclaude"
-  },
-  "response": null,
-  "activationAttempts": 0,
-  "lastActivationError": null,
-  "failedAt": null
-}
+```bash
+CHAT_ID="pr-123" \
+CHAT_EXPIRES_AT="2026-03-24T22:00:00Z" \
+CHAT_GROUP_NAME="PR #123: Fix auth bug" \
+CHAT_MEMBERS='["ou_developer"]' \
+CHAT_CONTEXT='{"prNumber": 123, "repository": "hs3180/disclaude"}' \
+bash scripts/chat/create.sh
 ```
 
 ### Schedule Activates (automatic)
