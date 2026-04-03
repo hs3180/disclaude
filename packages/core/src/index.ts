@@ -141,6 +141,17 @@ export {
   BaseAgent,
 } from './agents/base-agent.js';
 
+// Agent Mode (Issue #1709: Research Mode)
+export {
+  type AgentMode as AgentModeType,
+  type ResearchModeConfig as ResearchModeConfigType,
+  type ResolvedModeConfig,
+  type ResearchWorkspaceResult,
+  ModeManager,
+  sanitizeTopicName,
+  isResearchWorkspace,
+} from './agents/mode.js';
+
 // Message Builder (Issue #1492: extracted from worker-node to core)
 export {
   MessageBuilder,

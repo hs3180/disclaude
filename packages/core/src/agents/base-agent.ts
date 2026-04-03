@@ -27,6 +27,7 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import { ModeManager } from './mode.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -106,6 +107,9 @@ export abstract class BaseAgent implements Disposable {
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
+  // Mode management (Issue #1709)
+  protected readonly modeManager: ModeManager;
+
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
@@ -119,6 +123,13 @@ export abstract class BaseAgent implements Disposable {
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());
+
+    // Initialize mode manager (Issue #1709)
+    this.modeManager = new ModeManager({
+      mode: config.mode,
+      researchConfig: config.researchConfig,
+      workspaceDir: this.resolveWorkspaceDir(),
+    });
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
@@ -142,6 +153,27 @@ export abstract class BaseAgent implements Disposable {
   protected abstract getAgentName(): string;
 
   /**
+   * Get the current agent mode (Issue #1709).
+   */
+  getMode(): string {
+    return this.modeManager.getMode();
+  }
+
+  /**
+   * Check if the agent is in research mode (Issue #1709).
+   */
+  isResearchMode(): boolean {
+    return this.modeManager.isResearchMode();
+  }
+
+  /**
+   * Get the mode manager for advanced mode operations (Issue #1709).
+   */
+  getModeManager(): ModeManager {
+    return this.modeManager;
+  }
+
+  /**
    * Create SDK options for agent execution.
    *
    * This method provides a unified way to build SDK options
@@ -152,11 +184,23 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    // Resolve mode-specific CWD (Issue #1709)
+    const modeConfig = this.modeManager.resolve();
+    const effectiveCwd = extra.cwd ?? modeConfig.cwd;
+
     const options: AgentQueryOptions = {
-      cwd: extra.cwd ?? this.getWorkspaceDir(),
+      cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       settingSources: ['project'],
     };
+
+    // Log mode information when in research mode
+    if (modeConfig.hasCustomCwd && !extra.cwd) {
+      this.logger.info(
+        { mode: modeConfig.mode, cwd: effectiveCwd },
+        'Using mode-specific working directory'
+      );
+    }
 
     // Add allowed/disallowed tools
     if (extra.allowedTools) {
@@ -199,6 +243,21 @@ export abstract class BaseAgent implements Disposable {
    * Get workspace directory from runtime context.
    */
   protected getWorkspaceDir(): string {
+    if (hasRuntimeContext()) {
+      return getRuntimeContext().getWorkspaceDir();
+    }
+    return Config.getWorkspaceDir();
+  }
+
+  /**
+   * Resolve workspace directory for constructor initialization.
+   *
+   * This method is called during construction to resolve the workspace directory
+   * before the modeManager is initialized. It cannot use modeManager.resolve().
+   *
+   * @private
+   */
+  private resolveWorkspaceDir(): string {
     if (hasRuntimeContext()) {
       return getRuntimeContext().getWorkspaceDir();
     }

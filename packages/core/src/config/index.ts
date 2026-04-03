@@ -484,4 +484,25 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get agent mode configuration.
+   * Controls the agent's operation mode (normal or research).
+   * @see Issue #1709
+   *
+   * @returns Agent mode configuration with defaults
+   */
+  static getAgentModeConfig(): {
+    mode: 'normal' | 'research';
+    research?: {
+      baseDir?: string;
+      topic?: string;
+    };
+  } {
+    const modesConfig = fileConfigOnly.modes;
+    return {
+      mode: modesConfig?.mode ?? 'normal',
+      research: modesConfig?.research,
+    };
+  }
 }

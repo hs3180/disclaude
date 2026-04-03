@@ -287,6 +287,56 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Agent operation mode (Issue #1709).
+ *
+ * - normal: Default mode for general conversation and tasks
+ * - research: Isolated research mode with restricted directory access
+ *   and research-specific behavioral guidelines
+ */
+export type AgentMode = 'normal' | 'research';
+
+/**
+ * Research mode configuration (Issue #1709).
+ *
+ * Configures the research mode behavior, including workspace location
+ * and research topic.
+ */
+export interface ResearchModeConfig {
+  /**
+   * Base directory for research workspaces.
+   * Each research topic gets its own subdirectory under this path.
+   * Default: `{workspaceDir}/research/`
+   */
+  baseDir?: string;
+
+  /**
+   * Topic name for the current research session.
+   * Used to create a dedicated subdirectory: `{baseDir}/{topic}/`
+   * Default: 'default'
+   */
+  topic?: string;
+}
+
+/**
+ * Agent mode configuration section (Issue #1709).
+ *
+ * Controls the agent's operation mode and mode-specific settings.
+ */
+export interface AgentModeConfig {
+  /**
+   * Current agent mode.
+   * Default: 'normal'
+   */
+  mode?: AgentMode;
+
+  /**
+   * Research mode specific configuration.
+   * Only used when mode is 'research'.
+   */
+  research?: ResearchModeConfig;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -322,6 +372,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Agent mode configuration (Issue #1709) */
+  modes?: AgentModeConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

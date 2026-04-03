@@ -17,6 +17,7 @@
  */
 
 import type { AgentMessage, FileRef } from '../types/index.js';
+import type { AgentMode, ResearchModeConfig } from '../config/types.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -249,6 +250,17 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * Agent operation mode (Issue #1709).
+   * Controls behavioral guidelines, working directory, and skill loading.
+   * Default: 'normal'
+   */
+  mode?: AgentMode;
+  /**
+   * Research mode configuration (Issue #1709).
+   * Only used when mode is 'research'.
+   */
+  researchConfig?: ResearchModeConfig;
 }
 
 /**
