@@ -287,6 +287,41 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Project Knowledge configuration (Issue #1916).
+ *
+ * Controls how project instructions (CLAUDE.md) and knowledge base files
+ * are loaded and injected into agent context.
+ *
+ * The knowledge content is loaded by KnowledgeLoader and formatted by
+ * buildProjectKnowledgeGuidance() in the MessageBuilder guidance system.
+ */
+export interface KnowledgeConfig {
+  /**
+   * Path to project instructions file (e.g., CLAUDE.md).
+   * If not set, auto-detects CLAUDE.md in the workspace directory.
+   * Set to empty string or false to disable instructions loading.
+   */
+  instructionsPath?: string;
+  /**
+   * Directories to scan for knowledge base files.
+   * Text-based files (.md, .txt, .json, .yaml, .ts, .js, .py, etc.)
+   * are read and their content injected into agent context.
+   */
+  paths?: string[];
+  /**
+   * Maximum total characters for all knowledge content combined.
+   * Prevents exceeding context window limits (default: 50000).
+   */
+  maxChars?: number;
+  /**
+   * File extensions to include when scanning knowledge directories.
+   * Default: common text-based formats.
+   * Use empty array to include all files.
+   */
+  includeExtensions?: string[];
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -322,6 +357,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project knowledge configuration (Issue #1916) */
+  knowledge?: KnowledgeConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

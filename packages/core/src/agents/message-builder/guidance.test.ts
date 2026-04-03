@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,33 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectKnowledgeGuidance', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectKnowledgeGuidance()).toBe('');
+    expect(buildProjectKnowledgeGuidance(undefined)).toBe('');
+    expect(buildProjectKnowledgeGuidance('')).toBe('');
+  });
+
+  it('should return formatted section with knowledge context', () => {
+    const result = buildProjectKnowledgeGuidance('# Project Instructions\n\nSome knowledge content.');
+    expect(result).toContain('Project Knowledge');
+    expect(result).toContain('project instructions and knowledge base');
+    expect(result).toContain('# Project Instructions');
+    expect(result).toContain('Some knowledge content.');
+  });
+
+  it('should include guidance for using knowledge', () => {
+    const result = buildProjectKnowledgeGuidance('knowledge here');
+    expect(result).toContain('inform your responses');
+    expect(result).toContain('prefer specific details');
+  });
+
+  it('should wrap content in section delimiters', () => {
+    const result = buildProjectKnowledgeGuidance('content');
+    expect(result).toContain('---\n\n## Project Knowledge');
+    expect(result).toContain('\n---');
   });
 });

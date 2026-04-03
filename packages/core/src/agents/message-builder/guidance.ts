@@ -211,5 +211,35 @@ You are running on a remote server that is physically separate from the user's t
 > "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
 
 **✅ Correct Approach:**
-> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help me with the weather forecast?"`;
+}
+
+/**
+ * Build the project knowledge guidance section.
+ *
+ * Issue #1916: Injects project instructions (CLAUDE.md) and knowledge base
+ * file contents into the agent prompt. This provides the agent with
+ * project-specific context and domain knowledge.
+ *
+ * @param knowledgeContext - Pre-loaded knowledge context string, or undefined to skip
+ * @returns Formatted project knowledge section, or empty string if no context
+ */
+export function buildProjectKnowledgeGuidance(knowledgeContext?: string): string {
+  if (!knowledgeContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Knowledge
+
+The following project instructions and knowledge base content are provided for context.
+Use this information to inform your responses. When referencing this knowledge,
+prefer specific details over generic advice.
+
+${knowledgeContext}
+
+---`;
 }

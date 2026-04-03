@@ -484,4 +484,15 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get project knowledge configuration.
+   * Controls how project instructions and knowledge base files are loaded.
+   * @see Issue #1916
+   *
+   * @returns Knowledge configuration, or undefined if not configured
+   */
+  static getKnowledgeConfig(): DisclaudeConfig['knowledge'] {
+    return fileConfigOnly.knowledge;
+  }
 }

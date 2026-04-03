@@ -149,10 +149,18 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Knowledge module (Issue #1916: project instructions and knowledge base)
+export {
+  loadKnowledge,
+  fsOps as knowledgeFsOps,
+  type KnowledgeContent,
+} from './knowledge/index.js';
 
 // Skills module (Issue #430)
 export {

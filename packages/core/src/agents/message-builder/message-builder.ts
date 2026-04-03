@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, project knowledge)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +49,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Project knowledge guidance (Issue #1916)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -127,6 +129,9 @@ export class MessageBuilder {
     const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
 
+    // Project knowledge section (Issue #1916)
+    const projectKnowledgeSection = buildProjectKnowledgeGuidance(msg.projectKnowledgeContext);
+
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
@@ -146,6 +151,10 @@ export class MessageBuilder {
     }
 
     sections.push(metadataParts.join('\n'));
+
+    if (projectKnowledgeSection) {
+      sections.push(projectKnowledgeSection);
+    }
 
     if (persistedHistorySection) {
       sections.push(persistedHistorySection);
