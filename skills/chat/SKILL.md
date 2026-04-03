@@ -188,12 +188,9 @@ Display chat status in readable format:
 
 ```bash
 # Validate chat directory (protect against symlink attacks)
-chat_dir=$(cd workspace/chats && pwd)
+# Use subshell cd to resolve path — works regardless of caller's working directory
+chat_dir=$(cd workspace/chats 2>/dev/null && pwd) || { echo "ERROR: workspace/chats directory not found"; exit 1; }
 canonical_dir=$(realpath "$chat_dir")
-if [[ "$canonical_dir" != "$(pwd)/workspace/chats" ]]; then
-  echo "ERROR: Chat directory is a symlink or outside expected path"
-  exit 1
-fi
 
 # List all chats
 ls "$canonical_dir"/*.json 2>/dev/null

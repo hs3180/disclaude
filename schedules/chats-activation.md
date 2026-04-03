@@ -52,7 +52,7 @@ mkdir -p workspace/chats
 
 ```bash
 # 查找所有 pending 状态的群聊（跳过已过期的）
-now_epoch=$(date +%s)
+now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 for f in workspace/chats/*.json; do
   [ -f "$f" ] || continue
   status=$(jq -r '.status' "$f" 2>/dev/null)
@@ -60,10 +60,10 @@ for f in workspace/chats/*.json; do
     # 过期预检：如果 expiresAt 已过，直接标记为 expired，不尝试激活
     expires=$(jq -r '.expiresAt // empty' "$f" 2>/dev/null)
     if [ -n "$expires" ]; then
-      expires_epoch=$(date -d "$expires" +%s 2>/dev/null)
-      if [ -n "$expires_epoch" ] && [ "$expires_epoch" -lt "$now_epoch" ]; then
+      # ISO 8601 格式可直接比较字符串（无需依赖 GNU date -d）
+      # 兼容 Linux (GNU date) 和 macOS (BSD date)
+      if [[ "$expires" < "$now_iso" ]]; then
         echo "INFO: Chat $(jq -r '.id' "$f") expired at $expires (skipping activation)"
-        now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         tmpfile=$(mktemp "${f}.XXXXXX")
         jq --arg now "$now_iso" '.status = "expired" | .expiredAt = $now' "$f" > "$tmpfile" \
           && mv "$tmpfile" "$f"
@@ -100,7 +100,8 @@ if ! echo "$group_name" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$';
   echo "ERROR: Invalid group name '$group_name' for chat $id — contains unsafe characters, skipping"
   continue
 fi
-group_name=$(echo "$group_name" | head -c 64)
+# 字符级截断（避免 head -c 在 UTF-8 多字节字符中间截断导致乱码）
+group_name=$(echo "$group_name" | cut -c 1-64)
 
 # 校验 members：每个 member 必须符合 ou_xxxxx 格式
 skip_chat=false
