@@ -228,6 +228,10 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  // Issue #857: Task progress tracking
+  TaskContext,
+  type TaskProgress,
+  type TaskStep,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

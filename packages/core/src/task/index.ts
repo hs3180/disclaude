@@ -17,3 +17,10 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Context (Issue #857: progress tracking for Reporter Agent)
+export {
+  TaskContext,
+  type TaskProgress,
+  type TaskStep,
+} from './task-context.js';
