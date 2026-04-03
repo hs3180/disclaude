@@ -64,12 +64,6 @@ Each chat is a single JSON file in `workspace/chats/`:
     "name": "PR #123 Review",
     "members": ["ou_user1"]
   },
-  "message": "## 🔔 PR Review Request\n\n**PR #123**: Fix auth bug\n\nPlease review and respond.",
-  "options": [
-    {"value": "approve", "text": "✅ Approve"},
-    {"value": "request_changes", "text": "🔄 Request Changes"},
-    {"value": "close", "text": "❌ Close"}
-  ],
   "context": {"prNumber": 123},
   "response": null,
   "activationAttempts": 0,
@@ -89,8 +83,6 @@ Each chat is a single JSON file in `workspace/chats/`:
 | `activatedAt` | No | ISO 8601 timestamp (filled by Schedule upon activation) |
 | `expiresAt` | Yes | ISO 8601 timestamp (when chat should expire) |
 | `createGroup` | Yes | Group creation config with `name` and `members` array |
-| `message` | No | Initial message content (Markdown). Sent by consumer after activation. |
-| `options` | No | Button options array for interactive card. Format: `[{"value": "...", "text": "..."}]`. Sent by consumer after activation. |
 | `context` | No | Arbitrary key-value data for consumer use |
 | `response` | No | User response data (filled when user responds in group) |
 | `activationAttempts` | No | Retry counter for group creation (managed by Schedule, default: 0) |
@@ -154,11 +146,6 @@ cat > workspace/chats/{id}.json << 'EOF'
     "name": "Chat Title",
     "members": ["ou_xxx"]
   },
-  "message": "Initial message content (Markdown)",
-  "options": [
-    {"value": "action1", "text": "✅ Option 1"},
-    {"value": "action2", "text": "❌ Option 2"}
-  ],
   "context": {},
   "response": null,
   "activationAttempts": 0,
@@ -286,19 +273,14 @@ jq --arg msg "{user_message}" \
 Consumers (PR Scanner, offline questions, etc.) use this pattern:
 
 ```
-1. Consumer calls this Skill → creates pending chat file (with message + options)
+1. Consumer calls this Skill → creates pending chat file
 2. Schedule detects pending → creates group via lark-cli → sets active
    (or marks as failed after 5 retries if members are invalid)
-3. Consumer reads active chat → sends message + interactive card to group
-   (message field → send_text / send_card, options field → send_interactive buttons)
+3. Consumer detects chat is active (polls chat file) → sends message to group
 4. User responds in group → consumer/skill updates chat file with response
 5. chat-timeout Skill detects timeout → marks as expired, dissolves group
 6. Consumer polls chat file → finds response → takes downstream action
 ```
-
-**Step 3 详细说明**: Consumer 读取 chat 文件中的 `message` 和 `options` 字段，通过 MCP 工具发送到群组：
-- `message` → 使用 `send_text` 或 `send_card` 发送初始消息
-- `options` → 使用 `send_interactive` 的按钮选项（`actionPrompts` 中包含 chat ID 以便路由响应）
 
 ## Chat Directory
 
@@ -347,12 +329,6 @@ workspace/chats/
     "name": "PR #123: Fix auth bug",
     "members": ["ou_developer"]
   },
-  "message": "## 🔔 PR Review Request\n\n**PR #123**: Fix auth bug\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | bot |\n| 📊 变更 | +42 -17 (3 files) |\n\n请查看 PR 并做出决策。",
-  "options": [
-    {"value": "pr-123:approve", "text": "✅ Approve"},
-    {"value": "pr-123:request_changes", "text": "🔄 Request Changes"},
-    {"value": "pr-123:close", "text": "❌ Close PR"}
-  ],
   "context": {
     "prNumber": 123,
     "repository": "hs3180/disclaude"
@@ -368,13 +344,9 @@ workspace/chats/
 
 `chats-activation` Schedule reads the pending chat, creates group via `lark-cli`, updates status to `active`.
 
-### Consumer Sends Initial Message
-
-Consumer skill reads the active chat's `message` and `options` fields, sends interactive card to the group via MCP tools.
-
 ### User Responds
 
-User replies in the group naturally (clicks button or types text). Consumer or this skill updates the chat file with the response.
+User replies in the group naturally (types text). Consumer or this skill updates the chat file with the response.
 
 ### PR Scanner Polls
 
