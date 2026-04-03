@@ -678,9 +678,10 @@ export class MessageHandler {
       }
     }
 
-    // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
-      logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
+    // Handle file/image/media/audio messages - download to workspace and include path in prompt
+    // Issue #1966: Add 'audio' for voice message support
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
+      logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image/audio message received');
 
       // Parse content to extract file_key and file_name
       let fileKey: string | undefined;
@@ -690,6 +691,10 @@ export class MessageHandler {
         if (message_type === 'image') {
           fileKey = parsed.image_key;
           fileName = `image_${fileKey}`;
+        } else if (message_type === 'audio') {
+          // Issue #1966: Audio messages use file_key for the audio resource
+          fileKey = parsed.file_key;
+          fileName = `voice_${fileKey}`;
         } else {
           fileKey = parsed.file_key;
           fileName = parsed.file_name || `file_${fileKey}`;
@@ -713,9 +718,11 @@ export class MessageHandler {
 
           logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
 
+          // Issue #1966: Feishu audio resource download requires type='file', not type='audio'
+          const resourceType = message_type === 'audio' ? 'file' : message_type;
           const response = await this.client.im.messageResource.get({
             path: { message_id, file_key: fileKey },
-            params: { type: message_type },
+            params: { type: resourceType },
           });
           await response.writeFile(localPath);
 
@@ -745,20 +752,21 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : '媒体文件';
+      // Issue #1966: Handle audio (voice) message type
+      const typeLabel = message_type === 'image' ? '图片' : message_type === 'audio' ? '语音消息' : message_type === 'file' ? '文件' : '媒体文件';
       const filePrompt = localPath
-        ? `用户上传了一个${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : ''}`
-        : `用户上传了一个${typeLabel}，但下载失败。`;
+        ? `用户发送了一条${typeLabel}（语音），文件：${fileName || fileKey}\n\n语音文件已下载到本地: ${localPath}\n\n请注意这是一个语音/音频文件，你无法直接播放它。如果你有语音转文字(ASR)工具，请使用该工具将语音转录为文本后再处理。如果没有，请告知用户当前不支持语音消息处理。`
+        : `用户发送了一条${typeLabel}（语音），但下载失败。请告知用户语音消息接收失败，建议重新发送或使用文字消息。`;
 
       await this.callbacks.emitMessage({
         messageId: `${message_id}-file`,
         chatId: chat_id,
         userId: this.extractOpenId(sender),
         content: filePrompt,
-        messageType: 'file',
+        messageType: message_type === 'audio' ? 'audio' : 'file',
         timestamp: create_time,
         threadId,
-        attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
+        attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath, mimeType: message_type === 'audio' ? 'audio' : undefined }] : undefined,
       });
       return;
     }
