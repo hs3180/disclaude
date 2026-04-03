@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatGetUpdatesResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -30,9 +32,9 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_BOT_TYPE = 3;
 
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and message receiving.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -208,6 +210,90 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message receiving endpoints (POST, with auth headers)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Uses long-polling with 35s timeout. Returns an empty array on timeout
+   * (normal for long polling). Supports AbortSignal for graceful shutdown.
+   *
+   * @param options - Optional signal for abort control
+   * @returns Array of message updates (empty if no new messages)
+   *
+   * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
+   */
+  async getUpdates(options?: { signal?: AbortSignal }): Promise<import('./types.js').WeChatUpdate[]> {
+    const url = `${this.baseUrl}/ilink/bot/getupdates`;
+    const bodyStr = '{}';
+
+    const headers = this.buildAuthHeaders(bodyStr);
+    const timeoutMs = LONG_POLL_TIMEOUT_MS;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Link external signal for graceful shutdown
+    const onExternalAbort = () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+    options?.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: bodyStr,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+      options?.signal?.removeEventListener('abort', onExternalAbort);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'getUpdates request failed');
+        throw new Error(`WeChat API error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatGetUpdatesResponse;
+
+      // Check for WeChat iLink error format (ret !== 0)
+      const {ret} = data;
+      if (ret !== undefined && ret !== 0) {
+        const errMsg = (data as Record<string, unknown>).err_msg as string
+          || (data as Record<string, unknown>).errmsg as string
+          || `Error code ${ret}`;
+        logger.error({ ret, errMsg }, 'getUpdates returned error');
+        throw new Error(`WeChat API error [${ret}]: ${errMsg}`);
+      }
+
+      return data.update_list ?? [];
+    } catch (error) {
+      clearTimeout(timer);
+      options?.signal?.removeEventListener('abort', onExternalAbort);
+
+      // Timeout during long polling is normal — return empty array
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Distinguish between external abort and timeout
+        if (options?.signal?.aborted) {
+          logger.debug('getUpdates aborted by external signal');
+          throw error;
+        }
+        logger.debug('getUpdates long poll timed out');
+        return [];
+      }
+
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
