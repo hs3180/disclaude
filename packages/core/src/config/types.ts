@@ -322,8 +322,24 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Projects configuration (Issue #1916) */
+  projects?: ProjectsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+}
+
+/**
+ * Projects configuration section (Issue #1916).
+ * Configures project-scoped knowledge bases and instructions.
+ */
+export interface ProjectsConfig {
+  /** Project configurations keyed by project name */
+  [projectName: string]: {
+    /** Path to project instructions file (e.g., CLAUDE.md) */
+    instructionsPath?: string;
+    /** List of directory paths to scan for knowledge files */
+    knowledge?: string[];
+  } | undefined;
 }
 
 /**

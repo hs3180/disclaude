@@ -149,6 +149,7 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
@@ -309,3 +310,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Projects module (Issue #1916)
+export {
+  KnowledgeBaseLoader,
+  ProjectManager,
+  DEFAULT_KNOWLEDGE_LOADER_OPTIONS,
+  type ProjectConfig,
+  type ProjectsConfig,
+  type KnowledgeFile,
+  type KnowledgeBaseLoaderOptions,
+  type KnowledgeLoadResult,
+  type ProjectInfo,
+} from './projects/index.js';

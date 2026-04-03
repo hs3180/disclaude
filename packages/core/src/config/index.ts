@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectsConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -483,5 +484,16 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get projects configuration.
+   * Configures project-scoped knowledge bases and instructions.
+   * @see Issue #1916
+   *
+   * @returns Projects configuration, or undefined if not configured
+   */
+  static getProjectsConfig(): ProjectsConfig | undefined {
+    return fileConfigOnly.projects;
   }
 }

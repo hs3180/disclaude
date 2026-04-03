@@ -7,6 +7,7 @@ import { handleStop } from './stop.js';
 import { handleListNodes } from './list-nodes.js';
 import { handleShowDebug, handleClearDebug } from './debug.js';
 import { handlePassive } from './passive.js';
+import { handleProject } from './project.js';
 import {
   handleListGroup,
   handleCreateGroup,
@@ -33,6 +34,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'add-group-member', handler: handleAddGroupMember, description: '添加群组成员' },
   { type: 'remove-group-member', handler: handleRemoveGroupMember, description: '移除群组成员' },
   { type: 'dissolve-group', handler: handleDissolveGroup, description: '解散群组' },
+  { type: 'project', handler: handleProject, description: '项目知识库管理 (list/switch/status/reload)' },
 ];
 
 /**

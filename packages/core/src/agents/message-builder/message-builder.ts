@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
 } from './guidance.js';
 
 /**
@@ -159,6 +160,15 @@ export class MessageBuilder {
 
     if (toolsSection) {
       sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+    }
+
+    // Project knowledge base section (Issue #1916)
+    const projectKnowledgeSection = buildProjectKnowledgeSection(
+      msg.projectKnowledgeContext,
+      msg.projectName
+    );
+    if (projectKnowledgeSection) {
+      sections.push(projectKnowledgeSection);
     }
 
     sections.push(nextStepGuidance);
