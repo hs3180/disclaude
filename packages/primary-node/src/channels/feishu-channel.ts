@@ -351,7 +351,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     logger.info('FeishuChannel stopped');
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
     if (!this.client) {
       throw new Error('Client not initialized');
     }
@@ -359,138 +359,164 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // If WebSocket is reconnecting, queue message for later (Issue #1351)
     if (this.wsConnectionManager && this.wsConnectionManager.state !== 'connected') {
       this.queueOfflineMessage(message);
-      return;
+      return undefined;
     }
 
     switch (message.type) {
       case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
-        break;
+        return this.sendFeishuMessage(message, 'text', JSON.stringify({ text: message.text || '' }));
       }
 
       case 'card': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'interactive',
-            content: JSON.stringify(message.card || {}),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Card message sent');
-        break;
+        return this.sendFeishuMessage(message, 'interactive', JSON.stringify(message.card || {}));
       }
 
       case 'file': {
-        if (!message.filePath) {
-          logger.error({ chatId: message.chatId }, 'File path missing in file message');
-          throw new Error('File path is required for file messages');
-        }
-
-        // eslint-disable-next-line prefer-destructuring
-        const filePath = message.filePath;
-        const fileName = path.basename(filePath);
-        const ext = path.extname(filePath).toLowerCase();
-        const { size: fileSize } = fs.statSync(filePath);
-
-        logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
-
-        // Determine message type based on file extension
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
-        const isImage = imageExtensions.includes(ext);
-
-        if (isImage) {
-          // Upload image using im.image.create
-          if (fileSize > 10 * 1024 * 1024) {
-            throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
-          }
-          const uploadResp = await this.client.im.image.create({
-            data: {
-              image_type: 'message',
-              image: fs.createReadStream(filePath),
-            },
-          });
-          const imageKey = uploadResp?.image_key;
-          if (!imageKey) {
-            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
-            throw new Error(`Failed to upload image: ${fileName}`);
-          }
-          logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
-
-          // Send image message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'image',
-              content: JSON.stringify({ image_key: imageKey }),
-            },
-          });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'Image message sent');
-        } else {
-          // Upload file using im.file.create
-          if (fileSize > 30 * 1024 * 1024) {
-            throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
-          }
-
-          // Map file extension to Feishu file_type
-          const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
-            '.opus': 'opus',
-            '.mp4': 'mp4',
-            '.pdf': 'pdf',
-            '.doc': 'doc', '.docx': 'doc',
-            '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
-            '.ppt': 'ppt', '.pptx': 'ppt',
-          };
-          const fileType = extToType[ext] || 'stream';
-
-          const uploadResp = await this.client.im.file.create({
-            data: {
-              file_type: fileType,
-              file_name: fileName,
-              file: fs.createReadStream(filePath),
-            },
-          });
-          const fileKey = uploadResp?.file_key;
-          if (!fileKey) {
-            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
-            throw new Error(`Failed to upload file: ${fileName}`);
-          }
-          logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
-
-          // Send file message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'file',
-              content: JSON.stringify({ file_key: fileKey }),
-            },
-          });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'File message sent');
-        }
-        break;
+        return this.sendFeishuFileMessage(message);
       }
 
       case 'done':
         logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
-        break;
+        return undefined;
 
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  /**
+   * Send a Feishu message, using thread reply when threadId is present.
+   *
+   * Consistent with feishu-adapter.ts thread reply pattern (Issue #1619).
+   *
+   * @param message - Outgoing message with optional threadId
+   * @param msgType - Feishu message type (text, interactive, image, file)
+   * @param content - JSON-serialized message content
+   * @returns The Feishu message_id from the API response, or undefined
+   */
+  private async sendFeishuMessage(
+    message: OutgoingMessage,
+    msgType: string,
+    content: string,
+  ): Promise<string | undefined> {
+    if (message.threadId) {
+      // Thread reply: use client.im.message.reply()
+      const response = await this.client!.im.message.reply({
+        path: {
+          message_id: message.threadId,
+        },
+        data: {
+          msg_type: msgType,
+          content,
+        },
+      });
+      const messageId = response?.data?.message_id;
+      logger.debug(
+        { chatId: message.chatId, threadId: message.threadId, messageId, msgType },
+        'Thread reply sent',
+      );
+      return messageId;
+    }
+
+    // New message: use client.im.message.create()
+    const response = await this.client!.im.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: message.chatId,
+        msg_type: msgType,
+        content,
+      },
+    });
+    const messageId = response.data?.message_id;
+    logger.debug({ chatId: message.chatId, messageId, msgType }, 'Message sent');
+    return messageId;
+  }
+
+  /**
+   * Send a file message (image or document) via Feishu API.
+   *
+   * Handles upload + send, with thread reply support (Issue #1619).
+   *
+   * @returns The Feishu message_id from the API response, or undefined
+   */
+  private async sendFeishuFileMessage(message: OutgoingMessage): Promise<string | undefined> {
+    if (!message.filePath) {
+      logger.error({ chatId: message.chatId }, 'File path missing in file message');
+      throw new Error('File path is required for file messages');
+    }
+
+    // eslint-disable-next-line prefer-destructuring
+    const filePath = message.filePath;
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const { size: fileSize } = fs.statSync(filePath);
+
+    logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
+
+    // Determine message type based on file extension
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    const isImage = imageExtensions.includes(ext);
+
+    let msgType: string;
+    let content: string;
+
+    if (isImage) {
+      // Upload image using im.image.create
+      if (fileSize > 10 * 1024 * 1024) {
+        throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+      }
+      const uploadResp = await this.client!.im.image.create({
+        data: {
+          image_type: 'message',
+          image: fs.createReadStream(filePath),
+        },
+      });
+      const imageKey = uploadResp?.image_key;
+      if (!imageKey) {
+        logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
+        throw new Error(`Failed to upload image: ${fileName}`);
+      }
+      logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
+      msgType = 'image';
+      content = JSON.stringify({ image_key: imageKey });
+    } else {
+      // Upload file using im.file.create
+      if (fileSize > 30 * 1024 * 1024) {
+        throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
+      }
+
+      // Map file extension to Feishu file_type
+      const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+        '.opus': 'opus',
+        '.mp4': 'mp4',
+        '.pdf': 'pdf',
+        '.doc': 'doc', '.docx': 'doc',
+        '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
+        '.ppt': 'ppt', '.pptx': 'ppt',
+      };
+      const fileType = extToType[ext] || 'stream';
+
+      const uploadResp = await this.client!.im.file.create({
+        data: {
+          file_type: fileType,
+          file_name: fileName,
+          file: fs.createReadStream(filePath),
+        },
+      });
+      const fileKey = uploadResp?.file_key;
+      if (!fileKey) {
+        logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
+        throw new Error(`Failed to upload file: ${fileName}`);
+      }
+      logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
+      msgType = 'file';
+      content = JSON.stringify({ file_key: fileKey });
+    }
+
+    // Send using the unified helper (supports thread reply)
+    return this.sendFeishuMessage(message, msgType, content);
   }
 
   protected checkHealth(): boolean {

@@ -182,17 +182,17 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         // Build card using extracted builder (Primary Node owns the full card lifecycle)
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
-        await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
+        const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
 
         // Build action prompts: use caller-provided prompts or generate defaults
         const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
           ? actionPrompts
           : buildActionPrompts(options);
 
-        // Issue #1570: Return synthetic messageId for action prompt registration
-        const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
+        // Use real messageId from Feishu API when available, fallback to synthetic ID (Issue #1619)
+        const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
 
-        return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
+        return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
       registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => {

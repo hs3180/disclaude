@@ -288,7 +288,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal
@@ -340,7 +340,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
           'Received done but no pending response or session found'
         );
       }
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     }
 
     // For text responses
@@ -378,7 +378,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
     }
 
-    return Promise.resolve();
+    return Promise.resolve(undefined);
   }
 
   protected checkHealth(): boolean {
