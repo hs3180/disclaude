@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -27,6 +28,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -117,6 +119,15 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return image_key for embedding in card messages.',
+    parameters: {
+      type: 'object',
+      properties: { filePath: { type: 'string' } },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -314,6 +325,40 @@ For display-only cards, use send_card instead.
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image file and return an image_key that can be used to embed images in card messages.
+
+When you need to include images in card messages (via send_card), you must first upload the image using this tool to obtain an image_key. Then use the image_key in the card's img element.
+
+## Parameters
+- **filePath**: Path to the image file (supports .jpg, .jpeg, .png, .webp, .gif, .tiff, .bmp, max 10MB)
+
+## Example Workflow
+1. Generate an image (e.g., chart.png)
+2. Call upload_image({"filePath": "chart.png"}) → returns image_key
+3. Use the image_key in send_card's img element:
+\`\`\`json
+{"tag": "img", "img_key": "img_v3_xxxx", "alt": {"tag": "plain_text", "content": "Chart"}}
+\`\`\`
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

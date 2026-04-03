@@ -221,6 +221,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #1919: Upload image and return image_key for card embedding
+      uploadImage: async (filePath: string) => {
+        context.logger.debug({ filePath }, 'uploadImage: delegating to FeishuChannel');
+        return feishuChannel.uploadImage(filePath);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);
