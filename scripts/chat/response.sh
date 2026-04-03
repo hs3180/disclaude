@@ -79,7 +79,13 @@ if ! flock -n 9; then
   exit 1
 fi
 
-# Double-check after acquiring lock (another process may have written a response)
+# Double-check after acquiring lock (another process may have changed status or written a response)
+current_status=$(jq -r '.status' "$CHAT_FILE" 2>/dev/null)
+if [ "$current_status" != "active" ]; then
+  echo "ERROR: Chat $CHAT_ID status changed to '$current_status' while waiting for lock"
+  exec 9>&-
+  exit 1
+fi
 existing_response=$(jq -r '.response.content // empty' "$CHAT_FILE" 2>/dev/null)
 if [ -n "$existing_response" ]; then
   echo "ERROR: Chat $CHAT_ID already has a response — refusing to overwrite"
