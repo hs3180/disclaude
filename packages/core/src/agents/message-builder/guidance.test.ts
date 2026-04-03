@@ -31,6 +31,18 @@ describe('buildChatHistorySection', () => {
     const result = buildChatHistorySection('some context');
     expect(result).toContain('@mentioned in a group chat');
   });
+
+  it('should include proactive answering guidance for empty @mentions', () => {
+    const result = buildChatHistorySection('User: What is the capital of France?');
+    expect(result).toContain('proactively answer');
+    expect(result).toContain('@mention with no text');
+    expect(result).toContain('last question or request');
+  });
+
+  it('should instruct agent not to ask what the user needs for empty mentions', () => {
+    const result = buildChatHistorySection('some context');
+    expect(result).toContain('Do not ask the user what they need');
+  });
 });
 
 describe('buildPersistedHistorySection', () => {
