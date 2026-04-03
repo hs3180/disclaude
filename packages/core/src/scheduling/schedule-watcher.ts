@@ -110,6 +110,16 @@ function parseScheduleFrontmatter(content: string): {
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
         break;
+      case 'watch':
+        // Parse comma-separated or bracket-enclosed array of glob patterns
+        // Supports both: watch: "path1, path2" and watch: path1, path2
+        const raw = stripQuotes(value).trim();
+        if (raw.startsWith('[') && raw.endsWith(']')) {
+          frontmatter[key] = raw.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+        } else {
+          frontmatter[key] = raw.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        break;
     }
   }
 
@@ -216,6 +226,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as string[] | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +278,10 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watch && task.watch.length > 0) {
+      const watchStr = task.watch.map(p => `"${p}"`).join(', ');
+      frontmatter.push(`watch: [${watchStr}]`);
     }
 
     frontmatter.push('---', '');

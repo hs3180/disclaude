@@ -41,4 +41,15 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional event-driven trigger configuration.
+   * When defined, the scheduler watches the specified file paths and immediately
+   * triggers the task when a file change is detected, without waiting for cron.
+   *
+   * Defined in schedule markdown frontmatter as an array of glob patterns.
+   * Example: `watch: ["workspace/chats/*.json"]`
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watch?: string[];
 }

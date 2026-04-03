@@ -446,6 +446,87 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).not.toContain('model:');
     });
 
+    it('should parse watch field as array from bracket notation (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Watch Task"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_watch"',
+        'watch: ["workspace/chats/*.json"]',
+        '---',
+        '',
+        'Watch for chat files.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/watch-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toEqual(['workspace/chats/*.json']);
+    });
+
+    it('should parse watch field with multiple patterns (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch Task"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_multiwatch"',
+        'watch: ["workspace/chats/*.json", "workspace/data/*.txt"]',
+        '---',
+        '',
+        'Watch multiple paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toEqual(['workspace/chats/*.json', 'workspace/data/*.txt']);
+    });
+
+    it('should default watch to undefined when not specified (Issue #1953)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+
+    it('should write watch field when present (Issue #1953)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-watch-write',
+        name: 'Watch Write Task',
+        cron: '0 * * * * *',
+        prompt: 'Watch task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        watch: ['workspace/chats/*.json'],
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch: ["workspace/chats/*.json"]');
+    });
+
+    it('should not write watch field when undefined (Issue #1953)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-watch-write',
+        name: 'No Watch Write',
+        cron: '0 0 * * *',
+        prompt: 'No watch',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+    });
+
     it('should handle task IDs without schedule- prefix', async () => {
       const task: ScheduledTask = {
         id: 'my-task',

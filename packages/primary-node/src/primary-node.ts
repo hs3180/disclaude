@@ -51,6 +51,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1953: Event-driven schedule trigger
+  EventTriggerWatcher,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
@@ -152,6 +154,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  // Event-driven trigger (Issue #1953)
+  protected eventTriggerWatcher?: EventTriggerWatcher;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -492,23 +496,54 @@ export class PrimaryNode extends EventEmitter {
       onFileAdded: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Register task for event-driven triggering if watch is configured
+        if (task.watch && task.watch.length > 0) {
+          void this.eventTriggerWatcher?.registerTask(task);
+        }
       },
       onFileChanged: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Re-register task for event-driven triggering (watch config may have changed)
+        if (task.watch && task.watch.length > 0) {
+          void this.eventTriggerWatcher?.registerTask(task);
+        } else {
+          void this.eventTriggerWatcher?.unregisterTask(task.id);
+        }
       },
       onFileRemoved: (taskId: string) => {
         logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
         this.scheduler?.removeTask(taskId);
+        // Issue #1953: Unregister task from event-driven triggering
+        void this.eventTriggerWatcher?.unregisterTask(taskId);
       },
+    });
+
+    // Issue #1953: Initialize event trigger watcher for file-change-driven execution
+    this.eventTriggerWatcher = new EventTriggerWatcher({
+      triggerTask: (taskId: string) => this.scheduler?.triggerTask(taskId) ?? Promise.resolve(false),
+      baseDir: workspaceDir,
     });
 
     // Start scheduler and file watcher
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Register existing tasks with watch configurations for event triggering
+    const allTasks = await this.scheduleManager.listAll();
+    for (const task of allTasks) {
+      if (task.watch && task.watch.length > 0 && task.enabled) {
+        await this.eventTriggerWatcher.registerTask(task);
+      }
+    }
+    await this.eventTriggerWatcher.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    const stats = this.eventTriggerWatcher.getStats();
+    if (stats.taskCount > 0) {
+      console.log(`✓ Event trigger watcher started (${stats.taskCount} tasks, ${stats.dirCount} dirs)`);
+    }
     logger.info('Scheduler initialized');
   }
 
@@ -516,6 +551,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.eventTriggerWatcher?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

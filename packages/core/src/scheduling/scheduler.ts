@@ -323,6 +323,33 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task immediately (event-driven execution).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Called by EventTriggerWatcher when a watched file changes.
+   * Uses the same execution path as cron-triggered execution,
+   * including cooldown and blocking checks.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and execution was attempted, false if not found
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found in active jobs');
+      return false;
+    }
+
+    logger.info(
+      { taskId, name: entry.task.name, source: 'event' },
+      'Task triggered by event (non-cron)'
+    );
+
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
