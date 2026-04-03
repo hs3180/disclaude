@@ -91,3 +91,14 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// TCC-Safe Spawn (Issue #1957)
+export type { TCCPermission, TCCEnvironmentInfo, TCCSafeSpawnOptions, TCCSafeSpawnResult } from './tcc-safe-spawn.js';
+export {
+  isMacOS,
+  detectPm2Environment,
+  getTCCEnvironmentInfo,
+  spawnTCCSafe,
+  checkMicrophonePermission,
+  diagnoseTCCMicrophoneIssue,
+} from './tcc-safe-spawn.js';

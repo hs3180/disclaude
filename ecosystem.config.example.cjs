@@ -10,6 +10,17 @@
  *   npm run pm2:start
  *
  * @see {@link https://pm2.keymetrics.io/docs/usage/application-declaration/}
+ *
+ * ⚠️ macOS TCC Notice (Issue #1957):
+ * When running under PM2 fork mode on macOS, the system's TCC (Transparency,
+ * Consent, and Control) tracks the entire process chain. Since the PM2 node
+ * process lacks microphone/camera TCC permissions, ALL child processes are
+ * silently blocked from accessing TCC-protected resources.
+ *
+ * For TCC-sensitive operations (audio recording, camera, etc.), use the
+ * spawnTCCSafe() utility from @disclaude/core to bypass this restriction:
+ *   import { spawnTCCSafe } from '@disclaude/core';
+ *   const result = await spawnTCCSafe('python3', ['record.py'], { permission: 'microphone' });
  */
 
 module.exports = {
