@@ -30,6 +30,17 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Project CLAUDE.md context for development tasks (Issue #1506).
+   *
+   * When the agent works on a development project that has a CLAUDE.md file,
+   * this field carries the content of that file. The content is loaded after
+   * the agent finds/navigates to the project directory, not at startup.
+   *
+   * This enables the agent to understand project-specific conventions,
+   * coding standards, and development requirements.
+   */
+  projectContext?: string;
 }
 
 /**

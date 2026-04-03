@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectContextGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -108,5 +109,42 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectContextGuidance()).toBe('');
+    expect(buildProjectContextGuidance(undefined)).toBe('');
+  });
+
+  it('should return empty string for empty string input', () => {
+    expect(buildProjectContextGuidance('')).toBe('');
+  });
+
+  it('should include Project Context heading when context is provided', () => {
+    const result = buildProjectContextGuidance('# My Project\nUse TypeScript.');
+    expect(result).toContain('Project Context (CLAUDE.md)');
+  });
+
+  it('should include the CLAUDE.md content in the output', () => {
+    const claudeMd = '# My Project\n\nUse TypeScript.\n\n## Testing\nRun `npm test`.';
+    const result = buildProjectContextGuidance(claudeMd);
+    expect(result).toContain('# My Project');
+    expect(result).toContain('Use TypeScript.');
+    expect(result).toContain('## Testing');
+    expect(result).toContain('Run `npm test`.');
+  });
+
+  it('should include instructions to follow project conventions', () => {
+    const result = buildProjectContextGuidance('some content');
+    expect(result).toContain('Follow these conventions');
+    expect(result).toContain('coding standards');
+    expect(result).toContain('development requirements');
+  });
+
+  it('should reference CLAUDE.md as the source', () => {
+    const result = buildProjectContextGuidance('some content');
+    expect(result).toContain("project's CLAUDE.md file");
   });
 });

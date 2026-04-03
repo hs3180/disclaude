@@ -508,4 +508,53 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - project context (Issue #1506)', () => {
+    it('should include project context section when projectContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Fix the bug in auth module',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules\nUse strict TypeScript.',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('# Project Rules');
+      expect(result).toContain('Use strict TypeScript.');
+    });
+
+    it('should not include project context section when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        projectContext: '# Project Rules\nUse strict TypeScript.',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context (CLAUDE.md)');
+      expect(result).toContain('/reset');
+    });
+
+    it('should place project context after history and before guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'History...',
+        projectContext: '# Project Rules',
+      }, 'chat-456');
+
+      const historyIdx = result.indexOf('Recent Chat History');
+      const projectCtxIdx = result.indexOf('Project Context (CLAUDE.md)');
+      const nextStepIdx = result.indexOf('Next Steps After Response');
+      expect(projectCtxIdx).toBeGreaterThan(historyIdx);
+      expect(nextStepIdx).toBeGreaterThan(projectCtxIdx);
+    });
+  });
 });
