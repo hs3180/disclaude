@@ -395,4 +395,107 @@ describe('WeChatApiClient', () => {
         .rejects.toThrow('Error code 999');
     });
   });
+
+  describe('getUpdates', () => {
+    it('should fetch updates via POST', async () => {
+      const updates = [
+        { msg_id: 'msg-1', from_user_id: 'user-1', message_type: 1, item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+      ];
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: updates })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result.ret).toBe(0);
+      expect(result.update_list).toHaveLength(1);
+      expect(result.update_list?.[0].msg_id).toBe('msg-1');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('should pass cursor when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, cursor: 'next-cursor', update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates({ cursor: 'my-cursor' });
+
+      expect(result.cursor).toBe('next-cursor');
+
+      // Verify cursor was sent in the request body
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.cursor).toBe('my-cursor');
+    });
+
+    it('should not include cursor when not provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates();
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.cursor).toBeUndefined();
+    });
+
+    it('should return empty result on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result.ret).toBe(0);
+      expect(result.update_list).toEqual([]);
+    });
+
+    it('should re-throw non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Server error'));
+
+      client.setToken('bot-token');
+      await expect(client.getUpdates()).rejects.toThrow('Server error');
+    });
+
+    it('should include auth headers', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        }),
+      );
+    });
+
+    it('should handle empty update list', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result.update_list).toBeUndefined();
+    });
+  });
 });

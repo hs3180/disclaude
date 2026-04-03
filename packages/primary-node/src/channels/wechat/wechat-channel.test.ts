@@ -1,26 +1,53 @@
 /**
- * Tests for WeChatChannel (MVP).
+ * Tests for WeChatChannel.
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatChannel } from './wechat-channel.js';
-// Mock the API client
-const mockSendText = vi.fn().mockResolvedValue(undefined);
-const mockSetToken = vi.fn();
-const mockHasToken = vi.fn().mockReturnValue(true);
+
+// Use vi.hoisted to ensure mock references are available during vi.mock factory execution
+const {
+  mockSendText,
+  mockSetToken,
+  mockHasToken,
+  mockGetUpdates,
+  mockListenerStart,
+  mockListenerStop,
+  mockListenerIsListening,
+} = vi.hoisted(() => ({
+  mockSendText: vi.fn().mockResolvedValue(undefined),
+  mockSetToken: vi.fn(),
+  mockHasToken: vi.fn().mockReturnValue(true),
+  mockGetUpdates: vi.fn().mockResolvedValue({ ret: 0, update_list: [] }),
+  mockListenerStart: vi.fn(),
+  mockListenerStop: vi.fn().mockResolvedValue(undefined),
+  mockListenerIsListening: vi.fn().mockReturnValue(true),
+}));
 
 vi.mock('./api-client.js', () => ({
   WeChatApiClient: vi.fn().mockImplementation(() => ({
     sendText: mockSendText,
     setToken: mockSetToken,
     hasToken: mockHasToken,
+    getUpdates: mockGetUpdates,
   })),
 }));
+
+vi.mock('./message-listener.js', () => {
+  class MockWeChatMessageListener {
+    start = mockListenerStart;
+    stop = mockListenerStop;
+    isListening = mockListenerIsListening;
+    getDedupSize = vi.fn().mockReturnValue(0);
+  }
+  return { WeChatMessageListener: MockWeChatMessageListener };
+});
 
 // Mock the auth module
 vi.mock('./auth.js', () => ({
@@ -41,6 +68,8 @@ describe('WeChatChannel', () => {
     vi.clearAllMocks();
     mockHasToken.mockReturnValue(true);
     mockSendText.mockResolvedValue(undefined);
+    mockGetUpdates.mockResolvedValue({ ret: 0, update_list: [] });
+    mockListenerIsListening.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -71,12 +100,12 @@ describe('WeChatChannel', () => {
   });
 
   describe('getCapabilities', () => {
-    it('should return MVP capabilities (all false)', () => {
+    it('should return updated capabilities (supportsThread: true)', () => {
       const channel = new WeChatChannel();
       const caps = channel.getCapabilities();
       expect(caps).toEqual({
         supportsCard: false,
-        supportsThread: false,
+        supportsThread: true,
         supportsFile: false,
         supportsMarkdown: false,
         supportsMention: false,
@@ -89,16 +118,14 @@ describe('WeChatChannel', () => {
   describe('doSendMessage', () => {
     it('should throw if client is not initialized', async () => {
       const channel = new WeChatChannel();
-      // Access protected method via any cast for testing
       await expect(
-        (channel as any).doSendMessage({ chatId: 'test', type: 'text', text: 'hello' })
+        (channel as any).doSendMessage({ chatId: 'test', type: 'text', text: 'hello' }),
       ).rejects.toThrow('WeChat client not initialized');
     });
 
     it('should send text messages via API client', async () => {
       const channel = new WeChatChannel({ token: 'test-token' });
-      await channel.start(); // initializes client
-      // Manually set the client since mock doesn't fully work
+      await channel.start();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       await (channel as any).doSendMessage({
@@ -173,7 +200,6 @@ describe('WeChatChannel', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
-      // Empty text should fall through to warn
       await (channel as any).doSendMessage({
         chatId: 'chat-1',
         type: 'text',
@@ -210,16 +236,19 @@ describe('WeChatChannel', () => {
   });
 
   describe('checkHealth', () => {
-    it('should return true when client has token', () => {
+    it('should return true when client has token and listener is running', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).listener = { isListening: mockListenerIsListening };
       mockHasToken.mockReturnValue(true);
+      mockListenerIsListening.mockReturnValue(true);
       expect((channel as any).checkHealth()).toBe(true);
     });
 
     it('should return false when client has no token', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).listener = { isListening: mockListenerIsListening };
       mockHasToken.mockReturnValue(false);
       expect((channel as any).checkHealth()).toBe(false);
     });
@@ -228,12 +257,50 @@ describe('WeChatChannel', () => {
       const channel = new WeChatChannel();
       expect((channel as any).checkHealth()).toBe(false);
     });
+
+    it('should return false when listener is not running', () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).listener = { isListening: mockListenerIsListening };
+      mockHasToken.mockReturnValue(true);
+      mockListenerIsListening.mockReturnValue(false);
+      expect((channel as any).checkHealth()).toBe(false);
+    });
   });
 
   describe('getApiClient', () => {
     it('should return undefined when not started', () => {
       const channel = new WeChatChannel();
       expect(channel.getApiClient()).toBeUndefined();
+    });
+  });
+
+  describe('getMessageListener', () => {
+    it('should return undefined when not started', () => {
+      const channel = new WeChatChannel();
+      expect(channel.getMessageListener()).toBeUndefined();
+    });
+  });
+
+  describe('doStart / doStop (listener integration)', () => {
+    it('should start message listener after authentication', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+
+      await channel.start();
+
+      // Verify listener was created and started
+      expect(mockListenerStart).toHaveBeenCalled();
+
+      await channel.stop();
+    });
+
+    it('should stop message listener on channel stop', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+
+      await channel.start();
+      await channel.stop();
+
+      expect(mockListenerStop).toHaveBeenCalled();
     });
   });
 });

@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3)
  */
 
 import { createLogger } from '@disclaude/core';
+import type { GetUpdatesResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -210,6 +212,52 @@ export class WeChatApiClient {
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
   }
 
+  /**
+   * Long-poll for incoming messages (getUpdates).
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Uses long polling (default 35s timeout). On timeout, returns an empty
+   * update list (normal for long polling). Caller should retry on timeout.
+   *
+   * @param options - Poll options
+   * @returns Updates response with message list and cursor
+   */
+  async getUpdates(options?: {
+    /** Long-poll timeout in ms (default: 35000) */
+    timeoutMs?: number;
+    /** Cursor from previous poll for pagination */
+    cursor?: string;
+  }): Promise<GetUpdatesResponse> {
+    const body: Record<string, unknown> = {};
+    if (options?.cursor) {
+      body.cursor = options.cursor;
+    }
+
+    try {
+      const data = await this.postJson<GetUpdatesResponse>(
+        'ilink/bot/getupdates',
+        body,
+        { timeoutMs: options?.timeoutMs ?? LONG_POLL_TIMEOUT_MS },
+      );
+
+      const updateCount = data.update_list?.length ?? 0;
+      logger.debug(
+        { updateCount, hasCursor: !!data.cursor, hasMore: data.has_more },
+        'getUpdates received messages',
+      );
+
+      return data;
+    } catch (error) {
+      // Timeout during long polling is normal — return empty result
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out, returning empty');
+        return { ret: 0, update_list: [] };
+      }
+      throw error;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
@@ -217,7 +265,11 @@ export class WeChatApiClient {
   /**
    * Make an authenticated POST request to the API.
    */
-  private async postJson<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+  private async postJson<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    opts?: { timeoutMs?: number },
+  ): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
     const bodyStr = JSON.stringify(body);
 
@@ -229,7 +281,7 @@ export class WeChatApiClient {
       method: 'POST',
       headers,
       body: bodyStr,
-      timeoutMs: DEFAULT_API_TIMEOUT_MS,
+      timeoutMs: opts?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     });
 
     return data;
