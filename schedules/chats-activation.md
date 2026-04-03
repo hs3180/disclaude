@@ -85,7 +85,7 @@ existing_chat_id=$(jq -r '.chatId // empty' "$f")
 if [ -n "$existing_chat_id" ]; then
   echo "INFO: Chat $id already has chatId=$existing_chat_id, recovering to active"
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  tmpfile=$(mktemp /tmp/chat-update-XXXXXX.json)
+  tmpfile=$(mktemp "${f}.XXXXXX")
   jq --arg now "$now" \
       '.status = "active" | .activatedAt = $now' "$f" > "$tmpfile" \
     && mv "$tmpfile" "$f"
@@ -96,17 +96,20 @@ fi
 #### 2.3 通过 lark-cli 创建群组
 
 ```bash
-# 创建群组 — 分离 stdout 和 stderr
+# 创建群组 — 分离 stdout 和 stderr（使用 mktemp 避免并发竞争）
+tmp_err=$(mktemp /tmp/lark-cli-err-XXXXXX)
 result=$(lark-cli im +chat-create \
   --name "$group_name" \
-  --users "$members" 2>/tmp/lark-cli-err)
+  --users "$members" 2>"$tmp_err")
 exit_code=$?
 
 if [ $exit_code -ne 0 ]; then
-  error_msg=$(cat /tmp/lark-cli-err 2>/dev/null | head -5)
+  error_msg=$(cat "$tmp_err" 2>/dev/null | head -5)
   echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
+  rm -f "$tmp_err"
   # 跳转到错误处理（Step 2.4）
 fi
+rm -f "$tmp_err"
 
 chat_id=$(echo "$result" | jq -r '.data.chat_id // empty')
 ```
@@ -119,8 +122,8 @@ now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 new_attempts=$((attempts + 1))
 
 if [ -n "$chat_id" ]; then
-  # ✅ 创建成功 — 更新为 active
-  tmpfile=$(mktemp /tmp/chat-update-XXXXXX.json)
+  # ✅ 创建成功 — 更新为 active（临时文件与目标同目录，确保 mv 原子性）
+  tmpfile=$(mktemp "${f}.XXXXXX")
   jq --arg chat_id "$chat_id" \
       --arg now "$now" \
       '.status = "active" |
@@ -137,7 +140,7 @@ else
 
   if [ "$new_attempts" -ge "$MAX_RETRIES" ]; then
     echo "WARN: Chat $id reached max retries ($MAX_RETRIES), marking as failed"
-    tmpfile=$(mktemp /tmp/chat-update-XXXXXX.json)
+    tmpfile=$(mktemp "${f}.XXXXXX")
     jq --arg now "$now" \
         --arg error "$error_msg" \
         '.status = "failed" |
@@ -146,7 +149,7 @@ else
          .failedAt = $now' "$f" > "$tmpfile" \
       && mv "$tmpfile" "$f"
   else
-    tmpfile=$(mktemp /tmp/chat-update-XXXXXX.json)
+    tmpfile=$(mktemp "${f}.XXXXXX")
     jq --arg now "$now" \
         --arg error "$error_msg" \
         '.activationAttempts = $new_attempts |
