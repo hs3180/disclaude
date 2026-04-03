@@ -33,11 +33,13 @@ fi
 
 mkdir -p workspace/chats
 
+CHAT_DIR=$(cd workspace/chats && pwd)
+
 # ---- Step 1: List pending chats (skip expired) ----
 now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 pending_files=()
 
-for f in workspace/chats/*.json; do
+for f in "$CHAT_DIR"/*.json; do
   [ -f "$f" ] || continue
 
   # Validate JSON integrity — skip corrupted files

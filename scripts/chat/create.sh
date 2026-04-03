@@ -56,6 +56,12 @@ fi
 
 CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
 
+# Validate CHAT_CONTEXT is valid JSON
+echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {
+  echo "ERROR: CHAT_CONTEXT must be valid JSON, got '$CHAT_CONTEXT'"
+  exit 1
+}
+
 # ---- Step 3: Validate group name (prevent shell injection) ----
 if ! echo "$CHAT_GROUP_NAME" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$'; then
   echo "ERROR: Invalid group name '$CHAT_GROUP_NAME' — contains unsafe characters"

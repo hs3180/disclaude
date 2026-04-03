@@ -253,7 +253,7 @@ workspace/chats/
 | Duplicate `id` | Report "Chat {id} already exists" |
 | Invalid chat ID (path traversal) | Report "Invalid chat ID" and reject immediately |
 | Duplicate response | Report "Chat {id} already has a response" and reject |
-| `jq` not available | Use `node -e` as fallback |
+| `jq` not available | Exit with error (required dependency) |
 | `flock` not available | Exit with error (Linux-only requirement) |
 
 ## Example: PR Review Chat

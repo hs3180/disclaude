@@ -27,6 +27,12 @@ if [ -z "${CHAT_RESPONDER:-}" ]; then
   exit 1
 fi
 
+# Validate responder format (must be ou_xxxxx, consistent with create.sh)
+if ! echo "$CHAT_RESPONDER" | grep -qE '^ou_[a-zA-Z0-9]+$'; then
+  echo "ERROR: Invalid responder ID '$CHAT_RESPONDER' — expected ou_xxxxx format"
+  exit 1
+fi
+
 # ---- Step 1: Validate chat ID (path traversal protection) ----
 if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9._-]+$'; then
   echo "ERROR: Invalid chat ID '$CHAT_ID' — only [a-zA-Z0-9._-] allowed"
