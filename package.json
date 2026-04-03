@@ -37,6 +37,7 @@
     "test:integration:multimodal": "./tests/integration/multimodal-test.sh",
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",
+    "test:feishu": "npm run build && FEISHU_INTEGRATION_TEST=true vitest --run --config vitest.config.feishu.ts",
     "pm2:start": "npm run build && pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop disclaude-primary",
     "pm2:restart": "pm2 restart disclaude-primary",

@@ -30,6 +30,8 @@ export default defineConfig({
       'node_modules/',
       'dist/',
       '**/workspace/**',
+      // Feishu integration tests have their own vitest config (vitest.config.feishu.ts)
+      'tests/feishu/**',
     ],
     env: {
       NODE_ENV: 'test',
