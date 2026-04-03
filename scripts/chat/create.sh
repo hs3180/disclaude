@@ -114,27 +114,30 @@ if [ -f "$CHAT_FILE" ]; then
   exit 1
 fi
 
-# ---- Step 6: Write chat file (atomic write via mktemp + mv) ----
+# ---- Step 6: Write chat file (atomic write via jq + mktemp + mv) ----
+# Use jq for safe JSON construction — avoids heredoc variable expansion
+# which could inject $-containing values (e.g. CHAT_CONTEXT) into bash
 tmpfile=$(mktemp "${CHAT_FILE}.XXXXXX")
-cat > "$tmpfile" << ENDJSON
-{
-  "id": "$CHAT_ID",
-  "status": "pending",
-  "chatId": null,
-  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "activatedAt": null,
-  "expiresAt": "$CHAT_EXPIRES_AT",
-  "createGroup": {
-    "name": "$CHAT_GROUP_NAME",
-    "members": $CHAT_MEMBERS
-  },
-  "context": $CHAT_CONTEXT,
-  "response": null,
-  "activationAttempts": 0,
-  "lastActivationError": null,
-  "failedAt": null
-}
-ENDJSON
+jq -n \
+  --arg id "$CHAT_ID" \
+  --arg expires "$CHAT_EXPIRES_AT" \
+  --arg group_name "$CHAT_GROUP_NAME" \
+  --argjson members "$CHAT_MEMBERS" \
+  --argjson context "$CHAT_CONTEXT" \
+  '{
+    id: $id,
+    status: "pending",
+    chatId: null,
+    createdAt: (now | todate),
+    activatedAt: null,
+    expiresAt: $expires,
+    createGroup: { name: $group_name, members: $members },
+    context: $context,
+    response: null,
+    activationAttempts: 0,
+    lastActivationError: null,
+    failedAt: null
+  }' > "$tmpfile"
 mv "$tmpfile" "$CHAT_FILE"
 exec 9>&-
 
