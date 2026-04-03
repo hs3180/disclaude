@@ -21,6 +21,8 @@ import {
   applyGlobalEnv,
   createLogger,
   Config,
+  setRuntimeContext,
+  findSkill,
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
@@ -117,6 +119,17 @@ async function main(): Promise<void> {
   // Apply config env vars to process.env so main-process components can access them
   // Must be called AFTER setLoadedConfig() to ensure config is available
   applyGlobalEnv();
+
+  // Set runtime context for agents (Issue #1839)
+  // Must be called AFTER applyGlobalEnv() to ensure Config methods return correct values
+  setRuntimeContext({
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => Config.getLoggingConfig(),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+    findSkill: (name) => findSkill(name).then((r) => r ?? undefined),
+  });
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
