@@ -363,6 +363,24 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     switch (message.type) {
+      // Issue #1742: Added 'post' type for rich text messages with @mentions
+      case 'post': {
+        // Build Feishu post (rich text) content with @mentions
+        const postContent = this.buildPostContent(message.text || '', message.mentions);
+        const response = await this.client.im.message.create({
+          params: {
+            receive_id_type: 'chat_id',
+          },
+          data: {
+            receive_id: message.chatId,
+            msg_type: 'post',
+            content: JSON.stringify(postContent),
+          },
+        });
+        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id, mentions: message.mentions?.length }, 'Post message sent with mentions');
+        break;
+      }
+
       case 'text': {
         const response = await this.client.im.message.create({
           params: {
@@ -618,6 +636,53 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getWsMetrics(): ReturnType<WsConnectionManager['getMetrics']> | undefined {
     return this.wsConnectionManager?.getMetrics();
+  }
+
+  /**
+   * Build Feishu post (rich text) content with @mentions.
+   * Issue #1742: Bot-to-bot @mention support.
+   *
+   * Feishu post format:
+   * {
+   *   zh_cn: { title: "", content: [[ { tag: "text", text: "..." }, { tag: "at", user_id: "xxx" } ]] }
+   * }
+   */
+  private buildPostContent(
+    text: string,
+    mentions?: OutgoingMessage['mentions']
+  ): { zh_cn: { title: string; content: Array<Array<Record<string, string>>> } } {
+    // If no mentions, build a simple post with just text
+    if (!mentions || mentions.length === 0) {
+      return {
+        zh_cn: {
+          title: '',
+          content: [[{ tag: 'text', text }]],
+        },
+      };
+    }
+
+    // Build post content with @mentions prepended
+    // Feishu @mention format: { tag: "at", user_id: "<open_id>" }
+    const segments: Array<Record<string, string>> = [];
+
+    for (const mention of mentions) {
+      segments.push({
+        tag: 'at',
+        user_id: mention.openId,
+      });
+      // Add a space after each mention for readability
+      segments.push({ tag: 'text', text: ' ' });
+    }
+
+    // Add the actual text content
+    segments.push({ tag: 'text', text });
+
+    return {
+      zh_cn: {
+        title: '',
+        content: [segments],
+      },
+    };
   }
 
   /**

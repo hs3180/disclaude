@@ -61,13 +61,25 @@ export interface MessageAttachment {
 }
 
 /**
+ * Mention target for @mentioning a user or bot in a message.
+ * Used when sending messages with mentions (e.g., bot-to-bot @mentions).
+ */
+export interface MentionTarget {
+  /** Open ID of the user/bot to mention */
+  openId: string;
+  /** Display name for the mention (optional) */
+  name?: string;
+}
+
+/**
  * Outgoing message content types.
  * - 'text': Text message
+ * - 'post': Rich text message with @mentions (Feishu post format)
  * - 'card': Interactive card (platform-specific)
  * - 'file': File attachment
  * - 'done': Task completion signal (for REST sync mode)
  */
-export type OutgoingContentType = 'text' | 'card' | 'file' | 'done';
+export type OutgoingContentType = 'text' | 'post' | 'card' | 'file' | 'done';
 
 /**
  * Outgoing message to be sent through a channel.
@@ -79,7 +91,7 @@ export interface OutgoingMessage {
   /** Content type */
   type: OutgoingContentType;
 
-  /** Text content (for type 'text') */
+  /** Text content (for type 'text' and 'post') */
   text?: string;
 
   /** Card structure (for type 'card', platform-specific JSON) */
@@ -99,6 +111,13 @@ export interface OutgoingMessage {
 
   /** Error message if task failed (for type 'done') */
   error?: string;
+
+  /**
+   * Mention targets for @mentioning users/bots in the message.
+   * When provided with type 'post', mentions are embedded as <at> tags.
+   * Issue #1742: Bot-to-bot @mention support.
+   */
+  mentions?: MentionTarget[];
 }
 
 /**

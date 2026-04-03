@@ -240,9 +240,15 @@ export function createChannelApiHandlers(
   const { logger, channelName } = options;
 
   return {
-    sendMessage: async (chatId: string, text: string, threadId?: string) => {
+    // Issue #1742: Added mentions parameter for bot-to-bot @mention support
+    sendMessage: async (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => {
       try {
-        await channel.sendMessage({ chatId, type: 'text', text, threadId });
+        // When mentions are provided, use 'post' type for rich text with @mentions
+        if (mentions && mentions.length > 0) {
+          await channel.sendMessage({ chatId, type: 'post', text, threadId, mentions });
+        } else {
+          await channel.sendMessage({ chatId, type: 'text', text, threadId });
+        }
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'IPC handler failed');
         throw error;

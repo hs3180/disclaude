@@ -9,6 +9,7 @@
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { FeishuCard } from '../types/platform.js';
+import type { MentionTarget } from '../types/channel.js';
 
 /**
  * IPC request types.
@@ -32,10 +33,12 @@ export type IpcRequestType =
 export interface IpcRequestPayloads {
   ping: Record<string, never>;
   // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  // Issue #1742: Added mentions for bot-to-bot @mention support
   sendMessage: {
     chatId: string;
     text: string;
     threadId?: string;
+    mentions?: MentionTarget[];
   };
   sendCard: {
     chatId: string;

@@ -43,7 +43,7 @@ async function handleMessage(message: unknown) {
             tools: [
               {
                 name: 'send_text',
-                description: 'Send a plain text message to a chat.',
+                description: 'Send a plain text message to a chat. Supports optional @mentions for bot-to-bot communication.',
                 inputSchema: {
                   type: 'object',
                   properties: {
@@ -58,6 +58,18 @@ async function handleMessage(message: unknown) {
                     parentMessageId: {
                       type: 'string',
                       description: 'Optional parent message ID for thread replies.',
+                    },
+                    mentions: {
+                      type: 'array',
+                      description: 'Optional array of users/bots to @mention in the message. Each item requires openId (Feishu open_id of the target). When provided, message is sent as rich text post format.',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          openId: { type: 'string', description: 'Feishu open_id of the user/bot to @mention' },
+                          name: { type: 'string', description: 'Display name for the mention (optional)' },
+                        },
+                        required: ['openId'],
+                      },
                     },
                   },
                   required: ['text', 'chatId'],
@@ -161,7 +173,7 @@ async function handleMessage(message: unknown) {
         const { name, arguments: toolArgs } = callParams;
 
         if (name === 'send_text') {
-          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string };
+          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string; mentions?: Array<{ openId: string; name?: string }> };
           const result = await send_text(args);
 
           return {
