@@ -139,7 +139,6 @@ disclaude uses a skill system based on `SKILL.md` files:
 
 ```
 skills/
-├── reporter/SKILL.md
 ├── evaluator/SKILL.md
 ├── executor/SKILL.md
 ├── deep-task/SKILL.md

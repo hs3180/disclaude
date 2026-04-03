@@ -41,7 +41,7 @@ export interface IAgentSDKProvider {
   /**
    * 一次性查询（静态输入）
    *
-   * 用于任务型 Agent（Evaluator、Executor、Reporter、SiteMiner 等），
+   * 用于任务型 Agent（Evaluator、Executor、SiteMiner 等），
    * 接受静态输入，返回消息流。
    *
    * @param input - 输入内容（字符串或用户消息数组）

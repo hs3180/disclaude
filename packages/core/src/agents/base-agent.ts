@@ -259,7 +259,7 @@ export abstract class BaseAgent implements Disposable {
   /**
    * Execute a one-shot query.
    *
-   * For task-based agents (Evaluator, Executor, Reporter) that use
+   * For task-based agents (Evaluator, Executor, SiteMiner) that use
    * static prompts. Input is a string or message array.
    *
    * This method wraps the SDK provider query with:
