@@ -35,6 +35,7 @@
     "test:integration:multi-turn": "./tests/integration/use-case-3-multi-turn.sh",
     "test:integration:mcp": "./tests/integration/mcp-tools-test.sh",
     "test:integration:multimodal": "./tests/integration/multimodal-test.sh",
+    "test:integration:feishu": "FEISHU_INTEGRATION_TEST=true ./tests/integration/feishu-integration-test.sh",
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",
     "pm2:start": "npm run build && pm2 start ecosystem.config.cjs",

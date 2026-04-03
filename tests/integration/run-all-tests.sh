@@ -70,6 +70,10 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
+    echo "  7. Feishu Channel Tests (7 tests) [SKIPPED by default]"
+    echo "     - sendInteractive, multi-card, sendMessage, sendFile, sendCard, passive mode"
+    echo "     - Enable: FEISHU_INTEGRATION_TEST=true FEISHU_TEST_CHAT_ID=<id>"
+    echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
@@ -185,6 +189,15 @@ main() {
 
     if ! run_test_script "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
         failed=$((failed + 1))
+    fi
+
+    # Feishu integration tests (only run when explicitly enabled)
+    if [ "${FEISHU_INTEGRATION_TEST:-false}" = "true" ]; then
+        if ! run_test_script "$SCRIPT_DIR/feishu-integration-test.sh" "Feishu Channel Tests"; then
+            failed=$((failed + 1))
+        fi
+    else
+        log_info "Feishu integration tests skipped (set FEISHU_INTEGRATION_TEST=true to enable)"
     fi
 
     echo ""
