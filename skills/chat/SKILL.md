@@ -187,12 +187,27 @@ Display chat status in readable format:
 **Usage**: `/chat list [--status pending|active|expired]`
 
 ```bash
+# Validate chat directory (protect against symlink attacks)
+chat_dir=$(cd workspace/chats && pwd)
+canonical_dir=$(realpath "$chat_dir")
+if [[ "$canonical_dir" != "$(pwd)/workspace/chats" ]]; then
+  echo "ERROR: Chat directory is a symlink or outside expected path"
+  exit 1
+fi
+
 # List all chats
-ls workspace/chats/*.json 2>/dev/null
+ls "$canonical_dir"/*.json 2>/dev/null
 
 # Filter by status (use jq or grep)
-for f in workspace/chats/*.json; do
-  status=$(jq -r '.status' "$f")
+for f in "$canonical_dir"/*.json; do
+  [ -f "$f" ] || continue
+  # Verify file is still within chat directory after symlink resolution
+  file_dir=$(dirname "$(realpath "$f")")
+  if [[ "$file_dir" != "$canonical_dir" ]]; then
+    echo "WARN: Skipping file outside chat directory: $f"
+    continue
+  fi
+  status=$(jq -r '.status' "$f" 2>/dev/null)
   if [ "$status" = "active" ]; then
     echo "$f"
   fi
