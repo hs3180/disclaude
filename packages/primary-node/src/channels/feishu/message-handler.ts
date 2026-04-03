@@ -876,6 +876,17 @@ export class MessageHandler {
         return;
       }
 
+      // Issue #1868: Catch-all for unrecognized commands starting with '/'.
+      // Without this, unrecognized commands fall through to LLM processing,
+      // which may hallucinate a fake confirmation instead of honestly reporting
+      // that the command is not recognized.
+      await this.callbacks.sendMessage({
+        chatId: chat_id,
+        type: 'text',
+        text: `❓ 未知命令: /${cmd}\n\n输入 /help 查看可用命令列表。`,
+      });
+      return;
+
     }
 
     // Get quoted/replied message context if this is a reply

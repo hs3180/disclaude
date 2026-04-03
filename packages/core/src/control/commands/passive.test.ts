@@ -36,13 +36,15 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
 
 describe('handlePassive', () => {
   describe('passiveMode not available', () => {
-    it('should return development message when passiveMode is undefined', () => {
+    it('should return failure with development message when passiveMode is undefined', () => {
       const command = createCommand();
       const context = createContext({ passiveMode: undefined });
 
       const result = handlePassive(command, context) as ControlResponse;
 
-      expect(result.success).toBe(true);
+      // Issue #1868: success should be false when feature is not available,
+      // not true which falsely implies the command was executed
+      expect(result.success).toBe(false);
       expect(result.message).toContain('开发中');
     });
   });

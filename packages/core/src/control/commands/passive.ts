@@ -12,7 +12,7 @@ export const handlePassive: CommandHandler = (
 
   if (!passiveMode) {
     return {
-      success: true,
+      success: false,
       message: '⏳ 被动模式功能尚在开发中，敬请期待。',
     };
   }
