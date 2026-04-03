@@ -1,6 +1,6 @@
 ---
 name: "Chats Activation"
-cron: "0 */1 * * * *"
+cron: "0 * * * * *"
 enabled: true
 blocking: true
 chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
@@ -75,11 +75,19 @@ members=$(jq -r '.createGroup.members | join(",")' "$f")
 attempts=$(jq -r '.activationAttempts // 0' "$f")
 ```
 
-#### 2.2 幂等检查：群组是否已创建
+#### 2.2 使用 flock 防止并发竞态
 
-如果之前已成功创建群组但未完成状态更新（Schedule 崩溃场景），直接恢复状态：
+对每个 chat 文件加排他锁，防止多个 Schedule 实例同时处理同一文件：
 
 ```bash
+exec 9>"${f}.lock"
+
+if ! flock -n 9; then
+  echo "INFO: Chat $id is being processed by another instance, skipping"
+  continue
+fi
+
+# 幂等检查：群组是否已创建（Schedule 崩溃恢复场景）
 existing_chat_id=$(jq -r '.chatId // empty' "$f")
 
 if [ -n "$existing_chat_id" ]; then
@@ -89,25 +97,31 @@ if [ -n "$existing_chat_id" ]; then
   jq --arg now "$now" \
       '.status = "active" | .activatedAt = $now' "$f" > "$tmpfile" \
     && mv "$tmpfile" "$f"
+  exec 9>&-
   continue
 fi
 ```
 
-#### 2.3 通过 lark-cli 创建群组
+#### 2.3 通过 lark-cli 创建群组（带超时保护）
 
 ```bash
 # 创建群组 — 分离 stdout 和 stderr（使用 mktemp 避免并发竞争）
+# 30 秒超时保护，防止 lark-cli 挂起阻塞后续 Schedule
+LARK_TIMEOUT=30
 tmp_err=$(mktemp /tmp/lark-cli-err-XXXXXX)
-result=$(lark-cli im +chat-create \
+result=$(timeout $LARK_TIMEOUT lark-cli im +chat-create \
   --name "$group_name" \
   --users "$members" 2>"$tmp_err")
 exit_code=$?
 
 if [ $exit_code -ne 0 ]; then
-  error_msg=$(cat "$tmp_err" 2>/dev/null | head -5)
+  if [ $exit_code -eq 124 ]; then
+    error_msg="lark-cli timed out after ${LARK_TIMEOUT}s"
+  else
+    error_msg=$(cat "$tmp_err" 2>/dev/null | head -5)
+  fi
   echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
   rm -f "$tmp_err"
-  # 跳转到错误处理（Step 2.4）
 fi
 rm -f "$tmp_err"
 
@@ -148,6 +162,15 @@ else
          .lastActivationError = $error |
          .failedAt = $now' "$f" > "$tmpfile" \
       && mv "$tmpfile" "$f"
+    # 释放文件锁
+    exec 9>&-
+    # 📢 通知：群聊激活失败，告知用户
+    notify_chat_id=$(jq -r '.createGroup.notifyChatId // empty' "$f")
+    if [ -n "$notify_chat_id" ]; then
+      echo "NOTIFY: Sending failure notification to $notify_chat_id for chat $id"
+    fi
+    echo "NOTIFY: Chat '$id' activation failed after $MAX_RETRIES retries: $error_msg"
+    continue
   else
     tmpfile=$(mktemp "${f}.XXXXXX")
     jq --arg now "$now" \
@@ -157,6 +180,9 @@ else
       && mv "$tmpfile" "$f"
   fi
 fi
+
+# 释放文件锁
+exec 9>&-
 ```
 
 ## 状态转换
@@ -174,9 +200,11 @@ fi
 |------|----------|
 | `lark-cli` 不可用 | 发送通知到 chatId，终止执行 |
 | 创建群组失败（< 5 次） | 记录错误，递增重试计数器，下次重试 |
-| 创建群组失败（≥ 5 次） | 标记为 `failed`，不再重试 |
+| 创建群组失败（≥ 5 次） | 标记为 `failed`，输出通知消息供消费方处理 |
 | Schedule 崩溃后恢复 | 检测已有 chatId，幂等恢复为 `active` |
 | Chat 文件损坏（非 JSON） | 记录错误，跳过该文件 |
+| `lark-cli` 超时（> 30s） | 视为创建失败，记录超时错误，进入重试流程 |
+| 并发处理同一文件 | `flock -n` 非阻塞锁，跳过已被其他实例处理的文件 |
 
 ## 注意事项
 
@@ -186,6 +214,9 @@ fi
 4. **串行处理**: 一次处理一个群聊，避免并发问题
 5. **不创建新 Schedule**: 这是定时任务执行环境的规则
 6. **不修改其他文件**: 只处理 `workspace/chats/` 目录下的文件
+7. **并发安全**: 使用 `flock` 文件锁防止多个 Schedule 实例同时处理同一文件
+8. **超时保护**: `lark-cli` 调用设 30 秒超时，防止挂起阻塞后续 Schedule
+9. **失败通知**: 达到重试上限后输出通知消息，消费方可据此通知用户
 
 ## 验收标准
 

@@ -111,6 +111,26 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
+### ⚠️ Chat ID Validation (All Operations)
+
+Every operation that takes a `{id}` parameter **MUST** validate it before use:
+
+```bash
+# 1. Reject path traversal and special characters
+if ! echo "$id" | grep -qE '^[a-zA-Z0-9._-]+$'; then
+  echo "ERROR: Invalid chat ID '$id' — only [a-zA-Z0-9._-] allowed"
+  exit 1
+fi
+
+# 2. Resolve to canonical path and verify it stays within chat directory
+chat_dir=$(cd workspace/chats && pwd)
+chat_file=$(realpath -m "${chat_dir}/${id}.json" 2>/dev/null)
+if [[ "$chat_file" != "${chat_dir}/"* ]]; then
+  echo "ERROR: Path traversal detected for chat ID '$id'"
+  exit 1
+fi
+```
+
 ### 1. Create Chat
 
 **Usage**: `/chat create`
@@ -150,32 +170,18 @@ EOF
 
 **Validation**:
 - `id` must be unique (check existing files first)
-- `id` must only contain `[a-zA-Z0-9._-]` characters (reject `../`, `/`, etc. to prevent path traversal)
+- `id` must pass the [Chat ID Validation](#-chat-id-validation-all-operations) check
 - `members` must be a non-empty array of valid open IDs
 - `expiresAt` must be after `createdAt`
-
-```bash
-# Validate chat ID (reject path traversal and special characters)
-if ! echo "$id" | grep -qE '^[a-zA-Z0-9._-]+$'; then
-  echo "ERROR: Invalid chat ID '$id' — only [a-zA-Z0-9._-] allowed"
-  exit 1
-fi
-
-# Safety: resolve to canonical path within chat directory
-chat_dir=$(cd workspace/chats && pwd)
-chat_file=$(realpath -m "${chat_dir}/${id}.json" 2>/dev/null)
-if [[ "$chat_file" != "${chat_dir}/"* ]]; then
-  echo "ERROR: Path traversal detected for chat ID '$id'"
-  exit 1
-fi
-```
 
 ### 2. Query Chat
 
 **Usage**: `/chat query {id}`
 
+Apply [Chat ID Validation](#-chat-id-validation-all-operations), then:
+
 ```bash
-cat workspace/chats/{id}.json
+cat "$chat_file"
 ```
 
 Display chat status in readable format:
@@ -225,19 +231,23 @@ Display in table format:
 **Steps**:
 
 1. Identify the chat ID from context (e.g., group name, message context)
-2. Read the chat file
-3. Verify status is `active` (not already expired)
-4. Update the chat:
+2. Apply [Chat ID Validation](#-chat-id-validation-all-operations)
+3. Read the chat file
+4. Verify status is `active` (not already expired)
+5. Update the chat:
 
 ```bash
-# Update chat with response using jq
-tmpfile=$(mktemp /tmp/chat-update-XXXXXX.json)
-jq '.response = {
-       "content": "{user_message}",
-       "responder": "{senderOpenId}",
-       "repliedAt": "{currentTimestamp}"
-     }' workspace/chats/{id}.json > "$tmpfile" \
-  && mv "$tmpfile" workspace/chats/{id}.json
+# Update chat with response using jq (atomic write)
+tmpfile=$(mktemp "${chat_file}.XXXXXX")
+jq --arg msg "{user_message}" \
+    --arg responder "{senderOpenId}" \
+    --arg ts "{currentTimestamp}" \
+    '.response = {
+       "content": $msg,
+       "responder": $responder,
+       "repliedAt": $ts
+     }' "$chat_file" > "$tmpfile" \
+  && mv "$tmpfile" "$chat_file"
 ```
 
 **Note**: After updating the chat, the **consumer** (PR Scanner, offline questioner, etc.) is responsible for polling the chat file and taking downstream action. This skill does NOT execute callbacks.
@@ -318,6 +328,7 @@ workspace/chats/
 | Chat status is `failed` | Report "Chat {id} failed to activate: {lastActivationError}" |
 | Invalid JSON in chat file | Report error, do not overwrite |
 | Duplicate `id` | Report "Chat {id} already exists" |
+| Invalid chat ID (path traversal) | Report "Invalid chat ID" and reject immediately |
 | `jq` not available | Use `node -e` as fallback |
 
 ## Example: PR Review Chat
