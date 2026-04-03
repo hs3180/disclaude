@@ -46,3 +46,12 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Task status and progress (Issue #857)
+export {
+  get_task_status,
+  list_tasks,
+  update_task_progress,
+  type TaskStatusInfo,
+  type TaskStatus,
+} from './get-task-status.js';

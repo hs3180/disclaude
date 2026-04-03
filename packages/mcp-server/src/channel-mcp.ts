@@ -16,7 +16,10 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  get_task_status,
+  list_tasks,
+  update_task_progress,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -350,6 +353,121 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #857: Task status and progress reporting tools
+  {
+    name: 'get_task_status',
+    description: `Get the status of a specific task by its task ID.
+
+Returns structured information including:
+- Current status (pending/running/completed/failed)
+- Task title and creation time
+- Number of completed iterations
+- Progress summary and last update time
+- Error messages (if failed)
+
+## Parameters
+- **taskId**: Task identifier (typically the message ID used to create the task)
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier (typically the message ID)'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        const result = await get_task_status({ taskId });
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.error}`);
+        }
+        const d = result.data!;
+        const statusEmoji = { pending: '⏳', running: '🔄', completed: '✅', failed: '❌', not_found: '❓' };
+        const lines = [
+          `Task: ${d.title ?? d.taskId}`,
+          `Status: ${statusEmoji[d.status]} ${d.status}`,
+          `Iterations: ${d.iterations} / ${d.maxIterations}`,
+        ];
+        if (d.progressSummary) lines.push(`Progress: ${d.progressSummary}`);
+        if (d.lastProgressUpdate) lines.push(`Last Update: ${d.lastProgressUpdate}`);
+        if (d.errorMessage) lines.push(`Error: ${d.errorMessage}`);
+        return toolSuccess(lines.join('\n'));
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to get task status: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'list_tasks',
+    description: `List all tasks and their statuses.
+
+Scans the workspace tasks directory and returns status information for all tasks.
+Tasks are sorted by status: running → pending → completed → failed.
+
+## Example
+\`\`\`json
+{}
+\`\`\``,
+    parameters: z.object({}).passthrough(),
+    handler: async () => {
+      try {
+        const result = await list_tasks();
+        if (!result.success) {
+          return toolSuccess(`⚠️ ${result.error}`);
+        }
+        if (!result.data || result.data.length === 0) {
+          return toolSuccess('No tasks found.');
+        }
+        const statusEmoji = { pending: '⏳', running: '🔄', completed: '✅', failed: '❌', not_found: '❓' };
+        const lines = result.data.map(t =>
+          `${statusEmoji[t.status]} [${t.status.toUpperCase()}] ${t.title ?? t.taskId} (${t.iterations} iterations)`
+        );
+        return toolSuccess(`Tasks (${result.data.length}):\n${lines.join('\n')}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to list tasks: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'update_task_progress',
+    description: `Update progress information for a running task.
+
+Writes a progress.md file in the task directory that can be read by the Reporter Agent.
+Use this during task execution to provide progress updates to users.
+
+## Parameters
+- **taskId**: Task identifier (required)
+- **summary**: Progress summary text (required)
+- **currentStep**: Current step number (optional)
+- **totalSteps**: Total number of steps (optional)
+- **nextStep**: Description of the next step (optional)
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123", "summary": "Modified auth.service.ts", "currentStep": 3, "totalSteps": 8, "nextStep": "Run tests"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier'),
+      summary: z.string().describe('Progress summary text'),
+      currentStep: z.number().optional().describe('Current step number'),
+      totalSteps: z.number().optional().describe('Total number of steps'),
+      nextStep: z.string().optional().describe('Description of the next step'),
+    }),
+    handler: async ({ taskId, summary, currentStep, totalSteps, nextStep }: {
+      taskId: string;
+      summary: string;
+      currentStep?: number;
+      totalSteps?: number;
+      nextStep?: string;
+    }) => {
+      try {
+        const result = await update_task_progress({ taskId, summary, currentStep, totalSteps, nextStep });
+        return toolSuccess(result.success ? '✅ Progress updated' : `⚠️ ${result.error}`);
+      } catch (error) {
+        return toolSuccess(`⚠️ Failed to update progress: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
