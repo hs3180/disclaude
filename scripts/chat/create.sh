@@ -68,6 +68,13 @@ echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {
   exit 1
 }
 
+# Validate CHAT_CONTEXT size limit (prevent oversized chat files)
+CHAT_CONTEXT_SIZE=$(echo "$CHAT_CONTEXT" | jq -r '. | tostring | length' 2>/dev/null || echo "0")
+if [ "$CHAT_CONTEXT_SIZE" -gt 4096 ]; then
+  echo "ERROR: CHAT_CONTEXT too large ($CHAT_CONTEXT_SIZE bytes, max 4096)"
+  exit 1
+fi
+
 # ---- Step 3: Validate group name (prevent shell injection) ----
 if ! echo "$CHAT_GROUP_NAME" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$'; then
   echo "ERROR: Invalid group name '$CHAT_GROUP_NAME' — contains unsafe characters"

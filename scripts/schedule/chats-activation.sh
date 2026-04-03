@@ -179,9 +179,9 @@ for f in "${pending_files[@]}"; do
   fi
 
   # ---- 2.3: Create group via lark-cli (with timeout protection) ----
+  # Use explicit cleanup (not trap EXIT) to avoid conflicting with
+  # _atomic_jq_write's trap RETURN during the same iteration
   tmp_err=$(mktemp /tmp/lark-cli-err-XXXXXX)
-  trap 'rm -f "$tmp_err"' EXIT
-
   result=$(timeout "$LARK_TIMEOUT" lark-cli im +chat-create \
     --name "$group_name" \
     --users "$members" 2>"$tmp_err") || true
@@ -197,7 +197,6 @@ for f in "${pending_files[@]}"; do
     echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
   fi
   rm -f "$tmp_err"
-  trap - EXIT
 
   chat_id=$(echo "$result" | jq -r '.data.chat_id // empty' 2>/dev/null)
 
