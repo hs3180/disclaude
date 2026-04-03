@@ -41,4 +41,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional per-task SOUL.md file path for personality override.
+   * When set, the schedule agent will load this SOUL.md file and inject
+   * its content into the system prompt, overriding the global soul.
+   * Supports tilde expansion (e.g., `soul: "~/.disclaude/souls/code-reviewer.md"`).
+   *
+   * Issue #1315: Per-task soul for scheduled tasks.
+   */
+  soul?: string;
 }

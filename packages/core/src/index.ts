@@ -298,6 +298,12 @@ export {
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 
+// SOUL.md module - Agent personality/behavior definition (Issue #1315)
+export {
+  SoulLoader,
+  type SoulLoadResult,
+} from './soul/index.js';
+
 // Control module - unified control command handling
 export {
   createControlHandler,

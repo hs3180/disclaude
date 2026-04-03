@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1315: SOUL.md personality injection
+  SoulLoader,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -467,13 +469,33 @@ export class PrimaryNode extends EventEmitter {
       },
     };
 
+    // Issue #1315: Load global SOUL.md for personality injection
+    const soulConfig = Config.getSoulConfig();
+    let globalSoulContent: string | undefined;
+    if (soulConfig?.path) {
+      const soulLoader = new SoulLoader(soulConfig.path);
+      const soulResult = await soulLoader.load();
+      globalSoulContent = soulResult?.content;
+      if (globalSoulContent) {
+        logger.info({ soulPath: soulResult.sourcePath, sizeBytes: soulResult.sizeBytes }, 'Global SOUL.md loaded');
+      } else {
+        logger.warn({ soulPath: soulConfig.path }, 'Global SOUL.md configured but could not be loaded');
+      }
+    }
+
     // Issue #1382: Use unified createScheduleExecutor
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Pass systemPromptAppend for SOUL.md personality injection
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        // Per-task soul overrides global soul
+        const effectiveSoul = systemPromptAppend ?? globalSoulContent;
+        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), {
+          ...(model ? { model } : {}),
+          ...(effectiveSoul ? { systemPromptAppend: effectiveSoul } : {}),
+        });
       },
       callbacks: schedulerCallbacks,
     });

@@ -9,6 +9,17 @@
  */
 
 /**
+ * SOUL.md personality configuration section.
+ *
+ * Issue #1315: Defines the path to a SOUL.md file that contains
+ * Agent personality/behavior guidelines, injected into the system prompt.
+ */
+export interface SoulConfig {
+  /** Path to the SOUL.md file (supports ~ for home directory) */
+  path?: string;
+}
+
+/**
  * Workspace configuration section.
  */
 export interface WorkspaceConfig {
@@ -306,6 +317,8 @@ export interface DisclaudeConfig {
   workspace?: WorkspaceConfig;
   /** Agent/AI model settings */
   agent?: AgentConfig;
+  /** SOUL.md personality configuration (Issue #1315) */
+  soul?: SoulConfig;
   /** Feishu platform settings */
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */

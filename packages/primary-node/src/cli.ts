@@ -24,6 +24,8 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  // Issue #1315: SOUL.md personality injection
+  SoulLoader,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -161,10 +163,26 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Issue #1315: Load global SOUL.md for personality injection
+  const soulConfig = Config.getSoulConfig();
+  let globalSoulContent: string | undefined;
+  if (soulConfig?.path) {
+    const soulLoader = new SoulLoader(soulConfig.path);
+    const soulResult = await soulLoader.load();
+    globalSoulContent = soulResult?.content;
+    if (globalSoulContent) {
+      logger.info({ soulPath: soulResult.sourcePath, sizeBytes: soulResult.sizeBytes }, 'Global SOUL.md loaded');
+    } else {
+      logger.warn({ soulPath: soulConfig.path }, 'Global SOUL.md configured but could not be loaded');
+    }
+  }
+
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1315: Global SOUL.md content passed for personality injection
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    systemPromptAppend: globalSoulContent,
   });
 
   // Create unified control handler context

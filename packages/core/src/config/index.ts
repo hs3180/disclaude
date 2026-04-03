@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  SoulConfig,
 } from './types.js';
 
 // Re-export sub-modules
@@ -425,6 +426,16 @@ export class Config {
    */
   static getGlobalEnv(): Record<string, string> {
     return fileConfigOnly.env || {};
+  }
+
+  /**
+   * Get SOUL.md personality configuration.
+   * Issue #1315: Returns the path to the SOUL.md file if configured.
+   *
+   * @returns SoulConfig with path, or undefined if not configured
+   */
+  static getSoulConfig(): SoulConfig | undefined {
+    return fileConfigOnly.soul;
   }
 
   /**

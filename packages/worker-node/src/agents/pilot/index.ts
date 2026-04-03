@@ -81,12 +81,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
 
+  // Issue #1315: System prompt append for SOUL.md personality injection
+  private readonly systemPromptAppend?: string;
+
   constructor(config: PilotConfig) {
     super(config);
 
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+    this.systemPromptAppend = config.systemPromptAppend;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -381,6 +385,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.systemPromptAppend,
     });
 
     // Get capabilities for message building
@@ -584,6 +589,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      systemPromptAppend: this.systemPromptAppend,
     });
 
     this.logger.info(

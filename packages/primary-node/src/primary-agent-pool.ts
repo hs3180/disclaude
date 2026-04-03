@@ -31,6 +31,11 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * System prompt append text for personality injection.
+   * Issue #1315: Used for global SOUL.md content.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -59,6 +64,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        systemPromptAppend: this.options.systemPromptAppend,
       });
       this.agents.set(chatId, agent);
     }
