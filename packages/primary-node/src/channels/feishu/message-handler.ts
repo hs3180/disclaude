@@ -876,6 +876,18 @@ export class MessageHandler {
         return;
       }
 
+      // Issue #1868: Fallback /passive handling when controlHandler is unavailable.
+      // Without this guard, /passive falls through to the AI agent which hallucinates
+      // a confirmation ("被动模式已关闭") without actually changing any state.
+      if (cmd === 'passive') {
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '⏳ 被动模式命令当前不可用，请稍后重试。',
+        });
+        return;
+      }
+
     }
 
     // Get quoted/replied message context if this is a reply
