@@ -113,7 +113,11 @@ for f in "${pending_files[@]}"; do
   fi
   group_name=$(echo "$group_name" | cut -c 1-64)
 
-  # Validate members: each must be ou_xxxxx format
+  # Validate members: non-empty and each must be ou_xxxxx format
+  if [ -z "$members" ]; then
+    echo "ERROR: No members found for chat $id, skipping"
+    continue
+  fi
   skip_chat=false
   for member in $(echo "$members" | tr ',' ' '); do
     if ! echo "$member" | grep -qE '^ou_[a-zA-Z0-9]+$'; then
@@ -130,6 +134,7 @@ for f in "${pending_files[@]}"; do
   exec 9>"${f}.lock"
   if ! flock -n 9; then
     echo "INFO: Chat $id is being processed by another instance, skipping"
+    exec 9>&-
     continue
   fi
 
