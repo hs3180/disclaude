@@ -91,3 +91,16 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// TCC Bypass (Issue #1957)
+export type { TccBypassResult, TccBypassOptions } from './tcc-bypass.js';
+export {
+  isMacOS,
+  isRunningUnderPm2,
+  tccBypassStatus,
+  escapeAppleScriptString,
+  spawnOutsideProcessChain,
+  buildStatusScript,
+  readStatusFile,
+  waitForStatusFile,
+} from './tcc-bypass.js';
