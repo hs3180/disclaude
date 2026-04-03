@@ -75,10 +75,8 @@ for f in "$CHAT_DIR"/*.json; do
           chat_id=$(jq -r '.id' "$f")
           echo "INFO: Chat $chat_id expired at $expires (skipping activation)"
           # Acquire exclusive lock before modifying file
-          _exp_lock_fd=0
           exec 10>"${f}.lock"
           if flock -n 10 2>/dev/null; then
-            _exp_lock_fd=10
             # Re-check status under lock (another instance may have changed it)
             current_status=$(jq -r '.status' "$f" 2>/dev/null)
             if [ "$current_status" = "pending" ]; then
@@ -91,6 +89,7 @@ for f in "$CHAT_DIR"/*.json; do
             exec 10>&-
           else
             echo "WARN: Chat $chat_id is locked by another process, skipping expiration mark"
+            exec 10>&-
           fi
           continue
         fi

@@ -101,6 +101,8 @@ fi
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 tmpfile=$(mktemp "${CHAT_FILE}.XXXXXX")
+# shellcheck disable=SC2064
+trap "rm -f '$tmpfile'" EXIT
 jq --arg msg "$CHAT_RESPONSE" \
     --arg responder "$CHAT_RESPONDER" \
     --arg ts "$NOW" \
@@ -110,6 +112,7 @@ jq --arg msg "$CHAT_RESPONSE" \
        "repliedAt": $ts
      }' "$CHAT_FILE" > "$tmpfile" \
   && mv "$tmpfile" "$CHAT_FILE"
+trap - EXIT
 
 exec 9>&-
 

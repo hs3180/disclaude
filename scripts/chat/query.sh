@@ -41,7 +41,11 @@ jq empty "$CHAT_FILE" 2>/dev/null || {
 
 # ---- Step 3: Read with shared lock (allows concurrent readers) ----
 exec 9>"${CHAT_FILE}.lock"
-flock -s 9  # shared lock — multiple readers OK, blocks writers
+if ! flock -s -w 5 9; then
+  echo "ERROR: Failed to acquire read lock for chat $CHAT_ID (timed out after 5s)"
+  exec 9>&-
+  exit 1
+fi
 
 cat "$CHAT_FILE"
 

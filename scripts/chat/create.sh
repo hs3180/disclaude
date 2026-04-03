@@ -118,6 +118,8 @@ fi
 # Use jq for safe JSON construction — avoids heredoc variable expansion
 # which could inject $-containing values (e.g. CHAT_CONTEXT) into bash
 tmpfile=$(mktemp "${CHAT_FILE}.XXXXXX")
+# shellcheck disable=SC2064
+trap "rm -f '$tmpfile'" EXIT
 jq -n \
   --arg id "$CHAT_ID" \
   --arg expires "$CHAT_EXPIRES_AT" \
@@ -139,6 +141,7 @@ jq -n \
     failedAt: null
   }' > "$tmpfile"
 mv "$tmpfile" "$CHAT_FILE"
+trap - EXIT
 exec 9>&-
 
 echo "OK: Chat $CHAT_ID created successfully"
