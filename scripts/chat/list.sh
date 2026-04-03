@@ -36,6 +36,13 @@ for f in "$CANONICAL_DIR"/*.json; do
     continue
   }
 
+  # Acquire shared lock for consistent read (skip if lock unavailable)
+  _list_lock_fd=0
+  exec 8>"${f}.lock"
+  if flock -s -n 8 2>/dev/null; then
+    _list_lock_fd=8
+  fi
+
   # Apply status filter if provided
   if [ -n "$FILTER" ]; then
     status=$(jq -r '.status' "$f" 2>/dev/null)
@@ -44,5 +51,10 @@ for f in "$CANONICAL_DIR"/*.json; do
     fi
   else
     echo "$f"
+  fi
+
+  # Release shared lock
+  if [ "$_list_lock_fd" -ne 0 ]; then
+    exec 8>&-
   fi
 done

@@ -16,8 +16,8 @@ if [ -z "${CHAT_ID:-}" ]; then
 fi
 
 # ---- Step 1: Validate chat ID (path traversal protection) ----
-if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9._-]+$'; then
-  echo "ERROR: Invalid chat ID '$CHAT_ID' — only [a-zA-Z0-9._-] allowed"
+if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$'; then
+  echo "ERROR: Invalid chat ID '$CHAT_ID' — must start with [a-zA-Z0-9_-], only [a-zA-Z0-9._-] allowed"
   exit 1
 fi
 

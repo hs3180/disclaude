@@ -20,8 +20,8 @@ if [ -z "${CHAT_ID:-}" ]; then
   exit 1
 fi
 
-if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9._-]+$'; then
-  echo "ERROR: Invalid chat ID '$CHAT_ID' — only [a-zA-Z0-9._-] allowed"
+if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$'; then
+  echo "ERROR: Invalid chat ID '$CHAT_ID' — must start with [a-zA-Z0-9_-], only [a-zA-Z0-9._-] allowed"
   exit 1
 fi
 
@@ -42,6 +42,12 @@ fi
 if ! echo "$CHAT_EXPIRES_AT" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
   echo "ERROR: CHAT_EXPIRES_AT must be UTC Z-suffix format (e.g. 2026-03-25T10:00:00Z), got '$CHAT_EXPIRES_AT'"
   exit 1
+fi
+
+# expiresAt should be in the future (warn only, don't block)
+now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [[ "$CHAT_EXPIRES_AT" < "$now_iso" ]]; then
+  echo "WARN: CHAT_EXPIRES_AT '$CHAT_EXPIRES_AT' is already in the past (now: $now_iso)"
 fi
 
 if [ -z "${CHAT_GROUP_NAME:-}" ]; then

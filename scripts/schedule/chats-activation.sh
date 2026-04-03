@@ -14,6 +14,11 @@
 set -uo pipefail
 
 CHAT_MAX_PER_RUN="${CHAT_MAX_PER_RUN:-10}"
+# Validate CHAT_MAX_PER_RUN is a positive integer
+if ! [[ "$CHAT_MAX_PER_RUN" =~ ^[0-9]+$ ]] || [ "$CHAT_MAX_PER_RUN" -eq 0 ]; then
+  echo "WARN: Invalid CHAT_MAX_PER_RUN='$CHAT_MAX_PER_RUN', falling back to 10"
+  CHAT_MAX_PER_RUN=10
+fi
 LARK_TIMEOUT=30
 MAX_RETRIES=5
 PROCESSED=0
@@ -56,9 +61,18 @@ for f in "$CHAT_DIR"/*.json; do
         if [[ "$expires" < "$now_iso" ]]; then
           chat_id=$(jq -r '.id' "$f")
           echo "INFO: Chat $chat_id expired at $expires (skipping activation)"
-          tmpfile=$(mktemp "${f}.XXXXXX")
-          jq --arg now "$now_iso" '.status = "expired" | .expiredAt = $now' "$f" > "$tmpfile" \
-            && mv "$tmpfile" "$f"
+          # Acquire exclusive lock before modifying file
+          _exp_lock_fd=0
+          exec 10>"${f}.lock"
+          if flock -n 10 2>/dev/null; then
+            _exp_lock_fd=10
+            tmpfile=$(mktemp "${f}.XXXXXX")
+            jq --arg now "$now_iso" '.status = "expired" | .expiredAt = $now' "$f" > "$tmpfile" \
+              && mv "$tmpfile" "$f"
+            exec 10>&-
+          else
+            echo "WARN: Chat $chat_id is locked by another process, skipping expiration mark"
+          fi
           continue
         fi
       else

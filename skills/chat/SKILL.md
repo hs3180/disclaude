@@ -119,7 +119,7 @@ bash scripts/chat/create.sh
 ```
 
 **Validation** (built into script):
-- `CHAT_ID` must match `^[a-zA-Z0-9._-]+$` and pass path traversal check
+- `CHAT_ID` must match `^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$` (no leading dots) and pass path traversal check
 - `CHAT_EXPIRES_AT` must be UTC Z-suffix ISO 8601 format
 - `CHAT_MEMBERS` must be a non-empty JSON array of `ou_xxxxx` open IDs
 - Uniqueness checked under `flock` (TOCTOU-safe)
@@ -241,6 +241,7 @@ workspace/chats/
 - ❌ Create chats without a valid `expiresAt` (must be UTC Z-suffix)
 - ❌ Use YAML format (always JSON)
 - ❌ Delete chat files manually
+- ❌ Manually delete `.lock` files (cleaned up by `chats-cleanup` schedule)
 
 ## Error Handling
 
