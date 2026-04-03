@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildCommandRecognitionGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,51 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildCommandRecognitionGuidance', () => {
+  it('should include command recognition warning', () => {
+    const result = buildCommandRecognitionGuidance();
+    expect(result).toContain('System Command Recognition');
+    expect(result).toContain('CANNOT execute system commands through natural language');
+  });
+
+  it('should list all available system commands', () => {
+    const result = buildCommandRecognitionGuidance();
+    expect(result).toContain('/help');
+    expect(result).toContain('/reset');
+    expect(result).toContain('/passive');
+    expect(result).toContain('/stop');
+    expect(result).toContain('/status');
+    expect(result).toContain('/list-nodes');
+    expect(result).toContain('/show-debug');
+    expect(result).toContain('/clear-debug');
+    expect(result).toContain('/list-group');
+    expect(result).toContain('/create-group');
+    expect(result).toContain('/add-group-member');
+    expect(result).toContain('/remove-group-member');
+    expect(result).toContain('/dissolve-group');
+    expect(result).toContain('/restart');
+  });
+
+  it('should include examples of wrong and correct approaches', () => {
+    const result = buildCommandRecognitionGuidance();
+    expect(result).toContain('❌ Wrong Approach');
+    expect(result).toContain('✅ Correct Approach');
+  });
+
+  it('should instruct not to pretend executing commands', () => {
+    const result = buildCommandRecognitionGuidance();
+    expect(result).toContain('Do NOT pretend to execute system commands');
+    expect(result).toContain('Do NOT confirm');
+    expect(result).toContain('hallucination');
+  });
+
+  it('should instruct guiding users to slash commands', () => {
+    const result = buildCommandRecognitionGuidance();
+    expect(result).toContain('slash commands');
+    expect(result).toContain('/passive off');
+    expect(result).toContain('/reset');
   });
 });

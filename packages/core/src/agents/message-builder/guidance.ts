@@ -213,3 +213,64 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the command recognition guidance section.
+ *
+ * Issue #1868: Prevents the agent from hallucinating command responses.
+ * When users request system operations in natural language (e.g., "关闭被动模式"),
+ * the agent should NOT pretend to execute the command. System commands can only be
+ * processed via slash commands starting with `/`.
+ *
+ * @returns Formatted command recognition guidance section
+ */
+export function buildCommandRecognitionGuidance(): string {
+  return `
+
+---
+
+## System Command Recognition
+
+**IMPORTANT: You CANNOT execute system commands through natural language.**
+
+System commands (e.g., passive mode toggle, session reset, debug group management) can ONLY be processed via **slash commands** starting with \`/\`. You have NO ability to toggle passive mode, reset sessions, or manage debug groups through conversation.
+
+### Available System Commands
+
+| Command | Description |
+|---------|-------------|
+| \`/help\` | Show help information |
+| \`/status\` | View service status |
+| \`/reset\` | Reset current session |
+| \`/restart\` | Restart Agent instance |
+| \`/stop\` | Stop current response |
+| \`/passive [on\|off]\` | Toggle passive mode (group chat) |
+| \`/list-nodes\` | View execution nodes |
+| \`/show-debug\` | Show Debug group |
+| \`/clear-debug\` | Clear Debug group |
+| \`/list-group\` | List groups |
+| \`/create-group\` | Create a group |
+| \`/add-group-member\` | Add group member |
+| \`/remove-group-member\` | Remove group member |
+| \`/dissolve-group\` | Dissolve a group |
+
+### Guidelines
+
+- **Do NOT pretend to execute system commands** when users ask in natural language
+- **Do NOT confirm** that a system operation has been completed unless you actually processed a slash command
+- When a user requests a system operation in natural language, guide them to use the correct slash command
+
+### Examples
+
+**❌ Wrong Approach (user says "关闭被动模式"):**
+> "好的，被动模式已关闭。" ← This is a hallucination! You cannot actually toggle passive mode.
+
+**✅ Correct Approach (user says "关闭被动模式"):**
+> "被动模式需要通过斜杠命令来切换。请使用 \`/passive off\` 来关闭被动模式。"
+
+**❌ Wrong Approach (user says "重置一下对话"):**
+> "✅ 对话已重置。" ← This is a hallucination! You cannot actually reset the session.
+
+**✅ Correct Approach (user says "重置一下对话"):**
+> "请使用 \`/reset\` 命令来重置当前会话。"`;
+}
