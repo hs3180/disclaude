@@ -35,6 +35,13 @@ import type { WiredContext } from '../channel-lifecycle-manager.js';
 export interface ChannelCallbacksOptions {
   /** Whether to send a 'done' signal on task completion (REST sync mode) */
   sendDoneSignal?: boolean;
+  /**
+   * Callback to retrieve chat history for a chat.
+   * Issue #1863: Wires up getChatHistory so agents can load persisted history.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Chat history as formatted string, or undefined if not available
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -121,6 +128,8 @@ export function createChannelCallbacksFactory(
         async (chatId: string) => {
           logger.info({ chatId }, 'Task completed');
         },
+    // Issue #1863: Wire up getChatHistory callback for persisted history loading
+    ...(options?.getChatHistory && { getChatHistory: options.getChatHistory }),
   });
 }
 

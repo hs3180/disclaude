@@ -214,6 +214,44 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  // Issue #1863: getChatHistory callback wiring
+  it('should NOT include getChatHistory when not provided in options', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger);
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('should include getChatHistory when provided in options', () => {
+    const mockGetHistory = vi.fn().mockResolvedValue('history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    expect(typeof callbacks.getChatHistory).toBe('function');
+  });
+
+  it('getChatHistory should delegate to the provided callback', async () => {
+    const mockGetHistory = vi.fn().mockResolvedValue('history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetHistory,
+    });
+    const callbacks = factory('chat-001');
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetHistory).toHaveBeenCalledWith('chat-001');
+    expect(result).toBe('history content');
+  });
+
+  it('getChatHistory should return undefined when no history found', async () => {
+    const mockGetHistory = vi.fn().mockResolvedValue(undefined);
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetHistory,
+    });
+    const callbacks = factory('chat-001');
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(result).toBeUndefined();
+  });
 });
 
 // ============================================================================

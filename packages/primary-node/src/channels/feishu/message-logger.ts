@@ -225,33 +225,70 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   *
+   * Reads chat log files across multiple days (up to `historyDays` from config),
+   * ordered from oldest to newest so the agent sees natural conversation flow.
+   *
+   * Issue #1863: Previously only read the most recent day's log, causing
+   * cross-day conversation history to be silently truncated.
+   *
+   * @param chatId - The chat identifier to read history for
+   * @returns Aggregated history string, or undefined if no history found
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
-      // Find the most recent log file for this chat
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Filter to date directories
+      // Filter to date directories, sorted descending (newest first)
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => b.name.localeCompare(a.name));
 
-      for (const dir of dateDirs) {
+      if (dateDirs.length === 0) {
+        return undefined;
+      }
+
+      // Determine how many days of history to read
+      const maxDays = this.getMaxHistoryDays();
+
+      // Read and collect history from multiple days (newest first, then reverse)
+      const historyParts: string[] = [];
+      const dirsToRead = dateDirs.slice(0, maxDays);
+
+      for (const dir of dirsToRead) {
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            historyParts.push(content.trim());
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this date, skip
         }
       }
 
-      return undefined;
+      if (historyParts.length === 0) {
+        return undefined;
+      }
+
+      // Reverse to get oldest-first order for natural conversation flow
+      historyParts.reverse();
+      return historyParts.join('\n\n---\n\n');
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Get the maximum number of history days to read.
+   * Uses session restore config from Config (default: 7 days).
+   */
+  private getMaxHistoryDays(): number {
+    try {
+      const config = Config.getSessionRestoreConfig();
+      return config.historyDays;
+    } catch {
+      return 7; // Safe default if Config is not initialized
     }
   }
 

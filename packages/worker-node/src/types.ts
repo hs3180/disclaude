@@ -116,6 +116,11 @@ export interface PilotCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  /**
+   * Get chat history for a chat (Issue #1863).
+   * Used by agents to load persisted history on startup and for first-message context.
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**

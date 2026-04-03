@@ -36,6 +36,7 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import { messageLogger } from './feishu/message-logger.js';
 
 // ============================================================================
 // REST Wired Descriptor
@@ -63,7 +64,10 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: true }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: true,
+      getChatHistory: (chatId) => messageLogger.getChatHistory(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
@@ -98,7 +102,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: false,
+      getChatHistory: (chatId) => messageLogger.getChatHistory(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
