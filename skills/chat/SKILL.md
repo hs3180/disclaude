@@ -1,6 +1,6 @@
 ---
 name: chat
-description: Temporary chat lifecycle management - create, query, list, and respond to temporary chats. Primarily invoked by agents (PR Scanner, offline questions, etc.) to initiate user interactions. Use when user says keywords like "临时会话", "创建会话", "temporary chat", "chat create", "发起讨论". Also supports direct user invocation via /chat create|query|list.
+description: Temporary chat lifecycle management - create, query, list, and respond to temporary chats. Primarily invoked by agents (PR Scanner, offline questions, etc.) to initiate user interactions. Use when user says keywords like "临时会话", "创建临时会话", "temporary chat", "/chat create", "发起讨论", "会话管理". Also supports direct user invocation via /chat create|query|list.
 allowed-tools: [Bash, Read, Write, Glob, Grep]
 ---
 

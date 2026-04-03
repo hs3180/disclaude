@@ -75,6 +75,27 @@ members=$(jq -r '.createGroup.members | join(",")' "$f")
 attempts=$(jq -r '.activationAttempts // 0' "$f")
 ```
 
+#### 2.1.1 输入校验（防注入）
+
+对从 JSON 文件读取的数据做安全校验，防止 Shell 注入：
+
+```bash
+# 校验 group_name：只允许安全字符，截断超长名称
+if ! echo "$group_name" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$'; then
+  echo "ERROR: Invalid group name '$group_name' for chat $id — contains unsafe characters, skipping"
+  continue
+fi
+group_name=$(echo "$group_name" | head -c 64)
+
+# 校验 members：每个 member 必须符合 ou_xxxxx 格式
+for member in $(echo "$members" | tr ',' ' '); do
+  if ! echo "$member" | grep -qE '^ou_[a-zA-Z0-9]+$'; then
+    echo "ERROR: Invalid member ID '$member' for chat $id — expected ou_xxxxx format, skipping"
+    continue 2
+  fi
+done
+```
+
 #### 2.2 使用 flock 防止并发竞态
 
 对每个 chat 文件加排他锁，防止多个 Schedule 实例同时处理同一文件：
@@ -121,7 +142,6 @@ if [ $exit_code -ne 0 ]; then
     error_msg=$(cat "$tmp_err" 2>/dev/null | head -5)
   fi
   echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
-  rm -f "$tmp_err"
 fi
 rm -f "$tmp_err"
 
@@ -149,6 +169,8 @@ if [ -n "$chat_id" ]; then
 else
   # ❌ 创建失败 — 记录错误并判断是否达到上限
   error_msg=${error_msg:-$(echo "$result" | head -5)}
+  # 转义换行符，防止破坏 jq JSON 输出
+  error_msg=$(echo "$error_msg" | tr '\n' ' ' | sed 's/  */ /g')
   echo "ERROR: Failed to create group for chat $id (attempt $new_attempts/$MAX_RETRIES)"
   echo "$error_msg"
 
