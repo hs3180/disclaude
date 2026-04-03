@@ -8,6 +8,27 @@
  */
 
 /**
+ * Watch trigger configuration for event-driven schedule execution.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ * Declared in schedule frontmatter to watch file paths for changes
+ * and immediately trigger execution, complementing cron-based scheduling.
+ *
+ * @example
+ * ```yaml
+ * watch:
+ *   - path: "workspace/temporary-sessions/*.json"
+ *     debounce: 5000
+ * ```
+ */
+export interface WatchTrigger {
+  /** Glob pattern or directory path to watch for file changes */
+  path: string;
+  /** Debounce interval in milliseconds (default: 5000). Multiple changes within this window are coalesced. */
+  debounce?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +62,19 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional event-driven watch triggers.
+   * When declared, the scheduler watches the specified paths for file changes
+   * and immediately triggers execution, without waiting for the next cron tick.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * @example
+   * ```yaml
+   * watch:
+   *   - path: "workspace/temporary-sessions/*.json"
+   *     debounce: 5000
+   * ```
+   */
+  watch?: WatchTrigger[];
 }

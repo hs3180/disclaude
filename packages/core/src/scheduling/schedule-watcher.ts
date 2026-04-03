@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchTrigger } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -69,6 +69,162 @@ function stripQuotes(value: string): string {
 }
 
 /**
+ * Parse a YAML array block (multi-line) from frontmatter lines.
+ * Handles both compact and expanded forms:
+ *
+ * Compact:   watch:
+ *              - path: "foo"
+ *                debounce: 5000
+ * Expanded:  watch:
+ *              - "foo"
+ *
+ * @param lines - All frontmatter lines
+ * @param startIndex - Index of the array key line (e.g., index of "watch:")
+ * @returns Array of parsed items and the next line index after the array
+ */
+function parseArrayBlock(lines: string[], startIndex: number): { items: Record<string, unknown>[]; nextIndex: number } {
+  const items: Record<string, unknown>[] = [];
+  let i = startIndex + 1;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    // Check if this line starts a new top-level key (not indented, or indented less than array items)
+    const trimmed = line.trimStart();
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      i++;
+      continue;
+    }
+    // A new top-level key starts with a non-space character
+    if (line[0] !== ' ' && line[0] !== '\t' && trimmed.includes(':')) {
+      break;
+    }
+
+    // Array item starts with "- "
+    if (trimmed.startsWith('- ')) {
+      const itemContent = trimmed.slice(2).trim();
+
+      // Simple string item: - "path" or - path
+      if (!itemContent.includes(':')) {
+        items.push({ path: stripQuotes(itemContent) });
+        i++;
+        continue;
+      }
+
+      // Object item: - path: "foo" with possible continuation lines
+      const item: Record<string, unknown> = {};
+      // Parse inline key-value: - path: "foo" debounce: 5000
+      // Or just: - path: "foo"
+      const firstColon = itemContent.indexOf(':');
+      if (firstColon !== -1) {
+        const firstKey = itemContent.slice(0, firstColon).trim();
+        let firstValue = itemContent.slice(firstColon + 1).trim();
+        // Check if there's more after the first value
+        // e.g., "path: 'foo' debounce: 5000"
+        const restAfterFirstValue = parseInlineValue(firstValue);
+        item[firstKey] = restAfterFirstValue.value;
+        // Check for remaining key-value pairs on the same line
+        let remaining = restAfterFirstValue.remaining;
+        while (remaining) {
+          const nextColon = remaining.indexOf(':');
+          if (nextColon === -1) break;
+          const nextKey = remaining.slice(0, nextColon).trim();
+          const nextValueRaw = remaining.slice(nextColon + 1).trim();
+          const nextParsed = parseInlineValue(nextValueRaw);
+          item[nextKey] = nextParsed.value;
+          remaining = nextParsed.remaining;
+        }
+      }
+
+      // Check continuation lines (indented properties under the array item)
+      i++;
+      while (i < lines.length) {
+        const contLine = lines[i];
+        const contTrimmed = contLine.trimStart();
+        if (contTrimmed === '' || contLine[0] !== ' ' && contLine[0] !== '\t') {
+          break;
+        }
+        // Must be a continuation: indented key: value
+        if (!contTrimmed.startsWith('- ') && contTrimmed.includes(':')) {
+          const contColon = contTrimmed.indexOf(':');
+          const contKey = contTrimmed.slice(0, contColon).trim();
+          const contValue = contTrimmed.slice(contColon + 1).trim();
+          if (contKey === 'debounce') {
+            item[contKey] = parseInt(contValue, 10);
+          } else {
+            item[contKey] = stripQuotes(contValue);
+          }
+          i++;
+        } else {
+          break;
+        }
+      }
+
+      items.push(item);
+    } else {
+      i++;
+    }
+  }
+
+  return { items, nextIndex: i };
+}
+
+/**
+ * Parse an inline YAML value, returning the parsed value and any remaining text.
+ * Handles quoted strings and plain values.
+ */
+function parseInlineValue(text: string): { value: unknown; remaining: string | null } {
+  if (!text) return { value: '', remaining: null };
+
+  const trimmed = text.trimStart();
+  if (!trimmed) return { value: '', remaining: null };
+
+  // Quoted string
+  if ((trimmed[0] === '"' || trimmed[0] === "'")) {
+    const quote = trimmed[0];
+    let end = 1;
+    while (end < trimmed.length && trimmed[end] !== quote) {
+      if (trimmed[end] === '\\') end++; // skip escaped chars
+      end++;
+    }
+    if (end < trimmed.length) {
+      const value = trimmed.slice(1, end);
+      const remaining = trimmed.slice(end + 1).trim() || null;
+      return { value, remaining };
+    }
+  }
+
+  // Number
+  if (/^\d+$/.test(trimmed)) {
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) {
+      return { value: parseInt(trimmed, 10), remaining: null };
+    }
+    return { value: parseInt(trimmed.slice(0, spaceIdx), 10), remaining: trimmed.slice(spaceIdx).trim() || null };
+  }
+
+  // Boolean
+  if (trimmed === 'true') {
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) return { value: true, remaining: null };
+    return { value: true, remaining: trimmed.slice(spaceIdx).trim() || null };
+  }
+  if (trimmed === 'false') {
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) return { value: false, remaining: null };
+    return { value: false, remaining: trimmed.slice(spaceIdx).trim() || null };
+  }
+
+  // Plain string: read until next key pattern (word followed by colon)
+  const keyPattern = /\s+(\w+):/;
+  const match = trimmed.match(keyPattern);
+  if (match && match.index !== undefined && match.index > 0) {
+    return { value: trimmed.slice(0, match.index).trim(), remaining: trimmed.slice(match.index).trim() };
+  }
+
+  return { value: trimmed, remaining: null };
+}
+
+/**
  * Parse YAML frontmatter from schedule content.
  */
 function parseScheduleFrontmatter(content: string): {
@@ -86,9 +242,11 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
-  for (const line of lines) {
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
     const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) { continue; }
+    if (colonIndex === -1) { i++; continue; }
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
@@ -102,13 +260,26 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
         frontmatter[key] = stripQuotes(value);
+        i++;
         break;
       case 'enabled':
       case 'blocking':
         frontmatter[key] = value === 'true';
+        i++;
         break;
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
+        i++;
+        break;
+      case 'watch': {
+        // Parse multi-line watch array
+        const { items, nextIndex } = parseArrayBlock(lines, i);
+        frontmatter[key] = items;
+        i = nextIndex;
+        break;
+      }
+      default:
+        i++;
         break;
     }
   }
@@ -122,6 +293,37 @@ function parseScheduleFrontmatter(content: string): {
 function generateTaskId(fileName: string): string {
   const baseName = path.basename(fileName, '.md');
   return `schedule-${baseName}`;
+}
+
+/**
+ * Parse watch trigger configuration from frontmatter.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ *
+ * Accepts raw frontmatter value which may be:
+ * - An array of objects: [{ path: "foo", debounce: 5000 }, ...]
+ * - An array of strings: ["foo", "bar"]
+ * - undefined (no watch triggers)
+ */
+function parseWatchTriggers(raw: unknown): WatchTrigger[] | undefined {
+  if (!raw || !Array.isArray(raw)) return undefined;
+
+  const triggers: WatchTrigger[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      triggers.push({ path: item });
+    } else if (typeof item === 'object' && item !== null) {
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.path === 'string') {
+        triggers.push({
+          path: obj.path,
+          debounce: typeof obj.debounce === 'number' ? obj.debounce : undefined,
+        });
+      }
+    }
+  }
+
+  return triggers.length > 0 ? triggers : undefined;
 }
 
 // ============================================================================
@@ -218,6 +420,7 @@ export class ScheduleFileScanner {
         model: frontmatter['model'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
+        watch: parseWatchTriggers(frontmatter['watch']),
       };
 
       // Issue #1338: Warn if model is specified but looks suspicious (e.g., empty)
@@ -267,6 +470,17 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watch && task.watch.length > 0) {
+      frontmatter.push('watch:');
+      for (const w of task.watch) {
+        if (w.debounce !== undefined) {
+          frontmatter.push(`  - path: "${w.path}"`);
+          frontmatter.push(`    debounce: ${w.debounce}`);
+        } else {
+          frontmatter.push(`  - "${w.path}"`);
+        }
+      }
     }
 
     frontmatter.push('---', '');

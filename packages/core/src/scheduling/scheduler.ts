@@ -333,6 +333,34 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task execution immediately (event-driven).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Called by EventTriggerWatcher when a watched file changes.
+   * Reuses the same execution pipeline as cron triggers, including
+   * cooldown checks, blocking mechanism, and anti-recursion protection.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was found and execution was initiated, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'triggerTask called for unknown task');
+      return false;
+    }
+
+    logger.info(
+      { taskId, name: entry.task.name, source: 'event-driven' },
+      'Event-driven task trigger'
+    );
+
+    // Execute using the same pipeline as cron triggers
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {
