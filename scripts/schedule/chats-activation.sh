@@ -11,7 +11,20 @@
 #   0 — success (or no pending chats found)
 #   1 — fatal error (missing dependencies)
 
-set -uo pipefail
+set -euo pipefail
+
+# Helper: atomic file update via jq transform with tmpfile cleanup
+# Usage: _atomic_jq_write <file> <jq_args...>
+_atomic_jq_write() {
+  local file="$1"; shift
+  local tmpfile
+  tmpfile=$(mktemp "${file}.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmpfile'" RETURN
+  jq "$@" "$file" > "$tmpfile" || return 1
+  mv "$tmpfile" "$file" || return 1
+  trap - RETURN
+}
 
 CHAT_MAX_PER_RUN="${CHAT_MAX_PER_RUN:-10}"
 # Validate CHAT_MAX_PER_RUN is a positive integer
@@ -66,9 +79,15 @@ for f in "$CHAT_DIR"/*.json; do
           exec 10>"${f}.lock"
           if flock -n 10 2>/dev/null; then
             _exp_lock_fd=10
-            tmpfile=$(mktemp "${f}.XXXXXX")
-            jq --arg now "$now_iso" '.status = "expired" | .expiredAt = $now' "$f" > "$tmpfile" \
-              && mv "$tmpfile" "$f"
+            # Re-check status under lock (another instance may have changed it)
+            current_status=$(jq -r '.status' "$f" 2>/dev/null)
+            if [ "$current_status" = "pending" ]; then
+              _atomic_jq_write "$f" --arg now "$now_iso" \
+                '.status = "expired" | .expiredAt = $now' \
+                || echo "WARN: Failed to mark chat $chat_id as expired"
+            else
+              echo "INFO: Chat $chat_id status changed to '$current_status', skipping expiration mark"
+            fi
             exec 10>&-
           else
             echo "WARN: Chat $chat_id is locked by another process, skipping expiration mark"
@@ -100,7 +119,7 @@ for f in "${pending_files[@]}"; do
   fi
 
   # ---- 2.1: Read data ----
-  id=$(jq -r '.id' "$f")
+  _chat_id=$(jq -r '.id' "$f") || { echo "WARN: Failed to read chat data from $f, skipping"; continue; }
   group_name=$(jq -r '.createGroup.name' "$f")
   members=$(jq -r '.createGroup.members | join(",")' "$f")
   attempts=$(jq -r '.activationAttempts // 0' "$f")
@@ -108,20 +127,20 @@ for f in "${pending_files[@]}"; do
   # ---- 2.1.1: Input validation (prevent shell injection) ----
   # Validate group_name: whitelist safe chars, character-level truncation
   if ! echo "$group_name" | grep -qE '^[a-zA-Z0-9_\-\.\#\:/\ \(\)（）【】]+$'; then
-    echo "ERROR: Invalid group name '$group_name' for chat $id — contains unsafe characters, skipping"
+    echo "ERROR: Invalid group name '$group_name' for chat $_chat_id — contains unsafe characters, skipping"
     continue
   fi
   group_name=$(echo "$group_name" | cut -c 1-64)
 
   # Validate members: non-empty and each must be ou_xxxxx format
   if [ -z "$members" ]; then
-    echo "ERROR: No members found for chat $id, skipping"
+    echo "ERROR: No members found for chat $_chat_id, skipping"
     continue
   fi
   skip_chat=false
   for member in $(echo "$members" | tr ',' ' '); do
     if ! echo "$member" | grep -qE '^ou_[a-zA-Z0-9]+$'; then
-      echo "ERROR: Invalid member ID '$member' for chat $id — expected ou_xxxxx format, skipping"
+      echo "ERROR: Invalid member ID '$member' for chat $_chat_id — expected ou_xxxxx format, skipping"
       skip_chat=true
       break
     fi
@@ -133,7 +152,15 @@ for f in "${pending_files[@]}"; do
   # ---- 2.2: flock for concurrency safety ----
   exec 9>"${f}.lock"
   if ! flock -n 9; then
-    echo "INFO: Chat $id is being processed by another instance, skipping"
+    echo "INFO: Chat $_chat_id is being processed by another instance, skipping"
+    exec 9>&-
+    continue
+  fi
+
+  # Re-check status under lock (another instance may have changed it)
+  current_status=$(jq -r '.status' "$f" 2>/dev/null)
+  if [ "$current_status" != "pending" ]; then
+    echo "INFO: Chat $_chat_id status changed to '$current_status', skipping"
     exec 9>&-
     continue
   fi
@@ -141,12 +168,11 @@ for f in "${pending_files[@]}"; do
   # Idempotent recovery: if chatId already exists, recover to active
   existing_chat_id=$(jq -r '.chatId // empty' "$f")
   if [ -n "$existing_chat_id" ]; then
-    echo "INFO: Chat $id already has chatId=$existing_chat_id, recovering to active"
+    echo "INFO: Chat $_chat_id already has chatId=$existing_chat_id, recovering to active"
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    tmpfile=$(mktemp "${f}.XXXXXX")
-    jq --arg now "$now" \
-        '.status = "active" | .activatedAt = $now' "$f" > "$tmpfile" \
-      && mv "$tmpfile" "$f"
+    _atomic_jq_write "$f" --arg now "$now" \
+      '.status = "active" | .activatedAt = $now' \
+      || echo "WARN: Failed to recover chat $_chat_id to active"
     exec 9>&-
     PROCESSED=$((PROCESSED + 1))
     continue
@@ -158,7 +184,7 @@ for f in "${pending_files[@]}"; do
 
   result=$(timeout "$LARK_TIMEOUT" lark-cli im +chat-create \
     --name "$group_name" \
-    --users "$members" 2>"$tmp_err")
+    --users "$members" 2>"$tmp_err") || true
   exit_code=$?
 
   error_msg=""
@@ -181,44 +207,43 @@ for f in "${pending_files[@]}"; do
 
   if [ -n "$chat_id" ]; then
     # Success — update to active
-    tmpfile=$(mktemp "${f}.XXXXXX")
-    jq --arg chat_id "$chat_id" \
-        --arg now "$now" \
-        '.status = "active" |
-         .chatId = $chat_id |
-         .activatedAt = $now |
-         .activationAttempts = 0 |
-         .lastActivationError = null' "$f" > "$tmpfile" \
-      && mv "$tmpfile" "$f"
-    echo "OK: Chat $id activated (chatId=$chat_id)"
+    _atomic_jq_write "$f" \
+      --arg chat_id "$chat_id" \
+      --arg now "$now" \
+      '.status = "active" |
+       .chatId = $chat_id |
+       .activatedAt = $now |
+       .activationAttempts = 0 |
+       .lastActivationError = null' \
+      || echo "WARN: Failed to update chat $_chat_id to active (chatId=$chat_id)"
+    echo "OK: Chat $_chat_id activated (chatId=$chat_id)"
     PROCESSED=$((PROCESSED + 1))
   else
     # Failure — record error and check retry limit
     error_msg=${error_msg:-$(echo "$result" | head -20)}
     # Escape newlines to prevent breaking jq JSON output
     error_msg=$(echo "$error_msg" | tr '\n' ' ' | sed 's/  */ /g')
-    echo "ERROR: Failed to create group for chat $id (attempt $new_attempts/$MAX_RETRIES)"
+    echo "ERROR: Failed to create group for chat $_chat_id (attempt $new_attempts/$MAX_RETRIES)"
     echo "  $error_msg"
 
     if [ "$new_attempts" -ge "$MAX_RETRIES" ]; then
-      echo "WARN: Chat $id reached max retries ($MAX_RETRIES), marking as failed"
-      tmpfile=$(mktemp "${f}.XXXXXX")
-      jq --arg now "$now" \
-          --arg error "$error_msg" \
-          '.status = "failed" |
-           .activationAttempts = $new_attempts |
-           .lastActivationError = $error |
-           .failedAt = $now' "$f" > "$tmpfile" \
-        && mv "$tmpfile" "$f"
-      exec 9>&-
-      echo "WARN: Chat '$id' activation failed after $MAX_RETRIES retries: $error_msg"
+      echo "WARN: Chat $_chat_id reached max retries ($MAX_RETRIES), marking as failed"
+      _atomic_jq_write "$f" \
+        --arg now "$now" \
+        --arg error "$error_msg" \
+        '.status = "failed" |
+         .activationAttempts = $new_attempts |
+         .lastActivationError = $error |
+         .failedAt = $now' \
+        || echo "WARN: Failed to mark chat $_chat_id as failed"
+      echo "WARN: Chat '$_chat_id' activation failed after $MAX_RETRIES retries: $error_msg"
     else
-      tmpfile=$(mktemp "${f}.XXXXXX")
-      jq --arg now "$now" \
-          --arg error "$error_msg" \
-          '.activationAttempts = $new_attempts |
-           .lastActivationError = $error' "$f" > "$tmpfile" \
-        && mv "$tmpfile" "$f"
+      _atomic_jq_write "$f" \
+        --arg now "$now" \
+        --arg error "$error_msg" \
+        '.activationAttempts = $new_attempts |
+         .lastActivationError = $error' \
+        || echo "WARN: Failed to update retry count for chat $_chat_id"
     fi
     PROCESSED=$((PROCESSED + 1))
   fi
