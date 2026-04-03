@@ -20,6 +20,10 @@ createdAt: 2026-04-03T00:00:00.000Z
 
 - `@larksuite/cli`（飞书官方 CLI，npm 全局安装）
 - `jq`（JSON 处理工具）
+- `flock`（Linux 文件锁工具，util-linux 包提供 — **仅支持 Linux**）
+- `timeout`（GNU coreutils 超时命令 — **仅支持 Linux**，macOS 需 `brew install coreutils` 后使用 `gtimeout`）
+
+> **⚠️ 平台要求**: 本 Schedule 依赖 `flock` 和 `timeout`，均为 Linux 标准工具。如需在 macOS 运行，需安装 GNU coreutils 并替换 `timeout` 为 `gtimeout`、`flock` 为 `shlock` 或 `lockfile`。
 
 ## 职责边界
 
@@ -42,6 +46,12 @@ which lark-cli 2>/dev/null || echo "MISSING:lark-cli"
 # 检查 jq 是否可用
 which jq 2>/dev/null || echo "MISSING:jq"
 
+# 检查 flock 是否可用（Linux-only）
+which flock 2>/dev/null || echo "MISSING:flock"
+
+# 检查 timeout 是否可用（Linux-only，macOS 使用 gtimeout）
+which timeout 2>/dev/null || echo "MISSING:timeout"
+
 # 确保 chat 目录存在
 mkdir -p workspace/chats
 ```
@@ -55,13 +65,16 @@ mkdir -p workspace/chats
 now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 for f in workspace/chats/*.json; do
   [ -f "$f" ] || continue
+  # Validate JSON integrity — skip corrupted files
+  jq empty "$f" 2>/dev/null || { echo "WARN: Skipping corrupted file: $f"; continue; }
   status=$(jq -r '.status' "$f" 2>/dev/null)
   if [ "$status" = "pending" ]; then
     # 过期预检：如果 expiresAt 已过，直接标记为 expired，不尝试激活
     expires=$(jq -r '.expiresAt // empty' "$f" 2>/dev/null)
     if [ -n "$expires" ]; then
-      # ISO 8601 格式可直接比较字符串（无需依赖 GNU date -d）
-      # 兼容 Linux (GNU date) 和 macOS (BSD date)
+      # Normalize to UTC Z-suffix for reliable string comparison
+      # Handles both "2026-03-24T10:00:00Z" and "2026-03-24T18:00:00+08:00"
+      expires=$(echo "$expires" | sed 's/+00:00$//; s/\([0-9]\)[+-][0-9][0-9]:[0-9][0-9]$/\1Z/')
       if [[ "$expires" < "$now_iso" ]]; then
         echo "INFO: Chat $(jq -r '.id' "$f") expired at $expires (skipping activation)"
         tmpfile=$(mktemp "${f}.XXXXXX")
@@ -163,7 +176,7 @@ if [ $exit_code -ne 0 ]; then
   if [ $exit_code -eq 124 ]; then
     error_msg="lark-cli timed out after ${LARK_TIMEOUT}s"
   else
-    error_msg=$(cat "$tmp_err" 2>/dev/null | head -5)
+    error_msg=$(cat "$tmp_err" 2>/dev/null | head -20)
   fi
   echo "ERROR: lark-cli exited with code $exit_code: $error_msg"
 fi
@@ -193,7 +206,7 @@ if [ -n "$chat_id" ]; then
     && mv "$tmpfile" "$f"
 else
   # ❌ 创建失败 — 记录错误并判断是否达到上限
-  error_msg=${error_msg:-$(echo "$result" | head -5)}
+  error_msg=${error_msg:-$(echo "$result" | head -20)}
   # 转义换行符，防止破坏 jq JSON 输出
   error_msg=$(echo "$error_msg" | tr '\n' ' ' | sed 's/  */ /g')
   echo "ERROR: Failed to create group for chat $id (attempt $new_attempts/$MAX_RETRIES)"

@@ -196,6 +196,9 @@ exec 9>&-
 Apply [Chat ID Validation](#-chat-id-validation-all-operations), then:
 
 ```bash
+# Validate JSON integrity before reading
+jq empty "$chat_file" 2>/dev/null || { echo "ERROR: Chat file '$chat_file' is not valid JSON"; exit 1; }
+
 # Acquire shared lock to prevent reading during concurrent writes
 exec 9>"${chat_file}.lock"
 flock -s 9  # shared lock — multiple readers OK, blocks writers
@@ -270,6 +273,9 @@ Display in table format:
 5. Update the chat:
 
 ```bash
+# Validate JSON integrity before writing
+jq empty "$chat_file" 2>/dev/null || { echo "ERROR: Chat file '$chat_file' is not valid JSON"; exit 1; }
+
 # Acquire exclusive lock to prevent concurrent writes (Schedule may be updating this file)
 exec 9>"${chat_file}.lock"
 if ! flock -n 9; then
