@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult } from './base-agent.js';
 import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
+import { Config } from '../config/index.js';
 
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
@@ -171,6 +172,59 @@ describe('BaseAgent', () => {
 
       const options = agent.testCreateSdkOptions();
       expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+    });
+
+    it('should fall back to Config.getGlobalEnv() when no runtime context is set (Issue #1839)', () => {
+      // Ensure no runtime context is set
+      clearRuntimeContext();
+
+      // Mock Config.getGlobalEnv to return test env vars
+      const getGlobalEnvSpy = vi.spyOn(Config, 'getGlobalEnv').mockReturnValue({
+        CUSTOM_VAR: 'from-config',
+        ANOTHER_KEY: 'config-value',
+      });
+
+      try {
+        const options = agent.testCreateSdkOptions();
+
+        // Verify Config.getGlobalEnv was called as fallback
+        expect(getGlobalEnvSpy).toHaveBeenCalled();
+
+        // Verify config env vars are included in the SDK env
+        expect(options.env?.CUSTOM_VAR).toBe('from-config');
+        expect(options.env?.ANOTHER_KEY).toBe('config-value');
+      } finally {
+        getGlobalEnvSpy.mockRestore();
+      }
+    });
+
+    it('should use runtime context getGlobalEnv() when set, not Config fallback', () => {
+      // Set runtime context with its own env vars
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ CONTEXT_VAR: 'from-context' }),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      // Config fallback should NOT be used when runtime context provides env
+      const getGlobalEnvSpy = vi.spyOn(Config, 'getGlobalEnv').mockReturnValue({
+        CONFIG_VAR: 'from-config',
+      });
+
+      try {
+        const options = agent.testCreateSdkOptions();
+
+        // Runtime context takes precedence
+        expect(options.env?.CONTEXT_VAR).toBe('from-context');
+        expect(options.env?.CONFIG_VAR).toBeUndefined();
+
+        // Config fallback was NOT called
+        expect(getGlobalEnvSpy).not.toHaveBeenCalled();
+      } finally {
+        getGlobalEnvSpy.mockRestore();
+      }
     });
   });
 
