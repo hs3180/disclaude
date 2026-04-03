@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * WeChat API Client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -14,9 +14,11 @@
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { createLogger } from '@disclaude/core';
+import type { WeChatGetUpdatesResponse, WeChatUpdate } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -30,9 +32,9 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_BOT_TYPE = 3;
 
 /**
- * WeChat API Client for Tencent ilink Bot API (MVP).
+ * WeChat API Client for Tencent ilink Bot API.
  *
- * Provides typed methods for auth and text messaging.
+ * Provides typed methods for auth, messaging, and message listening.
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
@@ -211,13 +213,58 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Message listening (getUpdates long-poll) — Phase 3.1
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Long-poll for incoming messages.
+   *
+   * POST /ilink/bot/getupdates
+   *
+   * Blocks until new messages arrive or timeout (35s).
+   * On client-side timeout, returns empty array (normal for long polling).
+   *
+   * @param options - Poll options
+   * @returns Array of new message updates (empty on timeout)
+   */
+  async getUpdates(options?: {
+    /** AbortSignal for graceful shutdown */
+    signal?: AbortSignal;
+    /** Custom timeout in ms (default: 35s) */
+    timeoutMs?: number;
+  }): Promise<WeChatUpdate[]> {
+    const timeoutMs = options?.timeoutMs ?? LONG_POLL_TIMEOUT_MS;
+
+    try {
+      const data = await this.postJson<WeChatGetUpdatesResponse>(
+        'ilink/bot/getupdates',
+        {},
+        { timeoutMs, signal: options?.signal }
+      );
+
+      return data.update_list ?? [];
+    } catch (error) {
+      // Timeout during long polling is normal — return empty
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.debug('getUpdates long poll timed out, returning empty');
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
 
   /**
    * Make an authenticated POST request to the API.
    */
-  private async postJson<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+  private async postJson<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
     const bodyStr = JSON.stringify(body);
 
@@ -229,7 +276,8 @@ export class WeChatApiClient {
       method: 'POST',
       headers,
       body: bodyStr,
-      timeoutMs: DEFAULT_API_TIMEOUT_MS,
+      timeoutMs: options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
+      signal: options?.signal,
     });
 
     return data;
@@ -282,10 +330,16 @@ export class WeChatApiClient {
     headers: Record<string, string>;
     body?: string;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Link external signal if provided
+    if (opts.signal) {
+      opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
 
     try {
       const response = await fetch(url, {
