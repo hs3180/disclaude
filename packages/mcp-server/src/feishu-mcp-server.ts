@@ -59,6 +59,18 @@ async function handleMessage(message: unknown) {
                       type: 'string',
                       description: 'Optional parent message ID for thread replies.',
                     },
+                    mentions: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          openId: { type: 'string', description: 'Open ID of the user/bot to @mention' },
+                          name: { type: 'string', description: 'Display name of the mention target' },
+                        },
+                        required: ['openId'],
+                      },
+                      description: 'Mention targets for @mentioning users/bots (Issue #1742)',
+                    },
                   },
                   required: ['text', 'chatId'],
                 },
@@ -161,7 +173,7 @@ async function handleMessage(message: unknown) {
         const { name, arguments: toolArgs } = callParams;
 
         if (name === 'send_text') {
-          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string };
+          const args = toolArgs as { text: string; chatId: string; parentMessageId?: string; mentions?: Array<{ openId: string; name?: string }> };
           const result = await send_text(args);
 
           return {

@@ -416,6 +416,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1742: If mentions are provided, send as post (rich text) with @mention tags
+        if (message.mentions && message.mentions.length > 0) {
+          const postContent = this.buildPostContentWithMentions(message.mentions, message.text || '');
+          const messageId = await sendFeishuMessage('post', JSON.stringify(postContent));
+          logger.debug({ chatId: message.chatId, messageId, mentionCount: message.mentions.length, threadReply: useThreadReply }, 'Post message (with mentions) sent');
+          return messageId;
+        }
         const messageId = await sendFeishuMessage(
           'text',
           JSON.stringify({ text: message.text || '' }),
@@ -525,6 +532,38 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  /**
+   * Build Feishu post content with @mention tags.
+   *
+   * Constructs a rich text (post) message structure with @mention elements
+   * followed by the text content. Used when sending messages with mentions
+   * to properly render @mention tags in Feishu.
+   *
+   * Issue #1742: Bot-to-bot @mention support.
+   *
+   * @param mentions - Array of mention targets with openId and optional name
+   * @param text - The text content to include after mentions
+   * @returns Feishu post content structure
+   */
+  private buildPostContentWithMentions(
+    mentions: Array<{ openId: string; name?: string }>,
+    text: string
+  ): Record<string, unknown> {
+    const inlineElements: Array<Record<string, unknown>> = [];
+    for (const mention of mentions) {
+      inlineElements.push({ tag: 'at', user_id: mention.openId });
+    }
+    if (text) {
+      inlineElements.push({ tag: 'text', text: ` ${text}` });
+    }
+    return {
+      zh_cn: {
+        title: '',
+        content: [inlineElements],
+      },
+    };
   }
 
   protected checkHealth(): boolean {
