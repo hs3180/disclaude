@@ -3,6 +3,7 @@
  *
  * Issue #1492: Tests for framework-agnostic guidance functions
  * extracted from MessageBuilder.
+ * Issue #1916: Tests for buildProjectKnowledgeSection.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -12,6 +13,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +110,27 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectKnowledgeSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectKnowledgeSection()).toBe('');
+    expect(buildProjectKnowledgeSection(undefined)).toBe('');
+    expect(buildProjectKnowledgeSection('')).toBe('');
+  });
+
+  it('should return formatted section with project knowledge', () => {
+    const knowledge = '### Project Instructions\n\nAlways respond in Japanese.';
+    const result = buildProjectKnowledgeSection(knowledge);
+    expect(result).toContain('Project Knowledge');
+    expect(result).toContain('project instructions and knowledge base');
+    expect(result).toContain('Always respond in Japanese.');
+  });
+
+  it('should wrap knowledge context with proper markers', () => {
+    const result = buildProjectKnowledgeSection('Some knowledge content');
+    expect(result).toContain('---\n\n## Project Knowledge');
+    expect(result).toContain('---\n');
   });
 });

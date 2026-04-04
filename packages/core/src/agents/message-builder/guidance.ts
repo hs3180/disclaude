@@ -213,3 +213,32 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the project knowledge section.
+ *
+ * Issue #1916: Injects project instructions and knowledge base content
+ * into the agent prompt. This provides Claude Projects-like functionality
+ * where project-scoped instructions and documents are available to the agent.
+ *
+ * @param knowledgeContext - Pre-formatted knowledge content string, or undefined to skip
+ * @returns Formatted project knowledge section, or empty string if no context
+ */
+export function buildProjectKnowledgeSection(knowledgeContext?: string): string {
+  if (!knowledgeContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Knowledge
+
+The following project instructions and knowledge base are provided for context.
+Use them to inform your responses and follow any project-specific guidelines.
+
+${knowledgeContext}
+
+---`;
+}

@@ -287,6 +287,29 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * Knowledge base configuration for a project (Issue #1916).
+ * Defines how project instructions and knowledge files are loaded.
+ */
+export interface KnowledgeConfig {
+  /** Path to project instructions file (e.g., CLAUDE.md). Relative to workspace dir or absolute. */
+  instructionsPath?: string;
+  /** List of directories to scan for knowledge files. Relative to workspace dir or absolute. */
+  knowledgeDirs?: string[];
+  /** Maximum total characters for injected knowledge content (default: 30000) */
+  maxKnowledgeChars?: number;
+  /**
+   * File extensions to include when scanning knowledge directories.
+   * Default: ['.md', '.txt', '.markdown']
+   */
+  includeExtensions?: string[];
+  /**
+   * Glob patterns for files to exclude from knowledge directories.
+   * Default: ['node_modules/**', '.git/**']
+   */
+  excludePatterns?: string[];
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (Pilot/Agent handler)
@@ -322,6 +345,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Knowledge base and project instructions configuration (Issue #1916) */
+  knowledge?: KnowledgeConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

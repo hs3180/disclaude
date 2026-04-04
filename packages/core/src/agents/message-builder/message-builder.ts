@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
 } from './guidance.js';
 
 /**
@@ -134,6 +135,7 @@ export class MessageBuilder {
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
     // Core guidance sections (framework-agnostic)
+    const projectKnowledgeSection = buildProjectKnowledgeSection(msg.knowledgeContext);
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
@@ -155,6 +157,10 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+
+    if (projectKnowledgeSection) {
+      sections.push(projectKnowledgeSection);
     }
 
     if (toolsSection) {

@@ -244,6 +244,49 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Knowledge Base & Project Instructions (Issue #1916)
+# -----------------------------------------------------------------------------
+# Implements Claude Projects-like knowledge management.
+# Injects project instructions and knowledge files into agent prompts.
+#
+# How it works:
+#   1. CLAUDE.md content is loaded as project-scoped system instructions
+#   2. Files from knowledge directories are injected as reference context
+#   3. Content is automatically truncated if it exceeds maxKnowledgeChars
+#
+# Compatible with Claude Code's CLAUDE.md ecosystem.
+#
+# knowledge:
+#   # Path to project instructions file (relative to workspace dir or absolute)
+#   # This file's content is injected as project-level system instructions.
+#   # Default: none
+#   # instructionsPath: "./CLAUDE.md"
+#
+#   # List of directories to scan for knowledge files.
+#   # All .md, .txt, .markdown files are included by default.
+#   # Default: []
+#   # knowledgeDirs:
+#   #   - "./docs/"
+#   #   - "./data/"
+#
+#   # Maximum total characters for injected knowledge content.
+#   # Includes both instructions and knowledge files.
+#   # Default: 30000
+#   # maxKnowledgeChars: 30000
+#
+#   # File extensions to include when scanning knowledge directories.
+#   # Default: ['.md', '.txt', '.markdown']
+#   # includeExtensions:
+#   #   - ".md"
+#   #   - ".txt"
+#
+#   # Glob patterns for directories/files to exclude.
+#   # Default: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+#   # excludePatterns:
+#   #   - "node_modules/**"
+#   #   - ".git/**"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

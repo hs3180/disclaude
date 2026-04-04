@@ -149,10 +149,19 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Knowledge module (Issue #1916: Claude Projects-like knowledge base)
+export {
+  loadKnowledge,
+  formatKnowledgeForPrompt,
+  type KnowledgeFileEntry,
+  type LoadedKnowledge,
+} from './knowledge/index.js';
 
 // Skills module (Issue #430)
 export {
