@@ -213,6 +213,64 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
 };
 
 /**
+ * Group metadata shared across all channel implementations.
+ *
+ * Defines the minimal set of fields required to register a group
+ * in the channel's group registry. Platform-specific implementations
+ * may extend this with additional fields.
+ *
+ * @see Issue #2067 - Group operations migrated to channel layer
+ */
+export interface ChannelGroupInfo {
+  /** Group chat ID (platform-specific) */
+  chatId: string;
+  /** Group name/topic */
+  name: string;
+  /** Creation timestamp (ms since epoch) */
+  createdAt: number;
+  /** Creator user ID (platform-specific) */
+  createdBy?: string;
+  /** Initial member IDs */
+  initialMembers: string[];
+  /** Additional platform-specific metadata */
+  [key: string]: unknown;
+}
+
+/**
+ * Group operations interface.
+ *
+ * Provides a type-safe abstraction for group management operations
+ * on channels that support group chats. Channels that don't support
+ * groups simply omit the `groupOps` property.
+ *
+ * @see Issue #2067 - Group operations migrated to channel layer
+ */
+export interface IGroupOps {
+  /**
+   * Dissolve (delete) a group chat on the platform.
+   *
+   * @param chatId - Group chat ID to dissolve
+   */
+  dissolve(chatId: string): Promise<void>;
+
+  /**
+   * Register a group in the channel's group registry.
+   *
+   * @param chatId - Group chat ID
+   * @param info - Group metadata to store
+   */
+  register(chatId: string, info: ChannelGroupInfo): void;
+
+  /**
+   * Unregister a group from the channel's group registry.
+   *
+   * @param chatId - Group chat ID to remove
+   * @returns Whether the group was found and removed
+   */
+  unregister(chatId: string): boolean;
+}
+
+/**
  * Channel interface.
  *
  * All communication channels must implement this interface.
@@ -285,6 +343,17 @@ export interface IChannel {
    * @returns Channel capabilities describing what features are supported
    */
   getCapabilities(): ChannelCapabilities;
+
+  /**
+   * Optional group operations for channels that support group management.
+   *
+   * Channels that don't support group chats (e.g., REST API) simply
+   * omit this property. Consumers should check `channel.groupOps`
+   * before calling group operations.
+   *
+   * @see Issue #2067 - Group operations migrated to channel layer
+   */
+  readonly groupOps?: IGroupOps;
 }
 
 /**

@@ -97,6 +97,9 @@ export type {
   ChannelFactory,
   ChannelCapabilities,
   ChannelDescriptor,
+  // Group operations (Issue #2067)
+  ChannelGroupInfo,
+  IGroupOps,
 } from './channel.js';
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';

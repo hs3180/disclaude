@@ -524,13 +524,26 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Initialize temp chat lifecycle service.
    * Issue #1703: Starts periodic cleanup of expired temp chats.
+   * Issue #2067: Wire groupOps from channel for type-safe group operations.
    */
   protected initTempChatLifecycle(): void {
+    // Resolve groupOps from the first channel that supports it
+    const channel = this.channelManager.getFirstChannel();
+    const groupOps = channel?.groupOps;
+
     this.tempChatLifecycleService = new TempChatLifecycleService({
       chatStore: this.chatStore,
+      dissolveChat: groupOps ? (chatId) => groupOps.dissolve(chatId) : undefined,
+      unregisterGroup: groupOps ? (chatId) => groupOps.unregister(chatId) : undefined,
     });
+
+    if (groupOps) {
+      logger.info('Temp chat lifecycle service started with groupOps support');
+    } else {
+      logger.info('Temp chat lifecycle service started (no groupOps available)');
+    }
+
     this.tempChatLifecycleService.start();
-    logger.info('Temp chat lifecycle service started');
   }
 
   /**

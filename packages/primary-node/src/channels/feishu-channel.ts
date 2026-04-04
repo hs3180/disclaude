@@ -23,10 +23,14 @@ import {
   type FeishuP2PChatEnteredEventData,
   type OutgoingMessage,
   type ChannelCapabilities,
+  type IGroupOps,
+  type ChannelGroupInfo,
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
+import { dissolveChat } from '../platforms/feishu/chat-ops.js';
+import { getGroupService, type GroupInfo } from '../platforms/feishu/group-service.js';
 import {
   PassiveModeManager,
   MentionDetector,
@@ -555,6 +559,29 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       ],
     };
   }
+
+  /**
+   * Group operations for Feishu channel.
+   *
+   * Provides type-safe access to group management operations
+   * (dissolve, register, unregister) through the channel abstraction.
+   *
+   * @see Issue #2067 - Group operations migrated to channel layer
+   */
+  readonly groupOps: IGroupOps = {
+    dissolve: async (chatId: string): Promise<void> => {
+      if (!this.client) {
+        throw new Error('Feishu client not initialized');
+      }
+      await dissolveChat(this.client, chatId);
+    },
+    register: (_chatId: string, info: ChannelGroupInfo): void => {
+      getGroupService().registerGroup(info as GroupInfo);
+    },
+    unregister: (chatId: string): boolean => {
+      return getGroupService().unregisterGroup(chatId);
+    },
+  };
 
   // Delegate passive mode methods to PassiveModeManager
   isPassiveModeDisabled(chatId: string): boolean {
