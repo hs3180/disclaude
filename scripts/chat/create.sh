@@ -27,7 +27,14 @@ fi
 
 mkdir -p workspace/chats
 CHAT_DIR=$(cd workspace/chats && pwd)
-CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
+# Use realpath -m where available, fall back to string concatenation
+# (safe because CHAT_DIR is already resolved via $(cd ... && pwd)
+# and CHAT_ID is validated to contain only [a-zA-Z0-9._-])
+if CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null); then
+  : # realpath -m succeeded
+else
+  CHAT_FILE="${CHAT_DIR}/${CHAT_ID}.json"
+fi
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
   echo "ERROR: Path traversal detected for chat ID '$CHAT_ID'"
   exit 1
@@ -61,7 +68,7 @@ if [ -z "${CHAT_MEMBERS:-}" ]; then
   exit 1
 fi
 
-CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
+CHAT_CONTEXT="${CHAT_CONTEXT:-"{}"}"
 
 # Validate CHAT_CONTEXT is valid JSON
 echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {

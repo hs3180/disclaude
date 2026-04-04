@@ -10,6 +10,37 @@ Manage temporary chats with a four-state lifecycle: **pending → active → exp
 
 Each chat is a JSON file in `workspace/chats/`. Chats are automatically activated (group created) by the companion Schedule (`chats-activation`).
 
+## Prerequisites
+
+The bash scripts in `scripts/chat/` require the following external tools:
+
+| Tool | Purpose | Availability |
+|------|---------|-------------|
+| `jq` | JSON construction & validation (create, query, list, response) | ❌ Not pre-installed on Alpine/BusyBox |
+| `flock` | Concurrent file locking (create, response, list) | ✅ Linux (util-linux); ❌ macOS |
+| `date -u` | UTC timestamp generation | ✅ Pre-installed |
+| `realpath -m` | Path normalization for non-existent files | ✅ GNU coreutils; ⚠️ BusyBox may lack `-m` flag |
+
+**First-time setup** — Run the dependency check before using any chat script:
+
+```bash
+bash scripts/chat/check-deps.sh
+```
+
+If `jq` is missing, install it:
+```bash
+# Alpine / BusyBox
+apk add jq
+
+# Debian / Ubuntu
+apt-get install jq
+
+# macOS
+brew install jq
+```
+
+> **Note**: `realpath -m` is used with a fallback to plain string concatenation. If `realpath -m` is unavailable (e.g., BusyBox), the scripts will still work correctly because `CHAT_ID` is validated to contain only safe characters.
+
 ## Single Responsibility
 
 - ✅ Create chat files (pending state)
