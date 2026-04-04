@@ -540,7 +540,7 @@ export class MessageHandler {
           // Issue #1711: Extract text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractCardTextContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
@@ -577,6 +577,10 @@ export class MessageHandler {
       if (messageType === 'image') {
         fileKey = parsed.image_key;
         fileName = `image_${fileKey}`;
+      } else if (messageType === 'audio') {
+        // Issue #1966: Audio messages use file_key in content JSON
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `audio_${fileKey}`;
       } else {
         fileKey = parsed.file_key;
         fileName = parsed.file_name || `file_${fileKey}`;
@@ -620,7 +624,7 @@ export class MessageHandler {
       }
     }
 
-    const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : '媒体文件';
+    const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : messageType === 'audio' ? '语音消息' : '媒体文件';
     if (!localPath) {
       return {
         text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败，无法查看内容）`,
@@ -689,7 +693,7 @@ export class MessageHandler {
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media') {
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
 
       // Parse content to extract file_key and file_name
@@ -700,6 +704,10 @@ export class MessageHandler {
         if (message_type === 'image') {
           fileKey = parsed.image_key;
           fileName = `image_${fileKey}`;
+        } else if (message_type === 'audio') {
+          // Issue #1966: Audio messages use file_key in content JSON
+          fileKey = parsed.file_key;
+          fileName = parsed.file_name || `audio_${fileKey}`;
         } else {
           fileKey = parsed.file_key;
           fileName = parsed.file_name || `file_${fileKey}`;
@@ -755,17 +763,17 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : '媒体文件';
+      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : message_type === 'audio' ? '语音消息' : '媒体文件';
       const filePrompt = localPath
-        ? `用户上传了一个${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : ''}`
-        : `用户上传了一个${typeLabel}，但下载失败。`;
+        ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}`
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}，但下载失败。`;
 
       await this.callbacks.emitMessage({
-        messageId: `${message_id}-file`,
+        messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
         userId: this.extractOpenId(sender),
         content: filePrompt,
-        messageType: 'file',
+        messageType: message_type === 'audio' ? 'audio' : 'file',
         timestamp: create_time,
         threadId,
         attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
