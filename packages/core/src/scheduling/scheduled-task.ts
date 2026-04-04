@@ -41,4 +41,22 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Glob pattern to watch for event-driven triggers.
+   * When matching files change, the task is triggered immediately without waiting for cron.
+   * Pattern is relative to the base directory (typically the project root).
+   *
+   * Example: `"workspace/chats/*.json"` watches all JSON files in workspace/chats/
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watch?: string;
+  /**
+   * Debounce interval in milliseconds for watch-triggered executions.
+   * Multiple file changes within this window are coalesced into a single trigger.
+   * Defaults to 5000ms (5 seconds) when not specified.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watchDebounce?: number;
 }

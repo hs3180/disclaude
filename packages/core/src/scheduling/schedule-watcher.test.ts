@@ -329,6 +329,56 @@ describe('ScheduleFileScanner', () => {
       expect(task!.sourceFile).toBe(`${MOCK_DIR}/test.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
     });
+
+    it('should parse watch field when specified (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Event-Triggered Task"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_events"',
+        'watch: "workspace/chats/*.json"',
+        '---',
+        '',
+        'Activate pending chats on file change.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/event-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBe('workspace/chats/*.json');
+      expect(task!.watchDebounce).toBeUndefined();
+    });
+
+    it('should parse watch and watchDebounce fields together (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Debounced Event Task"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_events"',
+        'watch: "workspace/chats/*.json"',
+        'watchDebounce: 3000',
+        '---',
+        '',
+        'Activate pending chats on file change with custom debounce.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/debounced-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBe('workspace/chats/*.json');
+      expect(task!.watchDebounce).toBe(3000);
+    });
+
+    it('should default watch and watchDebounce to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+      expect(task!.watchDebounce).toBeUndefined();
+    });
   });
 
   describe('scanAll', () => {
@@ -444,6 +494,63 @@ describe('ScheduleFileScanner', () => {
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('model:');
+    });
+
+    it('should write watch field when present (Issue #1953)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-event',
+        name: 'Event Task',
+        cron: '0 */5 * * * *',
+        prompt: 'Event-triggered task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        watch: 'workspace/chats/*.json',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch: "workspace/chats/*.json"');
+      expect(writtenContent).not.toContain('watchDebounce:');
+    });
+
+    it('should write watch and watchDebounce fields when both present (Issue #1953)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-event-debounced',
+        name: 'Debounced Event Task',
+        cron: '0 */5 * * * *',
+        prompt: 'Debounced event task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        watch: 'workspace/chats/*.json',
+        watchDebounce: 3000,
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch: "workspace/chats/*.json"');
+      expect(writtenContent).toContain('watchDebounce: 3000');
+    });
+
+    it('should not write watch fields when undefined (Issue #1953)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-watch',
+        name: 'No Watch Task',
+        cron: '0 * * * *',
+        prompt: 'Cron-only task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+      expect(writtenContent).not.toContain('watchDebounce:');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {

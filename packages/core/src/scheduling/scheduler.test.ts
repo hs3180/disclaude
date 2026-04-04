@@ -5,6 +5,7 @@
  * blocking mechanism, and lifecycle management.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #1953: Event-driven trigger tests.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -73,6 +74,17 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         executor: mockExecutor,
         cooldownManager: mockCooldownManager,
+      });
+
+      expect(s).toBeInstanceOf(Scheduler);
+    });
+
+    it('should accept optional baseDir', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        baseDir: '/custom/base',
       });
 
       expect(s).toBeInstanceOf(Scheduler);
@@ -267,6 +279,77 @@ describe('Scheduler', () => {
       expect(jobs[0].taskId).toBe('t1');
       expect(jobs[0].task.name).toBe('Job 1');
       expect(jobs[0].job).toBeDefined();
+    });
+  });
+
+  describe('triggerTask (Issue #1953)', () => {
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.triggerTask('nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('should return true and execute task for existing task', async () => {
+      const task = createTask();
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('task-1');
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should respect blocking mechanism when triggered', async () => {
+      const task = createTask({ blocking: true });
+      scheduler.addTask(task);
+
+      // Make executor hang (simulating a running task)
+      let resolveExecution: () => void;
+      vi.mocked(mockExecutor).mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveExecution = resolve;
+      }));
+
+      // Start first execution (non-blocking triggerTask call)
+      const firstExecution = scheduler.triggerTask('task-1');
+
+      // Wait a tick for the first execution to start running
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Try to trigger again while first is running
+      const secondResult = await scheduler.triggerTask('task-1');
+      expect(secondResult).toBe(true);
+
+      // Executor should only be called once (second was blocked by blocking mechanism)
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Complete first execution
+      resolveExecution!();
+      await firstExecution;
+    });
+
+    it('should pass correct parameters to executor when triggered', async () => {
+      const task = createTask({
+        id: 'event-task',
+        chatId: 'oc_events',
+        createdBy: 'ou_trigger_user',
+        model: 'claude-sonnet-4-20250514',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('event-task');
+
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_events',           // chatId
+        expect.any(String),    // wrapped prompt
+        'ou_trigger_user',     // createdBy
+        'claude-sonnet-4-20250514' // model
+      );
+    });
+  });
+
+  describe('getActiveEventTriggers (Issue #1953)', () => {
+    it('should return empty array when no event triggers are active', () => {
+      const triggers = scheduler.getActiveEventTriggers();
+      expect(triggers).toEqual([]);
     });
   });
 });

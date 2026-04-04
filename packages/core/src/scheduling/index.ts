@@ -8,8 +8,9 @@
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
- * - Scheduler: Cron-based task execution (with dependency injection)
+ * - Scheduler: Cron-based and event-driven task execution (Issue #1953)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
+ * - EventTriggerManager: File-watcher-based event triggers for schedules (Issue #1953)
  *
  * @module @disclaude/core/scheduling
  */
@@ -65,3 +66,9 @@ export {
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Event Trigger Manager (Issue #1953: event-driven schedule triggers)
+export {
+  EventTriggerManager,
+  type EventTriggerManagerOptions,
+} from './event-trigger-manager.js';
