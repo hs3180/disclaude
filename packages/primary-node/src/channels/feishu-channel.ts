@@ -364,15 +364,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
-        return this.sendFeishuMessage(message, 'text', JSON.stringify({ text: message.text || '' }));
+        return await this.sendFeishuMessage(message, 'text', JSON.stringify({ text: message.text || '' }));
       }
 
       case 'card': {
-        return this.sendFeishuMessage(message, 'interactive', JSON.stringify(message.card || {}));
+        return await this.sendFeishuMessage(message, 'interactive', JSON.stringify(message.card || {}));
       }
 
       case 'file': {
-        return this.sendFeishuFileMessage(message);
+        return await this.sendFeishuFileMessage(message);
       }
 
       case 'done':
