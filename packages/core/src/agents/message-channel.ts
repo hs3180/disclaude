@@ -38,18 +38,23 @@ export class MessageChannel {
    * Push a message to the channel.
    * Resolves the pending promise in the generator if waiting.
    *
+   * Issue #2007: Returns false when the channel is closed, allowing callers
+   * to detect and handle dropped messages instead of silently losing them.
+   *
    * @param message - The user message to push
+   * @returns true if the message was accepted, false if the channel is closed
    */
-  push(message: StreamingUserMessage): void {
+  push(message: StreamingUserMessage): boolean {
     if (this.closed) {
-      logger.warn('Push to closed channel ignored');
-      return;
+      logger.warn({ queueLength: this.queue.length }, 'Push to closed channel rejected');
+      return false;
     }
     this.queue.push(message);
     if (this.resolver) {
       this.resolver();
       this.resolver = null;
     }
+    return true;
   }
 
   /**

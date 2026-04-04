@@ -40,16 +40,31 @@ describe('MessageChannel', () => {
       channel = new MessageChannel();
       const msg = createTestMessage('hello');
 
-      expect(() => channel.push(msg)).not.toThrow();
+      const result = channel.push(msg);
+      expect(result).toBe(true);
     });
 
-    it('should ignore push when closed', () => {
+    it('should return false when closed', () => {
       channel = new MessageChannel();
       channel.close();
 
-      // Should not throw, just ignore
+      // Issue #2007: push returns false when channel is closed
       const msg = createTestMessage('hello');
-      expect(() => channel.push(msg)).not.toThrow();
+      const result = channel.push(msg);
+      expect(result).toBe(false);
+    });
+
+    it('should return true after re-opening via close then new channel', () => {
+      channel = new MessageChannel();
+      channel.close();
+
+      // Closed channel rejects messages
+      expect(channel.push(createTestMessage('closed'))).toBe(false);
+
+      // Create a new channel instead — old one stays closed
+      const newChannel = new MessageChannel();
+      expect(newChannel.push(createTestMessage('open'))).toBe(true);
+      newChannel.close();
     });
   });
 
