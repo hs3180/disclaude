@@ -145,7 +145,7 @@ export class InteractiveContextStore {
    */
   private removeFromActionValueIndex(chatId: string, messageId: string, actionPrompts: ActionPromptMap): void {
     const avMap = this.actionValueIndex.get(chatId);
-    if (!avMap) return;
+    if (!avMap) { return; }
 
     for (const actionValue of Object.keys(actionPrompts)) {
       // Only remove if the entry still points to this messageId
