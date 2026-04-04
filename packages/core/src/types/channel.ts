@@ -255,8 +255,10 @@ export interface IChannel {
    * Send a message through this channel.
    *
    * @param message - Message to send
+   * @returns The platform message ID if available, void otherwise.
+   *          Issue #1619: Return real messageId for action prompt matching.
    */
-  sendMessage(message: OutgoingMessage): Promise<void>;
+  sendMessage(message: OutgoingMessage): Promise<string | void>;
 
   /**
    * Start the channel.
