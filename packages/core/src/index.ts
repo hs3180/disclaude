@@ -309,3 +309,12 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Modes module (Issue #1709 - Research mode)
+export {
+  ResearchModeManager,
+  type AgentMode,
+  type ResearchModeConfig,
+  type ResearchModeState,
+  type ResearchActivationResult,
+} from './modes/index.js';

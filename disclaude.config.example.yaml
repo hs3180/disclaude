@@ -244,6 +244,27 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Research Mode Configuration (Issue #1709)
+# -----------------------------------------------------------------------------
+# Research mode provides an isolated investigation environment with:
+# - Dedicated research workspace (workspace/research/{topic}/)
+# - Research-specific SOUL/CLAUDE.md for focused behavior
+# - Phase 2: Research skill subset (future)
+#
+research:
+  # Enable research mode feature
+  # Default: false
+  enabled: false
+
+  # Default research topic name
+  # Default: "default"
+  defaultTopic: "default"
+
+  # Subdirectory name under workspace for research directories
+  # Default: "research"
+  workspaceSuffix: "research"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

@@ -322,8 +322,24 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Research mode configuration (Issue #1709) */
+  research?: ResearchConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+}
+
+/**
+ * Research mode configuration section.
+ * Controls the research mode feature for isolated investigation environments.
+ * @see Issue #1709
+ */
+export interface ResearchConfig {
+  /** Enable research mode feature (default: false) */
+  enabled?: boolean;
+  /** Default research topic name (default: "default") */
+  defaultTopic?: string;
+  /** Subdirectory name under workspace for research (default: "research") */
+  workspaceSuffix?: string;
 }
 
 /**

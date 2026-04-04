@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ResearchConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -491,6 +492,22 @@ export class Config {
       idleMinutes: timeoutConfig.idleMinutes ?? 30,
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
+    };
+  }
+
+  /**
+   * Get research mode configuration.
+   * Controls the research mode feature for isolated investigation environments.
+   * @see Issue #1709
+   *
+   * @returns Research mode configuration with defaults
+   */
+  static getResearchConfig(): ResearchConfig {
+    const config = fileConfigOnly.research || {};
+    return {
+      enabled: config.enabled ?? false,
+      defaultTopic: config.defaultTopic ?? 'default',
+      workspaceSuffix: config.workspaceSuffix ?? 'research',
     };
   }
 }
