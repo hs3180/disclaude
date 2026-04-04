@@ -288,7 +288,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected doSendMessage(message: OutgoingMessage): Promise<string | void> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal
