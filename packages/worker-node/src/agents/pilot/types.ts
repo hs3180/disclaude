@@ -65,6 +65,7 @@ export interface PilotCallbacks {
  *
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
+ * Issue #1506: Added cwd for project-scoped working directory support.
  */
 export interface PilotConfig extends BaseAgentConfig {
   /**
@@ -100,6 +101,23 @@ export interface PilotConfig extends BaseAgentConfig {
    * options when creating Pilot instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional working directory override for this Pilot instance.
+   *
+   * When set, the Claude SDK will use this directory as the working
+   * directory, which causes it to automatically load CLAUDE.md and
+   * other project configuration files from that location.
+   *
+   * This enables spawning sub-agents that work in specific project
+   * directories, allowing them to understand project-specific
+   * conventions, coding standards, and development guidelines.
+   *
+   * When omitted, the default workspace directory from Config is used.
+   *
+   * Issue #1506: Support project-scoped CLAUDE.md loading.
+   */
+  cwd?: string;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

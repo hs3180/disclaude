@@ -225,6 +225,24 @@ describe('AgentFactory', () => {
       const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
     });
+
+    it('should pass cwd to Pilot config (Issue #1506)', () => {
+      mockPilot.mockReturnValue({});
+      AgentFactory.createTaskAgent('chat-123', mockCallbacks, {
+        cwd: '/path/to/project',
+      });
+
+      const [[pilotConfig]] = mockPilot.mock.calls;
+      expect(pilotConfig.cwd).toBe('/path/to/project');
+    });
+
+    it('should not set cwd when not provided', () => {
+      mockPilot.mockReturnValue({});
+      AgentFactory.createTaskAgent('chat-123', mockCallbacks);
+
+      const [[pilotConfig]] = mockPilot.mock.calls;
+      expect(pilotConfig.cwd).toBeUndefined();
+    });
   });
 
   describe('config merging', () => {

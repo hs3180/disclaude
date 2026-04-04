@@ -101,6 +101,13 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Override working directory for the agent.
+   * When set, the Claude SDK will use this directory and automatically
+   * load CLAUDE.md and other project configuration files from it.
+   * Issue #1506: Support project-scoped CLAUDE.md loading.
+   */
+  cwd?: string;
 }
 
 /**
@@ -186,6 +193,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        ...(options.cwd && { cwd: options.cwd }),
       };
 
       return new Pilot(config);
@@ -230,6 +238,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      ...(options.cwd && { cwd: options.cwd }),
     };
 
     return new Pilot(config);
@@ -268,6 +277,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      ...(options.cwd && { cwd: options.cwd }),
     };
 
     return new Pilot(config);

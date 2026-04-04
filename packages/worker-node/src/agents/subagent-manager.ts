@@ -108,6 +108,15 @@ export interface SubagentOptions {
   onProgress?: (message: string) => void;
   /** Optional sender OpenId for scheduled tasks */
   senderOpenId?: string;
+  /**
+   * Optional working directory for the subagent.
+   * When set, the Claude SDK will use this directory and automatically
+   * load CLAUDE.md and other project configuration files from it.
+   * This enables spawning sub-agents that work in specific project
+   * directories with project-specific conventions and guidelines.
+   * Issue #1506: Support project-scoped CLAUDE.md loading.
+   */
+  cwd?: string;
 }
 
 /**
@@ -140,6 +149,8 @@ export interface SubagentHandle {
   schedule?: string;
   /** Isolation mode used */
   isolation: IsolationMode;
+  /** Working directory (if specified) */
+  cwd?: string;
 }
 
 /**
@@ -231,6 +242,7 @@ export class SubagentManager {
       startedAt: new Date(),
       schedule: options.schedule,
       isolation: options.isolation || 'none',
+      cwd: options.cwd,
     };
 
     this.handles.set(subagentId, handle);
@@ -272,7 +284,8 @@ export class SubagentManager {
     // Create agent using factory
     const agent = AgentFactory.createScheduleAgent(
       options.chatId,
-      options.callbacks
+      options.callbacks,
+      options.cwd ? { cwd: options.cwd } : {}
     );
 
     this.inMemoryAgents.set(subagentId, agent);
@@ -326,7 +339,8 @@ export class SubagentManager {
     // Create agent using factory
     const agent = AgentFactory.createTaskAgent(
       options.chatId,
-      options.callbacks
+      options.callbacks,
+      options.cwd ? { cwd: options.cwd } : {}
     );
 
     this.inMemoryAgents.set(subagentId, agent);

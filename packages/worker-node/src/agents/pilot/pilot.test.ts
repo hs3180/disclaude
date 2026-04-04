@@ -285,4 +285,47 @@ describe('Pilot', () => {
       expect(p.hasActiveSession()).toBe(true);
     });
   });
+
+  describe('cwd override (Issue #1506)', () => {
+    it('should accept cwd in config', () => {
+      const p = new Pilot({
+        chatId: 'oc_test_cwd',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        cwd: '/path/to/project',
+      });
+      expect(p.getChatId()).toBe('oc_test_cwd');
+    });
+
+    it('should pass cwd to createSdkOptions in executeOnce', async () => {
+      const cwdPilot = new Pilot({
+        chatId: 'oc_cwd_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        cwd: '/custom/project/dir',
+      });
+
+      await cwdPilot.executeOnce('oc_cwd_test', 'hello', 'msg_1');
+
+      // createSdkOptions should have been called with cwd
+      const baseAgentMock = cwdPilot as any;
+      expect(baseAgentMock.createSdkOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: '/custom/project/dir' })
+      );
+    });
+
+    it('should not pass cwd when not configured', async () => {
+      await pilot.executeOnce('oc_test_chat', 'hello', 'msg_2');
+
+      const baseAgentMock = pilot as any;
+      const lastCall = baseAgentMock.createSdkOptions.mock.calls[
+        baseAgentMock.createSdkOptions.mock.calls.length - 1
+      ];
+      expect(lastCall[0].cwd).toBeUndefined();
+    });
+  });
 });

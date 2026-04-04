@@ -72,6 +72,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Optional working directory override (Issue #1506)
+  private readonly cwdOverride?: string;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -102,6 +105,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Store optional working directory override (Issue #1506)
+    this.cwdOverride = config.cwd;
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }
@@ -443,9 +449,11 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1506: Pass cwd override so SDK loads CLAUDE.md from project directory
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.cwdOverride && { cwd: this.cwdOverride }),
     });
 
     // Get capabilities for message building
@@ -458,7 +466,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       senderOpenId,
     }, chatId, capabilities);
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
+    this.logger.info({ chatId, cwd: sdkOptions.cwd, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
 
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
@@ -686,13 +694,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1506: Pass cwd override so SDK loads CLAUDE.md from project directory
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(this.cwdOverride && { cwd: this.cwdOverride }),
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, cwd: sdkOptions.cwd, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
       'Starting SDK query with message channel'
     );
 
