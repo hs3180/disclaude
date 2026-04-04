@@ -100,7 +100,6 @@ export type FeishuHandlersContainer = ChannelHandlersContainer;
  * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers — state management
  * dispatch cases removed; only registerActionPrompts callback remains for
  * internal use by the sendInteractive handler.
- * Issue #1546: Added createChat / dissolveChat dispatch cases.
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,

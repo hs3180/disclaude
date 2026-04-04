@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createDiscussionChat, dissolveChat, addMembers, removeMembers, getMembers, getBotChats } from './chat-ops.js';
+import { createDiscussionChat, addMembers, removeMembers, getMembers, getBotChats } from './chat-ops.js';
 
 // Mock lark client
 const mockClient = {
@@ -139,28 +139,6 @@ describe('ChatOps', () => {
           members: ['ou_user_1'],
         })
       ).rejects.toThrow('API error');
-    });
-  });
-
-  describe('dissolveChat', () => {
-    it('should dissolve a chat successfully', async () => {
-      const mockDelete = mockClient.im.chat.delete as ReturnType<typeof vi.fn>;
-      mockDelete.mockResolvedValue({});
-
-      await dissolveChat(mockClient, 'oc_chat_123');
-
-      expect(mockDelete).toHaveBeenCalledWith({
-        path: { chat_id: 'oc_chat_123' },
-      });
-    });
-
-    it('should throw on dissolve error', async () => {
-      const mockDelete = mockClient.im.chat.delete as ReturnType<typeof vi.fn>;
-      mockDelete.mockRejectedValue(new Error('Permission denied'));
-
-      await expect(dissolveChat(mockClient, 'oc_chat_123')).rejects.toThrow(
-        'Permission denied'
-      );
     });
   });
 

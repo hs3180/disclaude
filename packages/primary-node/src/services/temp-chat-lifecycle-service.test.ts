@@ -34,8 +34,6 @@ describe('TempChatLifecycleService', () => {
     mockStore = createMockChatStore();
     deps = {
       chatStore: mockStore,
-      dissolveChat: vi.fn().mockResolvedValue(undefined),
-      unregisterGroup: vi.fn().mockReturnValue(true),
     };
     service = new TempChatLifecycleService(deps, { checkIntervalMs: 60_000 });
   });
@@ -101,52 +99,22 @@ describe('TempChatLifecycleService', () => {
 
       expect(result.cleaned).toBe(2);
       expect(result.details).toHaveLength(2);
-      expect(deps.dissolveChat).toHaveBeenCalledWith('oc_expired1');
-      expect(deps.dissolveChat).toHaveBeenCalledWith('oc_expired2');
-      expect(deps.unregisterGroup).toHaveBeenCalledWith('oc_expired1');
-      expect(deps.unregisterGroup).toHaveBeenCalledWith('oc_expired2');
       expect(mockStore.removeTempChat).toHaveBeenCalledWith('oc_expired1');
       expect(mockStore.removeTempChat).toHaveBeenCalledWith('oc_expired2');
     });
 
-    it('should continue cleanup when dissolveChat fails', async () => {
-      vi.mocked(deps.dissolveChat!).mockRejectedValue(new Error('API error'));
+    it('should handle cleanup failure gracefully', async () => {
+      vi.mocked(mockStore.removeTempChat).mockRejectedValue(new Error('Storage error'));
       vi.mocked(mockStore.getExpiredTempChats).mockResolvedValue([
         { chatId: 'oc_expired1', createdAt: '2026-01-01', expiresAt: '2026-01-02' },
       ] as any);
 
       const result = await service.checkAndCleanup();
 
-      // Should still succeed — dissolve failure is non-fatal
-      expect(result.cleaned).toBe(1);
-      expect(mockStore.removeTempChat).toHaveBeenCalledWith('oc_expired1');
-    });
-
-    it('should work without dissolveChat dependency', async () => {
-      const minimalDeps: TempChatLifecycleDeps = { chatStore: mockStore };
-      const minimalService = new TempChatLifecycleService(minimalDeps);
-
-      vi.mocked(mockStore.getExpiredTempChats).mockResolvedValue([
-        { chatId: 'oc_expired1', createdAt: '2026-01-01', expiresAt: '2026-01-02' },
-      ] as any);
-
-      const result = await minimalService.checkAndCleanup();
-      expect(result.cleaned).toBe(1);
-      expect(mockStore.removeTempChat).toHaveBeenCalledWith('oc_expired1');
-      minimalService.stop();
-    });
-
-    it('should work without unregisterGroup dependency', async () => {
-      const minimalDeps: TempChatLifecycleDeps = { chatStore: mockStore };
-      const minimalService = new TempChatLifecycleService(minimalDeps);
-
-      vi.mocked(mockStore.getExpiredTempChats).mockResolvedValue([
-        { chatId: 'oc_expired1', createdAt: '2026-01-01', expiresAt: '2026-01-02' },
-      ] as any);
-
-      const result = await minimalService.checkAndCleanup();
-      expect(result.cleaned).toBe(1);
-      minimalService.stop();
+      // Should report failure but not throw
+      expect(result.cleaned).toBe(0);
+      expect(result.details[0].success).toBe(false);
+      expect(result.details[0].error).toBe('Storage error');
     });
   });
 });
