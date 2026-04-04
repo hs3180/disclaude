@@ -19,6 +19,7 @@ import {
   loadConfigFile,
   setLoadedConfig,
   applyGlobalEnv,
+  createDefaultRuntimeContext,
   createLogger,
   Config,
   type DisclaudeConfigWithChannels,
@@ -117,6 +118,11 @@ async function main(): Promise<void> {
   // Apply config env vars to process.env so main-process components can access them
   // Must be called AFTER setLoadedConfig() to ensure config is available
   applyGlobalEnv();
+
+  // Set runtime context for agents (Issue #1839)
+  // Provides dependency injection for BaseAgent methods (getGlobalEnv, getWorkspaceDir, etc.)
+  // Without this, getGlobalEnv() returns {} and config env vars are silently dropped from SDK subprocess
+  createDefaultRuntimeContext();
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;

@@ -218,12 +218,17 @@ export abstract class BaseAgent implements Disposable {
 
   /**
    * Get global env from runtime context.
+   * Falls back to Config.getGlobalEnv() when runtime context is not set,
+   * providing defense in depth against missing setRuntimeContext() calls.
+   *
+   * @see Issue #1839
    */
   protected getGlobalEnv(): Record<string, string> {
     if (hasRuntimeContext()) {
       return getRuntimeContext().getGlobalEnv();
     }
-    return {};
+    // Fallback: read directly from config when runtime context is not set
+    return Config.getGlobalEnv();
   }
 
   /**
