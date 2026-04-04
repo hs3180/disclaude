@@ -318,28 +318,25 @@ export class Pilot extends BaseAgent implements ChatAgent {
         session_id: '',
       };
 
-      // Push message to channel
-      if (this.channel) {
-        const accepted = this.channel.push(streamingMessage);
-        if (!accepted) {
-          // Issue #2007: Channel is closed — message would be silently dropped.
-          // Yield an error indicator so the caller can detect the failure.
-          this.logger.warn({ chatId, messageId }, 'handleInput: message rejected, channel is closed');
+      // Push message to channel (Issue #2007)
+      // Attempt delivery with one retry on failure — channel may have been closed
+      // between session start and this point due to an agent loop crash.
+      if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
+        this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
+        try {
+          this.startAgentLoop();
+        } catch (restartErr) {
+          this.logger.error({ err: restartErr, chatId, messageId }, 'handleInput: session restart failed');
+        }
+        if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
+          this.logger.error({ chatId, messageId }, 'handleInput: retry also failed, yielding error');
           yield {
-            content: `⚠️ Message not delivered for session ${chatId}: channel is closed`,
+            content: '⚠️ 消息未能送达，会话已结束。请发送 /reset 重置会话后重试。',
             role: 'assistant',
             messageType: 'text',
           };
           continue;
         }
-      } else {
-        this.logger.error({ chatId, messageId }, 'handleInput: no channel available');
-        yield {
-          content: `⚠️ No channel available for session ${chatId}`,
-          role: 'assistant',
-          messageType: 'text',
-        };
-        continue;
       }
 
       yield {
@@ -546,6 +543,30 @@ export class Pilot extends BaseAgent implements ChatAgent {
         this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
       });
     }
+  }
+
+  /**
+   * Attempt to push a message to the channel.
+   *
+   * Centralizes push logic and handles both "no channel" and "channel closed" cases.
+   * Returns true if the message was accepted, false otherwise.
+   *
+   * @param message - The streaming user message to push
+   * @param chatId - Chat ID for logging
+   * @param messageId - Message ID for logging
+   * @returns true if message was accepted by the channel
+   */
+  private tryPushMessage(message: StreamingUserMessage, chatId: string, messageId: string): boolean {
+    if (!this.channel) {
+      this.logger.error({ chatId, messageId }, 'tryPushMessage: no channel available');
+      return false;
+    }
+    const accepted = this.channel.push(message);
+    if (!accepted) {
+      this.logger.warn({ chatId, messageId }, 'tryPushMessage: push rejected, channel is closed');
+      return false;
+    }
+    return true;
   }
 
   /**
