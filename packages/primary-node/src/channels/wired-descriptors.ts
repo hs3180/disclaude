@@ -155,6 +155,22 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         feishuChannel.setPassiveModeDisabled(chatId, !enabled),
     };
 
+    // 2b. Issue #2069: Initialize passive mode from persisted temp chat records.
+    // This ensures declarative passive mode settings survive restarts.
+    // Only loads records where passiveMode is explicitly set to false.
+    const chatStore = context.primaryNode.getChatStore();
+    chatStore.listTempChats().then(records => {
+      const passiveModeManager = feishuChannel.getPassiveModeManager();
+      const loaded = passiveModeManager.initFromRecords(
+        records.map(r => ({ chatId: r.chatId, passiveMode: r.passiveMode }))
+      );
+      if (loaded > 0) {
+        context.logger.info({ count: loaded }, 'Initialized passive mode from chat store records');
+      }
+    }).catch(err => {
+      context.logger.warn({ err }, 'Failed to initialize passive mode from chat store');
+    });
+
     // 3. Register IPC handlers for MCP Server connections
     // Base handlers reuse the same channel.sendMessage pattern as PilotCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
@@ -200,14 +216,21 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
-      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => {
-        const chatStore = context.primaryNode.getChatStore();
-        await chatStore.registerTempChat(chatId, {
+      // Issue #2069: Added passiveMode for declarative passive mode configuration
+      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; passiveMode?: boolean }) => {
+        const store = context.primaryNode.getChatStore();
+        await store.registerTempChat(chatId, {
           expiresAt: opts?.expiresAt,
           creatorChatId: opts?.creatorChatId,
           context: opts?.context,
+          passiveMode: opts?.passiveMode,
         });
-        const record = await chatStore.getTempChat(chatId);
+        // Issue #2069: Apply passive mode to PassiveModeManager immediately
+        if (opts?.passiveMode === false) {
+          feishuChannel.setPassiveModeDisabled(chatId, true);
+          context.logger.info({ chatId }, 'Passive mode disabled via declarative config');
+        }
+        const record = await store.getTempChat(chatId);
         return { success: true, expiresAt: record?.expiresAt };
       },
       listTempChats: async () => {
