@@ -18,8 +18,8 @@ import {
   createMarkdownMessage,
   createCardMessage,
   createDoneMessage,
+  type MessageContent,
 } from './universal-message.js';
-import type { MessageContent } from './universal-message.js';
 
 describe('Type Guards', () => {
   describe('isTextContent', () => {
@@ -112,7 +112,7 @@ describe('Type Guards', () => {
       const content: MessageContent = { type: 'text', text: 'Hello' };
       if (isTextContent(content)) {
         // TypeScript should narrow this to TextContent
-        const text: string = content.text;
+        const { text } = content;
         expect(text).toBe('Hello');
       }
     });
@@ -124,7 +124,7 @@ describe('Type Guards', () => {
         sections: [],
       };
       if (isCardContent(content)) {
-        const title: string = content.title;
+        const { title } = content;
         expect(title).toBe('Title');
         expect(content.sections).toEqual([]);
       }
