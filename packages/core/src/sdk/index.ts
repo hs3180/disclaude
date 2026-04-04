@@ -13,6 +13,12 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── acp/                     # ACP 协议基础设施
+ * │   ├── index.ts
+ * │   ├── types.ts             # JSON-RPC 2.0 + ACP 类型
+ * │   ├── transport.ts         # 传输层抽象（stdio/SSE）
+ * │   ├── connection.ts        # 连接管理器
+ * │   └── message-adapter.ts   # ACP ↔ AgentMessage 适配器
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -131,3 +137,68 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP 协议导出
+// ============================================================================
+
+export {
+  // 常量
+  AcpMethod,
+  JsonRpcErrorCode,
+  // 工具函数
+  createJsonRpcRequest,
+  createJsonRpcNotification,
+  createJsonRpcSuccessResponse,
+  createJsonRpcErrorResponse,
+  isJsonRpcRequest,
+  isJsonRpcNotification,
+  isJsonRpcResponse,
+  parseJsonRpcMessage,
+  serializeJsonRpcMessage,
+  // 传输层
+  StdioTransport,
+  // 连接管理
+  AcpConnection,
+  // 消息适配
+  userInputToAcpMessage,
+  acpMessageToAgentMessages,
+} from './acp/index.js';
+
+export type {
+  // JSON-RPC 2.0
+  JsonRpcId,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse,
+  JsonRpcError,
+  JsonRpcErrorResponse,
+  JsonRpcResponse,
+  JsonRpcNotification,
+  JsonRpcMessage,
+  // ACP 方法
+  AcpMethodName,
+  // ACP 能力
+  AcpClientCapabilities,
+  AcpServerCapabilities,
+  // ACP 初始化
+  AcpInitializeParams,
+  AcpInitializeResult,
+  // ACP 任务
+  AcpTaskId,
+  AcpTaskState,
+  AcpContentBlock,
+  AcpTaskMessage,
+  AcpTaskSendParams,
+  AcpTaskSendResult,
+  AcpTaskCancelParams,
+  AcpTaskCancelResult,
+  AcpTaskNotificationParams,
+  // ACP 传输
+  AcpStdioTransportConfig,
+  AcpSseTransportConfig,
+  AcpTransportConfig,
+  IAcpTransport,
+  // ACP 连接
+  AcpConnectionState,
+  AcpConnectionEvents,
+} from './acp/index.js';
