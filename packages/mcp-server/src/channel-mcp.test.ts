@@ -50,7 +50,7 @@ const mocked_register_temp_chat = vi.mocked(register_temp_chat);
 
 function getHandler(name: string) {
   const def = channelToolDefinitions.find(d => d.name === name);
-  if (!def) throw new Error(`Tool "${name}" not found`);
+  if (!def) { throw new Error(`Tool "${name}" not found`); }
   return def.handler;
 }
 
