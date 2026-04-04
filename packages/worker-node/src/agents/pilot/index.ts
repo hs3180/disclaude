@@ -359,10 +359,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
         }
       }
 
+      // Yield acknowledgment (internal diagnostic, not user-facing).
+      // Uses 'notification' type so consumers can filter it from user messages.
       yield {
-        content: `Message received for session ${chatId}`,
+        content: '✓',
         role: 'assistant',
-        messageType: 'text',
+        messageType: 'notification',
       };
     }
   }
