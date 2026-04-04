@@ -25,6 +25,19 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'application/zip': '.zip',
   'text/plain': '.txt',
   'application/json': '.json',
+  // Issue #1966: Audio MIME types
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/x-m4a': '.m4a',
+  'audio/mp4': '.m4a',
+  'audio/amr': '.amr',
+  'audio/x-amr': '.amr',
+  'audio/flac': '.flac',
+  'audio/aac': '.aac',
+  'audio/x-ms-wma': '.wma',
 };
 
 /**
@@ -102,6 +115,63 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
       return header.startsWith('<?xml') || header.startsWith('<svg');
     },
     ext: '.svg',
+  },
+  // Issue #1966: Audio format magic bytes
+  // MP3 (ID3v2): 49 44 33 (ID3)
+  {
+    detect: (buf) => buf.length >= 3 &&
+      buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33,
+    ext: '.mp3',
+  },
+  // MP3 (without ID3, sync word): FF FB or FF F3 or FF F2
+  {
+    detect: (buf) => buf.length >= 2 &&
+      buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0,
+    ext: '.mp3',
+  },
+  // WAV (RIFF....WAVE): 52 49 46 46 .... 57 41 56 45
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x41 && buf[10] === 0x56 && buf[11] === 0x45,
+    ext: '.wav',
+  },
+  // OGG: 4F 67 67 53 (OggS)
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x4F && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53,
+    ext: '.ogg',
+  },
+  // FLAC: 66 4C 61 43 (fLaC)
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x66 && buf[1] === 0x4C && buf[2] === 0x61 && buf[3] === 0x43,
+    ext: '.flac',
+  },
+  // M4A/MP4 (ftyp): offset 4 bytes: 66 74 79 70
+  {
+    detect: (buf) => buf.length >= 8 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70,
+    ext: '.m4a',
+  },
+  // AMR: 23 21 41 4D 52 (#!AMR)
+  {
+    detect: (buf) => buf.length >= 5 &&
+      buf[0] === 0x23 && buf[1] === 0x21 && buf[2] === 0x41 && buf[3] === 0x4D && buf[4] === 0x52,
+    ext: '.amr',
+  },
+  // AAC: FF F1 or FF F9 (ADTS header)
+  {
+    detect: (buf) => buf.length >= 2 &&
+      buf[0] === 0xFF && ((buf[1] & 0xF0) === 0xF0) && (buf[1] & 0x06) !== 0x00,
+    ext: '.aac',
+  },
+  // WMA: 30 26 B2 75 8E 66 CF 11
+  {
+    detect: (buf) => buf.length >= 8 &&
+      buf[0] === 0x30 && buf[1] === 0x26 && buf[2] === 0xB2 && buf[3] === 0x75 &&
+      buf[4] === 0x8E && buf[5] === 0x66 && buf[6] === 0xCF && buf[7] === 0x11,
+    ext: '.wma',
   },
 ];
 
