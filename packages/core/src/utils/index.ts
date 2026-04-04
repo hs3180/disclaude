@@ -91,3 +91,15 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Audio Record (Issue #1957)
+export type { AudioFormat, AudioRecordOptions, AudioRecordResult } from './audio-record.js';
+export {
+  isUnderPM2,
+  isMacOS,
+  shouldUseTccWorkaround,
+  validateAudioData,
+  recordViaTccWorkaround,
+  recordDirectly,
+  recordAudio,
+} from './audio-record.js';
