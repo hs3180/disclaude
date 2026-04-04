@@ -147,7 +147,8 @@ describe('FeishuChannel doSendMessage — mentions support (Issue #1742)', () =>
       });
 
       // Verify the post content structure
-      const callArgs = mocks.createMock.mock.calls[0][0];
+      // eslint-disable-next-line prefer-destructuring
+      const [callArgs] = mocks.createMock.mock.calls[0];
       const content = JSON.parse(callArgs.data.content);
       expect(content.zh_cn.title).toBe('');
       expect(content.zh_cn.content).toHaveLength(1);
@@ -170,7 +171,8 @@ describe('FeishuChannel doSendMessage — mentions support (Issue #1742)', () =>
         mentions,
       });
 
-      const callArgs = mocks.createMock.mock.calls[0][0];
+      // eslint-disable-next-line prefer-destructuring
+      const [callArgs] = mocks.createMock.mock.calls[0];
       const content = JSON.parse(callArgs.data.content);
       expect(content.zh_cn.content[0]).toHaveLength(1); // only the mention, no text element
       expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_bot_001' });
@@ -260,7 +262,8 @@ describe('FeishuChannel doSendMessage — mentions support (Issue #1742)', () =>
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
       // Fallback should still use post type with mentions
-      const callArgs = mocks.createMock.mock.calls[0][0];
+      // eslint-disable-next-line prefer-destructuring
+      const [callArgs] = mocks.createMock.mock.calls[0];
       expect(callArgs.data.msg_type).toBe('post');
       expect(result).toBe('new_msg_001');
     });
@@ -276,7 +279,8 @@ describe('FeishuChannel doSendMessage — mentions support (Issue #1742)', () =>
         mentions: [{ openId: 'ou_nobody' }],
       });
 
-      const callArgs = mocks.createMock.mock.calls[0][0];
+      // eslint-disable-next-line prefer-destructuring
+      const [callArgs] = mocks.createMock.mock.calls[0];
       const content = JSON.parse(callArgs.data.content);
       expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_nobody' });
       expect(content.zh_cn.content[0][1]).toEqual({ tag: 'text', text: ' Ping' });

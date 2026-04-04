@@ -120,7 +120,7 @@ export interface IFileHandler {
    */
   handleFileMessage(
     chatId: string,
-    messageType: 'image' | 'file' | 'media',
+    messageType: 'image' | 'file' | 'media' | 'audio',
     content: string,
     messageId: string
   ): Promise<FileHandlerResult>;
