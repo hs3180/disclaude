@@ -9,7 +9,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { FileRef, FeishuCard } from '@disclaude/core';
+import type { FileRef, FeishuCard, ChannelCapabilities } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgent Interface
@@ -116,6 +116,10 @@ export interface PilotCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  /** Get channel capabilities for a chat (Issue #582) */
+  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
+  /** Get chat history for first message context (Issue #1230, #1863) */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**

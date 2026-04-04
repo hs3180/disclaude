@@ -22,6 +22,7 @@ import {
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
+import { messageLogger } from './feishu/message-logger.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -98,7 +99,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: false,
+      // Issue #1863: Wire getChatHistory callback for session restoration
+      getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
