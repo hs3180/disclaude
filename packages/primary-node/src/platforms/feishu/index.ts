@@ -9,7 +9,6 @@
 // Chat operations
 export {
   createDiscussionChat,
-  dissolveChat,
   addMembers,
   removeMembers,
   getMembers,
@@ -18,15 +17,6 @@ export {
   type ChatOpsConfig,
   type BotChatInfo,
 } from './chat-ops.js';
-
-// Group service
-export {
-  GroupService,
-  getGroupService,
-  type GroupInfo,
-  type CreateGroupOptions,
-  type GroupServiceConfig,
-} from './group-service.js';
 
 // Welcome service
 export {

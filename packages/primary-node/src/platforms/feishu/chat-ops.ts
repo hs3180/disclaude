@@ -107,24 +107,6 @@ export async function createDiscussionChat(
 }
 
 /**
- * Dissolve (delete) a group chat.
- *
- * @param client - Feishu API client
- * @param chatId - Chat ID to dissolve
- */
-export async function dissolveChat(client: lark.Client, chatId: string): Promise<void> {
-  try {
-    await client.im.chat.delete({
-      path: { chat_id: chatId },
-    });
-    logger.info({ chatId }, 'Chat dissolved');
-  } catch (error) {
-    logger.error({ err: error, chatId }, 'Failed to dissolve chat');
-    throw error;
-  }
-}
-
-/**
  * Add members to a chat.
  *
  * @param client - Feishu API client
