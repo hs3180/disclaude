@@ -309,3 +309,25 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Mode module (Issue #1709, Issue #1710: Research Mode + RESEARCH.md state file)
+export {
+  createInitialResearchFile,
+  generateResearchMarkdown,
+  parseResearchMarkdown,
+  addFinding,
+  addOpenQuestion,
+  resolveOpenQuestion,
+  setConclusion,
+  addResource,
+  addObjective,
+  completeObjective,
+  archiveResearch,
+  type ResearchFileData,
+  type ResearchFinding,
+  type ResearchResource,
+  type ResearchMetadata,
+  type CreateResearchOptions,
+  type AddFindingOptions,
+  type ArchiveResult,
+} from './mode/index.js';
