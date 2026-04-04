@@ -214,6 +214,37 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  it('should NOT include getChatHistory when not provided in options', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger);
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('should include getChatHistory when provided in options', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue('Chat history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    expect(typeof callbacks.getChatHistory).toBe('function');
+
+    // Call the callback and verify delegation
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetChatHistory).toHaveBeenCalledWith('chat-001');
+    expect(result).toBe('Chat history content');
+  });
+
+  it('getChatHistory should return undefined when no history found', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue(undefined);
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+    const result = await callbacks.getChatHistory!('chat-001');
+    expect(result).toBeUndefined();
+  });
 });
 
 // ============================================================================
@@ -250,6 +281,30 @@ describe('createDefaultMessageHandler', () => {
         sendCard: expect.any(Function),
         sendFile: expect.any(Function),
         onDone: expect.any(Function),
+      }),
+    );
+  });
+
+  it('should include getChatHistory in callbacks when provided', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue('history');
+    const contextWithHistory = createMockWiredContext({
+      callbacks: (_chatId: string) => ({
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        sendFile: vi.fn().mockResolvedValue(undefined),
+        onDone: vi.fn().mockResolvedValue(undefined),
+        getChatHistory: mockGetChatHistory,
+      }),
+    });
+    const handler = createDefaultMessageHandler(channel, contextWithHistory, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage();
+    await handler(message);
+    expect(contextWithHistory.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+      'chat-001',
+      expect.objectContaining({
+        getChatHistory: mockGetChatHistory,
       }),
     );
   });

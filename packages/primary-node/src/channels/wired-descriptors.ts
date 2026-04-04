@@ -36,6 +36,7 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import { messageLogger } from './feishu/message-logger.js';
 
 // ============================================================================
 // REST Wired Descriptor
@@ -98,7 +99,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: false,
+      // Issue #1863: Wire getChatHistory callback so Pilot can load persisted history
+      getChatHistory: messageLogger.getChatHistory.bind(messageLogger),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {

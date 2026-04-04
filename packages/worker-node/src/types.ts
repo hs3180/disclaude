@@ -106,6 +106,7 @@ export interface AgentPoolInterface {
  * PilotCallbacks - Callbacks for ChatAgent to send messages.
  *
  * Used when creating ChatAgent instances.
+ * Issue #1863: Added getChatHistory for persisted history loading.
  */
 export interface PilotCallbacks {
   /** Send a text message */
@@ -116,6 +117,19 @@ export interface PilotCallbacks {
   sendFile: (chatId: string, filePath: string) => Promise<void>;
   /** Called when query completes */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  /**
+   * Get the capabilities of the channel for a specific chat.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Channel capabilities or undefined if not available
+   */
+  getCapabilities?: (chatId: string) => import('@disclaude/core').ChannelCapabilities | undefined;
+  /**
+   * Get chat history for session restoration and first-message context.
+   * Issue #1863: Used to load persisted chat history from MessageLogger.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Chat history string or undefined if not available
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**

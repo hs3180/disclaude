@@ -225,31 +225,53 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   *
+   * Issue #1863: Aggregates chat logs across multiple days (up to
+   * Config.getSessionRestoreConfig().historyDays, default 7).
+   * Returns logs in chronological order (oldest first), truncated
+   * to maxContextLength from the beginning to preserve recent context.
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
-      // Find the most recent log file for this chat
+      const sessionConfig = Config.getSessionRestoreConfig();
+      const { historyDays, maxContextLength } = sessionConfig;
+
+      // Find all date directories
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Filter to date directories
+      // Filter to date directories, sort ascending (oldest first) for chronological order
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(-historyDays); // Take the most recent N days
 
+      // Read and aggregate log contents
+      const contents: string[] = [];
       for (const dir of dateDirs) {
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            contents.push(content);
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this date, try next directory
         }
       }
 
-      return undefined;
+      if (contents.length === 0) {
+        return undefined;
+      }
+
+      // Concatenate in chronological order
+      const combined = contents.join('\n---\n\n');
+
+      // Truncate from the beginning to preserve recent context
+      if (combined.length > maxContextLength) {
+        return combined.slice(-maxContextLength);
+      }
+
+      return combined;
     } catch {
       return undefined;
     }
