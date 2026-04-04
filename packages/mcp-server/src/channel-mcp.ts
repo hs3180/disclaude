@@ -44,11 +44,14 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 }
 
 /**
- * Return an MCP tool error response that signals failure to the agent.
- * Unlike toolSuccess(), this sets `isError: true` so the agent knows
- * the operation did NOT succeed.
+ * Return a tool error result with isError flag.
  *
- * @see https://github.com/hs3180/disclaude/issues/1641 Scenario 2
+ * When isError is true, the Agent treats the tool call as failed and
+ * stops retrying/diagnosing — it reports the error to the user instead.
+ *
+ * Issue #1634: Without isError, failed tool calls wrapped in toolSuccess()
+ * caused the Agent to enter diagnostic mode, exceeding test timeouts.
+ * Issue #1641: chatId validation errors also use this to signal failure.
  */
 function toolError(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
   return { content: [{ type: 'text', text }], isError: true };
@@ -172,10 +175,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
 
       try {
         const result = await send_text({ text, chatId, parentMessageId });
-        if (result.success) {
-          return toolSuccess(result.message);
-        }
-        return toolError(`Text send failed: ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -241,10 +241,7 @@ For interactive cards with button click handlers, use send_interactive instead.
 
       try {
         const result = await send_card({ card, chatId, parentMessageId });
-        if (result.success) {
-          return toolSuccess(result.message);
-        }
-        return toolError(`Card send failed: ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -326,10 +323,7 @@ For display-only cards, use send_card instead.
 
       try {
         const result = await send_interactive({ question, options, chatId, title, context, actionPrompts, parentMessageId });
-        if (result.success) {
-          return toolSuccess(result.message);
-        }
-        return toolError(`Interactive card send failed: ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -348,10 +342,7 @@ For display-only cards, use send_card instead.
 
       try {
         const result = await send_file({ filePath, chatId });
-        if (result.success) {
-          return toolSuccess(result.message);
-        }
-        return toolError(`File send failed: ${result.message}`);
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }

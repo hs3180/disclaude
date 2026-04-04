@@ -642,7 +642,16 @@ export class WorkerNode {
               this.deps.logger.debug({ chatId, cardMessageId }, 'Card action processed by agent');
             }
           } else {
-            this.deps.logger.warn({ chatId }, 'No active feedback channel for card action');
+            // Issue #2007: No active feedback channel — card action would be silently dropped.
+            // Notify user via WebSocket so they can retry.
+            this.deps.logger.warn({ chatId, cardMessageId, actionValue }, 'No active feedback channel for card action, notifying user');
+            if (this.ws?.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({
+                type: 'text',
+                chatId,
+                text: '⚠️ 卡片操作未能送达 Agent（会话可能已结束）。请发送 /reset 重置会话后重试。',
+              }));
+            }
           }
           return;
         }

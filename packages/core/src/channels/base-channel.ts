@@ -144,18 +144,20 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * Delegates to platform-specific implementation.
    *
    * @param message - Message to send
+   * @returns The platform message ID if available, void otherwise.
    */
-  async sendMessage(message: OutgoingMessage): Promise<void> {
+  async sendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.isRunning) {
       throw new Error(`Channel ${this.id} is not running (status: ${this._status})`);
     }
 
     try {
-      await this.doSendMessage(message);
+      const messageId = await this.doSendMessage(message);
       logger.debug(
-        { id: this.id, chatId: message.chatId, type: message.type },
+        { id: this.id, chatId: message.chatId, type: message.type, messageId },
         'Message sent'
       );
+      return messageId;
     } catch (error) {
       logger.error(
         { err: error, id: this.id, chatId: message.chatId },
@@ -299,8 +301,10 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
   /**
    * Platform-specific message sending logic.
    * Called by sendMessage() after validation.
+   *
+   * @returns The platform message ID if available, void otherwise.
    */
-  protected abstract doSendMessage(message: OutgoingMessage): Promise<void>;
+  protected abstract doSendMessage(message: OutgoingMessage): Promise<string | void>;
 
   /**
    * Platform-specific health check.
