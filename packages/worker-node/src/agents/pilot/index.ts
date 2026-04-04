@@ -345,15 +345,53 @@ export class Pilot extends BaseAgent implements ChatAgent {
         session_id: '',
       };
 
-      // Push message to channel
-      if (this.channel) {
-        this.channel.push(streamingMessage);
+      // Push message to channel (Issue #2007)
+      // Attempt delivery with one retry on failure — channel may have been closed
+      // between session start and this point due to an agent loop crash.
+      if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
+        // Don't retry if session was intentionally closed (e.g., /reset).
+        // Retrying would re-create the session the user just terminated.
+        if (!this.isSessionActive) {
+          this.logger.info({ chatId, messageId }, 'handleInput: session is not active, skipping retry');
+          yield {
+            content: '⚠️ 当前会话已重置，请直接发送新消息。',
+            role: 'assistant',
+            messageType: 'text',
+          };
+          continue;
+        }
+
+        // Cancel old query to prevent orphaned processIterator from sending
+        // duplicate messages while the new session starts.
+        if (this.queryHandle) {
+          this.logger.info({ chatId }, 'handleInput: cancelling old queryHandle before retry');
+          this.queryHandle.cancel();
+          this.queryHandle = undefined;
+        }
+
+        this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
+        try {
+          this.startAgentLoop();
+        } catch (restartErr) {
+          this.logger.error({ err: restartErr, chatId, messageId }, 'handleInput: session restart failed');
+        }
+        if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
+          this.logger.error({ chatId, messageId }, 'handleInput: retry also failed, yielding error');
+          yield {
+            content: '⚠️ 消息未能送达，会话已结束。请发送 /reset 重置会话后重试。',
+            role: 'assistant',
+            messageType: 'text',
+          };
+          continue;
+        }
       }
 
+      // Yield acknowledgment (internal diagnostic, not user-facing).
+      // Uses 'notification' type so consumers can filter it from user messages.
       yield {
-        content: `Message received for session ${chatId}`,
+        content: '✓',
         role: 'assistant',
-        messageType: 'text',
+        messageType: 'notification',
       };
     }
   }
@@ -561,6 +599,30 @@ export class Pilot extends BaseAgent implements ChatAgent {
         this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
       });
     }
+  }
+
+  /**
+   * Attempt to push a message to the channel.
+   *
+   * Centralizes push logic and handles both "no channel" and "channel closed" cases.
+   * Returns true if the message was accepted, false otherwise.
+   *
+   * @param message - The streaming user message to push
+   * @param chatId - Chat ID for logging
+   * @param messageId - Message ID for logging
+   * @returns true if message was accepted by the channel
+   */
+  private tryPushMessage(message: StreamingUserMessage, chatId: string, messageId: string): boolean {
+    if (!this.channel) {
+      this.logger.error({ chatId, messageId }, 'tryPushMessage: no channel available');
+      return false;
+    }
+    const accepted = this.channel.push(message);
+    if (!accepted) {
+      this.logger.warn({ chatId, messageId }, 'tryPushMessage: push rejected, channel is closed');
+      return false;
+    }
+    return true;
   }
 
   /**
