@@ -105,6 +105,18 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), `flock` concurrency safety, and `jq` integrity checks.
 
+### Prerequisites (Bash Scripts)
+
+The `.sh` scripts require the following external tools. Run `bash scripts/chat/check-deps.sh` to verify before first use:
+
+| Dependency | Purpose | Install |
+|------------|---------|---------|
+| `jq` | JSON construction, validation, parsing | `apk add jq` / `apt-get install jq` / `brew install jq` |
+| `flock` | File locking for concurrency safety | `apk add util-linux` / `apt-get install util-linux` |
+| `date -u` | UTC timestamp generation | Usually pre-installed |
+
+> **Note**: The TypeScript versions (`.ts`) have no external dependencies — they use only Node.js built-ins. Prefer the `.ts` versions when available.
+
 ### 1. Create Chat
 
 **Usage**: `/chat create`
