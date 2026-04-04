@@ -20,11 +20,8 @@ createdAt: 2026-04-03T00:00:00.000Z
 ## 前置依赖
 
 - `@larksuite/cli`（飞书官方 CLI，npm 全局安装）
-- `jq`（JSON 处理工具）
-- `flock`（Linux 文件锁工具，util-linux 包提供 — **仅支持 Linux**）
-- `timeout`（GNU coreutils 超时命令 — **仅支持 Linux**，macOS 需 `brew install coreutils` 后使用 `gtimeout`）
-
-> **⚠️ 平台要求**: 本 Schedule 依赖 `flock` 和 `timeout`，均为 Linux 标准工具。如需在 macOS 运行，需安装 GNU coreutils 并替换 `timeout` 为 `gtimeout`、`flock` 为 `shlock` 或 `lockfile`。
+- `Node.js 20.12+`（TypeScript 运行时，用于 `npx tsx`）
+- `fs.flock` 可选（Node 20.12+ 内置，用于文件锁；不可用时自动降级为无锁模式）
 
 ## 职责边界
 
@@ -39,19 +36,19 @@ createdAt: 2026-04-03T00:00:00.000Z
 ## 执行步骤
 
 ```bash
-bash scripts/schedule/chats-activation.sh
+npx tsx scripts/schedule/chats-activation.ts
 ```
 
 脚本完整实现了以下逻辑：
 
 ### Step 0: 环境检查（fail-fast）
 
-检查 `lark-cli`、`jq`、`flock`、`timeout` 是否可用。**任一缺失则立即终止**（`exit 1`），不继续执行。
+检查 `lark-cli` 是否可用。**缺失则立即终止**（`exit 1`），不继续执行。
 
 ### Step 1: 列出 pending 群聊
 
 遍历 `workspace/chats/*.json`，查找所有 `status=pending` 的文件：
-- 跳过损坏的 JSON 文件（`jq empty` 校验）
+- 跳过损坏的 JSON 文件（native `JSON.parse` 校验）
 - **过期预检**: 如果 `expiresAt` 已过期（UTC Z-suffix 格式），直接标记为 `expired`，跳过激活
 - 非 UTC 格式的 `expiresAt` 跳过过期检查（fail-open）
 
@@ -61,7 +58,7 @@ bash scripts/schedule/chats-activation.sh
 
 1. **读取数据** — 从 JSON 文件提取 `id`、`createGroup.name`、`createGroup.members`、`activationAttempts`
 2. **输入校验** — `group_name` 白名单校验 + UTF-8 字符级截断、`members` `ou_xxxxx` 格式校验
-3. **并发保护** — `flock -n` 排他锁，防止多个 Schedule 实例同时处理同一文件
+3. **并发保护** — `fs.flock` 排他锁，防止多个 Schedule 实例同时处理同一文件
 4. **幂等恢复** — 检测已有 `chatId`，自动恢复为 `active`（Schedule 崩溃恢复场景）
 5. **创建群组** — 通过 `lark-cli im +chat-create` 创建，30 秒超时保护
 6. **处理结果** — 成功则更新为 `active`，失败则记录错误并在达到 5 次上限后标记为 `failed`
@@ -81,13 +78,13 @@ bash scripts/schedule/chats-activation.sh
 
 | 场景 | 处理方式 |
 |------|----------|
-| `lark-cli`/`jq`/`flock`/`timeout` 不可用 | 立即终止执行（exit 1） |
+| `lark-cli` 不可用 | 立即终止执行（exit 1） |
 | 创建群组失败（< 5 次） | 记录错误，递增重试计数器，下次重试 |
 | 创建群组失败（≥ 5 次） | 标记为 `failed`，记录错误信息 |
 | Schedule 崩溃后恢复 | 检测已有 chatId，幂等恢复为 `active` |
 | Chat 文件损坏（非 JSON） | 记录警告，跳过该文件 |
 | `lark-cli` 超时（> 30s） | 视为创建失败，记录超时错误，进入重试流程 |
-| 并发处理同一文件 | `flock -n` 非阻塞锁，跳过已被其他实例处理的文件 |
+| 并发处理同一文件 | `fs.flock` 非阻塞锁，跳过已被其他实例处理的文件 |
 | `pending` 群聊已过期 | 标记为 `expired`，跳过激活，不消耗重试次数 |
 | 非标准 `expiresAt` 格式 | 跳过过期检查（fail-open），不标记为 expired |
 
@@ -99,7 +96,7 @@ bash scripts/schedule/chats-activation.sh
 4. **串行处理**: 一次处理一个群聊，避免并发问题
 5. **不创建新 Schedule**: 这是定时任务执行环境的规则
 6. **不修改其他文件**: 只处理 `workspace/chats/` 目录下的文件
-7. **并发安全**: 使用 `flock` 文件锁防止多个 Schedule 实例同时处理同一文件
+7. **并发安全**: 使用 `fs.flock` 文件锁防止多个 Schedule 实例同时处理同一文件
 8. **超时保护**: `lark-cli` 调用设 30 秒超时，防止挂起阻塞后续 Schedule
 9. **失败记录**: 达到重试上限后标记为 `failed` 并记录错误信息，消费方可轮询检测
 10. **过期预检**: 在激活前检查 `expiresAt`，已过期的 pending 群聊直接标记为 `expired`，避免无意义的群组创建

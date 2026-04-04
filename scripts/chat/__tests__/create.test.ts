@@ -36,7 +36,7 @@ async function runScript(script: string, env: Record<string, string>): Promise<{
   }
 }
 
-const TEST_IDS = ['test-create-1', 'test-query-1', 'test-list-1', 'test-response-1'];
+const TEST_IDS = ['test-create-1', 'test-query-1', 'test-list-1', 'test-list-2', 'test-list-3', 'test-response-1'];
 
 async function cleanupTestFiles() {
   for (const id of TEST_IDS) {
@@ -269,6 +269,63 @@ describe('chat scripts integration', () => {
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('pending');
+    });
+  });
+
+  describe('list', () => {
+    beforeEach(async () => {
+      // Create test chat files with different statuses
+      const chats = [
+        { id: 'test-list-1', status: 'pending' },
+        { id: 'test-list-2', status: 'active' },
+        { id: 'test-list-3', status: 'expired' },
+      ];
+      for (const chat of chats) {
+        const chatData = {
+          id: chat.id,
+          status: chat.status,
+          chatId: chat.status === 'active' ? 'oc_existing' : null,
+          createdAt: '2026-01-01T00:00:00Z',
+          activatedAt: chat.status === 'active' ? '2026-01-01T00:01:00Z' : null,
+          expiresAt: '2099-12-31T23:59:59Z',
+          createGroup: { name: 'Test', members: ['ou_test123'] },
+          context: {},
+          response: null,
+          activationAttempts: 0,
+          lastActivationError: null,
+          failedAt: null,
+        };
+        await writeFile(resolve(CHAT_DIR, `${chat.id}.json`), JSON.stringify(chatData, null, 2), 'utf-8');
+      }
+    });
+
+    it('should list all chats without filter', async () => {
+      const result = await runScript('scripts/chat/list.ts', {});
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('test-list-1');
+      expect(result.stdout).toContain('test-list-2');
+      expect(result.stdout).toContain('test-list-3');
+    });
+
+    it('should filter chats by status', async () => {
+      const result = await runScript('scripts/chat/list.ts', {
+        CHAT_STATUS: 'active',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('test-list-2');
+      expect(result.stdout).not.toContain('test-list-1');
+      expect(result.stdout).not.toContain('test-list-3');
+    });
+
+    it('should reject invalid CHAT_STATUS', async () => {
+      const result = await runScript('scripts/chat/list.ts', {
+        CHAT_STATUS: 'invalid',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Invalid CHAT_STATUS');
     });
   });
 });
