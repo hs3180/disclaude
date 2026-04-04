@@ -36,6 +36,8 @@ import {
   type MessageCallbacks,
   WsConnectionManager,
 } from './feishu/index.js';
+import { TriggerPhraseDetector } from './feishu/trigger-phrase-detector.js';
+import { dissolveChat } from '../platforms/feishu/chat-ops.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -159,6 +161,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private feishuMessageHandler: FeishuMessageHandler;
   private interactionManager: InteractionManager;
 
+  /** Issue #1229: Detects trigger phrases in outgoing text messages for smart session end */
+  private triggerPhraseDetector: TriggerPhraseDetector;
+
   /**
    * Offline message queue (Issue #1351).
    *
@@ -178,6 +183,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
+    this.triggerPhraseDetector = new TriggerPhraseDetector();
 
     // Create message callbacks
     const callbacks: MessageCallbacks = {
@@ -421,6 +427,21 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           JSON.stringify({ text: message.text || '' }),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
+
+        // Issue #1229: Check for trigger phrases in outgoing text messages.
+        // When detected, initiate async session end (group dissolution).
+        // Fire-and-forget — does not block message sending.
+        if (message.text) {
+          const trigger = this.triggerPhraseDetector.detect(message.text);
+          if (trigger.detected) {
+            logger.info(
+              { chatId: message.chatId, triggerType: trigger.type },
+              'Trigger phrase detected in outgoing message, initiating session end',
+            );
+            void this.handleSessionEnd(message.chatId, trigger.type);
+          }
+        }
+
         return messageId;
       }
 
@@ -729,5 +750,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     logger.info({ flushed: valid.length, dropped: queue.length - valid.length }, 'Offline queue flushed');
+  }
+
+  // ─── Smart session end (Issue #1229) ──────────────────────────────────
+
+  /**
+   * Handle session end by dissolving the group chat.
+   *
+   * Called asynchronously (fire-and-forget) when a trigger phrase is detected
+   * in an outgoing text message. Uses the existing `dissolveChat` from chat-ops
+   * (Lark SDK) rather than spawning a lark-cli subprocess.
+   *
+   * Best-effort: errors are logged but never thrown, since the trigger message
+   * has already been sent successfully.
+   *
+   * @param chatId - Chat ID to dissolve
+   * @param triggerType - Type of trigger (e.g., 'timeout', 'abandoned')
+   */
+  private async handleSessionEnd(chatId: string, triggerType?: string): Promise<void> {
+    if (!this.client) {
+      logger.warn({ chatId, triggerType }, 'Cannot end session: client not initialized');
+      return;
+    }
+
+    try {
+      await dissolveChat(this.client, chatId);
+      logger.info({ chatId, triggerType }, 'Session ended: chat dissolved successfully');
+    } catch (error) {
+      // Best-effort: log but never throw.
+      // The chat may already be dissolved, or the bot may lack permissions.
+      logger.warn(
+        { err: error, chatId, triggerType },
+        'Failed to dissolve chat on session end (chat may already be dissolved)',
+      );
+    }
   }
 }

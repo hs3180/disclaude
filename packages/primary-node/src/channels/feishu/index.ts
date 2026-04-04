@@ -31,6 +31,9 @@ export { MessageHandler, type MessageCallbacks } from './message-handler.js';
 // Message Logger
 export { MessageLogger, messageLogger } from './message-logger.js';
 
+// Trigger Phrase Detector (Issue #1229)
+export { TriggerPhraseDetector, type TriggerResult } from './trigger-phrase-detector.js';
+
 // WebSocket Connection Manager (Issue #1351, #1666)
 export {
   WsConnectionManager,
