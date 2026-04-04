@@ -214,6 +214,24 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  it('should NOT include getChatHistory when not provided in options', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger);
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('should include getChatHistory callback when provided in options', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue('chat history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    const history = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetChatHistory).toHaveBeenCalledWith('chat-001');
+    expect(history).toBe('chat history content');
+  });
 });
 
 // ============================================================================
