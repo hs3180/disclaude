@@ -128,7 +128,7 @@ async function main() {
 
     // Expiry pre-check
     const expires = chat.expiresAt;
-    if (expires && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(expires) && expires < now) {
+    if (expires && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(expires) && expires < now) {
       console.log(`INFO: Chat ${chat.id} expired at ${expires} (skipping activation)`);
 
       // Mark as expired under lock
