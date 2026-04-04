@@ -401,24 +401,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   ): Promise<string | undefined> {
     if (message.threadId) {
       // Thread reply: use client.im.message.reply()
-      const response = await this.client!.im.message.reply({
-        path: {
-          message_id: message.threadId,
-        },
-        data: {
-          msg_type: msgType,
-          content,
-        },
-      });
-      const messageId = response?.data?.message_id;
-      logger.debug(
-        { chatId: message.chatId, threadId: message.threadId, messageId, msgType },
-        'Thread reply sent',
-      );
-      return messageId;
+      try {
+        const response = await this.client!.im.message.reply({
+          path: {
+            message_id: message.threadId,
+          },
+          data: {
+            msg_type: msgType,
+            content,
+          },
+        });
+        const messageId = response?.data?.message_id;
+        logger.debug(
+          { chatId: message.chatId, threadId: message.threadId, messageId, msgType },
+          'Thread reply sent',
+        );
+        return messageId;
+      } catch (replyError) {
+        // Fallback to create() when reply fails (e.g., parent message deleted,
+        // insufficient permissions, or invalid threadId). This ensures messages
+        // are still delivered even if thread context is broken.
+        logger.warn(
+          {
+            err: replyError,
+            chatId: message.chatId,
+            threadId: message.threadId,
+            msgType,
+          },
+          'Thread reply failed, falling back to create()',
+        );
+      }
     }
 
-    // New message: use client.im.message.create()
+    // New message (or reply fallback): use client.im.message.create()
     const response = await this.client!.im.message.create({
       params: {
         receive_id_type: 'chat_id',
