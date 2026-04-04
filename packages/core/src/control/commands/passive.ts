@@ -11,9 +11,13 @@ export const handlePassive: CommandHandler = (
   const { passiveMode } = context;
 
   if (!passiveMode) {
+    context.logger?.warn(
+      { chatId: command.chatId },
+      '/passive command received but passiveMode is not configured'
+    );
     return {
-      success: true,
-      message: '⏳ 被动模式功能尚在开发中，敬请期待。',
+      success: false,
+      message: '⚠️ 被动模式功能当前不可用。请检查频道配置是否正确。',
     };
   }
 

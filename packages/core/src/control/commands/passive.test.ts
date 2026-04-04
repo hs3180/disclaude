@@ -36,14 +36,19 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
 
 describe('handlePassive', () => {
   describe('passiveMode not available', () => {
-    it('should return development message when passiveMode is undefined', () => {
+    it('should return failure with clear message when passiveMode is undefined', () => {
       const command = createCommand();
-      const context = createContext({ passiveMode: undefined });
+      const mockWarn = vi.fn();
+      const context = createContext({ passiveMode: undefined, logger: { warn: mockWarn } as unknown as ControlHandlerContext['logger'] });
 
       const result = handlePassive(command, context) as ControlResponse;
 
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('开发中');
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('不可用');
+      expect(mockWarn).toHaveBeenCalledWith(
+        { chatId: 'test-chat-id' },
+        '/passive command received but passiveMode is not configured'
+      );
     });
   });
 
