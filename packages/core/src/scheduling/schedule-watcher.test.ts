@@ -329,6 +329,94 @@ describe('ScheduleFileScanner', () => {
       expect(task!.sourceFile).toBe(`${MOCK_DIR}/test.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
     });
+
+    it('should parse watch triggers with path only (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch).toHaveLength(1);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].filter).toBeUndefined();
+      expect(task!.watch![0].debounce).toBeUndefined();
+    });
+
+    it('should parse watch triggers with filter and debounce (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '    filter: \'.status == "pending"\'',
+        '    debounce: 5000',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch).toHaveLength(1);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].filter).toBe('.status == "pending"');
+      expect(task!.watch![0].debounce).toBe(5000);
+    });
+
+    it('should parse multiple watch triggers (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '    filter: \'.status == "pending"\'',
+        '    debounce: 3000',
+        '  - path: "workspace/events/*.json"',
+        '---',
+        '',
+        'Multi-watch task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch).toHaveLength(2);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].filter).toBe('.status == "pending"');
+      expect(task!.watch![0].debounce).toBe(3000);
+      expect(task!.watch![1].path).toBe('workspace/events/*.json');
+      expect(task!.watch![1].filter).toBeUndefined();
+      expect(task!.watch![1].debounce).toBeUndefined();
+    });
+
+    it('should default watch to undefined when not specified (Issue #1953)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
   });
 
   describe('scanAll', () => {

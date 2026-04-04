@@ -333,6 +333,41 @@ ${task.prompt}`;
   }
 
   /**
+   * Manually trigger a task execution.
+   *
+   * Issue #1953: Used by EventTriggerManager to trigger schedule execution
+   * when a watched file event occurs. Respects cooldown and blocking rules
+   * just like cron-triggered execution.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was found and triggered, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found in active jobs');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Event-triggering task execution');
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
+   * Get a task by its ID from active jobs.
+   *
+   * Issue #1953: Used by EventTriggerManager to check task details.
+   *
+   * @param taskId - Task ID
+   * @returns The task if found, undefined otherwise
+   */
+  getTask(taskId: string): ScheduledTask | undefined {
+    const entry = this.activeJobs.get(taskId);
+    return entry?.task;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {

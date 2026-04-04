@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchTrigger } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,10 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Supports simple key-value pairs and the `watch` list field.
+ *
+ * Issue #1953: Added parsing for `watch` field (event-driven triggers).
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -86,12 +90,60 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
-  for (const line of lines) {
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
     const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) { continue; }
+    if (colonIndex === -1) { i++; continue; }
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
+
+    // Issue #1953: Parse `watch` list field
+    if (key === 'watch') {
+      const watchItems: WatchTrigger[] = [];
+      i++; // Move to next line (should be "- path: ...")
+      while (i < lines.length && lines[i].match(/^\s*-\s+/)) {
+        const itemLine = lines[i].replace(/^\s*-\s+/, '').trim();
+        const itemColon = itemLine.indexOf(':');
+        if (itemColon === -1) { i++; continue; }
+
+        const itemKey = itemLine.slice(0, itemColon).trim();
+        const itemValue = itemLine.slice(itemColon + 1).trim();
+
+        if (itemKey === 'path') {
+          const watchItem: WatchTrigger = { path: stripQuotes(itemValue) };
+          // Look ahead for optional `filter` and `debounce` fields (indented under same list item)
+          let j = i + 1;
+          while (j < lines.length && lines[j].match(/^\s+\w+/) && !lines[j].match(/^\s*-\s+/)) {
+            const subLine = lines[j].trim();
+            const subColon = subLine.indexOf(':');
+            if (subColon === -1) { j++; continue; }
+
+            const subKey = subLine.slice(0, subColon).trim();
+            const subValue = subLine.slice(subColon + 1).trim();
+
+            if (subKey === 'filter') {
+              watchItem.filter = stripQuotes(subValue);
+            } else if (subKey === 'debounce') {
+              const parsed = parseInt(subValue, 10);
+              if (!isNaN(parsed)) {
+                watchItem.debounce = parsed;
+              }
+            }
+            j++;
+          }
+          watchItems.push(watchItem);
+          i = j;
+        } else {
+          i++;
+        }
+      }
+      if (watchItems.length > 0) {
+        frontmatter['watch'] = watchItems;
+      }
+      continue;
+    }
 
     switch (key) {
       case 'name':
@@ -111,6 +163,7 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = parseInt(value, 10);
         break;
     }
+    i++;
   }
 
   return { frontmatter, contentStart: match[0].length };
@@ -218,6 +271,8 @@ export class ScheduleFileScanner {
         model: frontmatter['model'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
+        // Issue #1953: Parse watch triggers for event-driven execution
+        watch: frontmatter['watch'] as WatchTrigger[] | undefined,
       };
 
       // Issue #1338: Warn if model is specified but looks suspicious (e.g., empty)
