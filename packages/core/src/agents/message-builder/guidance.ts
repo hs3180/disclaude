@@ -16,6 +16,9 @@
  * Issue #517: Provides recent conversation context when the agent
  * is @mentioned in a group chat.
  *
+ * Issue #1856: Enhanced guidance to help agent answer the last pending
+ * question when the user sends an empty @mention (no text attached).
+ *
  * @param chatHistoryContext - Chat history context string, or undefined to skip
  * @returns Formatted chat history section, or empty string if no context
  */
@@ -33,6 +36,8 @@ export function buildChatHistorySection(chatHistoryContext?: string): string {
 You were @mentioned in a group chat. Here's the recent conversation context:
 
 ${chatHistoryContext}
+
+**Important**: If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
 
 ---
 `;
