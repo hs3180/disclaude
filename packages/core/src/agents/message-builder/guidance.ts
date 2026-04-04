@@ -213,3 +213,59 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory state
+ * from the main process is inaccessible. A file-based `.runtime-env`
+ * mechanism is used to share state between processes. This guidance
+ * makes the agent aware of available runtime environment variables and
+ * how to interact with them.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to shared runtime environment variables stored in \`{workspace}/.runtime-env\`. These variables are shared between the main process (MCP servers, skills) and your agent subprocess.
+
+### How It Works
+
+- **Format**: Simple KEY=VALUE per line, with \`#\` comments and blank lines ignored
+- **Auto-loaded**: Variables from \`.runtime-env\` are automatically merged into your environment at startup
+- **Read/Write**: You can read the file with the Read tool and write to it with the Write tool
+
+### Common Variables
+
+| Variable | Description | Set By |
+|----------|-------------|--------|
+| \`GH_TOKEN\` | GitHub App installation access token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp (ISO 8601) | \`github-jwt-auth\` skill |
+
+### Reading Variables
+
+\`\`\`bash
+# Check if GitHub token exists and when it expires
+cat .runtime-env
+\`\`\`
+
+### Writing Variables
+
+If you need to share state with other processes (e.g., passing data to an MCP server or another skill), write to \`.runtime-env\`:
+
+\`\`\`
+# Append a new variable
+echo "MY_KEY=my_value" >> .runtime-env
+\`\`\`
+
+### Important Notes
+
+- Do NOT store secrets or sensitive credentials directly — use the \`github-jwt-auth\` skill for token management
+- The file is located in the workspace directory, not your home directory
+- Changes to \`.runtime-env\` by other processes are only visible after your current subprocess restarts`;
+}

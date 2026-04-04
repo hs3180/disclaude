@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -108,5 +109,42 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment variables section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain the KEY=VALUE format', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('KEY=VALUE');
+    expect(result).toContain('Auto-loaded');
+  });
+
+  it('should list common variables including GH_TOKEN', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('github-jwt-auth');
+  });
+
+  it('should explain how to read and write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Read tool');
+    expect(result).toContain('Write tool');
+  });
+
+  it('should warn about not storing secrets directly', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Do NOT store secrets');
+  });
+
+  it('should mention that changes are only visible after restart', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('only visible after your current subprocess restarts');
   });
 });
