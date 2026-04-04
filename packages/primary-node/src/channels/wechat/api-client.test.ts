@@ -1,7 +1,8 @@
 /**
- * Tests for WeChatApiClient (MVP).
+ * Tests for WeChatApiClient.
  *
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -351,6 +352,114 @@ describe('WeChatApiClient', () => {
       const callHeaders = mockFetch.mock.calls[0][1].headers;
       expect(callHeaders).toHaveProperty('SKRouteTag');
       expect(callHeaders['SKRouteTag']).toBe('test-route');
+    });
+  });
+
+  describe('getUpdates', () => {
+    it('should return updates from API', async () => {
+      const updates = [
+        {
+          msg_id: 'msg-1',
+          from_user_id: 'user-123',
+          to_user_id: 'bot-456',
+          item_list: [{ type: 1, text_item: { text: 'Hello bot!' } }],
+          create_time: 1710000000,
+        },
+      ];
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: updates })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].msg_id).toBe('msg-1');
+      expect(result[0].from_user_id).toBe('user-123');
+    });
+
+    it('should return empty array on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when no updates', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when update_list is missing', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should pass signal to fetch for graceful shutdown', async () => {
+      const abortController = new AbortController();
+      mockFetch.mockImplementation((_url, opts) => {
+        return new Promise((_resolve, reject) => {
+          setTimeout(() => abortController.abort(), 10);
+          opts.signal.addEventListener('abort', () => {
+            const abortError = new Error('Aborted');
+            abortError.name = 'AbortError';
+            reject(abortError);
+          }, { once: true });
+        });
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates({ signal: abortController.signal });
+
+      expect(result).toEqual([]);
+    });
+
+    it('should re-throw non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('bot-token');
+      await expect(client.getUpdates()).rejects.toThrow('Network error');
+    });
+
+    it('should include auth headers in getUpdates request', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        })
+      );
     });
   });
 
