@@ -443,6 +443,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
+   * @param messageType - Optional original message type for routing observability (Issue #2007)
    */
   processMessage(
     chatId: string,
@@ -450,7 +451,8 @@ export class Pilot extends BaseAgent implements ChatAgent {
     messageId: string,
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
-    chatHistoryContext?: string
+    chatHistoryContext?: string,
+    messageType?: string
   ): void {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -461,8 +463,18 @@ export class Pilot extends BaseAgent implements ChatAgent {
       return;
     }
 
+    // Issue #2007: Log card action callbacks with dedicated log level for
+    // end-to-end routing observability. Card messages travel through the same
+    // channel as text messages, so explicit logging helps track delivery.
+    if (messageType === 'card') {
+      this.logger.info(
+        { chatId, messageId, textLength: text.length, sessionActive: this.isSessionActive },
+        'Card action callback received — routing to agent'
+      );
+    }
+
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext, messageType },
       'processMessage called'
     );
 
@@ -506,11 +518,20 @@ export class Pilot extends BaseAgent implements ChatAgent {
       },
       parent_tool_use_id: null,
       session_id: '',
+      // Issue #2007: Preserve message type for SDK-level observability
+      ...(messageType && { messageType }),
     };
 
     // Push message to channel
     if (this.channel) {
       this.channel.push(userMessage);
+      // Issue #2007: Confirm card action delivery to channel for observability
+      if (messageType === 'card') {
+        this.logger.info(
+          { chatId, messageId },
+          'Card action callback queued in message channel'
+        );
+      }
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
       // Issue #1357: Notify user — message would otherwise be silently lost

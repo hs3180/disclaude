@@ -153,9 +153,9 @@ export function createDefaultMessageHandler(
   options: MessageHandlerOptions
 ): (message: IncomingMessage) => Promise<void> {
   return async (message: IncomingMessage) => {
-    const { chatId, content, messageId, userId, metadata } = message;
+    const { chatId, content, messageId, userId, metadata, messageType } = message;
     context.logger.info(
-      { chatId, messageId, contentLength: content.length, hasAttachments: !!message.attachments },
+      { chatId, messageId, contentLength: content.length, hasAttachments: !!message.attachments, messageType },
       `Processing message from ${options.channelName}`
     );
 
@@ -170,7 +170,9 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      // Issue #2007: Pass messageType for routing observability.
+      // This enables Pilot to log card-specific delivery information.
+      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext, messageType);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

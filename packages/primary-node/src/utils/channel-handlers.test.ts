@@ -269,6 +269,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       undefined,
       undefined,
+      'text',
     );
   });
 
@@ -295,6 +296,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       fileRefs,
       undefined,
+      'text',
     );
   });
 
@@ -315,6 +317,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       undefined,
       'Previous conversation context',
+      'text',
     );
   });
 
@@ -333,6 +336,7 @@ describe('createDefaultMessageHandler', () => {
       undefined,
       undefined,
       undefined,
+      'text',
     );
   });
 
@@ -363,6 +367,41 @@ describe('createDefaultMessageHandler', () => {
     await handler(message);
     expect(context.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ hasAttachments: true }),
+      expect.any(String),
+    );
+  });
+
+  it('should pass messageType=card for card action messages (Issue #2007)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage({
+      messageType: 'card',
+      content: 'User selected option A',
+      metadata: { cardAction: { type: 'button', value: 'option_a', text: 'Option A' } },
+    });
+    await handler(message);
+
+    const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
+    expect(agent.processMessage).toHaveBeenCalledWith(
+      'chat-001',
+      'User selected option A',
+      'msg-001',
+      'user-001',
+      undefined,
+      undefined,
+      'card',
+    );
+  });
+
+  it('should include messageType in processing log (Issue #2007)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage({ messageType: 'card' });
+    await handler(message);
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ messageType: 'card' }),
       expect.any(String),
     );
   });

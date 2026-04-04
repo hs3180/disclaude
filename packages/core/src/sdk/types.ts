@@ -47,12 +47,22 @@ export interface StreamingMessageContent {
  * 流式用户消息（用于 MessageChannel 和 Pilot）
  *
  * 这是 SDKUserMessage 的统一抽象，与具体 SDK 无关。
+ *
+ * Issue #2007: Added optional `messageType` field to track message origin
+ * (e.g., 'card' for interactive card action callbacks), enabling
+ * end-to-end observability of card action delivery through the Pilot.
  */
 export interface StreamingUserMessage {
   type: 'user';
   message: StreamingMessageContent;
   parent_tool_use_id: string | null;
   session_id: string;
+  /**
+   * Original message type from the channel (e.g., 'text', 'card', 'image').
+   * Used for routing observability — Pilot logs card-specific delivery info.
+   * Issue #2007.
+   */
+  messageType?: string;
 }
 
 // ============================================================================

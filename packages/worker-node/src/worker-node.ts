@@ -631,13 +631,15 @@ export class WorkerNode {
 
             const agent = this.agentPool?.getOrCreateChatAgent(chatId, callbacks);
             if (agent) {
+              // Issue #2007: Pass messageType='card' for routing observability
               agent.processMessage(
                 chatId,
                 messageContent,
                 `${cardMessageId}-${actionValue}`,
                 userId,
                 undefined, // no attachments
-                undefined  // no chat history context
+                undefined,  // no chat history context
+                'card'      // Issue #2007: mark as card action callback
               );
               this.deps.logger.debug({ chatId, cardMessageId }, 'Card action processed by agent');
             }
