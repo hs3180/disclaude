@@ -174,7 +174,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
 
     // Initialize modular components
-    this.passiveModeManager = new PassiveModeManager();
+    // Issue #2018: Enable file-based persistence for passive mode state
+    const passiveModeConfigPath = Config.getWorkspaceDir()
+      ? path.join(Config.getWorkspaceDir(), 'passive-mode.json')
+      : undefined;
+    this.passiveModeManager = new PassiveModeManager({
+      configPath: passiveModeConfigPath,
+    });
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
@@ -212,6 +218,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Load passive mode state from persistence file (Issue #2018)
+    await this.passiveModeManager.init();
 
     // Create Feishu client
     this.client = createFeishuClient(this.appId, this.appSecret, {

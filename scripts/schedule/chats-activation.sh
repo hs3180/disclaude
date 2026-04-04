@@ -26,6 +26,44 @@ _atomic_jq_write() {
   trap - RETURN
 }
 
+# Helper: add a chatId to the passive mode state file
+# Sets passive mode as DISABLED for the chat (bot responds to all messages).
+# Uses flock for concurrency safety with the Node.js process.
+# Usage: _set_passive_mode_disabled <chatId>
+_set_passive_mode_disabled() {
+  local chat_id="$1"
+  local pm_file="$PASSIVE_MODE_FILE"
+  local pm_dir
+  pm_dir=$(dirname "$pm_file")
+  mkdir -p "$pm_dir"
+
+  # Acquire lock for the passive mode file
+  exec 8>"${pm_file}.lock"
+  if ! flock -n 8 2>/dev/null; then
+    echo "WARN: Passive mode file locked by another process, skipping passive mode update for $chat_id"
+    exec 8>&-
+    return 1
+  fi
+
+  # Read existing state or create empty object
+  local current_state="{}"
+  if [ -f "$pm_file" ]; then
+    current_state=$(jq '.' "$pm_file" 2>/dev/null || echo '{}')
+  fi
+
+  # Add the chatId (idempotent — if already present, no change)
+  local tmpfile
+  tmpfile=$(mktemp "${pm_file}.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmpfile'" RETURN
+  echo "$current_state" | jq --arg cid "$chat_id" '. + {($cid): true}' > "$tmpfile"
+  mv "$tmpfile" "$pm_file"
+  trap - RETURN
+
+  exec 8>&-
+  echo "INFO: Passive mode disabled for chat $chat_id (temp chat default)"
+}
+
 CHAT_MAX_PER_RUN="${CHAT_MAX_PER_RUN:-10}"
 # Validate CHAT_MAX_PER_RUN is a positive integer
 if ! [[ "$CHAT_MAX_PER_RUN" =~ ^[0-9]+$ ]] || [ "$CHAT_MAX_PER_RUN" -eq 0 ]; then
@@ -35,6 +73,10 @@ fi
 LARK_TIMEOUT=30
 MAX_RETRIES=5
 PROCESSED=0
+
+# Issue #2018: Path to passive mode state file
+# Shared between this script and PassiveModeManager (Node.js)
+PASSIVE_MODE_FILE="workspace/passive-mode.json"
 
 # ---- Step 0: Environment check (fail-fast) ----
 _missing_deps=()
@@ -172,6 +214,13 @@ for f in "${pending_files[@]}"; do
     _atomic_jq_write "$f" --arg now "$now" \
       '.status = "active" | .activatedAt = $now' \
       || echo "WARN: Failed to recover chat $_chat_id to active"
+
+    # Issue #2018: Also recover passive mode state
+    passive_mode=$(jq -r '.passiveMode // "false"' "$f" 2>/dev/null)
+    if [ "$passive_mode" != "true" ]; then
+      _set_passive_mode_disabled "$existing_chat_id"
+    fi
+
     exec 9>&-
     PROCESSED=$((PROCESSED + 1))
     continue
@@ -215,6 +264,17 @@ for f in "${pending_files[@]}"; do
        .lastActivationError = null' \
       || echo "WARN: Failed to update chat $_chat_id to active (chatId=$chat_id)"
     echo "OK: Chat $_chat_id activated (chatId=$chat_id)"
+
+    # Issue #2018: Set passive mode for temp chat
+    # Default: passive mode DISABLED (bot responds to all messages)
+    # If passiveMode is explicitly "true", keep passive mode enabled
+    passive_mode=$(jq -r '.passiveMode // "false"' "$f" 2>/dev/null)
+    if [ "$passive_mode" != "true" ]; then
+      _set_passive_mode_disabled "$chat_id"
+    else
+      echo "INFO: Chat $_chat_id has passiveMode=true, keeping passive mode enabled"
+    fi
+
     PROCESSED=$((PROCESSED + 1))
   else
     # Failure — record error and check retry limit

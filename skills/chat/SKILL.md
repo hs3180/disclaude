@@ -64,6 +64,7 @@ Each chat is a single JSON file in `workspace/chats/`:
     "name": "PR #123 Review",
     "members": ["ou_user1"]
   },
+  "passiveMode": false,
   "context": {"prNumber": 123},
   "response": null,
   "activationAttempts": 0,
@@ -83,6 +84,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 | `activatedAt` | No | ISO 8601 timestamp (filled by Schedule upon activation) |
 | `expiresAt` | Yes | ISO 8601 UTC Z-suffix timestamp (e.g. `2026-03-25T10:00:00Z`) |
 | `createGroup` | Yes | Group creation config with `name` and `members` array |
+| `passiveMode` | No | Whether to keep passive mode enabled (default: `false`). When `false`, the bot responds to all messages without @mention. Set to `true` to require @mention. **Issue #2018** |
 | `context` | No | Arbitrary key-value data for consumer use |
 | `response` | No | User response data (filled when user responds in group) |
 | `activationAttempts` | No | Retry counter for group creation (managed by Schedule, default: 0) |
@@ -115,6 +117,7 @@ CHAT_EXPIRES_AT="2026-03-25T10:00:00Z" \
 CHAT_GROUP_NAME="PR #123 Review" \
 CHAT_MEMBERS='["ou_developer"]' \
 CHAT_CONTEXT='{"prNumber": 123}' \
+CHAT_PASSIVE_MODE="false" \
 bash scripts/chat/create.sh
 ```
 
@@ -122,6 +125,7 @@ bash scripts/chat/create.sh
 - `CHAT_ID` must match `^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$` (no leading dots) and pass path traversal check
 - `CHAT_EXPIRES_AT` must be UTC Z-suffix ISO 8601 format
 - `CHAT_MEMBERS` must be a non-empty JSON array of `ou_xxxxx` open IDs
+- `CHAT_PASSIVE_MODE` must be `"true"` or `"false"` (default: `"false"` — passive mode disabled)
 - Uniqueness checked under `flock` (TOCTOU-safe)
 - File written atomically via `mktemp` + `mv`
 
@@ -217,6 +221,7 @@ Consumers (PR Scanner, offline questions, etc.) use this pattern:
 1. Consumer calls this Skill → creates pending chat file
 2. Schedule detects pending → creates group via lark-cli → sets active
    (or marks as failed after 5 retries if members are invalid)
+   → If passiveMode is not "true", disables passive mode (bot responds to all messages)
 3. Consumer detects chat is active (polls chat file) → sends message to group
 4. User responds in group → consumer/skill updates chat file with response
 5. chat-timeout Skill detects timeout → marks as expired, dissolves group

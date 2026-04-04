@@ -7,6 +7,7 @@
 #   CHAT_GROUP_NAME (required) Group display name
 #   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
 #   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
+#   CHAT_PASSIVE_MODE (optional) "true" to keep passive mode on (default: "false")
 #
 # Exit codes:
 #   0 — success
@@ -62,12 +63,19 @@ if [ -z "${CHAT_MEMBERS:-}" ]; then
 fi
 
 CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
+CHAT_PASSIVE_MODE="${CHAT_PASSIVE_MODE:-false}"
 
 # Validate CHAT_CONTEXT is valid JSON
 echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {
   echo "ERROR: CHAT_CONTEXT must be valid JSON, got '$CHAT_CONTEXT'"
   exit 1
 }
+
+# Validate CHAT_PASSIVE_MODE
+if [ "$CHAT_PASSIVE_MODE" != "true" ] && [ "$CHAT_PASSIVE_MODE" != "false" ]; then
+  echo "ERROR: CHAT_PASSIVE_MODE must be 'true' or 'false', got '$CHAT_PASSIVE_MODE'"
+  exit 1
+fi
 
 # Validate CHAT_CONTEXT size limit (prevent oversized chat files)
 CHAT_CONTEXT_SIZE=$(echo "$CHAT_CONTEXT" | jq -r '. | tostring | length' 2>/dev/null || echo "0")
@@ -126,6 +134,7 @@ jq -n \
   --arg group_name "$CHAT_GROUP_NAME" \
   --argjson members "$CHAT_MEMBERS" \
   --argjson context "$CHAT_CONTEXT" \
+  --argjson passive_mode "${CHAT_PASSIVE_MODE}" \
   '{
     id: $id,
     status: "pending",
@@ -134,6 +143,7 @@ jq -n \
     activatedAt: null,
     expiresAt: $expires,
     createGroup: { name: $group_name, members: $members },
+    passiveMode: $passive_mode,
     context: $context,
     response: null,
     activationAttempts: 0,
