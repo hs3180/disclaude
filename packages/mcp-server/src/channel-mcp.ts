@@ -44,13 +44,25 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
 
 export const channelTools = {
   send_text: {
-    description: 'Send a plain text message to a chat.',
+    description: 'Send a plain text message to a chat. Use mentions to @mention users or bots (e.g., for bot-to-bot conversations).',
     parameters: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The text content to send' },
         chatId: { type: 'string', description: 'Target chat ID' },
         parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        mentions: {
+          type: 'array',
+          description: 'Optional mention targets for @mentioning users/bots. When provided, message is sent as rich text (post) format.',
+          items: {
+            type: 'object',
+            properties: {
+              openId: { type: 'string', description: 'Open ID of the user/bot to mention' },
+              name: { type: 'string', description: 'Display name of the mentioned user/bot' },
+            },
+            required: ['openId'],
+          },
+        },
       },
       required: ['text', 'chatId'],
     },
@@ -137,23 +149,33 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
 - **text**: The text content to send (string)
 - **chatId**: Target chat ID
 - **parentMessageId**: Optional, for thread reply
+- **mentions**: Optional, array of { openId, name? } for @mentioning users/bots. When provided, message uses rich text (post) format.
 
-## Example
+## Examples
 \`\`\`json
 {"text": "Hello, world!", "chatId": "oc_xxx"}
+\`\`\`
+
+\`\`\`json
+{"text": "Please review this", "chatId": "oc_xxx", "mentions": [{"openId": "ou_xxx", "name": "Alice"}]}
 \`\`\``,
     parameters: z.object({
       text: z.string().describe('The text content to send'),
       chatId: z.string().describe('Target chat ID'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      mentions: z.array(z.object({
+        openId: z.string().describe('Open ID of the user/bot to mention'),
+        name: z.string().optional().describe('Display name of the mentioned user/bot'),
+      })).optional().describe('Optional mention targets for @mentioning users/bots'),
     }),
-    handler: async ({ text, chatId, parentMessageId }: {
+    handler: async ({ text, chatId, parentMessageId, mentions }: {
       text: string;
       chatId: string;
       parentMessageId?: string;
+      mentions?: Array<{ openId: string; name?: string }>;
     }) => {
       try {
-        const result = await send_text({ text, chatId, parentMessageId });
+        const result = await send_text({ text, chatId, parentMessageId, mentions });
         return toolSuccess(result.success ? result.message : `⚠️ ${result.message}`);
       } catch (error) {
         return toolSuccess(`⚠️ Text send failed: ${error instanceof Error ? error.message : String(error)}`);

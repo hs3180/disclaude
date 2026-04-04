@@ -661,4 +661,37 @@ describe('createChannelApiHandlers', () => {
       'IPC handler failed',
     );
   });
+
+  // Issue #1742: mentions support
+  it('sendMessage should pass mentions to channel', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const mentions = [{ openId: 'ou_xxx', name: 'Bot A' }];
+    await handlers.sendMessage('chat-001', 'Hello', undefined, mentions);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Hello',
+      threadId: undefined,
+      mentions,
+    });
+  });
+
+  it('sendMessage should pass mentions with threadId', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const mentions = [{ openId: 'cli_bot1', name: 'Bot B' }];
+    await handlers.sendMessage('chat-001', 'Review please', 'thread-789', mentions);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Review please',
+      threadId: 'thread-789',
+      mentions,
+    });
+  });
 });

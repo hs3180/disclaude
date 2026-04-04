@@ -661,11 +661,16 @@ export class MessageHandler {
       return;
     }
 
-    // Ignore bot messages
+    // Ignore bot messages UNLESS the sender bot @mentions our bot (bot-to-bot communication)
+    // Issue #1742: Allow bot-to-bot @mention conversations
     if (sender?.sender_type === 'app') {
-      logger.debug('Skipped bot message');
-      this.forwardFilteredMessage('bot', message_id, chat_id, content);
-      return;
+      const botMentionsUs = this.mentionDetector.isBotMentioned(mentions);
+      if (!botMentionsUs) {
+        logger.debug('Skipped bot message (not mentioning our bot)');
+        this.forwardFilteredMessage('bot', message_id, chat_id, content);
+        return;
+      }
+      logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
     }
 
     // Check message age
