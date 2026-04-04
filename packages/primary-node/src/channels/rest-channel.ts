@@ -21,7 +21,7 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
+import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type SendMessageResult, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = createLogger('RestChannel');
@@ -288,7 +288,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
+  protected doSendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined> {
     const messageId = this.chatToMessage.get(message.chatId);
 
     // Handle 'done' type - task completion signal

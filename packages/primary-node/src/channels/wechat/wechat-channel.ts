@@ -17,7 +17,7 @@
  * @see Issue #1473 - WeChat Channel MVP
  */
 
-import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities } from '@disclaude/core';
+import { createLogger, BaseChannel, type OutgoingMessage, type SendMessageResult, type ChannelCapabilities } from '@disclaude/core';
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import type { WeChatChannelConfig } from './types.js';
@@ -108,7 +108,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
    * Other types are logged as warnings and silently ignored.
    */
-  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined> {
     if (!this.client) {
       throw new Error('WeChat client not initialized');
     }

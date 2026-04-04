@@ -97,6 +97,7 @@ export type {
   ChannelFactory,
   ChannelCapabilities,
   ChannelDescriptor,
+  SendMessageResult,
 } from './channel.js';
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';

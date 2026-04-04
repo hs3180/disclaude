@@ -8,7 +8,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FeishuChannel } from './feishu-channel.js';
 
 // Mock fs module for file message tests
@@ -103,7 +103,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.reply).not.toHaveBeenCalled();
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123' });
     });
 
     it('should send text as thread reply when threadId is provided', async () => {
@@ -124,7 +124,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
-      expect(result).toBe('reply_msg_456');
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
     });
   });
 
@@ -148,7 +148,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.reply).not.toHaveBeenCalled();
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123' });
     });
 
     it('should send card as thread reply when threadId is provided', async () => {
@@ -170,7 +170,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
-      expect(result).toBe('reply_msg_456');
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
     });
   });
 
@@ -184,7 +184,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         text: 'Hello',
       });
 
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123' });
     });
 
     it('should return real messageId from API for thread replies', async () => {
@@ -197,7 +197,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         threadId: 'parent_msg_789',
       });
 
-      expect(result).toBe('reply_msg_456');
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
     });
 
     it('should return undefined for done signal', async () => {
@@ -226,6 +226,48 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
       expect(result).toBeUndefined();
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
       expect(mockClient.im.message.reply).not.toHaveBeenCalled();
+    });
+
+    it('should not set threadFallback when sending new message without threadId', async () => {
+      const { channel } = createTestChannel();
+
+      const result = await (channel as any).doSendMessage({
+        chatId: 'chat_abc',
+        type: 'text',
+        text: 'Hello',
+      });
+
+      expect(result).toEqual({ messageId: 'new_msg_123' });
+      expect(result.threadFallback).toBeUndefined();
+    });
+
+    it('should not set threadFallback when thread reply succeeds', async () => {
+      const { channel } = createTestChannel();
+
+      const result = await (channel as any).doSendMessage({
+        chatId: 'chat_abc',
+        type: 'text',
+        text: 'Reply',
+        threadId: 'parent_msg_789',
+      });
+
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
+      expect(result.threadFallback).toBeUndefined();
+    });
+
+    it('should set threadFallback when thread reply fails and falls back to create()', async () => {
+      const mockClient = createMockClient();
+      mockClient.im.message.reply.mockRejectedValue(new Error('Reply failed'));
+      const { channel } = createTestChannel(mockClient);
+
+      const result = await (channel as any).doSendMessage({
+        chatId: 'chat_abc',
+        type: 'text',
+        text: 'Fallback',
+        threadId: 'parent_msg_789',
+      });
+
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
   });
 
@@ -273,7 +315,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
           content: JSON.stringify({ text: 'Fallback test' }),
         },
       });
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
 
     it('should fallback to create() when reply() returns 403 permission error', async () => {
@@ -293,7 +335,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
 
       expect(mockClient.im.message.reply).toHaveBeenCalled();
       expect(mockClient.im.message.create).toHaveBeenCalled();
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
 
     it('should fallback to create() when reply() returns 404 not found', async () => {
@@ -321,7 +363,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
           content: JSON.stringify({ text: 'Orphan reply' }),
         },
       });
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
 
     it('should not fallback when reply() succeeds but returns no messageId', async () => {
@@ -339,7 +381,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
 
       expect(mockClient.im.message.reply).toHaveBeenCalled();
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
+      expect(result).toEqual({ messageId: undefined });
     });
 
     it('should fallback to create() for card thread reply when reply() fails', async () => {
@@ -364,7 +406,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
           content: JSON.stringify({ header: { title: 'Fallback Card' }, elements: [] }),
         },
       });
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
   });
 
@@ -401,7 +443,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
-      expect(result).toBe('reply_msg_456');
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
     });
 
     it('should send document as thread reply when threadId is provided', async () => {
@@ -431,7 +473,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
         },
       });
       expect(mockClient.im.message.create).not.toHaveBeenCalled();
-      expect(result).toBe('reply_msg_456');
+      expect(result).toEqual({ messageId: 'reply_msg_456' });
     });
 
     it('should send image as new message when no threadId', async () => {
@@ -453,7 +495,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
           content: JSON.stringify({ image_key: 'img_key_abc' }),
         },
       });
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123' });
     });
 
     it('should fallback to create() for file thread reply when reply() fails', async () => {
@@ -482,7 +524,7 @@ describe('FeishuChannel doSendMessage (Issue #1619)', () => {
           content: JSON.stringify({ image_key: 'img_key_abc' }),
         },
       });
-      expect(result).toBe('new_msg_123');
+      expect(result).toEqual({ messageId: 'new_msg_123', threadFallback: true });
     });
   });
 });

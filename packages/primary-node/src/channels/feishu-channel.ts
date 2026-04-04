@@ -22,6 +22,7 @@ import {
   type FeishuChatMemberAddedEventData,
   type FeishuP2PChatEnteredEventData,
   type OutgoingMessage,
+  type SendMessageResult,
   type ChannelCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
@@ -351,7 +352,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     logger.info('FeishuChannel stopped');
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<string | undefined> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined> {
     if (!this.client) {
       throw new Error('Client not initialized');
     }
@@ -392,13 +393,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * @param message - Outgoing message with optional threadId
    * @param msgType - Feishu message type (text, interactive, image, file)
    * @param content - JSON-serialized message content
-   * @returns The Feishu message_id from the API response, or undefined
+   * @returns SendMessageResult with messageId, and threadFallback flag when
+   *          a thread reply was requested but failed and fell back to create()
    */
   private async sendFeishuMessage(
     message: OutgoingMessage,
     msgType: string,
     content: string,
-  ): Promise<string | undefined> {
+  ): Promise<SendMessageResult | undefined> {
     if (message.threadId) {
       // Thread reply: use client.im.message.reply()
       try {
@@ -416,7 +418,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           { chatId: message.chatId, threadId: message.threadId, messageId, msgType },
           'Thread reply sent',
         );
-        return messageId;
+        return { messageId };
       } catch (replyError) {
         // Fallback to create() when reply fails (e.g., parent message deleted,
         // insufficient permissions, or invalid threadId). This ensures messages
@@ -430,6 +432,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           },
           'Thread reply failed, falling back to create()',
         );
+        // Fall through to create() below, but mark result as threadFallback
       }
     }
 
@@ -445,8 +448,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
     });
     const messageId = response.data?.message_id;
-    logger.debug({ chatId: message.chatId, messageId, msgType }, 'Message sent');
-    return messageId;
+    const threadFallback = !!message.threadId;
+    logger.debug({ chatId: message.chatId, messageId, msgType, threadFallback }, 'Message sent');
+    return { messageId, threadFallback: threadFallback || undefined };
   }
 
   /**
@@ -454,9 +458,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    *
    * Handles upload + send, with thread reply support (Issue #1619).
    *
-   * @returns The Feishu message_id from the API response, or undefined
+   * @returns SendMessageResult with messageId and threadFallback flag
    */
-  private async sendFeishuFileMessage(message: OutgoingMessage): Promise<string | undefined> {
+  private async sendFeishuFileMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined> {
     if (!message.filePath) {
       logger.error({ chatId: message.chatId }, 'File path missing in file message');
       throw new Error('File path is required for file messages');

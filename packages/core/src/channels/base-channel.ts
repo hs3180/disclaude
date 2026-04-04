@@ -21,6 +21,7 @@ import {
   type ChannelConfig,
   type ChannelStatus,
   type OutgoingMessage,
+  type SendMessageResult,
   type MessageHandler,
   type ControlHandler,
   type ControlResponse,
@@ -143,23 +144,24 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * Send a message through this channel.
    * Delegates to platform-specific implementation.
    *
-   * Returns the platform-specific message ID when available.
+   * Returns a result containing the platform-specific message ID
+   * when available, and optional metadata about the send operation.
    *
    * @param message - Message to send
-   * @returns Platform message ID, or undefined
+   * @returns Send result with messageId and optional metadata, or undefined
    */
-  async sendMessage(message: OutgoingMessage): Promise<string | undefined> {
+  async sendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined> {
     if (!this.isRunning) {
       throw new Error(`Channel ${this.id} is not running (status: ${this._status})`);
     }
 
     try {
-      const messageId = await this.doSendMessage(message);
+      const result = await this.doSendMessage(message);
       logger.debug(
-        { id: this.id, chatId: message.chatId, type: message.type, messageId },
+        { id: this.id, chatId: message.chatId, type: message.type, messageId: result?.messageId, threadFallback: result?.threadFallback },
         'Message sent'
       );
-      return messageId;
+      return result;
     } catch (error) {
       logger.error(
         { err: error, id: this.id, chatId: message.chatId },
@@ -304,9 +306,9 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
    * Platform-specific message sending logic.
    * Called by sendMessage() after validation.
    *
-   * @returns Platform message ID when available, or undefined
+   * @returns Send result with messageId and optional metadata, or undefined
    */
-  protected abstract doSendMessage(message: OutgoingMessage): Promise<string | undefined>;
+  protected abstract doSendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined>;
 
   /**
    * Platform-specific health check.

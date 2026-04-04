@@ -182,7 +182,15 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         // Build card using extracted builder (Primary Node owns the full card lifecycle)
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
-        const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
+        const sendResult = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
+
+        // Warn if thread reply was requested but fell back to top-level message
+        if (threadId && sendResult?.threadFallback) {
+          context.logger.warn(
+            { chatId, threadId, messageId: sendResult.messageId },
+            'sendInteractive: thread reply failed, card sent as top-level message'
+          );
+        }
 
         // Build action prompts: use caller-provided prompts or generate defaults
         const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
@@ -190,7 +198,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
           : buildActionPrompts(options);
 
         // Use real messageId from Feishu API when available, fallback to synthetic ID (Issue #1619)
-        const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
+        const messageId = sendResult?.messageId || `interactive_${chatId}_${Date.now()}`;
 
         return { messageId, actionPrompts: resolvedActionPrompts };
       },

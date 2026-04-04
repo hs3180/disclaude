@@ -218,6 +218,24 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
  * All communication channels must implement this interface.
  * The PrimaryNode uses this interface to interact with channels.
  */
+
+/**
+ * Result of a sendMessage operation.
+ *
+ * Carries the platform-specific message ID and optional metadata
+ * about the send operation (e.g., thread fallback information).
+ */
+export interface SendMessageResult {
+  /** Platform-specific message ID returned by the messaging API */
+  messageId?: string;
+  /**
+   * True when a thread reply was requested (threadId provided) but
+   * the reply API failed and the message was sent as a top-level
+   * message instead. Callers can use this to adjust behavior or
+   * notify users about the unexpected delivery mode.
+   */
+  threadFallback?: boolean;
+}
 export interface IChannel {
   /**
    * Unique channel identifier.
@@ -254,13 +272,13 @@ export interface IChannel {
   /**
    * Send a message through this channel.
    *
-   * Returns the platform-specific message ID when available,
-   * or undefined if the platform does not provide one.
+   * Returns a result containing the platform-specific message ID
+   * when available, and optional metadata about the send operation.
    *
    * @param message - Message to send
-   * @returns Platform message ID, or undefined
+   * @returns Send result with messageId and optional metadata, or undefined
    */
-  sendMessage(message: OutgoingMessage): Promise<string | undefined>;
+  sendMessage(message: OutgoingMessage): Promise<SendMessageResult | undefined>;
 
   /**
    * Start the channel.
