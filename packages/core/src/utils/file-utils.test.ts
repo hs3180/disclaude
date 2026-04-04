@@ -91,6 +91,88 @@ describe('detectFileExtension', () => {
   it('should return undefined for too-short buffer', () => {
     expect(detectFileExtension(Buffer.from([0x89, 0x50]))).toBeUndefined();
   });
+
+  // Issue #1966: Audio format detection tests
+  it('should detect M4A/AAC from ftyp box (before MP3 check)', () => {
+    // M4A: ftyp box at offset 4-7
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, // ftyp
+      0x69, 0x73, 0x6F, 0x6D, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4a');
+  });
+
+  it('should detect WAV from RIFF....WAVE header', () => {
+    const buffer = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00,
+      0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.wav');
+  });
+
+  it('should detect OGG from OggS header', () => {
+    const buffer = Buffer.from('OggS', 'ascii');
+    expect(detectFileExtension(buffer)).toBe('.ogg');
+  });
+
+  it('should detect FLAC from fLaC header', () => {
+    const buffer = Buffer.from([
+      0x66, 0x4C, 0x61, 0x43, 0x00, 0x00, 0x00, 0x22,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.flac');
+  });
+
+  it('should detect AMR from #!AMR header', () => {
+    const buffer = Buffer.from('#!AMR', 'ascii');
+    expect(detectFileExtension(buffer)).toBe('.amr');
+  });
+
+  it('should detect MP3 from ID3v2 tag', () => {
+    const buffer = Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00', 'binary');
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect MP3 from MPEG sync word (0xFF 0xFB)', () => {
+    const buffer = Buffer.from([0xFF, 0xFB, 0x90, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect MP3 from MPEG sync word variant (0xFF 0xF3)', () => {
+    const buffer = Buffer.from([0xFF, 0xF3, 0x90, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect WMA from ASF Header GUID', () => {
+    const buffer = Buffer.from([
+      0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.wma');
+  });
+
+  it('should detect AIFF from FORM....AIFF header', () => {
+    const buffer = Buffer.from([
+      0x46, 0x4F, 0x52, 0x4D, 0x00, 0x00, 0x00, 0x00,
+      0x41, 0x49, 0x46, 0x46,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.aiff');
+  });
+
+  it('should not misidentify AAC/M4A as MP3 (AAC detected first)', () => {
+    // An AAC file with bytes that could match MPEG sync word pattern
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, // ftyp at offset 4
+      0x4D, 0x34, 0x41, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4a');
+  });
+
+  it('should not misidentify WebP as WAV (both use RIFF container)', () => {
+    const buffer = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, // WEBP
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.webp');
+  });
 });
 
 describe('mimeToExtension', () => {
@@ -116,6 +198,39 @@ describe('mimeToExtension', () => {
 
   it('should return undefined for unknown MIME type', () => {
     expect(mimeToExtension('application/unknown')).toBeUndefined();
+  });
+
+  // Issue #1966: Audio MIME type mapping tests
+  it('should map audio/mpeg to .mp3', () => {
+    expect(mimeToExtension('audio/mpeg')).toBe('.mp3');
+  });
+
+  it('should map audio/mp4 to .m4a', () => {
+    expect(mimeToExtension('audio/mp4')).toBe('.m4a');
+  });
+
+  it('should map audio/x-m4a to .m4a', () => {
+    expect(mimeToExtension('audio/x-m4a')).toBe('.m4a');
+  });
+
+  it('should map audio/wav to .wav', () => {
+    expect(mimeToExtension('audio/wav')).toBe('.wav');
+  });
+
+  it('should map audio/x-wav to .wav', () => {
+    expect(mimeToExtension('audio/x-wav')).toBe('.wav');
+  });
+
+  it('should map audio/ogg to .ogg', () => {
+    expect(mimeToExtension('audio/ogg')).toBe('.ogg');
+  });
+
+  it('should map audio/flac to .flac', () => {
+    expect(mimeToExtension('audio/flac')).toBe('.flac');
+  });
+
+  it('should map audio/amr to .amr', () => {
+    expect(mimeToExtension('audio/amr')).toBe('.amr');
   });
 });
 
@@ -362,5 +477,60 @@ describe('ensureFileExtensionFromPath', () => {
       '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g',
       '/tmp/image_img_v3_02104_b73cd122-662d-4ea5-a184-82f1dabc3e2g.png',
     );
+  });
+
+  // Issue #1966: Audio format detection via headers and magic bytes
+  it('should add .m4a extension from audio/mp4 content-type header', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
+    const result = await ensureFileExtensionFromPath('/tmp/audio_file', { 'content-type': 'audio/mp4' });
+    expect(result).toBe('/tmp/audio_file.m4a');
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/audio_file', '/tmp/audio_file.m4a');
+  });
+
+  it('should add .wav extension from audio/wav content-type header', async () => {
+    renameSpy.mockResolvedValue(undefined);
+
+    const result = await ensureFileExtensionFromPath('/tmp/audio_file', { 'content-type': 'audio/wav' });
+    expect(result).toBe('/tmp/audio_file.wav');
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it('should detect .ogg from magic bytes when no headers provided', async () => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
+        Buffer.from('OggS').copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    renameSpy.mockResolvedValue(undefined);
+
+    const result = await ensureFileExtensionFromPath('/tmp/audio_no_ext');
+    expect(result).toBe('/tmp/audio_no_ext.ogg');
+    expect(openSpy).toHaveBeenCalled();
+    expect(renameSpy).toHaveBeenCalledWith('/tmp/audio_no_ext', '/tmp/audio_no_ext.ogg');
+  });
+
+  it('should detect .mp3 from magic bytes (ID3v2) when no headers provided', async () => {
+    openSpy.mockResolvedValue({
+      read: vi.fn().mockImplementation((buf: Buffer, offset: number) => {
+        Buffer.from('ID3\x04\x00').copy(buf, offset);
+        return Promise.resolve({ bytesRead: 12 });
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never);
+    renameSpy.mockResolvedValue(undefined);
+
+    const result = await ensureFileExtensionFromPath('/tmp/audio_no_ext');
+    expect(result).toBe('/tmp/audio_no_ext.mp3');
+  });
+
+  it('should not modify path when audio file already has known extension', async () => {
+    const result = await ensureFileExtensionFromPath('/tmp/recording.mp3');
+    expect(result).toBe('/tmp/recording.mp3');
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
   });
 });

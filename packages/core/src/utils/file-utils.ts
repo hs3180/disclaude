@@ -25,6 +25,20 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'application/zip': '.zip',
   'text/plain': '.txt',
   'application/json': '.json',
+  // Issue #1966: Audio MIME type mappings
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/wave': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/flac': '.flac',
+  'audio/amr': '.amr',
+  'audio/aac': '.aac',
+  'audio/x-ms-wma': '.wma',
+  'audio/x-aiff': '.aiff',
+  'audio/mp4a-latm': '.m4a',
 };
 
 /**
@@ -92,6 +106,61 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
     detect: (buf) => buf.length >= 4 &&
       buf[0] === 0x4D && buf[1] === 0x4D && buf[2] === 0x00 && buf[3] === 0x2A,
     ext: '.tiff',
+  },
+  // Issue #1966: Audio format detection
+  // AAC/M4A: must be checked BEFORE MP3 sync word (see PR #2038 review)
+  // ftyp box at offset 4: bytes 4-7 = "ftyp"
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70,
+    ext: '.m4a',
+  },
+  // WAV: 52 49 46 46 .... 57 41 56 45 (RIFF....WAVE)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x41 && buf[10] === 0x56 && buf[11] === 0x45,
+    ext: '.wav',
+  },
+  // OGG: 4F 67 67 53 (OggS)
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x4F && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53,
+    ext: '.ogg',
+  },
+  // FLAC: 66 4C 61 43 00 00 00 22 (fLaC\x00\x00\x00\x22)
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x66 && buf[1] === 0x4C && buf[2] === 0x61 && buf[3] === 0x43,
+    ext: '.flac',
+  },
+  // AMR: 23 21 41 4D 52 (#!AMR)
+  {
+    detect: (buf) => buf.length >= 5 &&
+      buf[0] === 0x23 && buf[1] === 0x21 && buf[2] === 0x41 && buf[3] === 0x4D && buf[4] === 0x52,
+    ext: '.amr',
+  },
+  // MP3: ID3 tag (49 44 33) or sync word (FF FB / FF F3 / FF F2)
+  // Placed AFTER AAC/M4A to avoid false positives on AAC files
+  {
+    detect: (buf) => buf.length >= 3 &&
+      ((buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) || // ID3v2 tag
+       (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0)), // MPEG sync word
+    ext: '.mp3',
+  },
+  // WMA: 30 26 B2 75 8E 66 CF 11 (ASF Header GUID)
+  {
+    detect: (buf) => buf.length >= 8 &&
+      buf[0] === 0x30 && buf[1] === 0x26 && buf[2] === 0xB2 && buf[3] === 0x75 &&
+      buf[4] === 0x8E && buf[5] === 0x66 && buf[6] === 0xCF && buf[7] === 0x11,
+    ext: '.wma',
+  },
+  // AIFF: 46 4F 52 4D 00 00 00 00 41 49 46 46 (FORM....AIFF)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[0] === 0x46 && buf[1] === 0x4F && buf[2] === 0x52 && buf[3] === 0x4D &&
+      buf[8] === 0x41 && buf[9] === 0x49 && buf[10] === 0x46 && buf[11] === 0x46,
+    ext: '.aiff',
   },
   // SVG (text-based): check for XML declaration or <svg tag
   // Optimized: only inspect first 100 bytes instead of 256
