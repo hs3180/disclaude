@@ -108,6 +108,30 @@ describe('ChatStore', () => {
       // Should not throw
       await expect(store.registerTempChat('oc_test5')).resolves.not.toThrow();
     });
+
+    it('should store passiveMode field (Issue #2069)', async () => {
+      await store.registerTempChat('oc_test_pm', { passiveMode: false });
+
+      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
+        call => call[0].toString().includes('oc_test_pm.json')
+      );
+      expect(writeCall).toBeDefined();
+
+      const record = JSON.parse(writeCall![1] as string);
+      expect(record.passiveMode).toBe(false);
+    });
+
+    it('should persist passiveMode as undefined when not specified (Issue #2069)', async () => {
+      await store.registerTempChat('oc_test_pm2');
+
+      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
+        call => call[0].toString().includes('oc_test_pm2.json')
+      );
+      expect(writeCall).toBeDefined();
+
+      const record = JSON.parse(writeCall![1] as string);
+      expect(record.passiveMode).toBeUndefined();
+    });
   });
 
   describe('getTempChat', () => {
@@ -302,6 +326,23 @@ describe('ChatStore', () => {
       await store.registerTempChat('oc_test1');
       const result = await store.getTempChat('oc_test1');
       expect(result).not.toBeNull();
+    });
+
+    it('should load passiveMode from disk (Issue #2069)', async () => {
+      const record = {
+        chatId: 'oc_passive_off',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        passiveMode: false,
+      };
+
+      vi.mocked(fsPromises.readdir).mockResolvedValue(['oc_passive_off.json'] as any);
+      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(record));
+
+      const freshStore = new ChatStore({ storeDir });
+      const chat = await freshStore.getTempChat('oc_passive_off');
+      expect(chat).not.toBeNull();
+      expect(chat!.passiveMode).toBe(false);
     });
   });
 });

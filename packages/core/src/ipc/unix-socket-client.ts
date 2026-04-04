@@ -494,20 +494,23 @@ export class UnixSocketIpcClient {
   /**
    * Register a temporary chat for lifecycle tracking via IPC.
    * Issue #1703: Temp chat lifecycle management.
+   * Issue #2069: Added passiveMode for declarative passive mode configuration.
    *
    * @param chatId - The chat ID to track
    * @param expiresAt - Optional ISO timestamp for expiry (defaults to 24h)
    * @param creatorChatId - Optional originating chat ID
    * @param context - Optional arbitrary context data
+   * @param passiveMode - Optional declarative passive mode (false = disabled, true/undefined = default)
    */
   async registerTempChat(
     chatId: string,
     expiresAt?: string,
     creatorChatId?: string,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    passiveMode?: boolean
   ): Promise<{ success: boolean; chatId?: string; expiresAt?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('registerTempChat', { chatId, expiresAt, creatorChatId, context });
+      return await this.request('registerTempChat', { chatId, expiresAt, creatorChatId, context, passiveMode });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'registerTempChat failed');

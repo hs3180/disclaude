@@ -68,6 +68,8 @@ export interface IpcRequestPayloads {
     expiresAt?: string;
     creatorChatId?: string;
     context?: Record<string, unknown>;
+    /** Issue #2069: Declarative passive mode. false = disabled (respond to all), true/undefined = default */
+    passiveMode?: boolean;
   };
   listTempChats: Record<string, never>;
   markChatResponded: {

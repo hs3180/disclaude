@@ -43,6 +43,16 @@ export interface TempChatRecord {
   context?: Record<string, unknown>;
   /** Response data, populated when a user interacts */
   response?: TempChatResponse;
+  /**
+   * Declarative passive mode configuration for this chat.
+   *
+   * Issue #2069: When `false`, passive mode is disabled for this chat,
+   * meaning the bot responds to all messages without requiring @mention.
+   * When `true` or undefined, default behavior applies (passive mode enabled).
+   *
+   * This is set at chat creation time (declarative), not via runtime API.
+   */
+  passiveMode?: boolean;
 }
 
 /**
@@ -55,6 +65,14 @@ export interface RegisterTempChatOptions {
   creatorChatId?: string;
   /** Arbitrary context data */
   context?: Record<string, unknown>;
+  /**
+   * Declarative passive mode configuration.
+   *
+   * Issue #2069: When `false`, passive mode is disabled for this chat
+   * (bot responds to all messages). When `true` or undefined, default
+   * behavior applies (passive mode enabled, bot only responds to @mentions).
+   */
+  passiveMode?: boolean;
 }
 
 /**
@@ -172,6 +190,7 @@ export class ChatStore {
       expiresAt,
       creatorChatId: opts.creatorChatId,
       context: opts.context,
+      passiveMode: opts.passiveMode,
     };
 
     // Update memory cache
