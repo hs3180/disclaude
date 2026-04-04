@@ -2,6 +2,8 @@
  * Tests for InteractiveContextStore.
  *
  * Part of Phase 3 (#1572) of IPC layer responsibility refactoring (#1568).
+ * Extended for multi-card coexistence fix (#1625).
+ * Extended with supplementary tests from deep review (PR #1996).
  */
 
 import { describe, it, beforeEach, expect } from 'vitest';
@@ -45,6 +47,61 @@ describe('InteractiveContextStore', () => {
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
       expect(store.size).toBe(2);
     });
+
+    it('should support multiple contexts for the same chatId (#1625)', () => {
+      store.register('msg-a', 'chat-1', { explain_ai: 'Tell me about AI' });
+      store.register('msg-b', 'chat-1', { yes: 'User confirmed', no: 'User rejected' });
+
+      // Both contexts should be stored
+      expect(store.size).toBe(2);
+      // Both should be retrievable by exact messageId
+      expect(store.getActionPrompts('msg-a')).toEqual({ explain_ai: 'Tell me about AI' });
+      expect(store.getActionPrompts('msg-b')).toEqual({ yes: 'User confirmed', no: 'User rejected' });
+      // chatId fallback returns the most recent
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ yes: 'User confirmed', no: 'User rejected' });
+    });
+
+    it('should deduplicate when re-registering the same messageId', () => {
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.register('msg-1', 'chat-1', { a_updated: 'A updated' });
+
+      // msg-1 should be updated, not duplicated
+      expect(store.size).toBe(2);
+      expect(store.getActionPrompts('msg-1')).toEqual({ a_updated: 'A updated' });
+    });
+
+    it('should evict oldest entries when maxEntriesPerChat is exceeded', () => {
+      const store = new InteractiveContextStore(24 * 60 * 60 * 1000, 3);
+
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.register('msg-3', 'chat-1', { c: 'C' });
+      store.register('msg-4', 'chat-1', { d: 'D' });
+
+      // Only 3 entries should remain (max is 3)
+      expect(store.size).toBe(3);
+      // Oldest (msg-1) should be evicted
+      expect(store.getActionPrompts('msg-1')).toBeUndefined();
+      // Newer entries should remain
+      expect(store.getActionPrompts('msg-2')).toEqual({ b: 'B' });
+      expect(store.getActionPrompts('msg-3')).toEqual({ c: 'C' });
+      expect(store.getActionPrompts('msg-4')).toEqual({ d: 'D' });
+    });
+
+    it('should update inverted index on eviction', () => {
+      const store = new InteractiveContextStore(24 * 60 * 60 * 1000, 2);
+
+      store.register('msg-1', 'chat-1', { old_action: 'Old' });
+      store.register('msg-2', 'chat-1', { new_action: 'New' });
+      store.register('msg-3', 'chat-1', { newest_action: 'Newest' });
+
+      // msg-1 should be evicted and removed from inverted index
+      expect(store.findActionPromptsByChatId('chat-1', 'old_action')).toBeUndefined();
+      // Newer entries should still be findable via inverted index
+      expect(store.findActionPromptsByChatId('chat-1', 'new_action')).toEqual({ new_action: 'New' });
+      expect(store.findActionPromptsByChatId('chat-1', 'newest_action')).toEqual({ newest_action: 'Newest' });
+    });
   });
 
   describe('getActionPrompts', () => {
@@ -75,6 +132,82 @@ describe('InteractiveContextStore', () => {
       store.unregister('msg-1');
 
       expect(store.getActionPromptsByChatId('chat-1')).toBeUndefined();
+    });
+
+    it('should skip stale entries and find next valid one', () => {
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.register('msg-3', 'chat-1', { c: 'C' });
+
+      // Remove the most recent entry
+      store.unregister('msg-3');
+
+      // Should fall back to msg-2
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ b: 'B' });
+    });
+  });
+
+  describe('findActionPromptsByChatId', () => {
+    it('should find prompts containing the actionValue across multiple contexts (#1625)', () => {
+      // Card A (IPC script) with AI-related actions
+      store.register('msg-a', 'chat-1', {
+        explain_ai: 'Tell me about AI',
+        ai_applications: 'Show AI applications',
+        ai_history: 'Show AI history',
+      });
+      // Card B (Agent) with confirmation actions
+      store.register('msg-b', 'chat-1', {
+        yes: 'User confirmed',
+        no: 'User rejected',
+      });
+
+      // Should find 'explain_ai' in Card A even though Card B is newer
+      const prompts = store.findActionPromptsByChatId('chat-1', 'explain_ai');
+      expect(prompts).toEqual({
+        explain_ai: 'Tell me about AI',
+        ai_applications: 'Show AI applications',
+        ai_history: 'Show AI history',
+      });
+
+      // Should find 'yes' in Card B (most recent match)
+      const prompts2 = store.findActionPromptsByChatId('chat-1', 'yes');
+      expect(prompts2).toEqual({ yes: 'User confirmed', no: 'User rejected' });
+    });
+
+    it('should return undefined when actionValue is not found in any context', () => {
+      store.register('msg-a', 'chat-1', { a: 'A' });
+      store.register('msg-b', 'chat-1', { b: 'B' });
+
+      expect(store.findActionPromptsByChatId('chat-1', 'non_existent')).toBeUndefined();
+    });
+
+    it('should return undefined for non-existent chatId', () => {
+      expect(store.findActionPromptsByChatId('non-existent', 'any')).toBeUndefined();
+    });
+
+    it('should prefer newer contexts when actionValue exists in multiple cards', () => {
+      store.register('msg-old', 'chat-1', { action: 'Old prompt' });
+      store.register('msg-new', 'chat-1', { action: 'New prompt' });
+
+      const prompts = store.findActionPromptsByChatId('chat-1', 'action');
+      expect(prompts).toEqual({ action: 'New prompt' });
+    });
+
+    it('should use inverted index for O(1) lookup performance', () => {
+      // Register 10 cards (max per chat)
+      for (let i = 0; i < 10; i++) {
+        store.register(`card-${i}`, 'chat-perf', {
+          [`action_${i}`]: `Prompt ${i}`,
+        });
+      }
+
+      // Lookup should be fast (inverted index) even for the oldest card
+      const prompts = store.findActionPromptsByChatId('chat-perf', 'action_0');
+      expect(prompts).toEqual({ action_0: 'Prompt 0' });
+
+      // And for the newest card
+      const promptsLatest = store.findActionPromptsByChatId('chat-perf', 'action_9');
+      expect(promptsLatest).toEqual({ action_9: 'Prompt 9' });
     });
   });
 
@@ -137,6 +270,82 @@ describe('InteractiveContextStore', () => {
       const prompt = store.generatePrompt('msg-3', 'chat-1', 'action', undefined);
       expect(prompt).toBe('[用户操作] 选择了action');
     });
+
+    it('should find actionValue across multiple cards in the same chat (#1625)', () => {
+      // Simulate the exact scenario from the bug report:
+      // 1. IPC script sends Card A with AI-related buttons
+      store.register('card-a', 'chat-group', {
+        explain_ai: '[用户操作] 用户想了解AI解释',
+        ai_applications: '[用户操作] 用户想看AI应用',
+        ai_history: '[用户操作] 用户想看AI历史',
+      });
+      // 2. Agent sends Card B with different buttons
+      store.register('card-b', 'chat-group', {
+        yes: '[用户操作] 用户确认了',
+        no: '[用户操作] 用户拒绝了',
+      });
+
+      // User clicks Card A's button, but Feishu sends a different messageId
+      const prompt = store.generatePrompt(
+        'feishu_real_msg_id', // unknown to store
+        'chat-group',
+        'explain_ai', // belongs to Card A, not Card B
+        'AI解释'
+      );
+
+      // Should find the correct prompt from Card A, not Card B
+      expect(prompt).toBe('[用户操作] 用户想了解AI解释');
+    });
+
+    it('should return undefined when actionValue is not in any card of the chat', () => {
+      store.register('card-a', 'chat-group', { a: 'A prompt' });
+      store.register('card-b', 'chat-group', { b: 'B prompt' });
+
+      const prompt = store.generatePrompt('unknown', 'chat-group', 'non_existent');
+      expect(prompt).toBeUndefined();
+    });
+
+    it('should find actionValue across multiple cards with formData (#1625 review)', () => {
+      // Card A with form action
+      store.register('card-form', 'chat-1', {
+        submit_feedback: '用户提交了反馈: {{form.rating}}/5 - {{form.comment}}',
+      });
+      // Card B with simple action (registered after A)
+      store.register('card-simple', 'chat-1', {
+        dismiss: '用户关闭了对话框',
+      });
+
+      // User clicks Card A's submit button with form data
+      const prompt = store.generatePrompt(
+        'unknown-msg-id',
+        'chat-1',
+        'submit_feedback',
+        undefined,
+        undefined,
+        { rating: '4', comment: '很好用' },
+      );
+
+      expect(prompt).toBe('用户提交了反馈: 4/5 - 很好用');
+    });
+
+    it('should handle cross-card search with actionType placeholder (#1625 review)', () => {
+      store.register('card-old', 'chat-1', {
+        select_option: '用户选择了 {{actionType}}: {{actionText}}',
+      });
+      store.register('card-new', 'chat-1', {
+        click_btn: '用户点击了按钮',
+      });
+
+      const prompt = store.generatePrompt(
+        'unknown-msg-id',
+        'chat-1',
+        'select_option',
+        '选项A',
+        'select_static',
+      );
+
+      expect(prompt).toBe('用户选择了 select_static: 选项A');
+    });
   });
 
   describe('unregister', () => {
@@ -162,6 +371,49 @@ describe('InteractiveContextStore', () => {
       store.unregister('msg-1');
       // chatId index should still point to msg-2
       expect(store.getActionPromptsByChatId('chat-1')).toEqual({ ok: 'OK2' });
+    });
+
+    it('should remove from chatId index array without affecting other entries (#1625)', () => {
+      store.register('msg-a', 'chat-1', { a: 'A' });
+      store.register('msg-b', 'chat-1', { b: 'B' });
+      store.register('msg-c', 'chat-1', { c: 'C' });
+
+      store.unregister('msg-b');
+
+      // msg-a and msg-c should still be accessible
+      expect(store.getActionPrompts('msg-a')).toEqual({ a: 'A' });
+      expect(store.getActionPrompts('msg-c')).toEqual({ c: 'C' });
+      // chatId index should still work
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
+      // findActionPromptsByChatId should still find 'a'
+      expect(store.findActionPromptsByChatId('chat-1', 'a')).toEqual({ a: 'A' });
+    });
+
+    it('should clean up inverted index on unregister (#1625 review)', () => {
+      store.register('msg-1', 'chat-1', { action_a: 'A', action_b: 'B' });
+      store.unregister('msg-1');
+
+      // Inverted index should no longer find these actions
+      expect(store.findActionPromptsByChatId('chat-1', 'action_a')).toBeUndefined();
+      expect(store.findActionPromptsByChatId('chat-1', 'action_b')).toBeUndefined();
+    });
+
+    it('should not remove inverted index entries for different messageIds (#1625 review)', () => {
+      store.register('msg-1', 'chat-1', { shared: 'From card 1' });
+      store.register('msg-2', 'chat-1', { shared: 'From card 2', unique: 'Only in card 2' });
+
+      store.unregister('msg-1');
+
+      // 'shared' should still resolve to msg-2's prompts (newer registration won)
+      expect(store.findActionPromptsByChatId('chat-1', 'shared')).toEqual({
+        shared: 'From card 2',
+        unique: 'Only in card 2',
+      });
+      // 'unique' should still work
+      expect(store.findActionPromptsByChatId('chat-1', 'unique')).toEqual({
+        shared: 'From card 2',
+        unique: 'Only in card 2',
+      });
     });
   });
 
@@ -192,6 +444,47 @@ describe('InteractiveContextStore', () => {
       expect(store.cleanupExpired()).toBe(0);
       expect(store.size).toBe(1);
     });
+
+    it('should clean up multiple expired entries from chatId index (#1625)', () => {
+      const shortMaxAge = 100;
+      const store = new InteractiveContextStore(shortMaxAge);
+
+      store.register('msg-old1', 'chat-1', { a: 'A' });
+      store.register('msg-old2', 'chat-1', { b: 'B' });
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          store.register('msg-new', 'chat-1', { c: 'C' });
+          const cleaned = store.cleanupExpired();
+          expect(cleaned).toBe(2);
+          expect(store.size).toBe(1);
+          expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
+          resolve();
+        }, 150);
+      });
+    });
+
+    it('should clean up inverted index entries for expired contexts (#1625 review)', () => {
+      const shortMaxAge = 100;
+      const store = new InteractiveContextStore(shortMaxAge);
+
+      store.register('msg-expired', 'chat-1', { expired_action: 'Gone' });
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          store.register('msg-fresh', 'chat-1', { fresh_action: 'Still here' });
+          store.cleanupExpired();
+
+          // Expired action should no longer be findable
+          expect(store.findActionPromptsByChatId('chat-1', 'expired_action')).toBeUndefined();
+          // Fresh action should still work
+          expect(store.findActionPromptsByChatId('chat-1', 'fresh_action')).toEqual({
+            fresh_action: 'Still here',
+          });
+          resolve();
+        }, 150);
+      });
+    });
   });
 
   describe('size and clear', () => {
@@ -210,6 +503,43 @@ describe('InteractiveContextStore', () => {
       expect(store.size).toBe(0);
       expect(store.getActionPromptsByChatId('chat-1')).toBeUndefined();
       expect(store.getActionPromptsByChatId('chat-2')).toBeUndefined();
+    });
+
+    it('should report correct size after LRU eviction (#1625 review)', () => {
+      const store = new InteractiveContextStore(24 * 60 * 60 * 1000, 3);
+
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.register('msg-3', 'chat-1', { c: 'C' });
+      expect(store.size).toBe(3);
+
+      // This should evict msg-1
+      store.register('msg-4', 'chat-1', { d: 'D' });
+      expect(store.size).toBe(3); // Still 3, not 4
+
+      // Evict one more
+      store.register('msg-5', 'chat-1', { e: 'E' });
+      expect(store.size).toBe(3); // Still 3
+      expect(store.getActionPrompts('msg-2')).toBeUndefined(); // msg-2 also evicted
+    });
+
+    it('should allow re-registration after clear (#1625 review)', () => {
+      store.register('msg-1', 'chat-1', { a: 'A' });
+      store.register('msg-2', 'chat-1', { b: 'B' });
+      store.clear();
+
+      expect(store.size).toBe(0);
+
+      // Re-register after clear should work normally
+      store.register('msg-3', 'chat-1', { c: 'C' });
+      expect(store.size).toBe(1);
+      expect(store.getActionPrompts('msg-3')).toEqual({ c: 'C' });
+      expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
+      expect(store.findActionPromptsByChatId('chat-1', 'c')).toEqual({ c: 'C' });
+
+      // Old messageIds should not be accessible
+      expect(store.getActionPrompts('msg-1')).toBeUndefined();
+      expect(store.getActionPrompts('msg-2')).toBeUndefined();
     });
   });
 });
