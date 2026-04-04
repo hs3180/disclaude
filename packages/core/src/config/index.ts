@@ -421,9 +421,17 @@ export class Config {
    * Get global environment variables from config file.
    * These will be passed to all agent processes.
    *
+   * Prefers preloaded config (set via --config CLI flag) over the default
+   * config loaded at module import time, consistent with applyGlobalEnv().
+   *
+   * @see Issue #1839
    * @returns Global environment variables object
    */
   static getGlobalEnv(): Record<string, string> {
+    const preloaded = getPreloadedConfig();
+    if (preloaded && validateConfig(preloaded)) {
+      return getConfigFromFile(preloaded).env || {};
+    }
     return fileConfigOnly.env || {};
   }
 
