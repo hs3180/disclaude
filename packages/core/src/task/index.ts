@@ -17,3 +17,11 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Context
+export {
+  TaskContextReader,
+  type TaskContext,
+  type TaskContextReaderConfig,
+  type EvaluationStatus,
+} from './task-context.js';
