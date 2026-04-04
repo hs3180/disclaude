@@ -15,6 +15,7 @@ import {
   loadConfigFile,
   setLoadedConfig,
   applyGlobalEnv,
+  setRuntimeContext,
   createLogger,
   Config,
 } from '@disclaude/core';
@@ -124,6 +125,17 @@ async function main(): Promise<void> {
   // Apply config env vars to process.env so main-process components can access them
   // Must be called AFTER setLoadedConfig() to ensure config is available
   applyGlobalEnv();
+
+  // Set runtime context for agents (Issue #1839)
+  // Provides dependency injection for BaseAgent methods (getGlobalEnv, getWorkspaceDir, etc.)
+  // Without this, getGlobalEnv() returns {} and config env vars are silently dropped from SDK subprocess
+  setRuntimeContext({
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => Config.getLoggingConfig(),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+  });
 
   // Get configuration values
   const commUrl = options.commUrl ?? 'ws://localhost:3001';
