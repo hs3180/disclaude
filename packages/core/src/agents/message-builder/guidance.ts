@@ -185,6 +185,51 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the research mode guidance section.
+ *
+ * Issue #1709: Injects research-specific behavioral guidelines when
+ * a chat is operating in research mode. Includes working directory
+ * information and research methodology guidance.
+ *
+ * @param modeState - Current mode state, or undefined/null to skip
+ * @returns Formatted research mode guidance section, or empty string if not in research mode
+ */
+export function buildResearchModeGuidance(modeState?: { mode: string; research?: { topic: string; cwd: string; activatedAt: string } } | null): string {
+  if (!modeState || modeState.mode !== 'research' || !modeState.research) {
+    return '';
+  }
+
+  const { topic, cwd, activatedAt } = modeState.research;
+
+  return `
+
+---
+
+## Research Mode
+
+You are operating in **Research Mode** for topic: **${topic}**.
+
+### Working Directory
+
+Your working directory is: \`${cwd}\`
+
+Only access files within this directory and its subdirectories. Do not access other project files.
+
+### Research Guidelines
+
+- Focus on thoroughness and accuracy over speed
+- Present findings in structured markdown format
+- Include confidence levels for uncertain findings
+- Cite sources for all claims and data points
+- Track open questions that need further investigation
+- Update RESEARCH.md in the working directory as you make progress
+
+*Research mode activated: ${activatedAt}*
+---
+`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

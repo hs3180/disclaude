@@ -149,10 +149,23 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Mode module (Issue #1709: Research Mode - SOUL + cwd + Skill set switching)
+export {
+  ModeManager,
+  type AgentMode,
+  type ResearchModeConfig,
+  type ModeState,
+  type ModeManagerOptions,
+  sanitizeTopicName,
+  generateResearchSoulContent,
+  createResearchModeConfig,
+} from './mode/index.js';
 
 // Skills module (Issue #430)
 export {

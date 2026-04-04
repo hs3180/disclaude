@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,87 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildResearchModeGuidance', () => {
+  it('should return empty string when no mode state is provided', () => {
+    expect(buildResearchModeGuidance()).toBe('');
+    expect(buildResearchModeGuidance(undefined)).toBe('');
+    expect(buildResearchModeGuidance(null)).toBe('');
+  });
+
+  it('should return empty string when mode is normal', () => {
+    const result = buildResearchModeGuidance({ mode: 'normal' });
+    expect(result).toBe('');
+  });
+
+  it('should return empty string when mode is research but no research config', () => {
+    const result = buildResearchModeGuidance({ mode: 'research' });
+    expect(result).toBe('');
+  });
+
+  it('should include research mode section when in research mode', () => {
+    const result = buildResearchModeGuidance({
+      mode: 'research',
+      research: {
+        topic: 'machine-learning',
+        cwd: '/app/workspace/workspace/research/machine-learning',
+        activatedAt: '2026-04-05T00:00:00.000Z',
+      },
+    });
+    expect(result).toContain('Research Mode');
+    expect(result).toContain('machine-learning');
+  });
+
+  it('should include working directory path', () => {
+    const result = buildResearchModeGuidance({
+      mode: 'research',
+      research: {
+        topic: 'test',
+        cwd: '/app/workspace/workspace/research/test',
+        activatedAt: '2026-04-05T00:00:00.000Z',
+      },
+    });
+    expect(result).toContain('/app/workspace/workspace/research/test');
+  });
+
+  it('should include research guidelines', () => {
+    const result = buildResearchModeGuidance({
+      mode: 'research',
+      research: {
+        topic: 'test',
+        cwd: '/test/cwd',
+        activatedAt: '2026-04-05T00:00:00.000Z',
+      },
+    });
+    expect(result).toContain('Research Guidelines');
+    expect(result).toContain('thoroughness and accuracy');
+    expect(result).toContain('Cite sources');
+  });
+
+  it('should include activation timestamp', () => {
+    const result = buildResearchModeGuidance({
+      mode: 'research',
+      research: {
+        topic: 'test',
+        cwd: '/test/cwd',
+        activatedAt: '2026-04-05T12:00:00.000Z',
+      },
+    });
+    expect(result).toContain('2026-04-05T12:00:00.000Z');
+  });
+
+  it('should include directory access restriction', () => {
+    const result = buildResearchModeGuidance({
+      mode: 'research',
+      research: {
+        topic: 'test',
+        cwd: '/test/cwd',
+        activatedAt: '2026-04-05T00:00:00.000Z',
+      },
+    });
+    expect(result).toContain('Only access files within this directory');
+    expect(result).toContain('Do not access other project files');
   });
 });

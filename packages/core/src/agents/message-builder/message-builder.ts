@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, research mode)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildResearchModeGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +49,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Research mode guidance (Issue #1709)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -134,6 +136,7 @@ export class MessageBuilder {
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
     // Core guidance sections (framework-agnostic)
+    const researchModeGuidance = buildResearchModeGuidance(msg.modeState);
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
@@ -143,6 +146,11 @@ export class MessageBuilder {
 
     if (header) {
       sections.push(header);
+    }
+
+    // Research mode guidance (Issue #1709) - injected first for visibility
+    if (researchModeGuidance) {
+      sections.push(researchModeGuidance);
     }
 
     sections.push(metadataParts.join('\n'));
