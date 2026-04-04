@@ -280,6 +280,10 @@ Example:
                     type: 'string',
                     description: 'Target chat ID',
                   },
+                  parentMessageId: {
+                    type: 'string',
+                    description: 'Optional parent message ID for thread replies.',
+                  },
                 },
                 required: ['filePath', 'chatId'],
               },
@@ -487,6 +491,7 @@ Example:
         const result = await send_file({
           filePath: toolArgs.filePath,
           chatId: toolArgs.chatId,
+          parentMessageId: typeof toolArgs.parentMessageId === 'string' ? toolArgs.parentMessageId : undefined,
         });
         return {
           jsonrpc: '2.0',
