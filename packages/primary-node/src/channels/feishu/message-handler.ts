@@ -29,6 +29,7 @@ import {
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -489,7 +490,7 @@ export class MessageHandler {
   /**
    * Get quoted/replied message content.
    *
-   * Supports text, post, image, file, and media message types.
+   * Supports text, post, interactive, image, file, and media message types.
    * For image/file/media, downloads the file and returns both a text prompt
    * and a structured MessageAttachment so the agent can access the file.
    */
@@ -535,6 +536,10 @@ export class MessageHandler {
               }
             }
           }
+        } else if (msgType === 'interactive') {
+          // Issue #1711: Extract text from interactive card messages
+          const parsed = JSON.parse(msgContent);
+          quotedText = extractCardTextContent(parsed);
         } else if (msgType === 'image' || msgType === 'file' || msgType === 'media') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
@@ -1013,6 +1018,10 @@ export class MessageHandler {
 
     // Try to route card action to Worker Node first
     if (this.callbacks.routeCardAction) {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, actionValue: action.value },
+        'Attempting to route card action'
+      );
       const routed = await this.callbacks.routeCardAction({
         chatId: chat_id,
         cardMessageId: message_id,
@@ -1030,13 +1039,21 @@ export class MessageHandler {
       });
 
       if (routed) {
-        logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action routed to Worker Node');
+        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed to Worker Node');
         return;
       }
+      logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action not routed, falling back to local emit');
     }
 
     // Emit card action as a message to the agent
+    // Issue #2007: This is the fallback path when routeCardAction returns false
+    // (no remote Worker Node registered). The message goes through the same
+    // pipeline as text messages via createDefaultMessageHandler → Pilot.processMessage.
     try {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
+        'Emitting card action as local message to agent'
+      );
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
         chatId: chat_id,
@@ -1049,6 +1066,10 @@ export class MessageHandler {
           cardMessageId: message_id,
         },
       });
+      logger.debug(
+        { messageId: message_id, chatId: chat_id },
+        'Card action message emitted successfully'
+      );
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
       // Issue #1357: Notify user that their card action was not processed

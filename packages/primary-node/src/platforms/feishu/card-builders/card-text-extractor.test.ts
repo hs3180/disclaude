@@ -149,4 +149,53 @@ describe('extractCardTextContent', () => {
     expect(result).toContain('[接下来您可以...]');
     expect(result).toContain('✅ 任务已完成');
   });
+
+  // Issue #1711: Tests for interactive card quoted message extraction
+  describe('Issue #1711: quoted interactive card messages', () => {
+    it('should extract content from a typical bot-sent interactive card', () => {
+      // Simulates the card content structure returned by Feishu API
+      // when a user quotes/replies to a bot's interactive card message
+      const cardContent = JSON.stringify({
+        config: { wide_screen_mode: true },
+        header: {
+          title: { content: '搜索结果', tag: 'plain_text' },
+          template: 'blue'
+        },
+        elements: [
+          { tag: 'markdown', content: '找到 3 篇相关论文：' },
+          { tag: 'markdown', content: '1. Paper A - 2024' },
+          { tag: 'markdown', content: '2. Paper B - 2023' }
+        ]
+      });
+      const parsed = JSON.parse(cardContent);
+      const result = extractCardTextContent(parsed);
+      expect(result).toContain('[搜索结果]');
+      expect(result).toContain('找到 3 篇相关论文');
+      expect(result).not.toBe('[Interactive Card]');
+    });
+
+    it('should handle interactive card with only header (no elements)', () => {
+      const cardContent = JSON.stringify({
+        header: {
+          title: { content: '操作成功', tag: 'plain_text' }
+        },
+        elements: []
+      });
+      const parsed = JSON.parse(cardContent);
+      const result = extractCardTextContent(parsed);
+      expect(result).toContain('[操作成功]');
+    });
+
+    it('should return generic description for empty interactive card', () => {
+      const cardContent = JSON.stringify({});
+      const parsed = JSON.parse(cardContent);
+      const result = extractCardTextContent(parsed);
+      expect(result).toBe('[Interactive Card]');
+    });
+
+    it('should handle malformed card content gracefully', () => {
+      const cardContent = 'not valid json';
+      expect(() => JSON.parse(cardContent)).toThrow();
+    });
+  });
 });
