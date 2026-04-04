@@ -351,7 +351,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     logger.info('FeishuChannel stopped');
   }
 
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
       throw new Error('Client not initialized');
     }
@@ -362,35 +362,64 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
 
-    switch (message.type) {
-      case 'text': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
+    // Issue #1619: Use thread reply when threadId is provided.
+    // Consistent with feishu-adapter.ts pattern.
+    const useThreadReply = !!message.threadId;
+
+    // Narrow client type for use inside closure (TS can't narrow this.client in closures)
+    // eslint-disable-next-line prefer-destructuring
+    const client = this.client;
+
+    /**
+     * Helper: send a Feishu message via create or reply API.
+     * Returns the real message_id from the API response.
+     */
+    const sendFeishuMessage = async (
+      msgType: string,
+      content: string,
+    ): Promise<string | undefined> => {
+      if (useThreadReply && message.threadId) {
+        const replyResp = await client.im.message.reply({
+          path: {
+            message_id: message.threadId,
           },
           data: {
-            receive_id: message.chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text: message.text || '' }),
+            msg_type: msgType,
+            content,
           },
         });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Text message sent');
-        break;
+        return replyResp.data?.message_id;
+      }
+      const createResp = await client.im.message.create({
+        params: {
+          receive_id_type: 'chat_id',
+        },
+        data: {
+          receive_id: message.chatId,
+          msg_type: msgType,
+          content,
+        },
+      });
+      return createResp.data?.message_id;
+    };
+
+    switch (message.type) {
+      case 'text': {
+        const messageId = await sendFeishuMessage(
+          'text',
+          JSON.stringify({ text: message.text || '' }),
+        );
+        logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
+        return messageId;
       }
 
       case 'card': {
-        const response = await this.client.im.message.create({
-          params: {
-            receive_id_type: 'chat_id',
-          },
-          data: {
-            receive_id: message.chatId,
-            msg_type: 'interactive',
-            content: JSON.stringify(message.card || {}),
-          },
-        });
-        logger.debug({ chatId: message.chatId, messageId: response.data?.message_id }, 'Card message sent');
-        break;
+        const messageId = await sendFeishuMessage(
+          'interactive',
+          JSON.stringify(message.card || {}),
+        );
+        logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
+        return messageId;
       }
 
       case 'file': {
@@ -411,6 +440,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
         const isImage = imageExtensions.includes(ext);
 
+        let fileMessageId: string | undefined;
+
         if (isImage) {
           // Upload image using im.image.create
           if (fileSize > 10 * 1024 * 1024) {
@@ -430,15 +461,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
 
           // Send image message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'image',
-              content: JSON.stringify({ image_key: imageKey }),
-            },
-          });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'Image message sent');
+          fileMessageId = await sendFeishuMessage(
+            'image',
+            JSON.stringify({ image_key: imageKey }),
+          );
+          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'Image message sent');
         } else {
           // Upload file using im.file.create
           if (fileSize > 30 * 1024 * 1024) {
@@ -471,22 +498,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
 
           // Send file message
-          const response = await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-              receive_id: message.chatId,
-              msg_type: 'file',
-              content: JSON.stringify({ file_key: fileKey }),
-            },
-          });
-          logger.info({ chatId: message.chatId, messageId: response.data?.message_id, fileName }, 'File message sent');
+          fileMessageId = await sendFeishuMessage(
+            'file',
+            JSON.stringify({ file_key: fileKey }),
+          );
+          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'File message sent');
         }
-        break;
+        return fileMessageId;
       }
 
       case 'done':
         logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
-        break;
+        return;
 
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
