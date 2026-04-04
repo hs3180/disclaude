@@ -181,10 +181,10 @@ for f in "${pending_files[@]}"; do
   # Use explicit cleanup (not trap EXIT) to avoid conflicting with
   # _atomic_jq_write's trap RETURN during the same iteration
   tmp_err=$(mktemp /tmp/lark-cli-err-XXXXXX)
+  exit_code=0
   result=$(timeout "$LARK_TIMEOUT" lark-cli im +chat-create \
     --name "$group_name" \
-    --users "$members" 2>"$tmp_err") || true
-  exit_code=$?
+    --users "$members" 2>"$tmp_err") || exit_code=$?
 
   error_msg=""
   if [ $exit_code -ne 0 ]; then
@@ -229,8 +229,9 @@ for f in "${pending_files[@]}"; do
       _atomic_jq_write "$f" \
         --arg now "$now" \
         --arg error "$error_msg" \
+        --argjson attempts "$new_attempts" \
         '.status = "failed" |
-         .activationAttempts = $new_attempts |
+         .activationAttempts = $attempts |
          .lastActivationError = $error |
          .failedAt = $now' \
         || echo "WARN: Failed to mark chat $_chat_id as failed"
@@ -239,7 +240,8 @@ for f in "${pending_files[@]}"; do
       _atomic_jq_write "$f" \
         --arg now "$now" \
         --arg error "$error_msg" \
-        '.activationAttempts = $new_attempts |
+        --argjson attempts "$new_attempts" \
+        '.activationAttempts = $attempts |
          .lastActivationError = $error' \
         || echo "WARN: Failed to update retry count for chat $_chat_id"
     fi
