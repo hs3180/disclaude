@@ -378,17 +378,28 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       msgType: string,
       content: string,
     ): Promise<string | undefined> => {
-      if (useThreadReply && message.threadId) {
-        const replyResp = await client.im.message.reply({
-          path: {
-            message_id: message.threadId,
-          },
-          data: {
-            msg_type: msgType,
-            content,
-          },
-        });
-        return replyResp.data?.message_id;
+      if (useThreadReply) {
+        // useThreadReply is !!message.threadId — guaranteed truthy here.
+        // TypeScript can't narrow from boolean, so we use non-null assertion.
+        const threadId = message.threadId!;
+        try {
+          const replyResp = await client.im.message.reply({
+            path: {
+              message_id: threadId,
+            },
+            data: {
+              msg_type: msgType,
+              content,
+            },
+          });
+          return replyResp.data?.message_id;
+        } catch (err) {
+          logger.warn(
+            { threadId, err, chatId: message.chatId },
+            'Thread reply failed, falling back to message.create',
+          );
+          // Fall through to create path
+        }
       }
       const createResp = await client.im.message.create({
         params: {

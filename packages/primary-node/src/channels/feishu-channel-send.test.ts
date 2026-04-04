@@ -8,13 +8,16 @@
  * - Normal message creation via client.im.message.create when no threadId
  * - Real messageId returned from both reply and create paths
  * - File upload (image/file) with thread reply
- * - Offline queue behavior when WebSocket is reconnecting
- * - Edge cases: done signal, unsupported type
+ * - Reply API failure fallback to message.create
+ * - Edge cases: done signal, unsupported type, client not initialized
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { FeishuChannel } from './feishu-channel.js';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
@@ -49,12 +52,25 @@ function createMockClient() {
     data: { message_id: 'reply_msg_001' },
   });
 
-  const imageCreateMock = vi.fn().mockResolvedValue({
-    image_key: 'img_key_001',
+  /**
+   * Mock image upload that properly drains and closes the provided stream
+   * to avoid async ENOENT race conditions on temp file cleanup.
+   */
+  const imageCreateMock = vi.fn().mockImplementation(async (opts: any) => {
+    const stream = opts?.data?.image;
+    if (stream && typeof stream.on === 'function') {
+      // Drain the stream so it closes the underlying file descriptor
+      for await (const _chunk of stream) { /* intentionally empty */ }
+    }
+    return { image_key: 'img_key_001' };
   });
 
-  const fileCreateMock = vi.fn().mockResolvedValue({
-    file_key: 'file_key_001',
+  const fileCreateMock = vi.fn().mockImplementation(async (opts: any) => {
+    const stream = opts?.data?.file;
+    if (stream && typeof stream.on === 'function') {
+      for await (const _chunk of stream) { /* intentionally empty */ }
+    }
+    return { file_key: 'file_key_001' };
   });
 
   return {
@@ -305,6 +321,130 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
           text: 'test',
         }),
       ).rejects.toThrow('Client not initialized');
+    });
+
+    it('should fall back to message.create when reply API fails', async () => {
+      const { client, mocks } = createMockClient();
+      // Make reply throw an error
+      mocks.replyMock.mockRejectedValueOnce(new Error('Thread message not found'));
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Fallback test',
+        threadId: 'deleted_msg_999',
+      });
+
+      // reply was attempted
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      // then fell back to create
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('should fall back to create when reply fails for card messages', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('Permission denied'));
+      const channel = createTestChannel(client);
+
+      const card = { config: { wide_screen_mode: true }, elements: [] };
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+        threadId: 'root_msg_000',
+      });
+
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(result).toBe('new_msg_001');
+    });
+  });
+
+  describe('file messages with thread reply', () => {
+    // Collect temp files for cleanup after all tests in this describe block.
+    // Cannot delete immediately: fs.createReadStream opens asynchronously,
+    // and the mock upload API resolves without consuming the stream,
+    // causing ENOENT race conditions in ESM mode.
+    const tempFiles: string[] = [];
+
+    afterAll(() => {
+      for (const f of tempFiles) {
+        try { fs.unlinkSync(f); } catch { /* ignore */ }
+      }
+    });
+
+    it('should send image via reply when threadId is provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testImagePath = path.join(os.tmpdir(), `test_image_${Date.now()}.png`);
+      fs.writeFileSync(testImagePath, Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+        'hex',
+      ));
+      tempFiles.push(testImagePath);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testImagePath,
+        threadId: 'root_msg_456',
+      });
+
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(result).toBe('reply_msg_001');
+    });
+
+    it('should send file via reply when threadId is provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testFilePath = path.join(os.tmpdir(), `test_file_${Date.now()}.pdf`);
+      fs.writeFileSync(testFilePath, Buffer.from('%PDF-1.4 test content'));
+      tempFiles.push(testFilePath);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testFilePath,
+        threadId: 'root_msg_789',
+      });
+
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(result).toBe('reply_msg_001');
+    });
+
+    it('should fall back to create when reply fails during file send', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('Thread expired'));
+      const channel = createTestChannel(client);
+
+      const testImagePath = path.join(os.tmpdir(), `test_image_fb_${Date.now()}.png`);
+      fs.writeFileSync(testImagePath, Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+        'hex',
+      ));
+      tempFiles.push(testImagePath);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testImagePath,
+        threadId: 'deleted_root',
+      });
+
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(result).toBe('new_msg_001');
     });
   });
 });
