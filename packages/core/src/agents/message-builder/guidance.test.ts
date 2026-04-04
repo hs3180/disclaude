@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextSection,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,33 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectContextSection()).toBe('');
+    expect(buildProjectContextSection(undefined)).toBe('');
+  });
+
+  it('should return empty string for empty string input', () => {
+    expect(buildProjectContextSection('')).toBe('');
+  });
+
+  it('should include Project Context heading when context is provided', () => {
+    const result = buildProjectContextSection('## Project: my-project\n\nSome instructions.');
+    expect(result).toContain('Project Context');
+  });
+
+  it('should include the project context content', () => {
+    const result = buildProjectContextSection('## Project: book-reader\n\nRead carefully.');
+    expect(result).toContain('book-reader');
+    expect(result).toContain('Read carefully');
+  });
+
+  it('should include guidance about following project instructions', () => {
+    const result = buildProjectContextSection('Some context');
+    expect(result).toContain('project-specific instructions');
+    expect(result).toContain('knowledge base');
   });
 });

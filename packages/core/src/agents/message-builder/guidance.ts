@@ -218,3 +218,33 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the project context section for scoped instructions and knowledge base.
+ *
+ * Issue #1916: Injects project-scoped instructions (from CLAUDE.md) and
+ * knowledge base content into the agent prompt. This enables Claude
+ * Projects-like functionality where each project has its own instructions
+ * and knowledge base.
+ *
+ * The project context is typically loaded by the ProjectContext module
+ * and passed here as a pre-formatted string.
+ *
+ * @param projectContext - Pre-formatted project context string, or undefined to skip
+ * @returns Formatted project context section, or empty string if no context
+ */
+export function buildProjectContextSection(projectContext?: string): string {
+  if (!projectContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Project Context
+
+The following project-specific instructions and knowledge base are active for this conversation. Follow the project instructions carefully and reference the knowledge base when relevant.
+
+${projectContext}`;
+}

@@ -85,6 +85,15 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should not include project context when not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -94,6 +103,7 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
       expect(result).not.toContain('Location Awareness');
+      expect(result).not.toContain('Project Context');
     });
   });
 
@@ -196,6 +206,55 @@ describe('MessageBuilder', () => {
 
       expect(result).not.toContain('Previous Session Context');
       expect(result).toContain('/reset');
+    });
+  });
+
+  describe('buildEnhancedContent - project context (Issue #1916)', () => {
+    it('should include project context section when provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        projectContext: '## Project: my-project\n\nBe concise.',
+      }, 'chat-456');
+
+      expect(result).toContain('Project Context');
+      expect(result).toContain('my-project');
+      expect(result).toContain('Be concise');
+    });
+
+    it('should not include project context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+        projectContext: '## Project: my-project\n\nInstructions.',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Project Context');
+    });
+
+    it('should place project context after chat history', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'Chat history...',
+        projectContext: 'Project context...',
+      }, 'chat-456');
+
+      const historyIdx = result.indexOf('Recent Chat History');
+      const projectIdx = result.indexOf('Project Context');
+      expect(projectIdx).toBeGreaterThan(historyIdx);
+    });
+
+    it('should place project context before guidance sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        projectContext: 'Project context...',
+      }, 'chat-456');
+
+      const projectIdx = result.indexOf('Project Context');
+      const outputFormatIdx = result.indexOf('Output Format Requirements');
+      expect(outputFormatIdx).toBeGreaterThan(projectIdx);
     });
   });
 

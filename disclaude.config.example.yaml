@@ -255,6 +255,45 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Projects Configuration (Issue #1916)
+# -----------------------------------------------------------------------------
+# Enables Claude Projects-like functionality with scoped instructions
+# and knowledge bases. Each project can have its own CLAUDE.md instructions
+# and knowledge base directories that are automatically injected into prompts.
+#
+# The "default" project is used when no project is explicitly selected.
+# Set `active` to switch the active project.
+#
+projects:
+  # Currently active project name (default: "default")
+  # active: "book-reader"
+
+  # Default project configuration
+  default:
+    # Path to CLAUDE.md for project-level instructions
+    # Content is injected into every prompt for this project
+    instructionsPath: "./CLAUDE.md"
+
+    # Knowledge base directories
+    # Files in these directories are scanned and injected into prompts
+    # Supports: .md, .txt, .ts, .js, .json, .yaml, .py, and more
+    knowledge:
+      - dir: "./docs"
+        # Maximum total characters from all knowledge files (default: 100000)
+        maxChars: 50000
+        # File extensions to include (default: common text formats)
+        extensions: [".md", ".txt", ".json"]
+
+  # Example: Book reader project
+  # book-reader:
+  #   instructionsPath: "./projects/book-reader/CLAUDE.md"
+  #   knowledge:
+  #     - dir: "./data/books"
+  #       maxChars: 80000
+  #     - dir: "./data/summaries"
+  #       maxChars: 20000
+
 # =============================================================================
 # Notes
 # =============================================================================

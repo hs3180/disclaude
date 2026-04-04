@@ -294,6 +294,54 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Configuration for a single project's knowledge base.
+ *
+ * Each project can have multiple knowledge directories containing
+ * files that are automatically injected into the agent's context.
+ *
+ * @see Issue #1916
+ */
+export interface ProjectKnowledgeEntry {
+  /** Directory path containing knowledge files */
+  dir: string;
+  /** File extensions to include (default: common text formats) */
+  extensions?: string[];
+  /** Maximum total characters from all knowledge files (default: 100000) */
+  maxChars?: number;
+}
+
+/**
+ * Configuration for a single project.
+ *
+ * Projects provide scoped instructions (via CLAUDE.md) and knowledge base
+ * files that are automatically injected into agent prompts.
+ *
+ * @see Issue #1916
+ */
+export interface ProjectConfigEntry {
+  /** Path to CLAUDE.md file for project-level instructions */
+  instructionsPath?: string;
+  /** Knowledge base directories to scan for context injection */
+  knowledge?: ProjectKnowledgeEntry[];
+}
+
+/**
+ * Projects configuration section.
+ *
+ * Enables Claude Projects-like functionality with scoped instructions
+ * and knowledge bases. The "default" project is used when no project
+ * is explicitly selected.
+ *
+ * @see Issue #1916
+ */
+export interface ProjectsConfig {
+  /** Currently active project name (default: "default") */
+  active?: string;
+  /** Named project configurations */
+  [projectName: string]: ProjectConfigEntry | string | undefined;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -322,6 +370,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Projects configuration for scoped instructions and knowledge bases (Issue #1916) */
+  projects?: ProjectsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

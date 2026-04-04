@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectContextSection,
 } from './guidance.js';
 
 /**
@@ -127,6 +128,9 @@ export class MessageBuilder {
     const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
 
+    // Project context section (Issue #1916: scoped instructions + knowledge base)
+    const projectContextSection = buildProjectContextSection(msg.projectContext);
+
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
@@ -152,6 +156,9 @@ export class MessageBuilder {
     }
     if (chatHistorySection) {
       sections.push(chatHistorySection);
+    }
+    if (projectContextSection) {
+      sections.push(projectContextSection);
     }
     if (postHistory) {
       sections.push(postHistory);
