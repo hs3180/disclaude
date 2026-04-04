@@ -27,6 +27,7 @@ import {
   GROUP_NAME_REGEX,
   MEMBER_ID_REGEX,
   MAX_GROUP_NAME_LENGTH,
+  truncateGroupName,
   type ChatFile,
 } from '../chat/schema.js';
 import { acquireLock } from '../chat/lock.js';
@@ -47,14 +48,13 @@ async function atomicWrite(filePath: string, data: string): Promise<void> {
   await rename(tmpFile, filePath);
 }
 
-/**
- * Truncate a string to max length at character boundaries.
- */
-function truncateAtCharBoundaries(str: string, max: number): string {
-  return Array.from(str).slice(0, max).join('');
-}
-
 async function main() {
+  // ---- Check lark-cli availability ----
+  try {
+    await execFileAsync('lark-cli', ['--version'], { timeout: 5000 });
+  } catch {
+    exit('Missing required dependency: lark-cli not found in PATH');
+  }
   // ---- Parse and validate CHAT_MAX_PER_RUN ----
   let maxPerRun = DEFAULT_MAX_PER_RUN;
   const maxPerRunEnv = process.env.CHAT_MAX_PER_RUN;
@@ -194,7 +194,7 @@ async function main() {
       console.error(`ERROR: Invalid group name '${groupName}' for chat ${chatId} — contains unsafe characters, skipping`);
       continue;
     }
-    const truncatedName = truncateAtCharBoundaries(groupName, MAX_GROUP_NAME_LENGTH);
+    const truncatedName = truncateGroupName(groupName);
 
     if (members.length === 0) {
       console.error(`ERROR: No members found for chat ${chatId}, skipping`);

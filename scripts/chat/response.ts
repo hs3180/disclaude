@@ -66,8 +66,8 @@ async function main() {
   try {
     await stat(chatFile);
   } catch (err: unknown) {
-    // @ts-expect-error - checking error code
-    if (err?.code === 'ENOENT') {
+    const nodeErr = err as { code?: string };
+    if (nodeErr.code === 'ENOENT') {
       exit(`Chat ${chatId} not found`);
     }
     exit(`Failed to access chat file: ${err}`);
@@ -101,11 +101,11 @@ async function main() {
     const currentChat = parseChatFile(content, chatFile);
 
     if (currentChat.status !== 'active') {
-      exit(`Chat ${chatId} status changed to '${currentChat.status}' while waiting for lock`);
+      throw new ValidationError(`Chat ${chatId} status changed to '${currentChat.status}' while waiting for lock`);
     }
 
     if (currentChat.response) {
-      exit(`Chat ${chatId} already has a response — refusing to overwrite`);
+      throw new ValidationError(`Chat ${chatId} already has a response — refusing to overwrite`);
     }
 
     // Write response atomically

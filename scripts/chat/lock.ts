@@ -3,6 +3,7 @@
  *
  * Provides exclusive and shared advisory locks for file-based concurrency safety.
  * Falls back to a no-op lock with warning if fs.flock is unavailable (Node <20.12).
+ * Lock acquisition will throw if called without fs.flock support.
  */
 
 import { open, type FileHandle } from 'node:fs/promises';
@@ -19,6 +20,10 @@ try {
   }
 } catch {
   // fs.flock not available
+}
+
+if (!_flockFn) {
+  console.error('WARN: fs.flock not available (requires Node 20.12+). File locking will be disabled.');
 }
 
 export function isFlockAvailable(): boolean {
@@ -54,8 +59,10 @@ export async function acquireLock(
   timeout: number = 5000,
 ): Promise<FileLock> {
   if (!_flockFn) {
-    console.error('WARN: fs.flock not available (requires Node 20.12+), skipping lock');
-    return { release: async () => {} };
+    throw new Error(
+      'fs.flock not available — this project requires Node.js >= 20.12. ' +
+      'Please upgrade your Node.js version.',
+    );
   }
 
   const handle: FileHandle = await open(lockPath, 'w');
@@ -69,20 +76,28 @@ export async function acquireLock(
   // For non-blocking mode, use ifPresent
   if (timeout === 0) {
     try {
-      await _flockFn(fd, { ...options, ifPresent: true });
+      await _flockFn!(fd, { ...options, ifPresent: true });
     } catch {
       await handle.close();
       throw new Error(`Failed to acquire ${mode} lock for '${lockPath}' (already locked)`);
     }
   } else {
-    // Blocking with timeout — we use a race
-    const lockPromise = _flockFn(fd, options);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Lock acquisition timed out after ${timeout}ms`)), timeout),
-    );
+    // Blocking with timeout — use a cancellable timer
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([lockPromise, timeoutPromise]);
+      const lockPromise = _flockFn!(fd, options);
+      await new Promise<void>((resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Lock acquisition timed out after ${timeout}ms`)),
+          timeout,
+        );
+        lockPromise.then(() => {
+          if (timer) clearTimeout(timer);
+          resolve();
+        }, reject);
+      });
     } catch (err: unknown) {
+      if (timer) clearTimeout(timer);
       await handle.close();
       if (err instanceof Error && err.message.includes('timed out')) {
         throw new Error(`Failed to acquire ${mode} lock for '${lockPath}' (timed out after ${timeout}ms)`);
