@@ -153,9 +153,9 @@ export function createDefaultMessageHandler(
   options: MessageHandlerOptions
 ): (message: IncomingMessage) => Promise<void> {
   return async (message: IncomingMessage) => {
-    const { chatId, content, messageId, userId, metadata } = message;
+    const { chatId, content, messageId, userId, metadata, messageType } = message;
     context.logger.info(
-      { chatId, messageId, contentLength: content.length, hasAttachments: !!message.attachments },
+      { chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments },
       `Processing message from ${options.channelName}`
     );
 
