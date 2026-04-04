@@ -555,6 +555,39 @@ describe('createChannelApiHandlers', () => {
       type: 'text',
       text: 'Reply',
       threadId: 'thread-123',
+      mentions: undefined,
+    });
+  });
+
+  it('sendMessage should pass mentions', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const mentions = [{ openId: 'ou_xxx', name: 'Bot User' }];
+    await handlers.sendMessage('chat-001', 'Hello with mention', undefined, mentions);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Hello with mention',
+      threadId: undefined,
+      mentions,
+    });
+  });
+
+  it('sendMessage should pass threadId and mentions together', async () => {
+    const handlers = createChannelApiHandlers(channel, {
+      logger: mockLogger,
+      channelName: 'Test',
+    });
+    const mentions = [{ openId: 'ou_yyy' }];
+    await handlers.sendMessage('chat-001', 'Reply with mention', 'thread-789', mentions);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: 'Reply with mention',
+      threadId: 'thread-789',
+      mentions,
     });
   });
 

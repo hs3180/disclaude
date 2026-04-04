@@ -94,6 +94,13 @@ export interface OutgoingMessage {
   /** Thread root message ID for thread replies */
   threadId?: string;
 
+  /**
+   * Mention targets for @mentioning users/bots in text messages.
+   * When provided, the channel should use rich text format (e.g., Feishu post)
+   * to include @mention tags. Issue #1742.
+   */
+  mentions?: Array<{ openId: string; name?: string }>;
+
   /** Task success status (for type 'done') */
   success?: boolean;
 
