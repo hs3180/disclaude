@@ -81,3 +81,16 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool.
+ * Issue #1919: Image upload for card embedding.
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  imageKey?: string;
+  imageName?: string;
+  imageSize?: number;
+  error?: string;
+}
+

@@ -502,6 +502,51 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key.
+   * Issue #1919: Allows Agent to embed images in interactive cards.
+   *
+   * @param imagePath - Absolute path to the image file
+   * @returns Object with imageKey, imageName, and imageSize
+   * @throws Error if upload fails or file is invalid
+   */
+  async uploadImage(imagePath: string): Promise<{ imageKey: string; imageName: string; imageSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(imagePath);
+    const ext = path.extname(imagePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(imagePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ imagePath, fileName, fileSize }, 'Uploading image for image_key');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(imagePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ imagePath, fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully, image_key obtained');
+    return { imageKey, imageName: fileName, imageSize: fileSize };
+  }
+
+  /**
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {
