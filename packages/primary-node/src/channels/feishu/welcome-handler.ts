@@ -5,6 +5,7 @@
  * Issue #463: Send welcome message on first private chat
  * Issue #676: Send help message when users join a group
  * Issue #694: Extracted from feishu-channel.ts
+ * Issue #2052: Add onBotAddedToGroup callback for small group detection
  *
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
@@ -15,6 +16,19 @@ import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 const logger = createLogger('WelcomeHandler');
 
 /**
+ * Options for WelcomeHandler.
+ */
+export interface WelcomeHandlerOptions {
+  /**
+   * Callback fired when the bot is added to a group chat.
+   * Used by FeishuChannel to perform small group detection (Issue #2052).
+   *
+   * @param chatId - The group chat ID the bot was added to
+   */
+  onBotAddedToGroup?: (chatId: string) => Promise<void>;
+}
+
+/**
  * Welcome Handler.
  *
  * Handles P2P chat entered and chat member added events.
@@ -23,16 +37,19 @@ export class WelcomeHandler {
   private welcomeService?: WelcomeService;
   private appId: string;
   private isRunning: () => boolean;
+  private onBotAddedToGroup?: (chatId: string) => Promise<void>;
 
   /**
    * Create a WelcomeHandler.
    *
    * @param appId - Feishu App ID for bot identification
    * @param isRunning - Function to check if channel is running
+   * @param options - Optional callbacks
    */
-  constructor(appId: string, isRunning: () => boolean) {
+  constructor(appId: string, isRunning: () => boolean, options?: WelcomeHandlerOptions) {
     this.appId = appId;
     this.isRunning = isRunning;
+    this.onBotAddedToGroup = options?.onBotAddedToGroup;
   }
 
   /**
@@ -110,6 +127,15 @@ export class WelcomeHandler {
       // Bot was added to the group -> send welcome message
       logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
       await this.welcomeService.handleBotAddedToGroup(event.chat_id);
+
+      // Issue #2052: Notify about bot being added for small group detection
+      if (this.onBotAddedToGroup) {
+        try {
+          await this.onBotAddedToGroup(event.chat_id);
+        } catch (error) {
+          logger.error({ err: error, chatId: event.chat_id }, 'onBotAddedToGroup callback failed');
+        }
+      }
     } else if (userMembers.length > 0) {
       // Users joined a group that already has the bot -> send help message
       logger.info(

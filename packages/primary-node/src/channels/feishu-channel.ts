@@ -174,10 +174,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
 
     // Initialize modular components
-    this.passiveModeManager = new PassiveModeManager();
+    const passiveModeConfigPath = Config.getWorkspaceDir()
+      ? path.join(Config.getWorkspaceDir(), 'passive-mode.json')
+      : undefined;
+    this.passiveModeManager = new PassiveModeManager({ configPath: passiveModeConfigPath });
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
-    this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
+    this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning, {
+      // Issue #2052: Auto-detect small groups when bot is added
+      onBotAddedToGroup: async (chatId: string) => {
+        await this.handleSmallGroupDetection(chatId);
+      },
+    });
 
     // Create message callbacks
     const callbacks: MessageCallbacks = {
@@ -212,6 +220,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   protected async doStart(): Promise<void> {
     // Initialize message logger
     await messageLogger.init();
+
+    // Initialize passive mode manager (load persisted state)
+    await this.passiveModeManager.init();
 
     // Create Feishu client
     this.client = createFeishuClient(this.appId, this.appSecret, {
@@ -567,6 +578,70 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   getPassiveModeDisabledChats(): string[] {
     return this.passiveModeManager.getPassiveModeDisabledChats();
+  }
+
+  /**
+   * Handle small group detection when bot is added to a group.
+   *
+   * Issue #2052: When the bot is added to a 2-member group (bot + 1 user),
+   * automatically disable passive mode since the interaction is effectively
+   * a private conversation.
+   *
+   * Uses `client.im.chat.get()` (lightweight metadata API) to get member counts
+   * instead of `getMembers()` which lists all members. This is called only once
+   * per group (on bot.added event), not in the message processing path.
+   *
+   * The result is persisted via PassiveModeManager's file-based storage.
+   */
+  private async handleSmallGroupDetection(chatId: string): Promise<void> {
+    // Skip if already checked (idempotent)
+    if (this.passiveModeManager.isSmallGroupChecked(chatId)) {
+      logger.debug({ chatId }, 'Small group already checked, skipping');
+      return;
+    }
+
+    if (!this.client) {
+      logger.warn({ chatId }, 'Client not initialized, cannot check group size');
+      return;
+    }
+
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+      });
+
+      const chatData = response?.data;
+      if (!chatData) {
+        logger.warn({ chatId }, 'No chat data returned from API');
+        this.passiveModeManager.markSmallGroupChecked(chatId);
+        return;
+      }
+
+      const userCount = parseInt(chatData.user_count ?? '0', 10);
+      const botCount = parseInt(chatData.bot_count ?? '0', 10);
+      const totalMembers = userCount + botCount;
+
+      logger.info(
+        { chatId, userCount, botCount, totalMembers },
+        'Group member count checked',
+      );
+
+      // Mark as checked regardless of result (avoid re-checking)
+      this.passiveModeManager.markSmallGroupChecked(chatId);
+
+      // Auto-disable passive mode for 2-member groups (bot + 1 user)
+      if (totalMembers <= 2 && userCount === 1) {
+        this.passiveModeManager.setPassiveModeDisabled(chatId, true);
+        logger.info(
+          { chatId, userCount, botCount },
+          'Auto-disabled passive mode for 2-member group (Issue #2052)',
+        );
+      }
+    } catch (error) {
+      logger.warn({ err: error, chatId }, 'Failed to check group size for passive mode');
+      // Mark as checked to avoid retrying on API errors
+      this.passiveModeManager.markSmallGroupChecked(chatId);
+    }
   }
 
   /**
