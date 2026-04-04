@@ -80,6 +80,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
   // First message chat history (Issue #1230)
   private firstMessageHistoryContext?: string;
   private firstMessageHistoryLoaded = false;
+  private firstMessageHistoryLoadPromise?: Promise<void>;
 
   constructor(config: PilotConfig) {
     super(config);
@@ -213,9 +214,35 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * This method loads recent chat history to be attached to the first message
    * in a new agent session, providing context for the agent.
    *
+   * Issue #1863: Added promise caching to prevent duplicate loads and
+   * enable awaiting from processMessage() to fix race condition.
+   *
    * @returns Promise that resolves when history is loaded
    */
   private async loadFirstMessageHistory(): Promise<void> {
+    // If already loading, wait for the existing promise
+    if (this.firstMessageHistoryLoadPromise) {
+      return this.firstMessageHistoryLoadPromise;
+    }
+
+    // If already loaded, return immediately
+    if (this.firstMessageHistoryLoaded) {
+      return;
+    }
+
+    // Start loading history
+    this.firstMessageHistoryLoadPromise = this.doLoadFirstMessageHistory();
+    try {
+      await this.firstMessageHistoryLoadPromise;
+    } finally {
+      this.firstMessageHistoryLoadPromise = undefined;
+    }
+  }
+
+  /**
+   * Internal method to perform the actual first message history loading.
+   */
+  private async doLoadFirstMessageHistory(): Promise<void> {
     try {
       this.logger.info(
         { chatId: this.boundChatId },
@@ -444,14 +471,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
    */
-  processMessage(
+  async processMessage(
     chatId: string,
     text: string,
     messageId: string,
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
     chatHistoryContext?: string
-  ): void {
+  ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
       this.logger.error(
@@ -473,6 +500,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+    }
+
+    // Issue #1863: Wait for first message history to load before building content.
+    // This fixes the race condition where processMessage() checks firstMessageHistoryContext
+    // before the async loadFirstMessageHistory() in startAgentLoop() completes.
+    if (!this.firstMessageHistoryLoaded) {
+      await this.loadFirstMessageHistory();
     }
 
     // Issue #1230: Attach chat history on first message for new sessions

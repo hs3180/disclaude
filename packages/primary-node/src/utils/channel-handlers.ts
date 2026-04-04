@@ -35,6 +35,16 @@ import type { WiredContext } from '../channel-lifecycle-manager.js';
 export interface ChannelCallbacksOptions {
   /** Whether to send a 'done' signal on task completion (REST sync mode) */
   sendDoneSignal?: boolean;
+
+  /**
+   * Optional callback to retrieve chat history for a given chat.
+   * Wired to MessageLogger.getChatHistory() for channels that support message logging.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Chat history context string or undefined if not available
+   *
+   * @see Issue #1863 - Wire getChatHistory callback for session restoration
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -121,6 +131,8 @@ export function createChannelCallbacksFactory(
         async (chatId: string) => {
           logger.info({ chatId }, 'Task completed');
         },
+    // Issue #1863: Wire getChatHistory callback for session restoration
+    getChatHistory: options?.getChatHistory,
   });
 }
 
