@@ -34,6 +34,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildProjectContextGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -136,6 +137,7 @@ export class MessageBuilder {
     // Core guidance sections (framework-agnostic)
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
+    const projectContextGuidance = buildProjectContextGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -163,6 +165,7 @@ export class MessageBuilder {
 
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
+    sections.push(projectContextGuidance);
     sections.push(locationAwarenessGuidance);
 
     const preamble = sections.join('\n');

@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildProjectContextGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -108,5 +109,44 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectContextGuidance', () => {
+  it('should include project context section heading', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Project Context (CLAUDE.md)');
+  });
+
+  it('should mention checking CLAUDE.md for development tasks', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('CLAUDE.md');
+    expect(result).toContain('development tasks');
+  });
+
+  it('should instruct to check the project directory, not workspace root', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('project\'s own directory');
+    expect(result).toContain('not the workspace root');
+  });
+
+  it('should list what to look for in CLAUDE.md', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Build/test commands');
+    expect(result).toContain('Code conventions');
+    expect(result).toContain('Architecture overview');
+    expect(result).toContain('Development workflow');
+  });
+
+  it('should mention when to check for CLAUDE.md', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('Before making code changes');
+    expect(result).toContain('After cloning or navigating');
+  });
+
+  it('should handle missing CLAUDE.md gracefully', () => {
+    const result = buildProjectContextGuidance();
+    expect(result).toContain('If no `CLAUDE.md` exists');
+    expect(result).toContain('general best practices');
   });
 });

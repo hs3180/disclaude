@@ -180,6 +180,54 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the project context guidance section.
+ *
+ * Issue #1506: When the agent handles development tasks (bug fixes,
+ * feature implementations, refactoring), it should proactively check
+ * for CLAUDE.md in the relevant project directory to understand
+ * project conventions, build commands, and architecture.
+ *
+ * This provides behavioral guidance rather than injecting content,
+ * allowing the agent to find and use CLAUDE.md from the correct
+ * project directory at the right time (after navigating to the project).
+ *
+ * @returns Formatted project context guidance section
+ */
+export function buildProjectContextGuidance(): string {
+  return `
+
+---
+
+## Project Context (CLAUDE.md)
+
+When you are working on **development tasks** (bug fixes, feature implementations, refactoring, code changes), you should proactively check for a \`CLAUDE.md\` file in the relevant **project directory**.
+
+### When to Check
+
+- Before making code changes to a project
+- After cloning or navigating to a project repository
+- When starting a new development task in an unfamiliar codebase
+
+### How to Use CLAUDE.md
+
+1. Look for \`CLAUDE.md\` in the **root directory** of the project you are working on
+2. If found, **read it** using the Read tool to understand:
+   - **Build/test commands** — How to build, test, and lint the project
+   - **Code conventions** — Naming patterns, file organization, style rules
+   - **Architecture overview** — Key modules, entry points, data flow
+   - **Development workflow** — Branch strategy, commit conventions, PR process
+3. **Follow the project's conventions** in your implementation (code style, commands, patterns)
+4. If no \`CLAUDE.md\` exists, proceed with general best practices
+
+### Important Notes
+
+- Check the **project's own directory**, not the workspace root
+- \`CLAUDE.md\` is specific to each project — always look in the project you are modifying
+- Use the project's documented build/test commands, not generic ones
+- Respect the project's architectural patterns and coding conventions`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
