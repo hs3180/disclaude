@@ -24,6 +24,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -421,9 +422,17 @@ export class Config {
    * Get global environment variables from config file.
    * These will be passed to all agent processes.
    *
+   * Prefers preloaded config (set via --config CLI flag) over the default
+   * config loaded at module import time, consistent with applyGlobalEnv().
+   *
+   * @see Issue #1839
    * @returns Global environment variables object
    */
   static getGlobalEnv(): Record<string, string> {
+    const preloaded = getPreloadedConfig();
+    if (preloaded && validateConfig(preloaded)) {
+      return getConfigFromFile(preloaded).env || {};
+    }
     return fileConfigOnly.env || {};
   }
 
@@ -484,4 +493,47 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+}
+
+// ============================================================================
+// Runtime Context Factory (Issue #1839)
+// ============================================================================
+
+/**
+ * Create a default AgentRuntimeContext wired to Config static methods.
+ *
+ * This eliminates duplicated setRuntimeContext() calls across CLI entry points.
+ * Platform-specific methods (sendMessage, sendCard, etc.) can be passed via overrides.
+ *
+ * @example
+ * ```typescript
+ * import { createDefaultRuntimeContext } from '@disclaude/core';
+ *
+ * // Basic usage (config-only context)
+ * createDefaultRuntimeContext();
+ *
+ * // With platform overrides
+ * createDefaultRuntimeContext({
+ *   sendMessage: (chatId, text) => channel.send(chatId, text),
+ *   sendCard: (chatId, card) => channel.sendCard(chatId, card),
+ * });
+ * ```
+ *
+ * @param overrides - Optional platform-specific method overrides
+ * @returns AgentRuntimeContext wired to Config
+ * @see Issue #1839
+ */
+export function createDefaultRuntimeContext(
+  overrides?: Partial<AgentRuntimeContext>,
+): AgentRuntimeContext {
+  const ctx: AgentRuntimeContext = {
+    getWorkspaceDir: () => Config.getWorkspaceDir(),
+    getAgentConfig: () => Config.getAgentConfig(),
+    getLoggingConfig: () => Config.getLoggingConfig(),
+    getGlobalEnv: () => Config.getGlobalEnv(),
+    isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+    ...overrides,
+  };
+  setRuntimeContext(ctx);
+  return ctx;
 }
