@@ -702,6 +702,53 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Issue #1919: Exposes the image upload capability so that agents
+   * can obtain an image_key for embedding images in card messages.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey and fileName
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Image file not found: ${filePath}`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+
+    // Validate image size (Feishu limit: 10MB)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for image_key');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ filePath, fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName }, 'Image uploaded successfully, image_key obtained');
+    return { imageKey, fileName };
+  }
+
+  /**
    * Queue a message for later delivery when the WebSocket is reconnecting.
    *
    * Messages older than `MAX_MESSAGE_AGE_MS` are discarded during flush.

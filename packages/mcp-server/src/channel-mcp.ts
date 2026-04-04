@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -145,6 +147,16 @@ For display-only cards, use send_card instead.`,
     },
     handler: send_file,
   },
+  // Issue #1919: Upload image and return image_key for card embedding
+  upload_image: {
+    description: 'Upload an image and return the image_key for use in card messages.',
+    parameters: {
+      type: 'object',
+      properties: { filePath: { type: 'string', description: 'Path to the image file' } },
+      required: ['filePath'],
+    },
+    handler: upload_image,
+  },
 };
 
 export const channelToolDefinitions: SdkInlineToolDefinition[] = [
@@ -154,6 +166,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
   // - send_card: Display-only cards (no interactions)
   // - send_interactive: Interactive cards with button handlers
   // - send_file: File uploads
+  // - upload_image: Image upload for card embedding (Issue #1919)
   // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
   // ============================================================================
   {
@@ -362,6 +375,42 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image file to the platform and return the image_key.
+
+The returned image_key can be used in the \`img\` element of card messages
+(created via send_card) to embed images directly in cards, providing a
+rich visual experience.
+
+## Parameters
+- **filePath**: Path to the image file (supports .jpg, .jpeg, .png, .webp, .gif, .tiff, .bmp, .ico)
+
+## Workflow
+1. Call \`upload_image\` with the file path to get an \`image_key\`
+2. Use the returned \`image_key\` in card JSON \`img\` elements
+3. Send the card via \`send_card\`
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+## Supported Formats
+.jpg, .jpeg, .png, .webp, .gif, .tiff, .bmp, .ico (max 10MB)`,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
