@@ -19,6 +19,7 @@ import {
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
 // Re-export
@@ -50,6 +51,7 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
  *
  * Issue #1634: Without isError, failed tool calls wrapped in toolSuccess()
  * caused the Agent to enter diagnostic mode, exceeding test timeouts.
+ * Issue #1641: chatId validation errors also use this to signal failure.
  */
 function toolError(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
   return { content: [{ type: 'text', text }], isError: true };
@@ -165,6 +167,12 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       chatId: string;
       parentMessageId?: string;
     }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
       try {
         const result = await send_text({ text, chatId, parentMessageId });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
@@ -225,9 +233,10 @@ For interactive cards with button click handlers, use send_interactive instead.
         return toolError(`Invalid card structure: ${getCardValidationError(card)}`);
       }
 
-      // Validate chatId
-      if (!chatId || typeof chatId !== 'string') {
-        return toolError('Invalid chatId: must be a non-empty string');
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
       try {
@@ -305,8 +314,11 @@ For display-only cards, use send_card instead.
       if (!Array.isArray(options) || options.length === 0) {
         return toolError('Invalid options: must be a non-empty array');
       }
-      if (!chatId || typeof chatId !== 'string') {
-        return toolError('Invalid chatId: must be a non-empty string');
+
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
       try {
@@ -322,6 +334,12 @@ For display-only cards, use send_card instead.
     description: 'Send a file to a chat.',
     parameters: z.object({ filePath: z.string(), chatId: z.string() }),
     handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
       try {
         const result = await send_file({ filePath, chatId });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
