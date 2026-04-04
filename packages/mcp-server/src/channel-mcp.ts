@@ -66,6 +66,18 @@ export const channelTools = {
         text: { type: 'string', description: 'The text content to send' },
         chatId: { type: 'string', description: 'Target chat ID' },
         parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        mentions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              openId: { type: 'string', description: 'Open ID of the user/bot to @mention' },
+              name: { type: 'string', description: 'Display name of the mention target' },
+            },
+            required: ['openId'],
+          },
+          description: 'Mention targets for @mentioning users/bots (Issue #1742)',
+        },
       },
       required: ['text', 'chatId'],
     },
@@ -161,11 +173,16 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       text: z.string().describe('The text content to send'),
       chatId: z.string().describe('Target chat ID'),
       parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      mentions: z.array(z.object({
+        openId: z.string().describe('Open ID of the user/bot to @mention'),
+        name: z.string().optional().describe('Display name of the mention target'),
+      })).optional().describe('Mention targets for @mentioning users/bots (Issue #1742)'),
     }),
-    handler: async ({ text, chatId, parentMessageId }: {
+    handler: async ({ text, chatId, parentMessageId, mentions }: {
       text: string;
       chatId: string;
       parentMessageId?: string;
+      mentions?: Array<{ openId: string; name?: string }>;
     }) => {
       // Issue #1641 P1: Validate chatId format before IPC call
       const chatIdError = getChatIdValidationError(chatId);
@@ -174,7 +191,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       }
 
       try {
-        const result = await send_text({ text, chatId, parentMessageId });
+        const result = await send_text({ text, chatId, parentMessageId, mentions });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
