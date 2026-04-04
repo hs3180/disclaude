@@ -128,7 +128,11 @@ For display-only cards, use send_card instead.`,
     description: 'Send a file to a chat.',
     parameters: {
       type: 'object',
-      properties: { filePath: { type: 'string' }, chatId: { type: 'string' } },
+      properties: {
+        filePath: { type: 'string' },
+        chatId: { type: 'string' },
+        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+      },
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
@@ -331,9 +335,23 @@ For display-only cards, use send_card instead.
   },
   {
     name: 'send_file',
-    description: 'Send a file to a chat.',
-    parameters: z.object({ filePath: z.string(), chatId: z.string() }),
-    handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
+    description: `Send a file to a chat.
+
+## Parameters
+- **filePath**: Path to the file to send (string)
+- **chatId**: Target chat ID
+- **parentMessageId**: Optional, for thread reply
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/report.pdf", "chatId": "oc_xxx"}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string(),
+      chatId: z.string(),
+      parentMessageId: z.string().optional(),
+    }),
+    handler: async ({ filePath, chatId, parentMessageId }: { filePath: string; chatId: string; parentMessageId?: string }) => {
       // Issue #1641 P1: Validate chatId format before IPC call
       const chatIdError = getChatIdValidationError(chatId);
       if (chatIdError) {
@@ -341,7 +359,7 @@ For display-only cards, use send_card instead.
       }
 
       try {
-        const result = await send_file({ filePath, chatId });
+        const result = await send_file({ filePath, chatId, parentMessageId });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
