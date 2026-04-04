@@ -27,7 +27,9 @@ fi
 
 mkdir -p workspace/chats
 CHAT_DIR=$(cd workspace/chats && pwd)
-CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
+# Use direct path construction instead of realpath -m (incompatible with BusyBox).
+# CHAT_DIR is already resolved via $(cd ... && pwd), and CHAT_ID is validated above.
+CHAT_FILE="${CHAT_DIR}/${CHAT_ID}.json"
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
   echo "ERROR: Path traversal detected for chat ID '$CHAT_ID'"
   exit 1
@@ -61,7 +63,9 @@ if [ -z "${CHAT_MEMBERS:-}" ]; then
   exit 1
 fi
 
-CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
+if [ -z "${CHAT_CONTEXT:-}" ]; then
+  CHAT_CONTEXT='{}'
+fi
 
 # Validate CHAT_CONTEXT is valid JSON
 echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {

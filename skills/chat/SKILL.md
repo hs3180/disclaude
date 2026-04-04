@@ -105,6 +105,25 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), `flock` concurrency safety, and `jq` integrity checks.
 
+### Prerequisites
+
+The Chat Skill scripts depend on the following external tools:
+
+| Dependency | Purpose | Alpine | Debian/Ubuntu | macOS |
+|------------|---------|--------|---------------|-------|
+| `jq` | JSON construction and validation | `apk add jq` | `apt-get install jq` | `brew install jq` |
+| `flock` | Concurrency-safe file locking | `apk add util-linux` | `apt-get install util-linux` | (built-in) |
+| `realpath` | Path normalization | (built-in BusyBox) | (built-in) | (built-in) |
+| `date` | UTC timestamp generation | (built-in) | (built-in) | (built-in) |
+
+> **Note**: On Alpine Linux, `realpath -m` is not supported by BusyBox. The scripts use direct path construction as a portable fallback.
+
+**Before first use**, run the dependency check:
+
+```bash
+bash scripts/chat/check-deps.sh
+```
+
 ### 1. Create Chat
 
 **Usage**: `/chat create`

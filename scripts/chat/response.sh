@@ -46,7 +46,9 @@ if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$'; then
 fi
 
 CHAT_DIR=$(cd workspace/chats && pwd)
-CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
+# Use direct path construction instead of realpath -m (incompatible with BusyBox).
+# CHAT_DIR is already resolved via $(cd ... && pwd), and CHAT_ID is validated above.
+CHAT_FILE="${CHAT_DIR}/${CHAT_ID}.json"
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
   echo "ERROR: Path traversal detected for chat ID '$CHAT_ID'"
   exit 1
