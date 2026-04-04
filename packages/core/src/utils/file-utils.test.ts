@@ -91,6 +91,65 @@ describe('detectFileExtension', () => {
   it('should return undefined for too-short buffer', () => {
     expect(detectFileExtension(Buffer.from([0x89, 0x50]))).toBeUndefined();
   });
+
+  // Issue #1966: Audio format detection tests
+  it('should detect MP3 from ID3v2 header', () => {
+    const buffer = Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect MP3 from sync word (without ID3)', () => {
+    const buffer = Buffer.from([0xFF, 0xFB, 0x90, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect MP3 from F3 sync word variant', () => {
+    const buffer = Buffer.from([0xFF, 0xF3, 0x90, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mp3');
+  });
+
+  it('should detect WAV from RIFF...WAVE header', () => {
+    const buffer = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.wav');
+  });
+
+  it('should detect OGG from OggS header', () => {
+    const buffer = Buffer.from([0x4F, 0x67, 0x67, 0x53, 0x00, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.ogg');
+  });
+
+  it('should detect FLAC from fLaC header', () => {
+    const buffer = Buffer.from([0x66, 0x4C, 0x61, 0x43, 0x00, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.flac');
+  });
+
+  it('should detect M4A from ftyp box', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4a');
+  });
+
+  it('should detect AMR from #!AMR header', () => {
+    const buffer = Buffer.from([0x23, 0x21, 0x41, 0x4D, 0x52, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.amr');
+  });
+
+  it('should detect WMA from ASF header GUID', () => {
+    const buffer = Buffer.from([
+      0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.wma');
+  });
+
+  it('should detect AAC from ADTS header (not matched by MP3 sync word first)', () => {
+    // FF F1 has bits 1:0 = 01 (AAC-LC), so (buf[1] & 0x06) !== 0x00 is true
+    // This must match AAC, not the MP3 sync word detector which comes after
+    const buffer = Buffer.from([0xFF, 0xF1, 0x90, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.aac');
+  });
 });
 
 describe('mimeToExtension', () => {
@@ -116,6 +175,39 @@ describe('mimeToExtension', () => {
 
   it('should return undefined for unknown MIME type', () => {
     expect(mimeToExtension('application/unknown')).toBeUndefined();
+  });
+
+  // Issue #1966: Audio MIME type mapping tests
+  it('should map audio/mpeg to .mp3', () => {
+    expect(mimeToExtension('audio/mpeg')).toBe('.mp3');
+  });
+
+  it('should map audio/mp3 to .mp3', () => {
+    expect(mimeToExtension('audio/mp3')).toBe('.mp3');
+  });
+
+  it('should map audio/wav to .wav', () => {
+    expect(mimeToExtension('audio/wav')).toBe('.wav');
+  });
+
+  it('should map audio/ogg to .ogg', () => {
+    expect(mimeToExtension('audio/ogg')).toBe('.ogg');
+  });
+
+  it('should map audio/x-m4a to .m4a', () => {
+    expect(mimeToExtension('audio/x-m4a')).toBe('.m4a');
+  });
+
+  it('should map audio/amr to .amr', () => {
+    expect(mimeToExtension('audio/amr')).toBe('.amr');
+  });
+
+  it('should map audio/flac to .flac', () => {
+    expect(mimeToExtension('audio/flac')).toBe('.flac');
+  });
+
+  it('should map audio/aac to .aac', () => {
+    expect(mimeToExtension('audio/aac')).toBe('.aac');
   });
 });
 
