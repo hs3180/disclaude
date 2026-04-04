@@ -200,7 +200,7 @@ Task requires 5 endpoints, only 3 were created.
 
 ## Tools NOT Available (intentionally restricted)
 
-- `send_user_feedback`: Reporter's job, not yours
+- `send_user_feedback`: Not available in this skill
 
 ## Examples
 

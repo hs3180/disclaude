@@ -1,6 +1,6 @@
 ---
 name: deep-task
-description: Deep task initialization specialist for ONE-TIME execution tasks with full dialogue workflow (Evaluator → Executor → Reporter). Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor, deep task.
+description: Deep task initialization specialist for ONE-TIME execution tasks with full dialogue workflow (Evaluator → Executor). Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor, deep task.
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
