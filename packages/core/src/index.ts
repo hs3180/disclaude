@@ -149,6 +149,7 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,

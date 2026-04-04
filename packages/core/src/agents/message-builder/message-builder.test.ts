@@ -85,6 +85,37 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should not include discussion focus guidance when discussionTopic is not set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Mode');
+    });
+
+    it('should include discussion focus guidance when discussionTopic is set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Should we use TypeScript?',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Mode');
+      expect(result).toContain('Should we use TypeScript?');
+      expect(result).toContain('Stay on topic');
+    });
+
+    it('should not include discussion focus guidance for skill commands even with discussionTopic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Mode');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',

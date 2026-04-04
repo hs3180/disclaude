@@ -30,6 +30,14 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Discussion topic for focus-keeping guidance (Issue #1228).
+   * When set, injects a discussion personality profile that helps
+   * the agent stay on topic during focused discussions.
+   * Typically set by the start-discussion skill when a discussion
+   * is initiated with a specific topic or question.
+   */
+  discussionTopic?: string;
 }
 
 /**

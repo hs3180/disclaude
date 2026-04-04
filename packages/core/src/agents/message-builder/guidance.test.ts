@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,69 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should return empty string when no topic is provided', () => {
+    expect(buildDiscussionFocusGuidance()).toBe('');
+    expect(buildDiscussionFocusGuidance(undefined)).toBe('');
+    expect(buildDiscussionFocusGuidance('')).toBe('');
+  });
+
+  it('should return formatted section with discussion topic', () => {
+    const result = buildDiscussionFocusGuidance('Should we automate code formatting?');
+    expect(result).toContain('Discussion Mode');
+    expect(result).toContain('Should we automate code formatting?');
+  });
+
+  it('should include stay-on-topic guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Stay on topic');
+    expect(result).toContain('north star');
+  });
+
+  it('should include anti-performative helpfulness guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('genuinely helpful');
+    expect(result).toContain('not performatively helpful');
+    expect(result).toContain('Great question!');
+  });
+
+  it('should include gentle redirection guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Gently redirect');
+    expect(result).toContain("let's not lose sight");
+  });
+
+  it('should include depth-over-breadth guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Depth over breadth');
+    expect(result).toContain('thoroughly');
+  });
+
+  it('should include boundaries section', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Boundaries');
+    expect(result).toContain('Do not chase every interesting tangent');
+    expect(result).toContain('Summarize progress periodically');
+  });
+
+  it('should allow user to change topics explicitly', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('user explicitly wants to change topics');
+    expect(result).toContain('follow their lead');
+  });
+
+  it('should render the topic as a blockquote', () => {
+    const result = buildDiscussionFocusGuidance('Should we use TypeScript?');
+    expect(result).toContain('> **Should we use TypeScript?**');
+  });
+
+  it('should handle multi-line topics', () => {
+    const topic = 'Should we migrate to TypeScript?\nWhat are the pros and cons?';
+    const result = buildDiscussionFocusGuidance(topic);
+    expect(result).toContain('Should we migrate to TypeScript?');
+    expect(result).toContain('What are the pros and cons?');
   });
 });

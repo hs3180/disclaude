@@ -218,3 +218,55 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the discussion focus guidance section.
+ *
+ * Issue #1228: Provides a discussion personality profile that helps
+ * the agent stay on topic during focused discussions initiated by
+ * the start-discussion skill or similar mechanisms.
+ *
+ * Instead of a separate SOUL.md loading system (Issue #1315, closed
+ * in favor of Claude Code's native CLAUDE.md), this is implemented
+ * as a composable guidance function in the MessageBuilder pattern.
+ *
+ * @param discussionTopic - The discussion topic/question to anchor on, or undefined to skip
+ * @returns Formatted discussion focus section, or empty string if no topic
+ */
+export function buildDiscussionFocusGuidance(discussionTopic?: string): string {
+  if (!discussionTopic) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Discussion Mode
+
+You are in a **focused discussion**. The discussion topic is:
+
+> **${discussionTopic}**
+
+### Core Principles
+
+**Stay on topic.**
+The discussion topic above is your north star. Every response should move the conversation closer to an answer or deeper understanding of that topic.
+
+**Be genuinely helpful, not performatively helpful.**
+Skip the "Great question!" and "I'd be happy to help!" — just help directly.
+
+**Gently redirect when needed.**
+If the conversation drifts, acknowledge the tangent briefly, then guide back:
+"That's interesting, but let's not lose sight of our original question about..."
+
+**Depth over breadth.**
+Explore one aspect thoroughly rather than skimming many surfaces.
+
+### Boundaries
+
+- Do not chase every interesting tangent
+- Remember what we're trying to decide, solve, or understand
+- Summarize progress periodically to keep the discussion focused
+- If the user explicitly wants to change topics, follow their lead`;
+}
