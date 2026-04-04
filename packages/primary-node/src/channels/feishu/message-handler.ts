@@ -29,6 +29,7 @@ import {
   type ControlResponse,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
+import { getMembers } from '../../platforms/feishu/chat-ops.js';
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -443,6 +444,34 @@ export class MessageHandler {
   }
 
   /**
+   * Check if a group chat has exactly 2 members (bot + 1 user).
+   * If so, auto-disable passive mode for that chat.
+   *
+   * Issue #2052: 2-member group chats should behave like private chats.
+   * This is a one-time check — once evaluated, the result is sticky.
+   *
+   * @param chatId - Group chat ID to check
+   */
+  private async checkSmallGroupAndDisablePassive(chatId: string): Promise<void> {
+    if (!this.client) {
+      logger.debug({ chatId }, 'No client available, skipping small-group detection');
+      return;
+    }
+
+    try {
+      const members = await getMembers(this.client, chatId);
+      this.passiveModeManager.handleSmallGroupDetection(chatId, members.length);
+    } catch (error) {
+      // Best-effort: if API fails, mark as checked to avoid retrying on every message
+      logger.warn(
+        { err: error, chatId },
+        'Failed to check member count for small-group detection, skipping',
+      );
+      this.passiveModeManager.markSmallGroupChecked(chatId);
+    }
+  }
+
+  /**
    * Forward a filtered message (simplified - just logs for now).
    */
   private forwardFilteredMessage(
@@ -809,8 +838,16 @@ export class MessageHandler {
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Group chat passive mode
+    // Issue #2052: Auto-disable passive mode for 2-member group chats (bot + 1 user)
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
+    let passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
+
+    if (this.isGroupChat(chat_type) && !passiveModeDisabled && !this.passiveModeManager.isSmallGroupChecked(chat_id)) {
+      // First message in this group chat — check member count
+      await this.checkSmallGroupAndDisablePassive(chat_id);
+      passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
+    }
+
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
       this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
