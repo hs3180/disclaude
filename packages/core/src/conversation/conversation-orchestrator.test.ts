@@ -90,7 +90,7 @@ describe('ConversationOrchestrator', () => {
       // Close the session via the session manager
       orchestrator.getSessionManager().getOrCreate('chat-1');
       const session = orchestrator.getSessionManager().get('chat-1');
-      if (session) session.closed = true;
+      if (session) { session.closed = true; }
 
       const result = orchestrator.processMessage('chat-1', createMessage({ messageId: 'msg-2' }));
 

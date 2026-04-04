@@ -11,8 +11,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createScheduleExecutor } from './schedule-executor.js';
-import type { ScheduleAgent, ScheduleAgentFactory } from './schedule-executor.js';
+import {
+  createScheduleExecutor,
+  type ScheduleAgent,
+  type ScheduleAgentFactory,
+} from './schedule-executor.js';
 import type { SchedulerCallbacks } from './scheduler.js';
 
 describe('createScheduleExecutor', () => {
