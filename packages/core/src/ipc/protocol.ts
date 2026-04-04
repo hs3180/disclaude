@@ -36,6 +36,8 @@ export interface IpcRequestPayloads {
     chatId: string;
     text: string;
     threadId?: string;
+    /** Mention targets for @mentioning users/bots (Issue #1742) */
+    mentions?: Array<{ openId: string; name?: string }>;
   };
   sendCard: {
     chatId: string;

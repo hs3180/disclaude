@@ -26,10 +26,11 @@ export { setMessageSentCallback, getMessageSentCallback };
 async function sendMessageViaIpc(
   chatId: string,
   text: string,
-  threadId?: string
+  threadId?: string,
+  mentions?: Array<{ openId: string; name?: string }>
 ): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendMessage(chatId, text, threadId);
+  return await ipcClient.sendMessage(chatId, text, threadId, mentions);
 }
 
 /**
@@ -43,8 +44,9 @@ export async function send_text(params: {
   text: string;
   chatId: string;
   parentMessageId?: string;
+  mentions?: Array<{ openId: string; name?: string }>;
 }): Promise<SendMessageResult> {
-  const { text, chatId, parentMessageId } = params;
+  const { text, chatId, parentMessageId, mentions } = params;
 
   logger.info({
     chatId,
@@ -80,7 +82,7 @@ export async function send_text(params: {
     }
 
     logger.debug({ chatId, parentMessageId }, 'Using IPC for text message');
-    const result = await sendMessageViaIpc(chatId, text, parentMessageId);
+    const result = await sendMessageViaIpc(chatId, text, parentMessageId, mentions);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC text message failed');

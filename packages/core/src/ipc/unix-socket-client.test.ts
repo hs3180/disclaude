@@ -221,7 +221,7 @@ describe('UnixSocketIpcClient', () => {
 
       const result = await client.sendMessage('chat-1', 'Hello');
       expect(result.success).toBe(true);
-      expect(mockHandlers.handlers.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined);
+      expect(mockHandlers.handlers.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined, undefined);
 
       await client.disconnect();
       await server.stop();
