@@ -85,6 +85,17 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should include runtime-env awareness guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('.runtime-env');
+      expect(result).toContain('GH_TOKEN');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -94,6 +105,7 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
       expect(result).not.toContain('Location Awareness');
+      expect(result).not.toContain('Runtime Environment Variables');
     });
   });
 

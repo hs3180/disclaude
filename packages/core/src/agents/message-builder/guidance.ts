@@ -218,3 +218,46 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory state
+ * from the main process is inaccessible. A file-based `.runtime-env`
+ * mechanism enables cross-process state sharing (e.g., GitHub tokens
+ * passed from skills). This guidance makes agents aware of the mechanism
+ * so they can actively discover and use available runtime env variables.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to **runtime environment variables** shared between the main process and your agent subprocess via the workspace \`.runtime-env\` file. These are pre-loaded into your \`process.env\`.
+
+### How to Read
+- Variables are already available via \`process.env\` (e.g., \`process.env.GH_TOKEN\`)
+- You can also read the file directly: \`cat {workspace}/.runtime-env\`
+
+### How to Write
+Use the Write or Bash tool to append \`KEY=VALUE\` lines to \`{workspace}/.runtime-env\`:
+\`\`\`bash
+echo "MY_KEY=MyValue" >> {workspace}/.runtime-env
+\`\`\`
+
+### Known Variables
+| Variable | Purpose | Writer |
+|----------|---------|--------|
+| \`GH_TOKEN\` | GitHub API token for \`gh\` CLI | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp | \`github-jwt-auth\` skill |
+
+### Notes
+- The \`.runtime-env\` file is in \`.gitignore\` — never commit secrets
+- Tokens expire; check \`GH_TOKEN_EXPIRES_AT\` before use and trigger refresh if needed
+- Prefer using existing variables over creating new ones
+- When writing new variables, use descriptive names with a namespace prefix (e.g., \`SKILL_NAME_KEY\`)`;
+}

@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,45 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment variables section heading', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should explain what .runtime-env is and how it enables cross-process sharing', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('shared between the main process');
+    expect(result).toContain('subprocess');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('How to Read');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('How to Write');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should mention known runtime-env variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('github-jwt-auth');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expire');
+    expect(result).toContain('refresh');
   });
 });
