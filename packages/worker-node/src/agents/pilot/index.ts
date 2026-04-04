@@ -320,7 +320,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
 
       // Push message to channel
       if (this.channel) {
-        this.channel.push(streamingMessage);
+        const accepted = this.channel.push(streamingMessage);
+        if (!accepted) {
+          // Issue #2007: Channel is closed — message would be silently dropped.
+          // Yield an error indicator so the caller can detect the failure.
+          this.logger.warn({ chatId, messageId }, 'handleInput: message rejected, channel is closed');
+          yield {
+            content: `⚠️ Message not delivered for session ${chatId}: channel is closed`,
+            role: 'assistant',
+            messageType: 'text',
+          };
+          continue;
+        }
+      } else {
+        this.logger.error({ chatId, messageId }, 'handleInput: no channel available');
+        yield {
+          content: `⚠️ No channel available for session ${chatId}`,
+          role: 'assistant',
+          messageType: 'text',
+        };
+        continue;
       }
 
       yield {
