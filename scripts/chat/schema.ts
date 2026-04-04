@@ -27,6 +27,7 @@ export interface ChatFile {
   createdAt: string;
   activatedAt: string | null;
   expiresAt: string;
+  expiredAt: string | null;
   createGroup: CreateGroup;
   context: Record<string, unknown>;
   response: ChatResponse | null;
