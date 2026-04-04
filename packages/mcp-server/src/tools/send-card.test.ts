@@ -27,7 +27,7 @@ vi.mock('./credentials.js', () => ({
 vi.mock('./ipc-utils.js', () => ({
   isIpcAvailable: vi.fn(),
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
-    if (type === 'ipc_unavailable') return '❌ IPC 服务不可用。';
+    if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }),
 }));

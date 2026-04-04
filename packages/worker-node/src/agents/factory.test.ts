@@ -91,7 +91,7 @@ describe('AgentFactory', () => {
       expect(agent).toBeDefined();
       expect(mockPilot).toHaveBeenCalledTimes(1);
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.chatId).toBe('chat-123');
       expect(pilotConfig.callbacks).toBe(mockCallbacks);
       expect(pilotConfig.apiKey).toBe('default-key');
@@ -103,7 +103,7 @@ describe('AgentFactory', () => {
       const agent = AgentFactory.createChatAgent('pilot', mockCallbacks);
 
       expect(agent).toBeDefined();
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.chatId).toBe('default');
       expect(pilotConfig.callbacks).toBe(mockCallbacks);
     });
@@ -117,7 +117,7 @@ describe('AgentFactory', () => {
         apiBaseUrl: 'https://custom.api.com',
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.apiKey).toBe('custom-key');
       expect(pilotConfig.model).toBe('custom-model');
       expect(pilotConfig.provider).toBe('openai');
@@ -131,7 +131,7 @@ describe('AgentFactory', () => {
         messageBuilderOptions: mcpOptions,
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
     });
 
@@ -144,7 +144,7 @@ describe('AgentFactory', () => {
       mockPilot.mockReturnValue({});
       AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks);
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.permissionMode).toBe('bypassPermissions');
     });
 
@@ -154,7 +154,7 @@ describe('AgentFactory', () => {
         permissionMode: 'default',
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.permissionMode).toBe('default');
     });
   });
@@ -165,7 +165,7 @@ describe('AgentFactory', () => {
       const agent = AgentFactory.createScheduleAgent('chat-123', mockCallbacks);
 
       expect(agent).toBeDefined();
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.chatId).toBe('chat-123');
       expect(pilotConfig.callbacks).toBe(mockCallbacks);
     });
@@ -176,7 +176,7 @@ describe('AgentFactory', () => {
         model: 'schedule-model',
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.model).toBe('schedule-model');
     });
 
@@ -187,7 +187,7 @@ describe('AgentFactory', () => {
         messageBuilderOptions: mcpOptions,
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
     });
   });
@@ -198,7 +198,7 @@ describe('AgentFactory', () => {
       const agent = AgentFactory.createTaskAgent('chat-123', mockCallbacks);
 
       expect(agent).toBeDefined();
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.chatId).toBe('chat-123');
       expect(pilotConfig.callbacks).toBe(mockCallbacks);
     });
@@ -210,7 +210,7 @@ describe('AgentFactory', () => {
         provider: 'anthropic',
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.model).toBe('task-model');
       expect(pilotConfig.provider).toBe('anthropic');
     });
@@ -222,7 +222,7 @@ describe('AgentFactory', () => {
         messageBuilderOptions: mcpOptions,
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
     });
   });
@@ -243,7 +243,7 @@ describe('AgentFactory', () => {
         apiKey: 'override-key',
       });
 
-      const pilotConfig = mockPilot.mock.calls[0][0];
+      const [[pilotConfig]] = mockPilot.mock.calls;
       expect(pilotConfig.apiKey).toBe('override-key');
       expect(pilotConfig.model).toBe('default-model');
       expect(pilotConfig.provider).toBe('anthropic');
