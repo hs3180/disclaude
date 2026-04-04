@@ -54,6 +54,9 @@ const DEFAULT_MAX_ENTRIES_PER_CHAT = 10;
  *
  * The chatId index stores multiple messageIds per chat to support coexistence
  * of multiple interactive cards in the same chat (#1625).
+ *
+ * An inverted index (actionValueIndex) provides O(1) lookup of actionValue
+ * to messageId within a chat, optimizing the cross-card search path.
  */
 export class InteractiveContextStore {
   private readonly contexts = new Map<string, InteractiveContext>();
@@ -64,6 +67,13 @@ export class InteractiveContextStore {
    * Capped at maxEntriesPerChat to prevent unbounded memory growth.
    */
   private readonly chatIdIndex = new Map<string, string[]>();
+
+  /**
+   * Inverted index: chatId → (actionValue → messageId).
+   * Enables O(1) lookup for findActionPromptsByChatId() instead of O(n×m).
+   * Updated on register/unregister/cleanupExpired/clear.
+   */
+  private readonly actionValueIndex = new Map<string, Map<string, string>>();
 
   /** Maximum age for contexts before cleanup (default: 24 hours) */
   private readonly maxAge: number;
@@ -107,16 +117,48 @@ export class InteractiveContextStore {
         const ctx = this.contexts.get(evictedId);
         if (ctx && ctx.chatId === chatId) {
           this.contexts.delete(evictedId);
+          this.removeFromActionValueIndex(chatId, evictedId, ctx.actionPrompts);
         }
       }
     }
 
     this.chatIdIndex.set(chatId, filtered);
 
+    // Update inverted index: chatId → actionValue → messageId
+    let avMap = this.actionValueIndex.get(chatId);
+    if (!avMap) {
+      avMap = new Map();
+      this.actionValueIndex.set(chatId, avMap);
+    }
+    for (const actionValue of Object.keys(actionPrompts)) {
+      avMap.set(actionValue, messageId);
+    }
+
     logger.debug(
       { messageId, chatId, actions: Object.keys(actionPrompts), totalForChat: filtered.length },
       'Action prompts registered'
     );
+  }
+
+  /**
+   * Remove entries from the inverted index for a given chatId/messageId pair.
+   */
+  private removeFromActionValueIndex(chatId: string, messageId: string, actionPrompts: ActionPromptMap): void {
+    const avMap = this.actionValueIndex.get(chatId);
+    if (!avMap) return;
+
+    for (const actionValue of Object.keys(actionPrompts)) {
+      // Only remove if the entry still points to this messageId
+      // (it may have been overwritten by a newer registration)
+      if (avMap.get(actionValue) === messageId) {
+        avMap.delete(actionValue);
+      }
+    }
+
+    // Clean up empty maps
+    if (avMap.size === 0) {
+      this.actionValueIndex.delete(chatId);
+    }
   }
 
   /**
@@ -155,22 +197,38 @@ export class InteractiveContextStore {
 
     // All entries stale, clean up
     this.chatIdIndex.delete(chatId);
+    this.actionValueIndex.delete(chatId);
     return undefined;
   }
 
   /**
    * Find action prompts by chatId that contain a specific actionValue.
    *
-   * Searches through all contexts for the given chatId (from newest to oldest)
-   * and returns the first ActionPromptMap that contains the requested actionValue.
-   * This resolves the issue where multiple interactive cards in the same chat
-   * overwrite each other's chatId index entry (#1625).
+   * Uses an inverted index (actionValueIndex) for O(1) lookup instead of
+   * iterating through all contexts. Falls back to linear scan if the
+   * inverted index entry is stale (messageId not found in contexts).
    *
    * @param chatId - Chat ID to search
    * @param actionValue - The action value to look for
    * @returns Action prompt map containing the actionValue, or undefined
    */
   findActionPromptsByChatId(chatId: string, actionValue: string): ActionPromptMap | undefined {
+    // Fast path: use inverted index for O(1) lookup
+    const avMap = this.actionValueIndex.get(chatId);
+    if (avMap) {
+      const messageId = avMap.get(actionValue);
+      if (messageId) {
+        const context = this.contexts.get(messageId);
+        if (context) {
+          return context.actionPrompts;
+        }
+        // Stale entry — inverted index points to a deleted/expired context.
+        // Clean up and fall through to linear scan.
+        avMap.delete(actionValue);
+      }
+    }
+
+    // Slow path: linear scan through chatIdIndex (fallback for stale entries)
     const messageIds = this.chatIdIndex.get(chatId);
     if (!messageIds || messageIds.length === 0) {
       return undefined;
@@ -180,6 +238,10 @@ export class InteractiveContextStore {
     for (let i = messageIds.length - 1; i >= 0; i--) {
       const context = this.contexts.get(messageIds[i]);
       if (context && context.actionPrompts[actionValue]) {
+        // Repair inverted index while we're at it
+        if (avMap) {
+          avMap.set(actionValue, messageIds[i]);
+        }
         return context.actionPrompts;
       }
     }
@@ -283,6 +345,8 @@ export class InteractiveContextStore {
           this.chatIdIndex.set(context.chatId, filtered);
         }
       }
+      // Remove from inverted index
+      this.removeFromActionValueIndex(context.chatId, messageId, context.actionPrompts);
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
     return removed;
@@ -309,15 +373,28 @@ export class InteractiveContextStore {
       }
     }
 
-    // Batch clean up chatId index
+    // Batch clean up chatId index and inverted index
     for (const [chatId, expiredIds] of expiredChatEntries) {
       const messageIds = this.chatIdIndex.get(chatId);
       if (messageIds) {
         const filtered = messageIds.filter((id) => !expiredIds.includes(id));
         if (filtered.length === 0) {
           this.chatIdIndex.delete(chatId);
+          this.actionValueIndex.delete(chatId);
         } else {
           this.chatIdIndex.set(chatId, filtered);
+          // Clean up inverted index for expired entries
+          const avMap = this.actionValueIndex.get(chatId);
+          if (avMap) {
+            for (const [actionValue, msgId] of avMap) {
+              if (expiredIds.includes(msgId)) {
+                avMap.delete(actionValue);
+              }
+            }
+            if (avMap.size === 0) {
+              this.actionValueIndex.delete(chatId);
+            }
+          }
         }
       }
     }
@@ -337,10 +414,11 @@ export class InteractiveContextStore {
   }
 
   /**
-   * Clear all contexts.
+   * Clear all contexts and indexes.
    */
   clear(): void {
     this.contexts.clear();
     this.chatIdIndex.clear();
+    this.actionValueIndex.clear();
   }
 }
