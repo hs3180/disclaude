@@ -205,7 +205,7 @@ describe('SkillFinder', () => {
     it('should list skills from a single domain', async () => {
       mockReaddir.mockResolvedValueOnce([
         makeDirent('evaluator', true),
-        makeDirent('reporter', true),
+        makeDirent('deployer', true),
         makeDirent('README.md', false),
       ]);
 
@@ -215,7 +215,7 @@ describe('SkillFinder', () => {
 
       expect(skills).toHaveLength(2);
       expect(skills.map(s => s.name)).toContain('evaluator');
-      expect(skills.map(s => s.name)).toContain('reporter');
+      expect(skills.map(s => s.name)).toContain('deployer');
       expect(skills[0].domain).toBe('project');
     });
 
@@ -278,15 +278,15 @@ describe('SkillFinder', () => {
       ]);
       mockAccess.mockResolvedValueOnce(undefined);
 
-      // Workspace: has reporter (not in project)
+      // Workspace: has deployer (not in project)
       mockReaddir.mockResolvedValueOnce([
-        makeDirent('reporter', true),
+        makeDirent('deployer', true),
       ]);
       mockAccess.mockResolvedValueOnce(undefined);
 
-      // Package: has deployer (not in project or workspace)
+      // Package: has site-miner (not in project or workspace)
       mockReaddir.mockResolvedValueOnce([
-        makeDirent('deployer', true),
+        makeDirent('site-miner', true),
       ]);
       mockAccess.mockResolvedValueOnce(undefined);
 
@@ -295,8 +295,8 @@ describe('SkillFinder', () => {
       expect(skills).toHaveLength(3);
       const names = skills.map(s => s.name);
       expect(names).toContain('evaluator');
-      expect(names).toContain('reporter');
       expect(names).toContain('deployer');
+      expect(names).toContain('site-miner');
     });
 
     it('should handle non-existent search paths gracefully', async () => {
