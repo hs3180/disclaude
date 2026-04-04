@@ -1018,6 +1018,10 @@ export class MessageHandler {
 
     // Try to route card action to Worker Node first
     if (this.callbacks.routeCardAction) {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, actionValue: action.value },
+        'Attempting to route card action'
+      );
       const routed = await this.callbacks.routeCardAction({
         chatId: chat_id,
         cardMessageId: message_id,
@@ -1035,13 +1039,21 @@ export class MessageHandler {
       });
 
       if (routed) {
-        logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action routed to Worker Node');
+        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed to Worker Node');
         return;
       }
+      logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action not routed, falling back to local emit');
     }
 
     // Emit card action as a message to the agent
+    // Issue #2007: This is the fallback path when routeCardAction returns false
+    // (no remote Worker Node registered). The message goes through the same
+    // pipeline as text messages via createDefaultMessageHandler → Pilot.processMessage.
     try {
+      logger.debug(
+        { messageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
+        'Emitting card action as local message to agent'
+      );
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${action.value}`,
         chatId: chat_id,
@@ -1054,6 +1066,10 @@ export class MessageHandler {
           cardMessageId: message_id,
         },
       });
+      logger.debug(
+        { messageId: message_id, chatId: chat_id },
+        'Card action message emitted successfully'
+      );
     } catch (error) {
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
       // Issue #1357: Notify user that their card action was not processed
