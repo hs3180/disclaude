@@ -309,3 +309,64 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// ACP (Agent Communication Protocol) module (Issue #1333)
+// Protocol infrastructure for multi-model support via standardized interface
+export {
+  AcpClient,
+  StdioTransport,
+  SSETransport,
+  createTransport,
+  JsonRpcErrorCode,
+  AcpMethod,
+  AcpNotification,
+  type AcpTransport,
+} from './acp/index.js';
+
+export type {
+  // JSON-RPC 2.0
+  JsonRpcId,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse,
+  JsonRpcErrorObject,
+  JsonRpcErrorResponse,
+  JsonRpcResponse,
+  JsonRpcMessage,
+  // ACP capabilities
+  AcpAgentCapabilities,
+  AcpClientCapabilities,
+  // ACP initialization
+  AcpInitializeParams,
+  AcpInitializeResult,
+  // ACP tasks
+  AcpTaskState,
+  AcpTaskInfo,
+  AcpTaskCreateParams,
+  AcpTaskCreateResult,
+  AcpTaskSendParams,
+  AcpTaskCancelParams,
+  AcpTaskGetParams,
+  AcpTaskCloseParams,
+  AcpTaskForkParams,
+  AcpTaskForkResult,
+  AcpTaskListResult,
+  // ACP messages
+  AcpTextContent,
+  AcpImageContent,
+  AcpToolUseContent,
+  AcpToolResultContent,
+  AcpContentBlock,
+  AcpRole,
+  AcpMessage,
+  // ACP notifications
+  AcpTaskStatusNotification,
+  AcpTaskMessageNotification,
+  AcpTaskArtefactNotification,
+  // ACP transport
+  AcpTransportType,
+  AcpStdioConfig,
+  AcpSseConfig,
+  AcpTransportConfig,
+  // ACP events
+  AcpClientEvents,
+} from './acp/index.js';
