@@ -103,7 +103,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
-All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), `flock` concurrency safety, and `jq` integrity checks.
+All scripts are TypeScript files located in `scripts/chat/`, run via `npx tsx`. They accept input via **environment variables** (avoids shell quoting issues with JSON). All scripts include built-in Chat ID validation (path traversal protection), file-lock concurrency safety (`fs.flock`), and structured error handling.
 
 ### 1. Create Chat
 
@@ -115,22 +115,22 @@ CHAT_EXPIRES_AT="2026-03-25T10:00:00Z" \
 CHAT_GROUP_NAME="PR #123 Review" \
 CHAT_MEMBERS='["ou_developer"]' \
 CHAT_CONTEXT='{"prNumber": 123}' \
-bash scripts/chat/create.sh
+npx tsx scripts/chat/create.ts
 ```
 
 **Validation** (built into script):
 - `CHAT_ID` must match `^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$` (no leading dots) and pass path traversal check
 - `CHAT_EXPIRES_AT` must be UTC Z-suffix ISO 8601 format
 - `CHAT_MEMBERS` must be a non-empty JSON array of `ou_xxxxx` open IDs
-- Uniqueness checked under `flock` (TOCTOU-safe)
-- File written atomically via `mktemp` + `mv`
+- Uniqueness checked under file lock (TOCTOU-safe)
+- File written atomically via temp file + rename
 
 ### 2. Query Chat
 
 **Usage**: `/chat query {id}`
 
 ```bash
-CHAT_ID="pr-123" bash scripts/chat/query.sh
+CHAT_ID="pr-123" npx tsx scripts/chat/query.ts
 ```
 
 Output is the raw JSON chat file. Display in readable format:
@@ -150,10 +150,10 @@ Output is the raw JSON chat file. Display in readable format:
 
 ```bash
 # List all chats
-bash scripts/chat/list.sh
+npx tsx scripts/chat/list.ts
 
 # Filter by status
-CHAT_STATUS="active" bash scripts/chat/list.sh
+CHAT_STATUS="active" npx tsx scripts/chat/list.ts
 ```
 
 Display in table format:
@@ -176,7 +176,7 @@ Display in table format:
 CHAT_ID="pr-123" \
 CHAT_RESPONSE="Looks good, approve it" \
 CHAT_RESPONDER="ou_developer" \
-bash scripts/chat/response.sh
+npx tsx scripts/chat/response.ts
 ```
 
 **Idempotency**: If a response already exists, the script rejects the write (prevents accidental overwrites).
@@ -254,8 +254,7 @@ workspace/chats/
 | Duplicate `id` | Report "Chat {id} already exists" |
 | Invalid chat ID (path traversal) | Report "Invalid chat ID" and reject immediately |
 | Duplicate response | Report "Chat {id} already has a response" and reject |
-| `jq` not available | Exit with error (required dependency) |
-| `flock` not available | Exit with error (Linux-only requirement) |
+| `tsx` / Node.js not available | Exit with error (required dependency) |
 
 ## Example: PR Review Chat
 
@@ -267,7 +266,7 @@ CHAT_EXPIRES_AT="2026-03-24T22:00:00Z" \
 CHAT_GROUP_NAME="PR #123: Fix auth bug" \
 CHAT_MEMBERS='["ou_developer"]' \
 CHAT_CONTEXT='{"prNumber": 123, "repository": "hs3180/disclaude"}' \
-bash scripts/chat/create.sh
+npx tsx scripts/chat/create.ts
 ```
 
 ### Schedule Activates (automatic)
