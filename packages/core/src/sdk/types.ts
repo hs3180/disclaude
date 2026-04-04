@@ -192,6 +192,8 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /** System prompt appendage (e.g., SOUL.md content) injected after the main system prompt */
+  systemPromptAppend?: string;
 }
 
 // ============================================================================

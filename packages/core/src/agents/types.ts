@@ -249,6 +249,12 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * System prompt appendage (e.g., SOUL.md content).
+   * Injected after the main system prompt to define Agent personality/behavior.
+   * Issue #1315
+   */
+  systemPromptAppend?: string;
 }
 
 /**

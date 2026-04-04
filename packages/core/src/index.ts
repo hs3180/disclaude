@@ -223,6 +223,12 @@ export type {
   TaskDefinitionDetails,
 } from './task/index.js';
 
+// SOUL.md module (Issue #1315: Agent personality/behavior definition system)
+export {
+  SoulLoader,
+  type SoulLoadResult,
+} from './soul/index.js';
+
 export {
   DialogueMessageTracker,
   TaskTracker,

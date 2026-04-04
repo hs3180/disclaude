@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1315: SOUL.md personality system
+  SoulLoader,
 } from '@disclaude/core';
 import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -471,9 +473,30 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #1315: Load global soul and pass as systemPromptAppend fallback
+    let globalSoulAppend: string | undefined;
+    const soulConfig = Config.getSoulConfig();
+    if (soulConfig?.path) {
+      const soulLoader = new SoulLoader(soulConfig.path);
+      const soulResult = await soulLoader.load();
+      if (soulResult) {
+        globalSoulAppend = soulResult.content;
+        logger.info({ soulPath: soulConfig.path }, 'Global SOUL.md loaded');
+      }
+    }
+
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, systemPromptAppend) => {
+        // Per-task soul takes precedence over global soul
+        const effectiveSoul = systemPromptAppend ?? globalSoulAppend;
+        return AgentFactory.createScheduleAgent(
+          chatId,
+          toPilotCallbacks(callbacks),
+          {
+            ...(model ? { model } : {}),
+            ...(effectiveSoul ? { systemPromptAppend: effectiveSoul } : {}),
+          }
+        );
       },
       callbacks: schedulerCallbacks,
     });

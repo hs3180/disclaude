@@ -26,6 +26,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { SoulLoader } from '../soul/loader.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -57,8 +58,15 @@ export interface SchedulerCallbacks {
  * @param prompt - The task prompt to execute
  * @param userId - Optional user ID for context
  * @param model - Optional model override for this task (Issue #1338)
+ * @param systemPromptAppend - Optional per-task soul content (Issue #1315)
  */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string) => Promise<void>;
+export type TaskExecutor = (
+  chatId: string,
+  prompt: string,
+  userId?: string,
+  model?: string,
+  systemPromptAppend?: string
+) => Promise<void>;
 
 /**
  * Scheduler options.
@@ -295,9 +303,29 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
+      // Issue #1315: Load per-task soul if configured
+      let perTaskSoulContent: string | undefined;
+      if (task.soul) {
+        const soulLoader = new SoulLoader(task.soul);
+        const soulResult = await soulLoader.load();
+        if (soulResult) {
+          perTaskSoulContent = soulResult.content;
+          logger.info(
+            { taskId: task.id, soulPath: task.soul },
+            'Per-task soul loaded for scheduled task'
+          );
+        } else {
+          logger.warn(
+            { taskId: task.id, soulPath: task.soul },
+            'Failed to load per-task soul, using default personality'
+          );
+        }
+      }
+
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      // Issue #1315: Pass per-task soul content for personality override
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, perTaskSoulContent);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'soul':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
