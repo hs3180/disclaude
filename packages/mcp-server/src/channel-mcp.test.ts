@@ -48,6 +48,9 @@ const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
 const mocked_register_temp_chat = vi.mocked(register_temp_chat);
 
+// Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
+const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+
 function getHandler(name: string) {
   const def = channelToolDefinitions.find(d => d.name === name);
   if (!def) { throw new Error(`Tool "${name}" not found`); }
@@ -66,7 +69,7 @@ describe('send_text handler', () => {
 
   it('should return success without isError on successful send', async () => {
     mocked_send_text.mockResolvedValue({ success: true, message: '✅ Message sent' });
-    const result = await handler({ text: 'Hello', chatId: 'oc_123' });
+    const result = await handler({ text: 'Hello', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ Message sent');
@@ -74,7 +77,7 @@ describe('send_text handler', () => {
 
   it('should return isError: true when send fails', async () => {
     mocked_send_text.mockResolvedValue({ success: false, message: '❌ Send failed' });
-    const result = await handler({ text: 'Hello', chatId: 'oc_123' });
+    const result = await handler({ text: 'Hello', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('❌ Send failed');
@@ -82,7 +85,7 @@ describe('send_text handler', () => {
 
   it('should return isError: true when send throws', async () => {
     mocked_send_text.mockRejectedValue(new Error('Network error'));
-    const result = await handler({ text: 'Hello', chatId: 'oc_123' });
+    const result = await handler({ text: 'Hello', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Network error');
@@ -103,7 +106,7 @@ describe('send_card handler', () => {
         header: { title: { tag: 'plain_text', content: 'Test' } },
         elements: [],
       },
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBeUndefined();
@@ -111,19 +114,19 @@ describe('send_card handler', () => {
   });
 
   it('should return isError: true for invalid card type', async () => {
-    const result = await handler({ card: 'not-an-object', chatId: 'oc_123' });
+    const result = await handler({ card: 'not-an-object', chatId: VALID_CHAT_ID });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid card');
   });
 
   it('should return isError: true for array card', async () => {
-    const result = await handler({ card: [], chatId: 'oc_123' });
+    const result = await handler({ card: [], chatId: VALID_CHAT_ID });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid card');
   });
 
   it('should return isError: true for null card', async () => {
-    const result = await handler({ card: null, chatId: 'oc_123' });
+    const result = await handler({ card: null, chatId: VALID_CHAT_ID });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid card');
   });
@@ -145,7 +148,7 @@ describe('send_card handler', () => {
         header: { title: { tag: 'plain_text', content: 'Test' } },
         elements: [],
       },
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBe(true);
@@ -160,7 +163,7 @@ describe('send_card handler', () => {
         header: { title: { tag: 'plain_text', content: 'Test' } },
         elements: [],
       },
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBe(true);
@@ -179,7 +182,7 @@ describe('send_interactive handler', () => {
     const result = await handler({
       question: 'Pick one',
       options: [{ text: 'A', value: 'a' }],
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBeUndefined();
@@ -190,7 +193,7 @@ describe('send_interactive handler', () => {
     const result = await handler({
       question: '',
       options: [{ text: 'A', value: 'a' }],
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid question');
@@ -200,7 +203,7 @@ describe('send_interactive handler', () => {
     const result = await handler({
       question: 'Pick one',
       options: [],
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid options');
@@ -221,7 +224,7 @@ describe('send_interactive handler', () => {
     const result = await handler({
       question: 'Pick one',
       options: [{ text: 'A', value: 'a' }],
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBe(true);
@@ -233,7 +236,7 @@ describe('send_interactive handler', () => {
     const result = await handler({
       question: 'Pick one',
       options: [{ text: 'A', value: 'a' }],
-      chatId: 'oc_123',
+      chatId: VALID_CHAT_ID,
     });
 
     expect(result.isError).toBe(true);
@@ -255,7 +258,7 @@ describe('send_file handler', () => {
       fileSize: 0,
       sizeMB: '0.00',
     });
-    const result = await handler({ filePath: 'test.txt', chatId: 'oc_123' });
+    const result = await handler({ filePath: 'test.txt', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ File sent');
@@ -268,7 +271,7 @@ describe('send_file handler', () => {
       message: '⚠️ File cannot be sent: Platform is not configured.',
       error: 'Platform credentials not configured',
     });
-    const result = await handler({ filePath: 'test.txt', chatId: 'oc_123' });
+    const result = await handler({ filePath: 'test.txt', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Platform is not configured');
@@ -280,7 +283,7 @@ describe('send_file handler', () => {
       message: '❌ File upload requires IPC connection.',
       error: 'IPC not available',
     });
-    const result = await handler({ filePath: 'test.txt', chatId: 'oc_123' });
+    const result = await handler({ filePath: 'test.txt', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('IPC connection');
@@ -288,7 +291,7 @@ describe('send_file handler', () => {
 
   it('should return isError: true when upload fails', async () => {
     mocked_send_file.mockRejectedValue(new Error('Failed to upload file via IPC'));
-    const result = await handler({ filePath: 'test.txt', chatId: 'oc_123' });
+    const result = await handler({ filePath: 'test.txt', chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Failed to upload file via IPC');
@@ -306,7 +309,7 @@ describe('register_temp_chat handler', () => {
       success: true,
       message: '✅ Temporary chat registered',
     });
-    const result = await handler({ chatId: 'oc_123' });
+    const result = await handler({ chatId: VALID_CHAT_ID });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ Temporary chat registered');
