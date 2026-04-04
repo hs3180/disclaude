@@ -7,6 +7,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger, getIpcClient } from '@disclaude/core';
+import { getChatIdValidationError } from '../utils/chat-id-validator.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
@@ -42,6 +43,12 @@ export async function send_file(params: {
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
+
+    // Issue #1641: Validate chatId format before IPC call
+    const chatIdError = getChatIdValidationError(chatId);
+    if (chatIdError) {
+      return { success: false, error: chatIdError, message: `❌ ${chatIdError}` };
+    }
 
     const { appId, appSecret } = getFeishuCredentials();
 

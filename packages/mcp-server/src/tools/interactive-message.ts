@@ -21,6 +21,7 @@ import {
   type FeishuHandlersContainer,
 } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { getChatIdValidationError } from '../utils/chat-id-validator.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
 
@@ -95,6 +96,12 @@ export async function send_interactive_message(params: {
         error: 'chatId is required',
         message: '❌ chatId 参数不能为空',
       };
+    }
+
+    // Issue #1641: Validate chatId format before IPC call
+    const chatIdError = getChatIdValidationError(chatId);
+    if (chatIdError) {
+      return { success: false, error: chatIdError, message: `❌ ${chatIdError}` };
     }
 
     // Validate options structure

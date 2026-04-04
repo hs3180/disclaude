@@ -8,6 +8,7 @@
  */
 
 import { createLogger, getIpcClient } from '@disclaude/core';
+import { getChatIdValidationError } from '../utils/chat-id-validator.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
@@ -58,6 +59,12 @@ export async function send_text(params: {
     }
     if (!chatId) {
       throw new Error('chatId is required');
+    }
+
+    // Issue #1641: Validate chatId format before IPC call
+    const chatIdError = getChatIdValidationError(chatId);
+    if (chatIdError) {
+      return { success: false, error: chatIdError, message: `❌ ${chatIdError}` };
     }
 
     const { appId, appSecret } = getFeishuCredentials();
