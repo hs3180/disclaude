@@ -5,3 +5,4 @@
  */
 
 export { isValidFeishuCard, getCardValidationError } from './card-validator.js';
+export { isValidChatId, getChatIdValidationError } from './chat-id-validator.js';
