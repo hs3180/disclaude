@@ -609,6 +609,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the PassiveModeManager instance.
+   * Issue #2069: Allows external initialization from persisted records.
+   */
+  getPassiveModeManager(): PassiveModeManager {
+    return this.passiveModeManager;
+  }
+
+  /**
    * Get the InteractionManager for this channel.
    */
   getInteractionManager(): InteractionManager {

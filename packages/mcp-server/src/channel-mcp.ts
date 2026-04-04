@@ -366,6 +366,7 @@ For display-only cards, use send_card instead.
     },
   },
   // Issue #1703: Temp chat lifecycle management
+  // Issue #2069: Added passiveMode for declarative passive mode configuration
   {
     name: 'register_temp_chat',
     description: `Register a temporary chat for automatic lifecycle management.
@@ -378,25 +379,28 @@ Use this after creating a group chat that should be temporary.
 - **expiresAt**: ISO timestamp for expiry (optional, defaults to 24h)
 - **creatorChatId**: The originating chat ID (optional, for notifications)
 - **context**: Arbitrary context data (optional, for consumer identification)
+- **passiveMode**: Set to \`false\` to disable passive mode (bot responds to all messages). Default/true = passive mode enabled (bot only responds to @mentions). (optional)
 
 ## Example
 \`\`\`json
-{"chatId": "oc_xxx", "expiresAt": "2026-03-28T10:00:00.000Z", "context": {"prNumber": 123}}
+{"chatId": "oc_xxx", "expiresAt": "2026-03-28T10:00:00.000Z", "passiveMode": false, "context": {"prNumber": 123}}
 \`\`\``,
     parameters: z.object({
       chatId: z.string().describe('The chat ID to track'),
       expiresAt: z.string().optional().describe('ISO timestamp for expiry (defaults to 24h)'),
       creatorChatId: z.string().optional().describe('The originating chat ID'),
       context: z.record(z.string(), z.unknown()).optional().describe('Arbitrary context data'),
+      passiveMode: z.boolean().optional().describe('Set to false to disable passive mode (bot responds to all messages)'),
     }),
-    handler: async ({ chatId, expiresAt, creatorChatId, context }: {
+    handler: async ({ chatId, expiresAt, creatorChatId, context, passiveMode }: {
       chatId: string;
       expiresAt?: string;
       creatorChatId?: string;
       context?: Record<string, unknown>;
+      passiveMode?: boolean;
     }) => {
       // register_temp_chat handles all errors internally and returns { success, message }
-      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context });
+      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, passiveMode });
       return toolSuccess(result.message);
     },
   },

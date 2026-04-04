@@ -5,6 +5,7 @@
  * The Primary Node will automatically dissolve expired chats.
  *
  * Issue #1703: Temp chat lifecycle management.
+ * Issue #2069: Added passiveMode for declarative passive mode configuration.
  *
  * @module mcp-server/tools/register-temp-chat
  */
@@ -22,16 +23,18 @@ const logger = createLogger('RegisterTempChat');
  * @param params.expiresAt - Optional ISO timestamp for expiry (defaults to 24h)
  * @param params.creatorChatId - Optional originating chat ID
  * @param params.context - Optional arbitrary context data
+ * @param params.passiveMode - Optional declarative passive mode (false = disabled, true/undefined = default)
  */
 export async function register_temp_chat(params: {
   chatId: string;
   expiresAt?: string;
   creatorChatId?: string;
   context?: Record<string, unknown>;
+  passiveMode?: boolean;
 }): Promise<RegisterTempChatResult> {
-  const { chatId, expiresAt, creatorChatId, context } = params;
+  const { chatId, expiresAt, creatorChatId, context, passiveMode } = params;
 
-  logger.info({ chatId, expiresAt, creatorChatId }, 'register_temp_chat called');
+  logger.info({ chatId, expiresAt, creatorChatId, passiveMode }, 'register_temp_chat called');
 
   try {
     // Check IPC availability
@@ -46,7 +49,7 @@ export async function register_temp_chat(params: {
     }
 
     const ipcClient = getIpcClient();
-    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context);
+    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context, passiveMode);
 
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
@@ -58,12 +61,13 @@ export async function register_temp_chat(params: {
       };
     }
 
-    logger.info({ chatId, expiresAt: result.expiresAt }, 'Temp chat registered');
+    logger.info({ chatId, expiresAt: result.expiresAt, passiveMode }, 'Temp chat registered');
+    const modeDesc = passiveMode === false ? ', passive mode: disabled' : '';
     return {
       success: true,
       chatId: result.chatId,
       expiresAt: result.expiresAt,
-      message: `✅ Temporary chat registered (chatId: ${result.chatId ?? chatId}, expiresAt: ${result.expiresAt ?? '24h default'})`,
+      message: `✅ Temporary chat registered (chatId: ${result.chatId ?? chatId}, expiresAt: ${result.expiresAt ?? '24h default'}${modeDesc})`,
     };
 
   } catch (error) {
