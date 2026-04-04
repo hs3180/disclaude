@@ -194,7 +194,7 @@ describe('Pilot', () => {
         { role: 'user' as const, content: 'hello', metadata: { chatId: 'oc_wrong' } },
       ];
       const gen = async function* () {
-        for (const msg of messages) yield msg;
+        for (const msg of messages) {yield msg;}
       };
 
       const results = [];
@@ -210,7 +210,7 @@ describe('Pilot', () => {
         { role: 'user' as const, content: 'hello', metadata: { chatId: 'oc_test_chat' } },
       ];
       const gen = async function* () {
-        for (const msg of messages) yield msg;
+        for (const msg of messages) {yield msg;}
       };
 
       const results = [];

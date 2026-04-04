@@ -22,7 +22,7 @@ vi.mock('./credentials.js', () => ({
 vi.mock('./ipc-utils.js', () => ({
   isIpcAvailable: vi.fn(),
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
-    if (type === 'ipc_unavailable') return '❌ IPC 服务不可用。';
+    if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }),
 }));
@@ -137,6 +137,7 @@ describe('send_text', () => {
     });
 
     it('should handle non-Error objects in catch', async () => {
+      // eslint-disable-next-line no-throw-literal
       vi.mocked(getIpcClient).mockImplementation(() => { throw 'string error'; });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
