@@ -10,7 +10,7 @@
  * @see Issue #1839
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Config, createDefaultRuntimeContext } from './index.js';
 import {
   setLoadedConfig,
@@ -158,14 +158,25 @@ describe('createDefaultRuntimeContext()', () => {
   });
 
   it('should wire getAgentConfig to Config.getAgentConfig()', () => {
-    createDefaultRuntimeContext();
+    // Mock getAgentConfig to avoid requiring API key in CI
+    const mockAgentConfig = vi.spyOn(Config, 'getAgentConfig').mockReturnValue({
+      apiKey: 'test-key',
+      model: 'test-model',
+      provider: 'glm',
+    });
 
-    const ctx = getRuntimeContext();
-    const agentConfig = ctx.getAgentConfig();
-    expect(agentConfig).toBeDefined();
-    expect(typeof agentConfig.apiKey).toBe('string');
-    expect(typeof agentConfig.model).toBe('string');
-    expect(typeof agentConfig.provider).toBe('string');
+    try {
+      createDefaultRuntimeContext();
+
+      const ctx = getRuntimeContext();
+      const agentConfig = ctx.getAgentConfig();
+      expect(agentConfig).toBeDefined();
+      expect(agentConfig.apiKey).toBe('test-key');
+      expect(agentConfig.model).toBe('test-model');
+      expect(agentConfig.provider).toBe('glm');
+    } finally {
+      mockAgentConfig.mockRestore();
+    }
   });
 
   it('should support platform-specific overrides', () => {
