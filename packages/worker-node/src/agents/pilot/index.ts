@@ -322,6 +322,26 @@ export class Pilot extends BaseAgent implements ChatAgent {
       // Attempt delivery with one retry on failure — channel may have been closed
       // between session start and this point due to an agent loop crash.
       if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
+        // Don't retry if session was intentionally closed (e.g., /reset).
+        // Retrying would re-create the session the user just terminated.
+        if (!this.isSessionActive) {
+          this.logger.info({ chatId, messageId }, 'handleInput: session is not active, skipping retry');
+          yield {
+            content: '⚠️ 当前会话已重置，请直接发送新消息。',
+            role: 'assistant',
+            messageType: 'text',
+          };
+          continue;
+        }
+
+        // Cancel old query to prevent orphaned processIterator from sending
+        // duplicate messages while the new session starts.
+        if (this.queryHandle) {
+          this.logger.info({ chatId }, 'handleInput: cancelling old queryHandle before retry');
+          this.queryHandle.cancel();
+          this.queryHandle = undefined;
+        }
+
         this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
         try {
           this.startAgentLoop();
