@@ -225,31 +225,60 @@ export class MessageLogger {
 
   /**
    * Get chat history as formatted string.
-   * Reads the most recent chat log file.
+   *
+   * Reads chat log files from multiple days (up to `historyDays` from config),
+   * sorted newest-first, and concatenates them for full context restoration.
+   *
+   * Issue #1863 Fix: Previously only read the most recent day's log,
+   * causing cross-day conversation history to be truncated.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @returns Concatenated chat history or undefined if no history found
    */
   async getChatHistory(chatId: string): Promise<string | undefined> {
     try {
-      // Find the most recent log file for this chat
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
-      // Filter to date directories
+      // Filter to date directories, sorted descending (newest first)
       const dateDirs = entries
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-        .sort((a, b) => b.name.localeCompare(a.name)); // Sort descending (newest first)
+        .sort((a, b) => b.name.localeCompare(a.name));
 
-      for (const dir of dateDirs) {
+      // Read up to historyDays of logs
+      const sessionConfig = Config.getSessionRestoreConfig();
+      const maxDays = sessionConfig.historyDays;
+      const maxLength = sessionConfig.maxContextLength;
+      const historyParts: string[] = [];
+
+      for (let i = 0; i < Math.min(dateDirs.length, maxDays); i++) {
+        const dir = dateDirs[i];
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
           if (content.trim()) {
-            return content;
+            // Add date header separator between days for readability
+            if (historyParts.length > 0) {
+              historyParts.push(`\n--- *${dir.name}* ---\n\n`);
+            }
+            historyParts.push(content.trim());
           }
         } catch {
-          // File doesn't exist, try next directory
+          // File doesn't exist for this day, continue
         }
       }
 
-      return undefined;
+      if (historyParts.length === 0) {
+        return undefined;
+      }
+
+      const combined = historyParts.join('\n');
+
+      // Truncate from the beginning if exceeding maxContextLength (keep recent history)
+      if (combined.length > maxLength) {
+        return combined.slice(-maxLength);
+      }
+
+      return combined;
     } catch {
       return undefined;
     }

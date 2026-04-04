@@ -288,8 +288,12 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     });
   }
 
-  protected doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected doSendMessage(message: OutgoingMessage): Promise<string | void> {
     const messageId = this.chatToMessage.get(message.chatId);
+
+    // Issue #1619: Return messageId for callers that need it (e.g., action prompt matching).
+    // REST channel messageIds are synthetic, assigned during request intake.
+    // For 'done' and 'text' types, messageId corresponds to the original request.
 
     // Handle 'done' type - task completion signal
     if (message.type === 'done') {
@@ -378,7 +382,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
     }
 
-    return Promise.resolve();
+    return Promise.resolve(messageId);
   }
 
   protected checkHealth(): boolean {
