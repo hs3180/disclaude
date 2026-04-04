@@ -108,6 +108,12 @@ export class MessageHandler {
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
 
+  /**
+   * Optional async check for whether a chat is a temporary chat.
+   * Issue #2018: Temp chats should auto-disable passive mode by default.
+   */
+  private tempChatCheckFn?: (chatId: string) => Promise<boolean>;
+
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
   /**
@@ -120,6 +126,7 @@ export class MessageHandler {
     callbacks: MessageCallbacks;
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
+    tempChatCheckFn?: (chatId: string) => Promise<boolean>;
   }) {
     this.passiveModeManager = options.passiveModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -127,6 +134,7 @@ export class MessageHandler {
     this.callbacks = options.callbacks;
     this.isRunning = options.isRunning;
     this.getHasControlHandler = options.hasControlHandler;
+    this.tempChatCheckFn = options.tempChatCheckFn;
     this.controlHandler = false;
   }
 
@@ -144,6 +152,16 @@ export class MessageHandler {
    */
   setControlHandler(hasHandler: boolean): void {
     this.controlHandler = hasHandler;
+  }
+
+  /**
+   * Set the temp chat check function.
+   * Issue #2018: Temp chats should auto-disable passive mode by default.
+   *
+   * @param fn - Async function that returns true if the chat is a temporary chat
+   */
+  setTempChatCheck(fn: (chatId: string) => Promise<boolean>): void {
+    this.tempChatCheckFn = fn;
   }
 
   /**
@@ -819,9 +837,15 @@ export class MessageHandler {
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Group chat passive mode
+    // Issue #2018: Temp chats auto-disable passive mode unless explicitly configured.
+    // Check order: explicit setting takes priority, then fall back to temp chat default.
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
     const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
+    const hasExplicitSetting = this.passiveModeManager.hasExplicitSetting(chat_id);
+    const isTempChat = !hasExplicitSetting && this.tempChatCheckFn
+      ? await this.tempChatCheckFn(chat_id)
+      : false;
+    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isTempChat && !isPassiveCommand) {
       logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
       this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;

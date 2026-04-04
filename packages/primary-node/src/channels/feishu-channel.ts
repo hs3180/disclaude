@@ -600,12 +600,24 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.passiveModeManager.isPassiveModeDisabled(chatId);
   }
 
+  hasPassiveModeSetting(chatId: string): boolean {
+    return this.passiveModeManager.hasExplicitSetting(chatId);
+  }
+
   setPassiveModeDisabled(chatId: string, disabled: boolean): void {
     this.passiveModeManager.setPassiveModeDisabled(chatId, disabled);
   }
 
   getPassiveModeDisabledChats(): string[] {
     return this.passiveModeManager.getPassiveModeDisabledChats();
+  }
+
+  /**
+   * Set the temp chat check function on the message handler.
+   * Issue #2018: Temp chats should auto-disable passive mode by default.
+   */
+  setTempChatCheck(fn: (chatId: string) => Promise<boolean>): void {
+    this.feishuMessageHandler.setTempChatCheck(fn);
   }
 
   /**

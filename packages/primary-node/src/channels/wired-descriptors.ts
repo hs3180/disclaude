@@ -155,6 +155,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         feishuChannel.setPassiveModeDisabled(chatId, !enabled),
     };
 
+    // 2.5 Issue #2018: Wire temp chat check for auto-disable passive mode.
+    // Temporary chats should respond to all messages by default, unless the user
+    // explicitly configures passive mode via /passive command.
+    const chatStore = context.primaryNode.getChatStore();
+    feishuChannel.setTempChatCheck(async (chatId: string) => {
+      try {
+        const record = await chatStore.getTempChat(chatId);
+        return record !== null;
+      } catch {
+        return false;
+      }
+    });
+
     // 3. Register IPC handlers for MCP Server connections
     // Base handlers reuse the same channel.sendMessage pattern as PilotCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
