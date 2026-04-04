@@ -165,8 +165,8 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   if (!isValidStatus(obj.status)) {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'status': '${obj.status}'`);
   }
-  if (typeof obj.expiresAt !== 'string') {
-    throw new ValidationError(`Chat file '${filePath}' has missing or invalid 'expiresAt'`);
+  if (typeof obj.expiresAt !== 'string' || !UTC_DATETIME_REGEX.test(obj.expiresAt)) {
+    throw new ValidationError(`Chat file '${filePath}' has missing or invalid 'expiresAt' (must be UTC Z-suffix)`);
   }
   if (
     !obj.createGroup ||
@@ -175,6 +175,28 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
     !Array.isArray((obj.createGroup as Record<string, unknown>).members)
   ) {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'createGroup'`);
+  }
+
+  // Validate members format
+  const members = (obj.createGroup as Record<string, unknown>).members;
+  for (const member of members) {
+    if (typeof member !== 'string' || !MEMBER_ID_REGEX.test(member)) {
+      throw new ValidationError(`Chat file '${filePath}' has invalid member ID '${member}'`);
+    }
+  }
+
+  // Validate optional fields with type checks
+  if (obj.chatId !== null && typeof obj.chatId !== 'string') {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'chatId'`);
+  }
+  if (obj.activatedAt !== null && typeof obj.activatedAt !== 'string') {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'activatedAt'`);
+  }
+  if (obj.failedAt !== null && typeof obj.failedAt !== 'string') {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'failedAt'`);
+  }
+  if (typeof obj.activationAttempts !== 'number' || obj.activationAttempts < 0) {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'activationAttempts'`);
   }
 
   return data as ChatFile;

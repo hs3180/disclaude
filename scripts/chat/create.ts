@@ -102,11 +102,12 @@ async function main() {
     // Double-check file doesn't exist
     try {
       await stat(chatFile);
-      exit(`Chat ${chatId} already exists`);
+      throw new ValidationError(`Chat ${chatId} already exists`);
     } catch (err: unknown) {
-      // @ts-expect-error - checking error code
-      if (err?.code !== 'ENOENT') {
-        exit(`Failed to check chat file: ${err}`);
+      if (err instanceof ValidationError) throw err;
+      const nodeErr = err as { code?: string };
+      if (nodeErr.code !== 'ENOENT') {
+        throw new Error(`Failed to check chat file: ${err}`);
       }
     }
 
