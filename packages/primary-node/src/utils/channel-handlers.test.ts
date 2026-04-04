@@ -214,6 +214,24 @@ describe('createChannelCallbacksFactory', () => {
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith({ chatId: 'chat-001' }, 'Task completed');
   });
+
+  it('should NOT include getChatHistory when not provided in options', () => {
+    const factory = createChannelCallbacksFactory(channel, mockLogger);
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeUndefined();
+  });
+
+  it('should include getChatHistory callback when provided in options', async () => {
+    const mockGetChatHistory = vi.fn().mockResolvedValue('chat history content');
+    const factory = createChannelCallbacksFactory(channel, mockLogger, {
+      getChatHistory: mockGetChatHistory,
+    });
+    const callbacks = factory('chat-001');
+    expect(callbacks.getChatHistory).toBeDefined();
+    const history = await callbacks.getChatHistory!('chat-001');
+    expect(mockGetChatHistory).toHaveBeenCalledWith('chat-001');
+    expect(history).toBe('chat history content');
+  });
 });
 
 // ============================================================================
@@ -346,10 +364,41 @@ describe('createDefaultMessageHandler', () => {
       expect.objectContaining({
         chatId: 'chat-001',
         messageId: 'msg-001',
+        messageType: 'text',
         contentLength: 13,
         hasAttachments: false,
       }),
       'Processing message from My Custom Channel',
+    );
+  });
+
+  it('should log messageType for card action messages (Issue #2007)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+    });
+    const cardMessage = createMockMessage({
+      messageType: 'card',
+      content: 'User clicked confirm button',
+      messageId: 'card-msg-001-action1',
+    });
+    await handler(cardMessage);
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageType: 'card',
+        chatId: 'chat-001',
+        messageId: 'card-msg-001-action1',
+      }),
+      'Processing message from Feishu channel',
+    );
+    // Verify the card message is still forwarded to the agent
+    const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
+    expect(agent.processMessage).toHaveBeenCalledWith(
+      'chat-001',
+      'User clicked confirm button',
+      'card-msg-001-action1',
+      'user-001',
+      undefined,
+      undefined,
     );
   });
 

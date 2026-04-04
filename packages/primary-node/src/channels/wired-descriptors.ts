@@ -22,6 +22,7 @@ import {
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
+import { messageLogger } from './feishu/message-logger.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -98,7 +99,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: false,
+      // Issue #1863: Wire getChatHistory callback for session restoration
+      getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
@@ -182,17 +187,17 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         // Build card using extracted builder (Primary Node owns the full card lifecycle)
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
-        await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
+        // Issue #1619: sendMessage now returns real messageId from Feishu API.
+        // Use real messageId for action prompt matching; fall back to synthetic ID.
+        const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
+        const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
 
         // Build action prompts: use caller-provided prompts or generate defaults
         const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
           ? actionPrompts
           : buildActionPrompts(options);
 
-        // Issue #1570: Return synthetic messageId for action prompt registration
-        const syntheticMessageId = `interactive_${chatId}_${Date.now()}`;
-
-        return { messageId: syntheticMessageId, actionPrompts: resolvedActionPrompts };
+        return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
       registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown> }) => {
