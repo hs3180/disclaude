@@ -120,6 +120,18 @@ export interface RuliuConfig {
 }
 
 /**
+ * Research mode configuration section.
+ * Controls the Research mode feature for isolated project workspaces.
+ * @see Issue #1709
+ */
+export interface ResearchConfig {
+  /** Enable/disable research mode feature (default: false) */
+  enabled?: boolean;
+  /** Directory suffix for research workspaces (default: "research") */
+  workspaceSuffix?: string;
+}
+
+/**
  * Logging configuration section.
  */
 export interface LoggingConfig {
@@ -320,6 +332,8 @@ export interface DisclaudeConfig {
   transport?: TransportConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** Research mode configuration (Issue #1709) */
+  research?: ResearchConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */

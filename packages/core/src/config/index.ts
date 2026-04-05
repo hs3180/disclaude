@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ResearchConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -454,6 +455,21 @@ export class Config {
    */
   static isAgentTeamsEnabled(): boolean {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
+  }
+
+  /**
+   * Get research mode configuration.
+   * Controls the Research mode feature for isolated project workspaces.
+   * @see Issue #1709
+   *
+   * @returns Research configuration with defaults
+   */
+  static getResearchConfig(): ResearchConfig & { enabled: boolean } {
+    const config = fileConfigOnly.research || {};
+    return {
+      enabled: config.enabled ?? false,
+      workspaceSuffix: config.workspaceSuffix ?? 'research',
+    };
   }
 
   /**

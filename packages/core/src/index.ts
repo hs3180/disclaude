@@ -309,3 +309,13 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Modes module - agent mode switching (Issue #1709)
+export {
+  ResearchModeManager,
+  type AgentMode,
+  type ResearchConfig,
+  type ResearchModeState,
+  type ActivateResearchResult,
+  type IResearchModeManager,
+} from './modes/index.js';

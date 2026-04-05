@@ -52,6 +52,16 @@ export interface ControlHandlerContext {
     setEnabled(chatId: string, enabled: boolean): void;
   };
 
+  /** Research 模式管理（可选，Issue #1709） */
+  researchMode?: {
+    activateResearch(project: string): { cwd: string; created: boolean; claudeMdWritten: boolean };
+    deactivateResearch(): string | null;
+    listResearchProjects(): string[];
+    isActive(): boolean;
+    getCurrentProject(): string | null;
+    getEffectiveCwd(): string;
+  };
+
   /** 日志记录器 */
   logger?: Logger;
 }

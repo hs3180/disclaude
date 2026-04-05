@@ -129,7 +129,9 @@ export type ControlCommandType =
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive';
+  | 'passive'
+  // Research mode control (Issue #1709)
+  | 'research';
 
 /**
  * Control command from user to agent.

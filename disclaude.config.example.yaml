@@ -244,6 +244,22 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Research Mode Configuration (Issue #1709)
+# -----------------------------------------------------------------------------
+# Controls the Research mode feature for isolated project workspaces.
+# When enabled, agents can switch to an isolated research workspace with
+# its own CLAUDE.md (project instructions) via /research enter <project>.
+research:
+  # Enable/disable research mode feature
+  # Default: false
+  # enabled: true
+
+  # Directory suffix for research workspaces
+  # Research projects will be stored in: workspace/<suffix>/<project>/
+  # Default: "research"
+  # workspaceSuffix: "research"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.
