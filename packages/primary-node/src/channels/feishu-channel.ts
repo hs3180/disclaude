@@ -35,6 +35,8 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  detectAndStripTrigger,
+  handleDiscussionEnd,
 } from './feishu/index.js';
 
 const logger = createLogger('FeishuChannel');
@@ -416,18 +418,43 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     switch (message.type) {
       case 'text': {
+        // Issue #1229: Check for discussion-end trigger phrase in text messages.
+        // Only text type messages are checked (not rich text/cards).
+        const triggerResult = detectAndStripTrigger(message.text || '');
+        let textToSend = message.text || '';
+
+        if (triggerResult) {
+          textToSend = triggerResult.cleanText || '';
+          logger.info(
+            { chatId: message.chatId, trigger: triggerResult.trigger.phrase, reason: triggerResult.trigger.reason },
+            'Discussion-end trigger detected in outgoing text message'
+          );
+        }
+
         // Issue #1742: If mentions are provided, send as post (rich text) with @mention tags
         if (message.mentions && message.mentions.length > 0) {
-          const postContent = this.buildPostContentWithMentions(message.mentions, message.text || '');
+          const postContent = this.buildPostContentWithMentions(message.mentions, textToSend);
           const messageId = await sendFeishuMessage('post', JSON.stringify(postContent));
           logger.debug({ chatId: message.chatId, messageId, mentionCount: message.mentions.length, threadReply: useThreadReply }, 'Post message (with mentions) sent');
+          // Issue #1229: After sending, handle discussion end (fire-and-forget)
+          if (triggerResult) {
+            handleDiscussionEnd(message.chatId, triggerResult.trigger).catch(() => {
+              // Error already logged inside handleDiscussionEnd
+            });
+          }
           return messageId;
         }
         const messageId = await sendFeishuMessage(
           'text',
-          JSON.stringify({ text: message.text || '' }),
+          JSON.stringify({ text: textToSend }),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
+        // Issue #1229: After sending, handle discussion end (fire-and-forget)
+        if (triggerResult) {
+          handleDiscussionEnd(message.chatId, triggerResult.trigger).catch(() => {
+            // Error already logged inside handleDiscussionEnd
+          });
+        }
         return messageId;
       }
 

@@ -137,6 +137,9 @@ vi.mock('./feishu/index.js', () => ({
     recordMessageReceived: vi.fn(),
     getMetrics: vi.fn().mockReturnValue(undefined),
   })),
+  // Issue #1229: Discussion end trigger detection and handling
+  detectAndStripTrigger: vi.fn().mockReturnValue(null),
+  handleDiscussionEnd: vi.fn().mockResolvedValue(undefined),
   type: {},
 }));
 

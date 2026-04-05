@@ -39,3 +39,19 @@ export {
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,
 } from './ws-connection-manager.js';
+
+// Discussion End Trigger Detection (Issue #1229)
+export {
+  detectTrigger,
+  detectAndStripTrigger,
+  hasTrigger,
+  parseTriggerPhrase,
+  type TriggerResult,
+} from './trigger-detector.js';
+
+// Discussion End Handler (Issue #1229)
+export {
+  dissolveChat,
+  handleDiscussionEnd,
+  type DissolutionResult,
+} from './discussion-end-handler.js';
