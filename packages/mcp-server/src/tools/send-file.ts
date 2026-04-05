@@ -1,6 +1,8 @@
 /**
  * send_file tool implementation.
  *
+ * Issue #1619: Added parentMessageId (threadId) parameter for thread reply support.
+ *
  * @module mcp-server/tools/send-file
  */
 
@@ -16,13 +18,15 @@ const logger = createLogger('SendFile');
 /**
  * Upload file via IPC to PrimaryNode's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
+ * Issue #1619: Added threadId parameter for thread reply support.
  */
 async function uploadFileViaIpc(
   chatId: string,
-  filePath: string
+  filePath: string,
+  threadId?: string
 ): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
   const ipcClient = getIpcClient();
-  const result = await ipcClient.uploadFile(chatId, filePath);
+  const result = await ipcClient.uploadFile(chatId, filePath, threadId);
   if (!result.success) {
     throw new Error('Failed to upload file via IPC');
   }
@@ -37,8 +41,10 @@ async function uploadFileViaIpc(
 export async function send_file(params: {
   filePath: string;
   chatId: string;
+  /** Optional parent message ID for thread reply (Issue #1619) */
+  parentMessageId?: string;
 }): Promise<SendFileResult> {
-  const { filePath, chatId } = params;
+  const { filePath, chatId, parentMessageId } = params;
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
@@ -57,7 +63,7 @@ export async function send_file(params: {
     const workspaceDir = getWorkspaceDir();
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceDir, filePath);
 
-    logger.debug({ filePath, resolvedPath, chatId }, 'send_file called');
+    logger.debug({ filePath, resolvedPath, chatId, hasParent: !!parentMessageId }, 'send_file called');
 
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) { throw new Error(`Path is not a file: ${filePath}`); }
@@ -75,13 +81,13 @@ export async function send_file(params: {
       };
     }
 
-    logger.debug({ chatId, filePath }, 'Using IPC for file upload');
-    const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath);
+    logger.debug({ chatId, filePath, parentMessageId }, 'Using IPC for file upload');
+    const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath, parentMessageId);
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
     const fileName = path.basename(resolvedPath);
 
-    logger.info({ fileName, fileSize, chatId }, 'File sent successfully');
+    logger.info({ fileName, fileSize, chatId, threadReply: !!parentMessageId }, 'File sent successfully');
 
     return {
       success: true,
