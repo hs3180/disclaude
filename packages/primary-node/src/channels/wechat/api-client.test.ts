@@ -395,4 +395,96 @@ describe('WeChatApiClient', () => {
         .rejects.toThrow('Error code 999');
     });
   });
+
+  describe('getUpdates', () => {
+    it('should return updates from API', async () => {
+      const updates = [
+        {
+          msg_id: 'msg-1',
+          from_user_id: 'user-123',
+          to_user_id: 'bot-456',
+          item_list: [{ type: 1, text_item: { text: 'Hello bot!' } }],
+          create_time: 1710000000,
+        },
+      ];
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: updates })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].msg_id).toBe('msg-1');
+      expect(result[0].from_user_id).toBe('user-123');
+    });
+
+    it('should return empty array on timeout (AbortError)', async () => {
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      mockFetch.mockRejectedValue(abortError);
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array when no updates', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.getUpdates();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should use custom timeout when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      await client.getUpdates({ timeoutMs: 5000 });
+
+      // Verify the request was made
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+    });
+
+    it('should pass signal to the request', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, update_list: [] })),
+      });
+
+      client.setToken('bot-token');
+      const controller = new AbortController();
+      await client.getUpdates({ signal: controller.signal });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('getupdates'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+    });
+
+    it('should throw non-timeout errors', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('bot-token');
+      await expect(client.getUpdates()).rejects.toThrow('Network error');
+    });
+  });
 });

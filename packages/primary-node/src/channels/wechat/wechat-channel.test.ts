@@ -210,9 +210,10 @@ describe('WeChatChannel', () => {
   });
 
   describe('checkHealth', () => {
-    it('should return true when client has token', () => {
+    it('should return true when client has token and message listener is active', () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).messageListener = { isListening: () => true };
       mockHasToken.mockReturnValue(true);
       expect((channel as any).checkHealth()).toBe(true);
     });
@@ -228,12 +229,27 @@ describe('WeChatChannel', () => {
       const channel = new WeChatChannel();
       expect((channel as any).checkHealth()).toBe(false);
     });
+
+    it('should return false when message listener is not active', () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = { hasToken: mockHasToken };
+      (channel as any).messageListener = { isListening: () => false };
+      mockHasToken.mockReturnValue(true);
+      expect((channel as any).checkHealth()).toBe(false);
+    });
   });
 
   describe('getApiClient', () => {
     it('should return undefined when not started', () => {
       const channel = new WeChatChannel();
       expect(channel.getApiClient()).toBeUndefined();
+    });
+  });
+
+  describe('getMessageListener', () => {
+    it('should return undefined when not started', () => {
+      const channel = new WeChatChannel();
+      expect(channel.getMessageListener()).toBeUndefined();
     });
   });
 });
