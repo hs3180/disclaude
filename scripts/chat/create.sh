@@ -61,7 +61,7 @@ if [ -z "${CHAT_MEMBERS:-}" ]; then
   exit 1
 fi
 
-CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
+CHAT_CONTEXT="${CHAT_CONTEXT:-"{}"}"
 
 # Validate CHAT_CONTEXT is valid JSON
 echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {

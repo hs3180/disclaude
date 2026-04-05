@@ -105,6 +105,19 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), `flock` concurrency safety, and `jq` integrity checks.
 
+## Prerequisites
+
+The shell scripts (`scripts/chat/*.sh`) require the following external tools:
+
+| Tool | Required | Purpose | Install |
+|------|----------|---------|---------|
+| `jq` | ✅ Yes | JSON construction and validation | `apk add jq` / `apt-get install jq` / `brew install jq` |
+| `flock` | ✅ Yes | File-based concurrency safety | `apk add util-linux` / (included on macOS) |
+| `date -u` | ✅ Yes | UTC timestamp generation | (usually pre-installed) |
+| `realpath -m` | ⚠️ Warn | Path normalization for non-existent files | GNU coreutils (not available on BusyBox) |
+
+Run `bash scripts/chat/check-deps.sh` to verify all dependencies before first use.
+
 ### 1. Create Chat
 
 **Usage**: `/chat create`
