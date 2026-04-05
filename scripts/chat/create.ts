@@ -3,11 +3,13 @@
  * chat/create.ts — Create a pending chat file.
  *
  * Environment variables:
- *   CHAT_ID         (required) Unique chat identifier (e.g. "pr-123")
- *   CHAT_EXPIRES_AT (required) ISO 8601 Z-suffix expiry timestamp
- *   CHAT_GROUP_NAME (required) Group display name
- *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
- *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_ID            (required) Unique chat identifier (e.g. "pr-123")
+ *   CHAT_EXPIRES_AT    (required) ISO 8601 Z-suffix expiry timestamp
+ *   CHAT_GROUP_NAME    (required) Group display name
+ *   CHAT_MEMBERS       (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
+ *   CHAT_CONTEXT       (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_PASSIVE_MODE  (optional) 'true' to enable passive mode (require @mention),
+ *                                    'false' or unset to disable passive mode (bot responds to all)
  *
  * Exit codes:
  *   0 — success
@@ -83,6 +85,21 @@ async function main() {
     exit(`CHAT_CONTEXT must be valid JSON: ${contextRaw}`);
   }
 
+  // ---- Step 2b: Parse optional passive mode ----
+  // Issue #2018: Default to false (passive mode disabled) for temp chats
+  const passiveModeRaw = process.env.CHAT_PASSIVE_MODE;
+  let passiveMode: boolean | undefined;
+  if (passiveModeRaw !== undefined && passiveModeRaw !== '') {
+    if (passiveModeRaw === 'true') {
+      passiveMode = true;
+    } else if (passiveModeRaw === 'false') {
+      passiveMode = false;
+    } else {
+      exit(`CHAT_PASSIVE_MODE must be 'true' or 'false', got '${passiveModeRaw}'`);
+    }
+  }
+  // When undefined, passive mode defaults to disabled (false) at activation time
+
   const truncatedName = truncateGroupName(groupName!);
 
   // ---- Step 3: Setup directory and resolve path ----
@@ -128,6 +145,7 @@ async function main() {
       activationAttempts: 0,
       lastActivationError: null,
       failedAt: null,
+      passiveMode,
     };
 
     // Atomic write: write to temp file then rename

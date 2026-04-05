@@ -13,7 +13,7 @@
  *   1 — fatal error (missing dependencies)
  */
 
-import { readdir, readFile, writeFile, stat, realpath, rename } from 'node:fs/promises';
+import { readdir, readFile, writeFile, stat, realpath, rename, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -34,6 +34,9 @@ import { acquireLock } from '../chat/lock.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Directory for TempChatRecord files (same as ChatStore storeDir) */
+const TEMP_CHATS_DIR = 'workspace/schedules/.temp-chats';
+
 function exit(msg: string): never {
   console.error(`ERROR: ${msg}`);
   process.exit(1);
@@ -46,6 +49,44 @@ async function atomicWrite(filePath: string, data: string): Promise<void> {
   const tmpFile = `${filePath}.${Date.now()}.tmp`;
   await writeFile(tmpFile, data, 'utf-8');
   await rename(tmpFile, filePath);
+}
+
+/**
+ * Write a TempChatRecord to the .temp-chats directory after activation.
+ *
+ * Issue #2018: After a chat is activated (group created), this registers the
+ * temp chat in ChatStore's storage directory so the Primary Node can:
+ * 1. Load passive mode config at startup via PassiveModeManager.initFromRecords()
+ * 2. Track the chat lifecycle (expiry, cleanup)
+ *
+ * @param chatId - The Feishu chat ID (oc_xxx) from group creation
+ * @param expiresAt - ISO expiry timestamp from the ChatFile
+ * @param passiveMode - Passive mode setting (default: false = disabled)
+ */
+async function registerTempChatRecord(
+  chatId: string,
+  expiresAt: string,
+  passiveMode: boolean | undefined
+): Promise<void> {
+  const tempChatsDir = resolve(TEMP_CHATS_DIR);
+  await mkdir(tempChatsDir, { recursive: true });
+
+  // Issue #2018: Default to false (passive mode disabled) for temp chats
+  const effectivePassiveMode = passiveMode ?? false;
+
+  const record = {
+    chatId,
+    createdAt: nowISO(),
+    expiresAt,
+    passiveMode: effectivePassiveMode,
+  };
+
+  const safeId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filePath = resolve(tempChatsDir, `${safeId}.json`);
+  const tmpFile = `${filePath}.${Date.now()}.tmp`;
+  await writeFile(tmpFile, JSON.stringify(record, null, 2), 'utf-8');
+  await rename(tmpFile, filePath);
+  console.log(`INFO: Registered temp chat ${chatId} (passiveMode=${effectivePassiveMode})`);
 }
 
 async function main() {
@@ -224,6 +265,14 @@ async function main() {
         console.log(`INFO: Chat ${chatId} already has chatId=${currentChat.chatId}, recovering to active`);
         const recovered = { ...currentChat, status: 'active' as const, activatedAt: now };
         await atomicWrite(filePath, JSON.stringify(recovered, null, 2) + '\n');
+
+        // Issue #2018: Ensure temp chat record exists for recovery cases
+        try {
+          await registerTempChatRecord(currentChat.chatId, currentChat.expiresAt, currentChat.passiveMode);
+        } catch (err) {
+          console.error(`WARN: Failed to register temp chat record for ${chatId}: ${err}`);
+        }
+
         processed++;
         continue;
       }
@@ -271,6 +320,14 @@ async function main() {
         };
         await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
         console.log(`OK: Chat ${chatId} activated (chatId=${newChatId})`);
+
+        // Issue #2018: Register temp chat record for passive mode & lifecycle tracking
+        try {
+          await registerTempChatRecord(newChatId, currentChat.expiresAt, currentChat.passiveMode);
+        } catch (err) {
+          // Non-fatal: passive mode won't be set until next restart, but chat is activated
+          console.error(`WARN: Failed to register temp chat record for ${chatId}: ${err}`);
+        }
       } else {
         // Failure — record error and check retry limit
         const errorMsg = (larkError ?? larkResult ?? 'unknown error').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

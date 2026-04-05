@@ -33,6 +33,15 @@ export interface ChatFile {
   activationAttempts: number;
   lastActivationError: string | null;
   failedAt: string | null;
+  /**
+   * Declarative passive mode configuration for this chat.
+   *
+   * Issue #2018: When `false` (default for new chats), passive mode is disabled,
+   * meaning the bot responds to all messages without requiring @mention.
+   * When `true`, default behavior applies (passive mode enabled).
+   * When undefined, treated as `false` (passive mode disabled) for backward compatibility.
+   */
+  passiveMode?: boolean;
 }
 
 // ---- Constants ----
@@ -197,6 +206,11 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   }
   if (typeof obj.activationAttempts !== 'number' || obj.activationAttempts < 0) {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'activationAttempts'`);
+  }
+
+  // Validate optional passiveMode field
+  if (obj.passiveMode !== undefined && typeof obj.passiveMode !== 'boolean') {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'passiveMode' — must be boolean or undefined`);
   }
 
   return data as ChatFile;

@@ -184,6 +184,33 @@ describe('schema', () => {
     it('should reject invalid status', () => {
       expect(() => validateChatFileData({ ...validChat, status: 'unknown' }, '/path')).toThrow(ValidationError);
     });
+
+    it('should accept passiveMode: false', () => {
+      const result = validateChatFileData({ ...validChat, passiveMode: false }, '/path');
+      expect(result.passiveMode).toBe(false);
+    });
+
+    it('should accept passiveMode: true', () => {
+      const result = validateChatFileData({ ...validChat, passiveMode: true }, '/path');
+      expect(result.passiveMode).toBe(true);
+    });
+
+    it('should accept undefined passiveMode', () => {
+      const result = validateChatFileData({ ...validChat, passiveMode: undefined }, '/path');
+      expect(result.passiveMode).toBeUndefined();
+    });
+
+    it('should accept chat without passiveMode field', () => {
+      const { passiveMode: _p, ...chatWithoutPassiveMode } = validChat;
+      const result = validateChatFileData(chatWithoutPassiveMode, '/path');
+      expect(result.passiveMode).toBeUndefined();
+    });
+
+    it('should reject non-boolean passiveMode', () => {
+      expect(() => validateChatFileData({ ...validChat, passiveMode: 'false' }, '/path')).toThrow(ValidationError);
+      expect(() => validateChatFileData({ ...validChat, passiveMode: 0 }, '/path')).toThrow(ValidationError);
+      expect(() => validateChatFileData({ ...validChat, passiveMode: null }, '/path')).toThrow(ValidationError);
+    });
   });
 
   describe('parseChatFile', () => {

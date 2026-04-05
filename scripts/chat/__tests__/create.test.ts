@@ -140,6 +140,69 @@ describe('chat scripts integration', () => {
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('ou_xxxxx');
     });
+
+    it('should create chat with CHAT_PASSIVE_MODE=false', async () => {
+      const result = await runScript('scripts/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_PASSIVE_MODE: 'false',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('OK');
+
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.passiveMode).toBe(false);
+    });
+
+    it('should create chat with CHAT_PASSIVE_MODE=true', async () => {
+      const result = await runScript('scripts/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_PASSIVE_MODE: 'true',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('OK');
+
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.passiveMode).toBe(true);
+    });
+
+    it('should create chat without CHAT_PASSIVE_MODE (undefined)', async () => {
+      const result = await runScript('scripts/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123"]',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('OK');
+
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.passiveMode).toBeUndefined();
+    });
+
+    it('should reject invalid CHAT_PASSIVE_MODE value', async () => {
+      const result = await runScript('scripts/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_PASSIVE_MODE: 'invalid',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('CHAT_PASSIVE_MODE');
+    });
   });
 
   describe('query', () => {
