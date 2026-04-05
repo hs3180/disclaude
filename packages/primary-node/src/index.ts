@@ -110,7 +110,6 @@ export {
 export {
   // Chat operations
   createDiscussionChat,
-  dissolveChat,
   addMembers,
   removeMembers,
   getMembers,
@@ -118,12 +117,6 @@ export {
   type CreateDiscussionOptions,
   type ChatOpsConfig,
   type BotChatInfo,
-  // Group service
-  GroupService,
-  getGroupService,
-  type GroupInfo,
-  type CreateGroupOptions,
-  type GroupServiceConfig,
   // Welcome service
   WelcomeService,
   initWelcomeService,

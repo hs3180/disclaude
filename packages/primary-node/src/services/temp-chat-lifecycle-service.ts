@@ -3,12 +3,10 @@
  *
  * Issue #1703: Phase 3 — Primary Node lifecycle service.
  * Periodically checks for expired temp chats and cleans them up
- * (dissolve group → unregister from GroupService → remove record).
+ * (remove record from ChatStore).
  *
  * This service runs in the Primary Node and coordinates:
  * - ChatStore (core data layer) for record management
- * - dissolveChat (platform API) for group dissolution
- * - GroupService for group registry cleanup
  *
  * @module services/temp-chat-lifecycle-service
  */
@@ -24,16 +22,6 @@ const logger = createLogger('TempChatLifecycle');
 export interface TempChatLifecycleDeps {
   /** ChatStore instance for temp chat record management */
   chatStore: ChatStore;
-  /**
-   * Dissolve a group chat via platform API.
-   * May be undefined if the platform doesn't support group dissolution.
-   */
-  dissolveChat?: (chatId: string) => Promise<void>;
-  /**
-   * Unregister a group from the GroupService registry.
-   * May be undefined if no GroupService is available.
-   */
-  unregisterGroup?: (chatId: string) => boolean;
 }
 
 /**
@@ -65,8 +53,6 @@ export interface CleanupResult {
  * ```typescript
  * const service = new TempChatLifecycleService({
  *   chatStore: new ChatStore({ storeDir: './workspace/schedules/.temp-chats' }),
- *   dissolveChat: (chatId) => feishuChannel.dissolveChat(chatId),
- *   unregisterGroup: (chatId) => groupService.unregisterGroup(chatId),
  * });
  *
  * await service.start();  // Starts periodic cleanup
@@ -75,15 +61,11 @@ export interface CleanupResult {
  */
 export class TempChatLifecycleService {
   private chatStore: ChatStore;
-  private dissolveChatFn?: (chatId: string) => Promise<void>;
-  private unregisterGroupFn?: (chatId: string) => boolean;
   private checkIntervalMs: number;
   private intervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: TempChatLifecycleDeps, config: TempChatLifecycleConfig = {}) {
     this.chatStore = deps.chatStore;
-    this.dissolveChatFn = deps.dissolveChat;
-    this.unregisterGroupFn = deps.unregisterGroup;
     this.checkIntervalMs = config.checkIntervalMs ?? 5 * 60 * 1000; // 5 minutes
   }
 
@@ -126,9 +108,7 @@ export class TempChatLifecycleService {
    * Check for expired temp chats and clean them up.
    *
    * Cleanup flow for each expired chat:
-   * 1. dissolveChat(client, chatId) — dissolve the platform group
-   * 2. unregisterGroup(chatId) — remove from GroupService registry
-   * 3. removeTempChat(chatId) — delete the storage record
+   * 1. removeTempChat(chatId) — delete the storage record
    *
    * @returns Cleanup result with counts and details
    */
@@ -170,28 +150,7 @@ export class TempChatLifecycleService {
     const { chatId } = chat;
 
     try {
-      // Step 1: Dissolve the platform group (best-effort)
-      if (this.dissolveChatFn) {
-        try {
-          await this.dissolveChatFn(chatId);
-          logger.debug({ chatId }, 'Dissolved expired temp chat group');
-        } catch (error) {
-          // Log but continue — group may already be dissolved externally
-          logger.warn({ err: error, chatId }, 'Failed to dissolve expired temp chat group (continuing cleanup)');
-        }
-      }
-
-      // Step 2: Unregister from GroupService (best-effort)
-      if (this.unregisterGroupFn) {
-        try {
-          this.unregisterGroupFn(chatId);
-          logger.debug({ chatId }, 'Unregistered expired temp chat from GroupService');
-        } catch {
-          // Ignore — may not be registered
-        }
-      }
-
-      // Step 3: Remove the storage record
+      // Remove the storage record
       await this.chatStore.removeTempChat(chatId);
       logger.info({ chatId }, 'Expired temp chat cleaned up');
 
