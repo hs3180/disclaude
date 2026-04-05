@@ -13,6 +13,12 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── acp/                    # ACP 协议基础设施
+ * │   ├── index.ts
+ * │   ├── json-rpc.ts         # JSON-RPC 2.0 类型与工具函数
+ * │   ├── types.ts            # ACP 协议类型定义
+ * │   ├── transport.ts        # 传输层（Stdio）
+ * │   └── acp-client.ts       # ACP 客户端连接管理
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -131,3 +137,68 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP 协议导出
+// ============================================================================
+
+export {
+  AcpClient,
+  StdioTransport,
+  AcpMethod,
+  JsonRpcErrorCode,
+  isJsonRpcRequest,
+  isJsonRpcNotification,
+  isJsonRpcResponse,
+  isJsonRpcErrorResponse,
+  isAcpInitializeRequest,
+  isAcpSessionUpdateNotification,
+  generateId,
+  resetIdCounter,
+  createRequest,
+  createNotification,
+  createSuccessResponse,
+  createErrorResponse,
+  parseMessage,
+  serializeMessage,
+} from './acp/index.js';
+
+export type {
+  JsonRpcId,
+  JsonRpcError,
+  JsonRpcRequest,
+  JsonRpcNotification,
+  JsonRpcSuccessResponse,
+  JsonRpcErrorResponse,
+  JsonRpcResponse,
+  JsonRpcMessage,
+  AcpClientCapabilities,
+  AcpServerCapabilities,
+  AcpInitializeParams,
+  AcpInitializeResult,
+  AcpNewSessionParams,
+  AcpNewSessionResult,
+  AcpListSessionsParams,
+  AcpListSessionsResult,
+  AcpLoadSessionParams,
+  AcpLoadSessionResult,
+  AcpCloseSessionParams,
+  AcpCloseSessionResult,
+  AcpContentBlockType,
+  AcpTextContent,
+  AcpToolUseContent,
+  AcpToolResultContent,
+  AcpContentBlock,
+  AcpUserMessage,
+  AcpAssistantMessage,
+  AcpPromptParams,
+  AcpStopReason,
+  AcpUsage,
+  AcpPromptResult,
+  AcpSessionUpdateParams,
+  AcpMethodName,
+  TransportEvents,
+  IAcpTransport,
+  StdioTransportConfig,
+  AcpClientConfig,
+} from './acp/index.js';
