@@ -508,4 +508,79 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus (Issue #1228)', () => {
+    it('should not include discussion focus when no topic is set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+      expect(result).not.toContain('focused discussion mode');
+    });
+
+    it('should not include discussion focus when topic is undefined', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: undefined,
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should include discussion focus guidance when topic is set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'What do you think?',
+        messageId: 'msg-123',
+        discussionTopic: '是否应该自动化代码格式化？',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('focused discussion mode');
+      expect(result).toContain('是否应该自动化代码格式化？');
+      expect(result).toContain('Stay on topic');
+    });
+
+    it('should not include discussion focus for skill commands even with topic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+      expect(result).toContain('/reset');
+    });
+
+    it('should place discussion focus before next-step guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Test topic',
+      }, 'chat-456');
+
+      const discussionIdx = result.indexOf('Discussion Focus');
+      const nextStepIdx = result.indexOf('Next Steps After Response');
+      expect(nextStepIdx).toBeGreaterThan(discussionIdx);
+    });
+
+    it('should place discussion focus after tools section', () => {
+      const options: MessageBuilderOptions = {
+        buildToolsSection: () => '- MCP tool: `some_tool`',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Test topic',
+      }, 'chat-456');
+
+      const toolsIdx = result.indexOf('## Tools');
+      const discussionIdx = result.indexOf('Discussion Focus');
+      expect(discussionIdx).toBeGreaterThan(toolsIdx);
+    });
+  });
 });

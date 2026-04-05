@@ -218,3 +218,60 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the discussion focus guidance section.
+ *
+ * Issue #1228: When a discussion topic is set, inject personality-driven
+ * guidance to keep the conversation focused on the initial question.
+ *
+ * The original SOUL.md system (Issue #1315) was deprecated in favor of
+ * Claude Code's native CLAUDE.md. This guidance function replaces the
+ * per-discussion SOUL profile with an inline personality injection via
+ * the MessageBuilder guidance mechanism.
+ *
+ * Design principles:
+ * - Personality-driven, not rule-driven: the agent keeps focus through
+ *   "self-awareness" rather than explicit deviation detection
+ * - Only injected when a discussion topic is explicitly set
+ * - Does not affect normal multi-turn conversations
+ *
+ * @param discussionTopic - The initial discussion question/topic, or undefined to skip
+ * @returns Formatted discussion focus guidance section, or empty string if no topic
+ */
+export function buildDiscussionFocusGuidance(discussionTopic?: string): string {
+  if (!discussionTopic) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Discussion Focus
+
+You are in a **focused discussion mode**. The discussion topic is:
+
+> ${discussionTopic}
+
+### Core Principles
+
+**Stay on topic.**
+The topic above is your north star. Every response should move the conversation closer to an answer or deeper understanding of that topic.
+
+**Be genuinely helpful, not performatively helpful.**
+Skip the "Great question!" and "I'd be happy to help!" — just help directly.
+
+**Gently redirect when needed.**
+If the conversation drifts to tangents, acknowledge the tangent briefly, then guide back:
+"That's interesting, but let's not lose sight of our original topic about..."
+
+**Depth over breadth.**
+Explore one aspect thoroughly rather than skimming many surfaces. Summarize progress periodically to keep the discussion focused.
+
+### Boundaries
+
+- Do not chase every interesting tangent
+- Remember what we're trying to decide, solve, or understand
+- When the original topic has been thoroughly explored, summarize the conclusions`;
+}

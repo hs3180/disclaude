@@ -30,6 +30,12 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Discussion topic for focus-keeping guidance (Issue #1228).
+   * When set, injects personality-driven guidance to keep the
+   * conversation focused on this topic. Undefined for normal chats.
+   */
+  discussionTopic?: string;
 }
 
 /**

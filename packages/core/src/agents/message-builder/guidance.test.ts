@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,48 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should return empty string when no topic is provided', () => {
+    expect(buildDiscussionFocusGuidance()).toBe('');
+    expect(buildDiscussionFocusGuidance(undefined)).toBe('');
+  });
+
+  it('should return empty string when topic is empty string', () => {
+    expect(buildDiscussionFocusGuidance('')).toBe('');
+  });
+
+  it('should include the discussion topic in the guidance', () => {
+    const result = buildDiscussionFocusGuidance('是否应该自动化代码格式化？');
+    expect(result).toContain('是否应该自动化代码格式化？');
+    expect(result).toContain('Discussion Focus');
+  });
+
+  it('should include focus-keeping principles', () => {
+    const result = buildDiscussionFocusGuidance('Some topic');
+    expect(result).toContain('Stay on topic');
+    expect(result).toContain('north star');
+    expect(result).toContain('genuinely helpful');
+    expect(result).toContain('Gently redirect');
+    expect(result).toContain('Depth over breadth');
+  });
+
+  it('should include boundaries section', () => {
+    const result = buildDiscussionFocusGuidance('Some topic');
+    expect(result).toContain('Boundaries');
+    expect(result).toContain('Do not chase every interesting tangent');
+    expect(result).toContain('summarize the conclusions');
+  });
+
+  it('should include redirect example', () => {
+    const result = buildDiscussionFocusGuidance('Some topic');
+    expect(result).toContain("let's not lose sight of our original topic");
+  });
+
+  it('should include focused discussion mode label', () => {
+    const result = buildDiscussionFocusGuidance('Some topic');
+    expect(result).toContain('focused discussion mode');
   });
 });
