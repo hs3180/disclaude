@@ -1,11 +1,36 @@
 /**
  * Tests for IPC utility functions (packages/mcp-server/src/tools/ipc-utils.ts)
+ * Issue #1617: Expanded coverage for isIpcAvailable
  */
 
-import { describe, it, expect } from 'vitest';
-import { getIpcErrorMessage } from './ipc-utils.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+
+const mockGetIpcSocketPath = vi.fn().mockReturnValue('/tmp/test-ipc.sock');
+const mockLogger = {
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  error: vi.fn(),
+};
+const mockCreateLogger = vi.fn().mockReturnValue(mockLogger);
 
 describe('getIpcErrorMessage', () => {
+  let getIpcErrorMessage: typeof import('./ipc-utils.js').getIpcErrorMessage;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockCreateLogger.mockReturnValue(mockLogger);
+    vi.resetModules();
+    const mod = await import('./ipc-utils.js');
+    ({ getIpcErrorMessage } = mod);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
   describe('ipc_unavailable error type', () => {
     it('should return IPC unavailable message', () => {
       const result = getIpcErrorMessage('ipc_unavailable');
@@ -47,7 +72,6 @@ describe('getIpcErrorMessage', () => {
     });
 
     it('should handle empty string original error', () => {
-      // Empty string is truthy, so it's used as-is
       const result = getIpcErrorMessage('ipc_request_failed', '');
       expect(result).toBe('❌ IPC 请求失败: ');
     });
@@ -89,6 +113,157 @@ describe('getIpcErrorMessage', () => {
     it('should handle null-like string as error type', () => {
       const result = getIpcErrorMessage('null', 'error', 'default');
       expect(result).toBe('default');
+    });
+  });
+});
+
+describe('isIpcAvailable', () => {
+  let isIpcAvailable: typeof import('./ipc-utils.js').isIpcAvailable;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockCreateLogger.mockReturnValue(mockLogger);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
+  describe('when socket file does not exist', () => {
+    it('should return false immediately (fast path)', async () => {
+      mockGetIpcSocketPath.mockReturnValue('/nonexistent/socket.sock');
+
+      vi.doMock('@disclaude/core', () => ({
+        getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+        createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      }));
+      vi.doMock('fs', () => ({
+        existsSync: vi.fn().mockReturnValue(false),
+      }));
+      vi.resetModules();
+      const mod = await import('./ipc-utils.js');
+      ({ isIpcAvailable } = mod);
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(false);
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'socket_not_found' }),
+        expect.stringContaining('not available'),
+      );
+    });
+  });
+
+  describe('when socket file exists', () => {
+    let mockSocket: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      mockGetIpcSocketPath.mockReturnValue('/tmp/existing-ipc.sock');
+      mockSocket = new EventEmitter() as EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+      mockSocket.destroy = vi.fn();
+    });
+
+    it('should return true when connection succeeds', async () => {
+      vi.doMock('@disclaude/core', () => ({
+        getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+        createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      }));
+      vi.doMock('fs', () => ({
+        existsSync: vi.fn().mockReturnValue(true),
+      }));
+      vi.doMock('net', () => ({
+        createConnection: vi.fn().mockReturnValue(mockSocket),
+      }));
+      vi.resetModules();
+      const mod = await import('./ipc-utils.js');
+      ({ isIpcAvailable } = mod);
+
+      const resultPromise = isIpcAvailable();
+
+      // Simulate successful connection on next tick
+      process.nextTick(() => {
+        mockSocket.emit('connect');
+      });
+
+      const result = await resultPromise;
+      expect(result).toBe(true);
+      expect(mockSocket.destroy).toHaveBeenCalled();
+    });
+
+    it('should return false when connection times out', async () => {
+      vi.doMock('@disclaude/core', () => ({
+        getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+        createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      }));
+      vi.doMock('fs', () => ({
+        existsSync: vi.fn().mockReturnValue(true),
+      }));
+      vi.doMock('net', () => ({
+        createConnection: vi.fn().mockReturnValue(mockSocket),
+      }));
+      vi.resetModules();
+      const mod = await import('./ipc-utils.js');
+      ({ isIpcAvailable } = mod);
+
+      vi.useFakeTimers();
+      const resultPromise = isIpcAvailable();
+
+      // Advance past the 1-second timeout
+      await vi.advanceTimersByTimeAsync(1100);
+
+      const result = await resultPromise;
+      expect(result).toBe(false);
+      expect(mockSocket.destroy).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('should return false when connection errors', async () => {
+      vi.doMock('@disclaude/core', () => ({
+        getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+        createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      }));
+      vi.doMock('fs', () => ({
+        existsSync: vi.fn().mockReturnValue(true),
+      }));
+      vi.doMock('net', () => ({
+        createConnection: vi.fn().mockReturnValue(mockSocket),
+      }));
+      vi.resetModules();
+      const mod = await import('./ipc-utils.js');
+      ({ isIpcAvailable } = mod);
+
+      const resultPromise = isIpcAvailable();
+
+      // Simulate connection error
+      process.nextTick(() => {
+        mockSocket.emit('error', new Error('ECONNREFUSED'));
+      });
+
+      const result = await resultPromise;
+      expect(result).toBe(false);
+      expect(mockSocket.destroy).toHaveBeenCalled();
+    });
+
+    it('should return false when an unexpected exception occurs', async () => {
+      vi.doMock('@disclaude/core', () => ({
+        getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+        createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      }));
+      vi.doMock('fs', () => ({
+        existsSync: vi.fn().mockReturnValue(true),
+      }));
+      vi.doMock('net', () => ({
+        createConnection: vi.fn().mockImplementation(() => {
+          throw new Error('Unexpected error');
+        }),
+      }));
+      vi.resetModules();
+      const mod = await import('./ipc-utils.js');
+      ({ isIpcAvailable } = mod);
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(false);
     });
   });
 });
