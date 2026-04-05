@@ -13,6 +13,11 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── acp/                     # ACP 协议基础设施
+ * │   ├── types.ts             # ACP 核心类型
+ * │   ├── jsonrpc.ts           # JSON-RPC 2.0 消息层
+ * │   ├── transport.ts         # HTTP/SSE 传输层
+ * │   └── connection.ts        # 连接管理器
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -131,3 +136,9 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP 协议导出
+// ============================================================================
+
+export * from './acp/index.js';
