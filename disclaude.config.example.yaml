@@ -255,6 +255,33 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Project Knowledge Base Configuration (Issue #1916)
+# -----------------------------------------------------------------------------
+# Project-scoped instructions and knowledge base, similar to Claude Projects.
+# Each project can have its own instructions file (CLAUDE.md) and knowledge
+# directories whose contents are injected into agent context.
+#
+# The "default" project is used when no project is explicitly selected.
+# Use /project list and /project switch <name> commands to manage projects.
+#
+# Example:
+# projects:
+#   default:
+#     instructions_path: ./CLAUDE.md
+#     knowledge:
+#       - ./docs/
+#       - ./data/
+#   book-reader:
+#     instructions_path: ./projects/book-reader/CLAUDE.md
+#     knowledge:
+#       - ./data/books/
+#       - ./data/summaries/
+# projects:
+#   default:
+#     instructions_path: ./CLAUDE.md
+#     knowledge: []
+
 # =============================================================================
 # Notes
 # =============================================================================

@@ -322,6 +322,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project knowledge base configuration (Issue #1916) */
+  projects?: import('../knowledge/types.js').ProjectsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

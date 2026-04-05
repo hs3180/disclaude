@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectKnowledgeSection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -120,5 +121,31 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProjectKnowledgeSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildProjectKnowledgeSection()).toBe('');
+    expect(buildProjectKnowledgeSection(undefined)).toBe('');
+    expect(buildProjectKnowledgeSection('')).toBe('');
+  });
+
+  it('should wrap knowledge context in section separators', () => {
+    const context = '## Project Knowledge: default\n\n### Project Instructions\n\nBe helpful.';
+    const result = buildProjectKnowledgeSection(context);
+
+    expect(result).toContain('---');
+    expect(result).toContain('## Project Knowledge: default');
+    expect(result).toContain('### Project Instructions');
+    expect(result).toContain('Be helpful.');
+  });
+
+  it('should include guidance about citing knowledge sources', () => {
+    const context = '## Project Knowledge: test\n\nContent here.';
+    const result = buildProjectKnowledgeSection(context);
+
+    expect(result).toContain('cite the source file path');
+    expect(result).toContain('do not repeat it verbatim');
   });
 });

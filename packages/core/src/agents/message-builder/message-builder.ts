@@ -14,6 +14,7 @@
  * MessageBuilder (core)
  *   ├── Metadata (chatId, messageId, senderId)
  *   ├── History sections (chat history, persisted history)
+ *   ├── Project knowledge section (Issue #1916)
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
@@ -32,6 +33,7 @@ import type { MessageData, MessageBuilderContext, MessageBuilderOptions } from '
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildProjectKnowledgeSection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
@@ -48,6 +50,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Project knowledge context (Issue #1916)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -127,6 +130,9 @@ export class MessageBuilder {
     const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
 
+    // Project knowledge section (Issue #1916)
+    const projectKnowledgeSection = buildProjectKnowledgeSection(msg.projectKnowledgeContext);
+
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
@@ -152,6 +158,9 @@ export class MessageBuilder {
     }
     if (chatHistorySection) {
       sections.push(chatHistorySection);
+    }
+    if (projectKnowledgeSection) {
+      sections.push(`\n---\n\n${projectKnowledgeSection}`);
     }
     if (postHistory) {
       sections.push(postHistory);

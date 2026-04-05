@@ -475,6 +475,17 @@ export class Config {
   }
 
   /**
+   * Get projects configuration for knowledge base.
+   * Controls project-scoped instructions and knowledge directories.
+   * @see Issue #1916
+   *
+   * @returns Projects configuration, or undefined if not configured
+   */
+  static getProjectsConfig(): import('../knowledge/types.js').ProjectsConfig | undefined {
+    return fileConfigOnly.projects;
+  }
+
+  /**
    * Get session timeout configuration.
    * Controls automatic cleanup of idle sessions.
    * @see Issue #1313
