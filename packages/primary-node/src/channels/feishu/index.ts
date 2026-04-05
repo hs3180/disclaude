@@ -39,3 +39,15 @@ export {
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,
 } from './ws-connection-manager.js';
+
+// Discussion End Detection (Issue #1229)
+export {
+  detectDiscussionEnd,
+  stripTriggerPhrases,
+  buildEndCard,
+  handleDiscussionEnd,
+  type DiscussionEndResult,
+  type DiscussionEndDetection,
+  type NoDiscussionEnd,
+  type DiscussionEndOptions,
+} from './discussion-end.js';

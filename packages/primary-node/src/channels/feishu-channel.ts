@@ -36,6 +36,12 @@ import {
   type MessageCallbacks,
   WsConnectionManager,
 } from './feishu/index.js';
+import {
+  detectDiscussionEnd,
+  stripTriggerPhrases,
+  handleDiscussionEnd,
+  type DiscussionEndResult,
+} from './feishu/discussion-end.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -414,6 +420,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return createResp.data?.message_id;
     };
 
+    // Issue #1229: Detect discussion end trigger phrases in text messages.
+    // If detected, send a summary card and dissolve the group instead of the raw text.
+    if (message.type === 'text' && message.text) {
+      const detection = detectDiscussionEnd(message.text);
+      if (detection.detected) {
+        const remainingText = stripTriggerPhrases(message.text);
+        // Fire-and-forget: send summary card and dissolve group in background
+        void this.handleDiscussionEndAsync(message.chatId, detection, remainingText)
+          .catch((err) => logger.error({ err, chatId: message.chatId }, 'Discussion end handling failed'));
+        return;
+      }
+    }
+
     switch (message.type) {
       case 'text': {
         // Issue #1742: If mentions are provided, send as post (rich text) with @mention tags
@@ -572,6 +591,33 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return this.wsConnectionManager.isHealthy();
     }
     return false;
+  }
+
+  /**
+   * Handle discussion end asynchronously.
+   *
+   * Sends a summary card and dissolves the group chat.
+   * Runs in background (fire-and-forget) to avoid blocking the message pipeline.
+   *
+   * @see Issue #1229 - Smart discussion ending
+   */
+  private async handleDiscussionEndAsync(
+    chatId: string,
+    detection: DiscussionEndResult,
+    remainingText?: string,
+  ): Promise<void> {
+    if (!this.client) {
+      logger.error({ chatId }, 'Cannot handle discussion end: client not initialized');
+      return;
+    }
+
+    await handleDiscussionEnd({
+      client: this.client,
+      chatId,
+      detection,
+      remainingText,
+      dissolveDelayMs: 3000,
+    });
   }
 
   /**
