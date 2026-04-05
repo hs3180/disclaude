@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -380,6 +382,45 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image to Feishu and return the image_key for embedding in card messages.
+
+Use this tool to upload an image file and get an image_key, then use the key
+in send_card's img element to embed the image in a card.
+
+## Workflow
+1. Call upload_image(filePath) to get image_key
+2. Use image_key in send_card: { "tag": "img", "img_key": "img_v3_xxx" }
+
+## Parameters
+- **filePath**: Path to the image file (string). Supports both absolute and relative paths.
+
+## Supported Formats
+JPEG (.jpg, .jpeg), PNG (.png), WebP (.webp), GIF (.gif), TIFF (.tiff), BMP (.bmp), ICO (.ico)
+
+## Size Limit
+Maximum 10MB per image
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+Returns image_key which can be used in card img elements.`,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

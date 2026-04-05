@@ -591,6 +591,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -648,6 +649,58 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Unlike sendMessage({ type: 'file' }) which uploads AND sends as a message,
+   * this method only uploads the image and returns the image_key, allowing
+   * the caller to embed it in card messages.
+   *
+   * Issue #1919: Enables Agent to embed images in Feishu cards.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const { size: fileSize } = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Validate image extension
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    // Validate file size (Feishu limit: 10MB for images)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for image_key');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ filePath, fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully, image_key obtained');
+    return { imageKey, fileName, fileSize };
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
