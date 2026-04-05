@@ -210,6 +210,80 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     });
   });
 
+  describe('text messages with mentions (post type)', () => {
+    it('should send as post type when mentions are provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const mentions = [{ openId: 'ou_user123', name: 'Alice' }];
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Hello @Alice',
+        mentions,
+      });
+
+      // Should use message.create with post type (no threadId)
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const createCall = mocks.createMock.mock.calls[0][0];
+      expect(createCall.data.msg_type).toBe('post');
+      // Content should be JSON with Feishu post structure (zh_cn with title and content)
+      const content = JSON.parse(createCall.data.content);
+      expect(content).toHaveProperty('zh_cn');
+      expect(content.zh_cn).toHaveProperty('content');
+      expect(mocks.replyMock).not.toHaveBeenCalled();
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('should send post type via thread reply when mentions and threadId are both provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const mentions = [{ openId: 'ou_user456', name: 'Bob' }];
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Reply @Bob',
+        mentions,
+        threadId: 'root_msg_999',
+      });
+
+      // Should use message.reply with post type
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      const replyCall = mocks.replyMock.mock.calls[0][0];
+      expect(replyCall.path.message_id).toBe('root_msg_999');
+      expect(replyCall.data.msg_type).toBe('post');
+      // Content should be JSON with Feishu post structure (zh_cn with title and content)
+      const content = JSON.parse(replyCall.data.content);
+      expect(content).toHaveProperty('zh_cn');
+      expect(content.zh_cn).toHaveProperty('content');
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(result).toBe('reply_msg_001');
+    });
+
+    it('should fall back to create when reply fails for post type with mentions', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('Thread deleted'));
+      const channel = createTestChannel(client);
+
+      const mentions = [{ openId: 'ou_user789', name: 'Charlie' }];
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Fallback @Charlie',
+        mentions,
+        threadId: 'deleted_thread',
+      });
+
+      // Reply attempted then fell back to create
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const createCall = mocks.createMock.mock.calls[0][0];
+      expect(createCall.data.msg_type).toBe('post');
+      expect(result).toBe('new_msg_001');
+    });
+  });
+
   describe('card messages (interactive)', () => {
     it('should use message.create for cards without threadId', async () => {
       const { client, mocks } = createMockClient();
