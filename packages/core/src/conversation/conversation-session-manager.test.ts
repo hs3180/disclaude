@@ -273,5 +273,109 @@ describe('ConversationSessionManager', () => {
       expect(resolver1).toHaveBeenCalled();
       expect(resolver2).toHaveBeenCalled();
     });
+
+    it('should handle closeAll on empty manager', () => {
+      expect(() => manager.closeAll()).not.toThrow();
+      expect(manager.size()).toBe(0);
+    });
+  });
+
+  describe('queueMessage - edge cases', () => {
+    it('should update lastActivity when queuing message', () => {
+      const session = manager.getOrCreate('chat-1');
+      const before = session.lastActivity;
+      vi.spyOn(Date, 'now').mockReturnValue(before + 200);
+      manager.queueMessage('chat-1', makeMessage());
+      expect(manager.get('chat-1')!.lastActivity).toBe(before + 200);
+      vi.restoreAllMocks();
+    });
+
+    it('should queue messages with all fields preserved', () => {
+      const msg = makeMessage({
+        text: 'test message',
+        messageId: 'msg-full',
+        senderOpenId: 'user-123',
+        attachments: [{
+          id: 'att-1',
+          fileName: 'test.png',
+          localPath: '/tmp/test.png',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        }],
+      });
+      manager.queueMessage('chat-1', msg);
+
+      const session = manager.get('chat-1')!;
+      expect(session.messageQueue).toHaveLength(1);
+      expect(session.messageQueue[0].text).toBe('test message');
+      expect(session.messageQueue[0].senderOpenId).toBe('user-123');
+      expect(session.messageQueue[0].attachments).toHaveLength(1);
+    });
+
+    it('should not trigger resolver for closed session', () => {
+      const resolver = vi.fn();
+      const session = manager.getOrCreate('chat-1');
+      session.closed = true;
+      session.messageResolver = resolver;
+      manager.queueMessage('chat-1', makeMessage());
+      expect(resolver).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('delete - edge cases', () => {
+    it('should handle delete after closeAll', () => {
+      manager.getOrCreate('chat-1');
+      manager.closeAll();
+      expect(manager.delete('chat-1')).toBe(false);
+    });
+
+    it('should allow re-creating session after delete', () => {
+      manager.getOrCreate('chat-1');
+      manager.delete('chat-1');
+      const newSession = manager.getOrCreate('chat-1');
+      expect(newSession.messageQueue).toHaveLength(0);
+      expect(newSession.closed).toBe(false);
+    });
+  });
+
+  describe('getStats - edge cases', () => {
+    it('should reflect closed state in stats', () => {
+      const session = manager.getOrCreate('chat-1');
+      session.closed = true;
+      const stats = manager.getStats('chat-1');
+      expect(stats!.isClosed).toBe(true);
+    });
+
+    it('should reflect unset thread root as undefined', () => {
+      manager.getOrCreate('chat-1');
+      const stats = manager.getStats('chat-1');
+      expect(stats!.threadRootId).toBeUndefined();
+    });
+  });
+
+  describe('setThreadRoot - edge cases', () => {
+    it('should update lastActivity when setting thread root', () => {
+      const session = manager.getOrCreate('chat-1');
+      const before = session.lastActivity;
+      vi.spyOn(Date, 'now').mockReturnValue(before + 300);
+      manager.setThreadRoot('chat-1', 'new-thread');
+      expect(manager.get('chat-1')!.lastActivity).toBe(before + 300);
+      vi.restoreAllMocks();
+    });
+
+    it('should overwrite existing thread root', () => {
+      manager.setThreadRoot('chat-1', 'thread-1');
+      manager.setThreadRoot('chat-1', 'thread-2');
+      expect(manager.getThreadRoot('chat-1')).toBe('thread-2');
+    });
+
+    it('should return false when deleting thread root from non-existent session', () => {
+      expect(manager.deleteThreadRoot('nonexistent')).toBe(false);
+    });
+
+    it('should return false when session has no thread root set', () => {
+      manager.getOrCreate('chat-1');
+      expect(manager.deleteThreadRoot('chat-1')).toBe(false);
+    });
   });
 });
