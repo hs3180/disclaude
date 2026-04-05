@@ -294,6 +294,30 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Projects configuration for project-scoped instructions and knowledge base.
+ * Issue #1916: Claude Projects-like knowledge management.
+ *
+ * Each project can have:
+ * - instructions_path: Path to CLAUDE.md or custom instructions file
+ * - knowledge: List of directories/files to include as knowledge base
+ * - max_knowledge_length: Maximum total character length for knowledge content
+ *
+ * @see ProjectConfig in project/types.ts for full documentation
+ */
+export interface ProjectsConfig {
+  [projectName: string]: {
+    /** Human-readable project name */
+    name?: string;
+    /** Path to project instructions file */
+    instructions_path?: string;
+    /** Knowledge base source directories */
+    knowledge?: string[];
+    /** Maximum knowledge base character length */
+    max_knowledge_length?: number;
+  } | undefined;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -322,6 +346,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project-scoped instructions and knowledge base (Issue #1916) */
+  projects?: ProjectsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

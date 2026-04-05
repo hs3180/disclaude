@@ -149,6 +149,7 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProjectKnowledgeSection,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
@@ -309,3 +310,23 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project Knowledge Base & Instructions (Issue #1916)
+export {
+  // Types
+  type ProjectConfig,
+  type ProjectsConfig as CoreProjectsConfig,
+  type KnowledgeEntry,
+  type LoadedProject,
+  // Constants
+  KNOWLEDGE_FILE_EXTENSIONS,
+  DEFAULT_MAX_KNOWLEDGE_LENGTH,
+  // Knowledge loader
+  isSupportedKnowledgeFile,
+  loadKnowledgeEntries,
+  loadInstructions,
+  loadProject,
+  formatProjectAsPromptSection,
+  // Project manager
+  ProjectManager,
+} from './project/index.js';

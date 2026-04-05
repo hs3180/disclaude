@@ -129,7 +129,11 @@ export type ControlCommandType =
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive';
+  | 'passive'
+  // Project management commands (Issue #1916)
+  | 'list-project'
+  | 'switch-project'
+  | 'project-info';
 
 /**
  * Control command from user to agent.

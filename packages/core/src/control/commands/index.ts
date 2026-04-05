@@ -14,6 +14,11 @@ import {
   handleRemoveGroupMember,
   handleDissolveGroup,
 } from './group.js';
+import {
+  handleListProjectDef,
+  handleSwitchProjectDef,
+  handleProjectInfoDef,
+} from './project.js';
 
 /**
  * 命令注册表
@@ -33,6 +38,10 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'add-group-member', handler: handleAddGroupMember, description: '添加群组成员' },
   { type: 'remove-group-member', handler: handleRemoveGroupMember, description: '移除群组成员' },
   { type: 'dissolve-group', handler: handleDissolveGroup, description: '解散群组' },
+  // Project management (Issue #1916)
+  handleListProjectDef,
+  handleSwitchProjectDef,
+  handleProjectInfoDef,
 ];
 
 /**

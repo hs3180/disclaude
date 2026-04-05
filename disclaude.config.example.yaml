@@ -244,6 +244,42 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project Knowledge Base & Instructions (Issue #1916)
+# -----------------------------------------------------------------------------
+# Provides Claude Projects-like knowledge management.
+# Each project can have custom instructions (CLAUDE.md) and knowledge files
+# that are automatically injected into the agent's prompt context.
+#
+# Supported knowledge file formats: .md, .txt, .json, .yaml, .ts, .js, .py, etc.
+# Binary files (images, PDFs) are automatically skipped.
+#
+# Use /list-project, /switch-project <name>, /project-info commands to manage.
+#
+# projects:
+#   default:
+#     # Path to project instructions file (CLAUDE.md)
+#     # Relative to workspace directory
+#     instructions_path: "./CLAUDE.md"
+#
+#     # Knowledge base source directories
+#     # Files from these directories are read and injected into context
+#     knowledge:
+#       - "./docs/"
+#       - "./data/"
+#
+#     # Maximum total character length for knowledge content
+#     # Default: 50000 (~12.5K tokens)
+#     # max_knowledge_length: 50000
+#
+#   # Example: Named project for a specific use case
+#   # book-reader:
+#   #   name: "Book Reading Assistant"
+#   #   instructions_path: "./projects/book-reader/CLAUDE.md"
+#   #   knowledge:
+#   #     - "./data/books/"
+#   #     - "./data/summaries/"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

@@ -30,6 +30,12 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Pre-formatted project knowledge context (Issue #1916).
+   * Contains project instructions and knowledge base content.
+   * Populated by the caller from ProjectManager.getProjectPromptSection().
+   */
+  projectContext?: string;
 }
 
 /**
@@ -57,6 +63,7 @@ export interface MessageBuilderContext {
  * - Metadata (chatId, messageId, senderId)
  * - History sections (chat history, persisted history)
  * - Guidance sections (next-step, output format, location awareness)
+ * - Project knowledge base (Issue #1916)
  * - Basic attachment info (file list, paths, MIME types)
  *
  * Channel-specific content:
@@ -105,4 +112,16 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Get project knowledge context for a chat.
+   * Issue #1916: Returns pre-formatted project instructions and knowledge
+   * base content for injection into the agent prompt.
+   *
+   * Inserted between history sections and guidance sections.
+   *
+   * @param chatId - The chat ID to get project context for
+   * @returns Formatted project context string, or empty string if no project is configured
+   */
+  getProjectContext?: (chatId: string) => Promise<string>;
 }

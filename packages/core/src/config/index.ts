@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectsConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -492,6 +493,17 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get projects configuration.
+   * Controls project-scoped instructions and knowledge base.
+   * @see Issue #1916
+   *
+   * @returns Projects configuration, or empty object if not configured
+   */
+  static getProjectsConfig(): ProjectsConfig {
+    return fileConfigOnly.projects ?? {};
   }
 }
 
