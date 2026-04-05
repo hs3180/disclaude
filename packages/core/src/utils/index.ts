@@ -91,3 +91,21 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Audio Recorder with TCC Bypass (Issue #1957)
+export type {
+  AudioFormat,
+  AudioRecordOptions,
+  AudioRecordResult,
+  Pm2EnvironmentInfo,
+  AudioValidationResult,
+} from './audio-recorder.js';
+export {
+  AudioRecorderError,
+  detectPm2Environment,
+  recordAudio,
+  recordAudioDirectly,
+  recordAudioViaBypass,
+  validateAudioFile,
+  checkPythonDependencies,
+} from './audio-recorder.js';
