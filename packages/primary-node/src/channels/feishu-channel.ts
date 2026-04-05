@@ -270,8 +270,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
       'im.chat.member.added_v1': async (data: unknown) => {
         this.recordWsActivity();
+        const eventData = data as FeishuChatMemberAddedEventData;
         try {
-          await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
+          await this.welcomeHandler.handleChatMemberAdded(eventData);
+          // Issue #2052: Auto-disable passive mode for 2-member groups
+          await this.autoDisablePassiveModeForSmallGroup(eventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle chat member added');
           await this.notifyUserDirectly(
@@ -648,6 +651,72 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  // ─── 2-Member Group Passive Mode (Issue #2052) ───────────────────────
+
+  /**
+   * Auto-disable passive mode when the bot is added to a 2-member group.
+   *
+   * When a group has exactly 2 members (bot + 1 user), it is functionally
+   * equivalent to a private conversation. This one-time check fires on the
+   * `im.chat.member.added_v1` event when the bot itself is among the added
+   * members, and uses the lightweight `im.chat.get` API to read `member_count`.
+   *
+   * **Architectural note**: This is NOT a per-message runtime decision (which
+   * was rejected in PR #2054 / #2102). It is a one-time initialization check
+   * triggered by a Feishu event, consistent with the event-driven architecture.
+   *
+   * Edge cases:
+   * - Member joins later → passive mode stays off (no disruptive change)
+   * - Member leaves → passive mode stays off (no disruptive change)
+   * - Bot already in group + restart → not covered (no event fires); user
+   *   can still use `/passive off` manually or rely on TempChatRecord.
+   */
+  private async autoDisablePassiveModeForSmallGroup(
+    data: FeishuChatMemberAddedEventData,
+  ): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+
+    const event = data.event;
+    if (!event?.chat_id || !event?.members || event.members.length === 0) {
+      return;
+    }
+
+    // Only act when the bot itself is among the added members
+    const botMemberAdded = event.members.some(
+      (member) => member.member_id_type === 'app_id' && member.member_id === this.appId,
+    );
+    if (!botMemberAdded) {
+      return;
+    }
+
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: event.chat_id },
+        params: { user_id_type: 'open_id' },
+      });
+
+      // Feishu API returns { data: { items: [{ member_count, ... }] } }
+      const items = response.data as { items?: Array<{ member_count?: number }> } | undefined;
+      const memberCount = items?.items?.[0]?.member_count;
+
+      if (memberCount !== undefined && memberCount <= 2) {
+        this.passiveModeManager.setPassiveModeDisabled(event.chat_id, true);
+        logger.info(
+          { chatId: event.chat_id, memberCount },
+          'Auto-disabled passive mode for 2-member group (Issue #2052)',
+        );
+      }
+    } catch (error) {
+      // Non-critical: log at debug level and continue normally
+      logger.debug(
+        { err: error, chatId: event.chat_id },
+        'Failed to check member count for passive mode auto-detection',
+      );
+    }
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
