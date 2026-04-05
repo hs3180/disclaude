@@ -271,6 +271,11 @@ describe('Scheduler', () => {
   });
 
   describe('executeTask (via cron job trigger)', () => {
+    /** Helper: fire a cron job and wait for async side-effects via vi.waitFor */
+    async function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
     it('should execute task and send start message', async () => {
       const task = createTask({ id: 'exec-1' });
       scheduler.addTask(task);
@@ -279,17 +284,12 @@ describe('Scheduler', () => {
       const jobs = scheduler.getActiveJobs();
       expect(jobs).toHaveLength(1);
 
-      // Wait for the cron job callback to execute
-      await new Promise<void>((resolve) => {
-        // eslint-disable-next-line prefer-destructuring
-        const { job } = jobs[0];
-        // Fire the cron job callback
-        void job.fireOnTick();
-        // Use setTimeout to allow async operations to complete
-        setTimeout(resolve, 50);
-      });
+      // Fire and wait for executor to be called
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
 
-      expect(mockExecutor).toHaveBeenCalledTimes(1);
       expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
         'oc_test',
         expect.stringContaining('开始执行'),
@@ -311,10 +311,10 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
 
       expect(mockExecutor).toHaveBeenCalledWith(
         'oc_test',
@@ -331,15 +331,13 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
-
-      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
-        'oc_test',
-        expect.stringContaining('执行失败'),
-      );
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
     });
 
     it('should wrap prompt with anti-recursion instructions', async () => {
@@ -347,10 +345,10 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
 
       // eslint-disable-next-line prefer-destructuring
       const [, promptArg] = mockExecutor.mock.calls[0];
@@ -367,15 +365,13 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
-
-      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
-        'oc_test',
-        expect.stringContaining('string error'),
-      );
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('string error'),
+        );
+      }, { timeout: 2000 });
     });
 
     it('should clear running state even when executor fails', async () => {
@@ -385,12 +381,10 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
-
-      expect(scheduler.isTaskRunning('fail-clear')).toBe(false);
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('fail-clear')).toBe(false);
+      }, { timeout: 2000 });
     });
   });
 
@@ -419,18 +413,16 @@ describe('Scheduler', () => {
       cooldownScheduler.addTask(task);
 
       const jobs = cooldownScheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
 
       // Executor should NOT be called when in cooldown
       expect(mockExecutor).not.toHaveBeenCalled();
-      // Should send cooldown notification
-      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
-        'oc_test',
-        expect.stringContaining('冷静期'),
-      );
     });
 
     it('should record execution after task completes with cooldown', async () => {
@@ -452,12 +444,10 @@ describe('Scheduler', () => {
       cooldownScheduler.addTask(task);
 
       const jobs = cooldownScheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
-
-      expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('cooldown-2', 60000);
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('cooldown-2', 60000);
+      }, { timeout: 2000 });
     });
 
     it('should record execution even when task fails with cooldown', async () => {
@@ -481,13 +471,10 @@ describe('Scheduler', () => {
       cooldownScheduler.addTask(task);
 
       const jobs = cooldownScheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
-
-      // Should still record execution for cooldown tracking
-      expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('cooldown-3', 30000);
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('cooldown-3', 30000);
+      }, { timeout: 2000 });
     });
 
     it('should not check cooldown when cooldownPeriod is not set', async () => {
@@ -510,15 +497,13 @@ describe('Scheduler', () => {
       cooldownScheduler.addTask(task);
 
       const jobs = cooldownScheduler.getActiveJobs();
-      await new Promise<void>((resolve) => {
-        void jobs[0].job.fireOnTick();
-        setTimeout(resolve, 50);
-      });
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
 
       // isInCooldown should not be called when no cooldownPeriod
       expect(mockCooldownManager.isInCooldown).not.toHaveBeenCalled();
-      // Executor should still be called
-      expect(mockExecutor).toHaveBeenCalledTimes(1);
     });
   });
 

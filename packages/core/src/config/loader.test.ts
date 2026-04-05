@@ -497,11 +497,20 @@ describe('validateRequiredConfig', () => {
 });
 
 describe('setLoadedConfig / getPreloadedConfig', () => {
-  it('should return null when no config is preloaded', () => {
-    // Note: other tests may have set config, so we just verify the API works
-    const result = getPreloadedConfig();
-    // Result may or may not be null depending on test order
-    expect(result === null || typeof result === 'object').toBe(true);
+  let previousConfig: ReturnType<typeof getPreloadedConfig>;
+
+  beforeEach(() => {
+    previousConfig = getPreloadedConfig();
+  });
+
+  afterEach(() => {
+    // Restore original config to avoid leaking state to other tests
+    if (previousConfig === null) {
+      // Clear the loaded config by setting to null via a fresh module-level reset
+      setLoadedConfig(null as any);
+    } else {
+      setLoadedConfig(previousConfig);
+    }
   });
 
   it('should set and get preloaded config', () => {
