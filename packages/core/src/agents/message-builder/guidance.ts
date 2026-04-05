@@ -218,3 +218,56 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Agents run in SDK subprocesses and cannot access in-memory
+ * state from the main process. The `.runtime-env` file enables cross-process
+ * state sharing (e.g., GitHub tokens, auth credentials), but agents are
+ * unaware of this mechanism. This guidance makes agents aware of available
+ * runtime environment variables so they can discover and use them.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment (.runtime-env)
+
+You run in an SDK subprocess. In-memory state from the main process (MCP servers, skills) is **not directly accessible** to you. The \`.runtime-env\` file in the workspace directory bridges this gap by sharing key-value pairs across processes.
+
+### How It Works
+
+- The main process writes variables to \`{workspace}/.runtime-env\` (e.g., auth tokens, configuration).
+- These variables are automatically loaded into your \`process.env\` at startup.
+- You can also read the file directly if needed.
+- You can write new variables to share state back to the main process or other agents.
+
+### Reading Variables
+
+Variables are pre-loaded into \`process.env\`. For known variables:
+
+- **GH_TOKEN** — GitHub personal access or installation token (set by \`github-jwt-auth\` skill)
+- **GH_TOKEN_EXPIRES_AT** — Token expiration time in ISO 8601 format
+
+To check available variables: read the \`.runtime-env\` file or inspect \`process.env\`.
+
+### Writing Variables
+
+Write to \`.runtime-env\` using the Write tool with \`KEY=VALUE\` format (one per line, \`#\` for comments):
+
+\`\`\`
+# .runtime-env
+MY_RESULT=value_from_agent
+STATUS=completed
+\`\`\`
+
+### Security Notes
+
+- \`.runtime-env\` is in \`.gitignore\` — never committed to the repository.
+- Tokens have expiration times. If a GitHub token is expired, trigger a refresh via the \`github-jwt-auth\` skill.
+- Only write values you intend to share. Avoid storing sensitive user data.`;
+}
