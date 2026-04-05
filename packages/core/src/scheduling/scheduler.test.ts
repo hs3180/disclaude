@@ -2,12 +2,16 @@
  * Tests for Scheduler.
  *
  * Verifies cron-based task execution, cooldown handling,
- * blocking mechanism, and lifecycle management.
+ * blocking mechanism, lifecycle management, and event-driven triggers.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #1953: Event-driven schedule trigger mechanism.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fsPromises from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
@@ -533,6 +537,231 @@ describe('Scheduler', () => {
 
       expect(scheduler.getActiveJobs()).toHaveLength(2);
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
+    });
+  });
+
+  describe('triggerTask (Issue #1953: event-driven triggers)', () => {
+    it('should trigger a task by ID', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('trigger-1');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.triggerTask('nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('should respect blocking when triggered', async () => {
+      // Make executor hang to simulate a running task
+      let resolveExecutor: () => void;
+      mockExecutor.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveExecutor = resolve;
+      }));
+
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger starts execution
+      void scheduler.triggerTask('blocking-trigger');
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-trigger')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger should be skipped due to blocking
+      const result = await scheduler.triggerTask('blocking-trigger');
+
+      // Executor should only be called once (blocking prevented second call)
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Clean up
+      resolveExecutor!();
+    });
+
+    it('should wrap prompt with anti-recursion instructions when triggered', async () => {
+      const task = createTask({ id: 'wrap-trigger', name: 'Trigger Task', prompt: 'Do work' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('wrap-trigger');
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Trigger Task');
+      expect(promptArg).toContain('Do work');
+    });
+  });
+
+  describe('event-driven trigger infrastructure (Issue #1953)', () => {
+    let tmpDir: string;
+    let triggerDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'scheduler-trigger-test-'));
+      triggerDir = path.join(tmpDir, '.triggers');
+    });
+
+    afterEach(async () => {
+      scheduler.stop();
+      await fsPromises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should create TriggerManager when triggerDir is provided', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerDir,
+      });
+
+      expect(s.getTriggerManager()).toBeDefined();
+      s.stop();
+    });
+
+    it('should create EventTriggerWatcher when workspaceDir is provided', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: tmpDir,
+      });
+
+      expect(s.getEventTriggerWatcher()).toBeDefined();
+      s.stop();
+    });
+
+    it('should not create trigger infrastructure when options not provided', () => {
+      expect(scheduler.getTriggerManager()).toBeUndefined();
+      expect(scheduler.getEventTriggerWatcher()).toBeUndefined();
+    });
+
+    it('should start TriggerManager on scheduler start', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerDir,
+      });
+
+      await s.start();
+      expect(s.getTriggerManager()?.isRunning()).toBe(true);
+      s.stop();
+    });
+
+    it('should stop TriggerManager on scheduler stop', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerDir,
+      });
+
+      await s.start();
+      s.stop();
+      expect(s.getTriggerManager()?.isRunning()).toBe(false);
+    });
+
+    it('should execute task when trigger signal is detected', async () => {
+      const task = createTask({ id: 'signal-task' });
+      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValue([task]);
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerDir,
+      });
+
+      await s.start();
+
+      // Write trigger signal directly
+      await s.getTriggerManager()!.trigger('signal-task');
+
+      // Wait for fs.watch detection and execution
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 3000 });
+
+      s.stop();
+    });
+
+    it('should stop event watchers when task is removed', async () => {
+      const task = createTask({ id: 'watch-task', watch: 'some/path' });
+      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValue([]);
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerDir,
+        workspaceDir: tmpDir,
+      });
+
+      await s.start();
+      s.addTask(task);
+
+      // Watch setup is async (mkdir), wait for it
+      await vi.waitFor(() => {
+        expect(s.getEventTriggerWatcher()?.isWatching('watch-task')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Remove task
+      s.removeTask('watch-task');
+
+      // Watch should be cleaned up
+      expect(s.getEventTriggerWatcher()?.isWatching('watch-task')).toBe(false);
+
+      s.stop();
+    });
+
+    it('should handle task with watch field on addTask', async () => {
+      const watchDir = path.join(tmpDir, 'chats');
+      await fsPromises.mkdir(watchDir, { recursive: true });
+
+      const task = createTask({ id: 'watch-add', watch: 'chats', watchDebounce: 2000 });
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: tmpDir,
+      });
+
+      s.addTask(task);
+
+      // Watch setup is async (mkdir), wait for it
+      await vi.waitFor(() => {
+        expect(s.getEventTriggerWatcher()?.isWatching('watch-add')).toBe(true);
+      }, { timeout: 2000 });
+      expect(s.getEventTriggerWatcher()?.getWatchCount()).toBe(1);
+
+      s.stop();
+    });
+
+    it('should not set up event watcher for tasks without watch field', () => {
+      const task = createTask({ id: 'no-watch' });
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: tmpDir,
+      });
+
+      s.addTask(task);
+
+      expect(s.getEventTriggerWatcher()?.isWatching('no-watch')).toBe(false);
+
+      s.stop();
     });
   });
 });

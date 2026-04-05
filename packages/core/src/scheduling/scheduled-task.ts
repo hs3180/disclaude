@@ -41,4 +41,26 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional directory path to watch for event-driven triggering.
+   * When files in this directory change, the schedule is triggered immediately
+   * (in addition to its regular cron schedule).
+   *
+   * Path is relative to the workspace root directory.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * Example frontmatter: `watch: "workspace/chats"`
+   */
+  watch?: string;
+  /**
+   * Debounce interval in milliseconds for watch-triggered events.
+   * Multiple file changes within this window are coalesced into a single trigger.
+   * Default: 5000ms (5 seconds).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * Example frontmatter: `watchDebounce: 3000`
+   */
+  watchDebounce?: number;
 }

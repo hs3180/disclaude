@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron and event-driven triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,10 +15,16 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ * - Signal files for cross-process triggering
+ * - File watchers for automatic path-based triggering
+ * - Coexists with cron as a complementary trigger source
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Event-driven triggers via signal files and file watchers
  *
  * @module @disclaude/core/scheduling
  */
@@ -26,6 +32,8 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { TriggerManager } from './trigger-manager.js';
+import { EventTriggerWatcher } from './event-trigger-watcher.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -67,6 +75,7 @@ export type TaskExecutor = (chatId: string, prompt: string, userId?: string, mod
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #1953: Added triggerDir and workspaceDir for event-driven triggers.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -77,6 +86,18 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Directory for trigger signal files (Issue #1953).
+   * When set, enables event-driven triggering via signal files.
+   * Signal files are created by TriggerManager and consumed by the scheduler.
+   * Typically: {workspaceDir}/schedules/.triggers
+   */
+  triggerDir?: string;
+  /**
+   * Workspace root directory (Issue #1953).
+   * Used as the base for resolving relative watch paths in schedule frontmatter.
+   */
+  workspaceDir?: string;
 }
 
 /**
@@ -119,17 +140,46 @@ export class Scheduler {
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
 
+  /** Issue #1953: Event-driven trigger infrastructure */
+  private triggerManager?: TriggerManager;
+  private eventWatcher?: EventTriggerWatcher;
+
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+
+    // Issue #1953: Initialize event-driven trigger infrastructure
+    if (options.triggerDir) {
+      this.triggerManager = new TriggerManager({ triggerDir: options.triggerDir });
+
+      // When a trigger signal is detected, execute the corresponding task
+      this.triggerManager.onTrigger((taskId) => {
+        void this.handleTrigger(taskId);
+      });
+    }
+
+    if (options.workspaceDir) {
+      this.eventWatcher = new EventTriggerWatcher({
+        baseDir: options.workspaceDir,
+        onTrigger: (taskId) => {
+          if (this.triggerManager) {
+            void this.triggerManager.trigger(taskId);
+          } else {
+            void this.handleTrigger(taskId);
+          }
+        },
+      });
+    }
+
     logger.info('Scheduler created');
   }
 
   /**
    * Start the scheduler.
    * Loads all enabled tasks and schedules them.
+   * Also starts event-driven trigger infrastructure if configured.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -138,6 +188,11 @@ export class Scheduler {
     }
 
     this.running = true;
+
+    // Issue #1953: Start trigger manager
+    if (this.triggerManager) {
+      await this.triggerManager.start();
+    }
 
     // Load and schedule all enabled tasks
     const tasks = await this.scheduleManager.listEnabled();
@@ -150,10 +205,20 @@ export class Scheduler {
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and event-driven watchers.
    */
   stop(): void {
     this.running = false;
+
+    // Issue #1953: Stop event watcher
+    if (this.eventWatcher) {
+      this.eventWatcher.stopAll();
+    }
+
+    // Issue #1953: Stop trigger manager
+    if (this.triggerManager) {
+      this.triggerManager.stop();
+    }
 
     for (const [taskId, entry] of this.activeJobs) {
       void entry.job.stop();
@@ -167,11 +232,12 @@ export class Scheduler {
   /**
    * Add a task to the scheduler.
    * Creates a cron job for the task.
+   * If the task has a `watch` path, also sets up event-driven file watching.
    *
    * @param task - Task to add
    */
   addTask(task: ScheduledTask): void {
-    // Remove existing job if any
+    // Remove existing job if any (including event watchers)
     this.removeTask(task.id);
 
     if (!task.enabled) {
@@ -193,10 +259,17 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Set up event-driven file watcher if watch path is declared
+    if (task.watch && this.eventWatcher) {
+      const debounceMs = task.watchDebounce ?? 5000;
+      void this.eventWatcher.watchTask(task.id, task.watch, debounceMs);
+    }
   }
 
   /**
    * Remove a task from the scheduler.
+   * Also stops any associated event-driven file watcher.
    *
    * @param taskId - Task ID to remove
    */
@@ -206,6 +279,11 @@ export class Scheduler {
       void entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
+    }
+
+    // Issue #1953: Stop event-driven watcher for this task
+    if (this.eventWatcher) {
+      this.eventWatcher.unwatchTask(taskId);
     }
   }
 
@@ -401,5 +479,67 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  // ==========================================================================
+  // Issue #1953: Event-Driven Trigger Methods
+  // ==========================================================================
+
+  /**
+   * Programmatically trigger a task by ID.
+   *
+   * This method allows external code (skills, agents, etc.) to immediately
+   * trigger a scheduled task execution, bypassing the cron schedule.
+   * The task must be currently loaded (in activeJobs).
+   *
+   * Respects blocking and cooldown mechanisms - if a task is already running
+   * or in cooldown, the trigger is silently skipped.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * @param taskId - ID of the task to trigger
+   * @returns true if the task was found and triggered, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found in active jobs');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Task triggered (event-driven)');
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
+   * Get the TriggerManager instance (Issue #1953).
+   * Returns undefined if event-driven triggering is not configured.
+   */
+  getTriggerManager(): TriggerManager | undefined {
+    return this.triggerManager;
+  }
+
+  /**
+   * Get the EventTriggerWatcher instance (Issue #1953).
+   * Returns undefined if event-driven watching is not configured.
+   */
+  getEventTriggerWatcher(): EventTriggerWatcher | undefined {
+    return this.eventWatcher;
+  }
+
+  /**
+   * Handle a trigger signal from the TriggerManager.
+   * Called when a signal file is detected and consumed.
+   *
+   * @param taskId - ID of the triggered task
+   */
+  private async handleTrigger(taskId: string): Promise<void> {
+    if (!this.running) {
+      logger.debug({ taskId }, 'Ignoring trigger: scheduler not running');
+      return;
+    }
+
+    await this.triggerTask(taskId);
   }
 }

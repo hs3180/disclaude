@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'watch':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -108,6 +109,7 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
+      case 'watchDebounce':
         frontmatter[key] = parseInt(value, 10);
         break;
     }
@@ -216,6 +218,8 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as string | undefined,
+        watchDebounce: frontmatter['watchDebounce'] as number | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +271,12 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watch) {
+      frontmatter.push(`watch: "${task.watch}"`);
+    }
+    if (task.watchDebounce) {
+      frontmatter.push(`watchDebounce: ${task.watchDebounce}`);
     }
 
     frontmatter.push('---', '');
