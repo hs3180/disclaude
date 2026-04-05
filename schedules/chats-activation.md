@@ -33,7 +33,7 @@ createdAt: 2026-04-03T00:00:00.000Z
 - ✅ 标记失败（达到重试上限后 → failed）
 - ✅ 标记过期（`expiresAt` 已过期的 pending 群聊 → expired）
 - ❌ 不发送消息到群组（由消费方 skill 负责）
-- ❌ 不处理超时/解散群组（由 `chat-timeout` skill 负责）
+- ❌ 不处理超时/解散群组（由 `discussion-end` skill 负责）
 - ❌ 不清理文件（由 `chats-cleanup` schedule 负责）
 
 ## 执行步骤

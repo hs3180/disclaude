@@ -17,7 +17,7 @@ Each chat is a JSON file in `workspace/chats/`. Chats are automatically activate
 - ✅ List chats with filters
 - ✅ Handle user responses (update chat with response data)
 - ❌ DO NOT create groups (Schedule handles this via lark-cli)
-- ❌ DO NOT dissolve groups (handled by `chat-timeout` skill)
+- ❌ DO NOT dissolve groups (handled by `discussion-end` skill)
 - ❌ DO NOT send messages to groups (handled by consumer skills)
 - ❌ DO NOT execute callbacks or downstream actions
 
@@ -207,7 +207,7 @@ bash scripts/chat/response.sh
 | `pending` | Waiting for group creation | Chat file created | **This Skill** |
 | `active` | Group created, waiting for response | Schedule completes activation | **`chats-activation` Schedule** |
 | `failed` | Group creation failed after max retries | Invalid members, API error, etc. | **`chats-activation` Schedule** |
-| `expired` | Chat ended | User responded OR timeout | **Consumer** (response) / **`chat-timeout` Skill** (timeout) |
+| `expired` | Chat ended | User responded OR timeout | **Consumer** (response) / **`discussion-end` Skill** (timeout) |
 
 ## Consumer Usage Pattern
 
@@ -219,7 +219,7 @@ Consumers (PR Scanner, offline questions, etc.) use this pattern:
    (or marks as failed after 5 retries if members are invalid)
 3. Consumer detects chat is active (polls chat file) → sends message to group
 4. User responds in group → consumer/skill updates chat file with response
-5. chat-timeout Skill detects timeout → marks as expired, dissolves group
+5. discussion-end Skill detects timeout/end → marks as expired, dissolves group
 6. Consumer polls chat file → finds response → takes downstream action
 ```
 
@@ -234,7 +234,7 @@ workspace/chats/
 
 ## DO NOT
 
-- ❌ Create or dissolve groups (Schedule creates, `chat-timeout` skill dissolves)
+- ❌ Create or dissolve groups (Schedule creates, `discussion-end` skill dissolves)
 - ❌ Send messages to groups (consumer skill's responsibility)
 - ❌ Execute downstream actions based on responses (consumer's responsibility)
 - ❌ Modify chats created by other processes
