@@ -109,13 +109,13 @@ describe('send_text', () => {
     it('should pass parentMessageId to IPC', async () => {
       mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
       await send_text({ text: 'reply', chatId: 'oc_test', parentMessageId: 'parent_456' });
-      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'reply', 'parent_456');
+      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'reply', 'parent_456', undefined);
     });
 
     it('should not pass parentMessageId when undefined', async () => {
       mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
       await send_text({ text: 'hello', chatId: 'oc_test' });
-      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'hello', undefined);
+      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'hello', undefined, undefined);
     });
   });
 
