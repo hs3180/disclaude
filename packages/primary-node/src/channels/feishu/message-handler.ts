@@ -30,6 +30,7 @@ import {
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
+import { getMembers } from '../../platforms/feishu/chat-ops.js';
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -107,6 +108,12 @@ export class MessageHandler {
   private isRunning: () => boolean;
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
+
+  /**
+   * Cache of group chats already checked for small-group auto passive mode.
+   * Issue #2052: Only check member count once per chat to avoid repeated API calls.
+   */
+  private smallGroupChecked: Set<string> = new Set();
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -441,6 +448,45 @@ export class MessageHandler {
    */
   private isGroupChat(chatType?: string): boolean {
     return chatType === 'group' || chatType === 'topic';
+  }
+
+  /**
+   * Check if a group chat is a small group (bot + 1 user) and auto-disable passive mode.
+   *
+   * Issue #2052: 2-member group chats (bot + 1 user) should behave like private chats,
+   * with passive mode disabled by default. This check runs only once per chat to avoid
+   * repeated API calls. Users can still manually override with /passive on.
+   *
+   * @param chatId - The group chat ID to check
+   */
+  private async checkSmallGroupPassiveMode(chatId: string): Promise<void> {
+    if (this.smallGroupChecked.has(chatId)) {
+      return;
+    }
+    this.smallGroupChecked.add(chatId);
+
+    if (!this.client) {
+      logger.warn('Cannot check small group: client not initialized');
+      return;
+    }
+
+    try {
+      const members = await getMembers(this.client, chatId);
+      if (members.length <= 2) {
+        logger.info(
+          { chatId, memberCount: members.length },
+          'Small group detected (≤2 members), auto-disabling passive mode'
+        );
+        this.passiveModeManager.setPassiveModeDisabled(chatId, true);
+      } else {
+        logger.debug(
+          { chatId, memberCount: members.length },
+          'Group has more than 2 members, keeping default passive mode'
+        );
+      }
+    } catch (error) {
+      logger.error({ err: error, chatId }, 'Failed to check group member count for passive mode');
+    }
   }
 
   /**
@@ -827,7 +873,11 @@ export class MessageHandler {
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Group chat passive mode
+    // Issue #2052: Auto-disable passive mode for 2-member groups (bot + 1 user)
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
+    if (this.isGroupChat(chat_type) && !isPassiveCommand) {
+      await this.checkSmallGroupPassiveMode(chat_id);
+    }
     const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
       logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
