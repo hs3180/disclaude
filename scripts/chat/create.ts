@@ -3,11 +3,12 @@
  * chat/create.ts — Create a pending chat file.
  *
  * Environment variables:
- *   CHAT_ID         (required) Unique chat identifier (e.g. "pr-123")
- *   CHAT_EXPIRES_AT (required) ISO 8601 Z-suffix expiry timestamp
- *   CHAT_GROUP_NAME (required) Group display name
- *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
- *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_ID           (required) Unique chat identifier (e.g. "pr-123")
+ *   CHAT_EXPIRES_AT   (required) ISO 8601 Z-suffix expiry timestamp
+ *   CHAT_GROUP_NAME   (required) Group display name
+ *   CHAT_MEMBERS      (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
+ *   CHAT_CONTEXT      (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_PASSIVE_MODE (optional) "true" or "false" (default: "false" — passive mode disabled)
  *
  * Exit codes:
  *   0 — success
@@ -83,6 +84,18 @@ async function main() {
     exit(`CHAT_CONTEXT must be valid JSON: ${contextRaw}`);
   }
 
+  // ---- Step 2b: Parse passive mode (default: false — disabled for temp chats) ----
+  // Issue #2018: Temporary chats should disable passive mode by default
+  const passiveModeRaw = process.env.CHAT_PASSIVE_MODE;
+  let passiveMode: boolean;
+  if (passiveModeRaw === undefined || passiveModeRaw === 'false') {
+    passiveMode = false;
+  } else if (passiveModeRaw === 'true') {
+    passiveMode = true;
+  } else {
+    exit(`CHAT_PASSIVE_MODE must be "true" or "false", got '${passiveModeRaw}'`);
+  }
+
   const truncatedName = truncateGroupName(groupName!);
 
   // ---- Step 3: Setup directory and resolve path ----
@@ -128,6 +141,8 @@ async function main() {
       activationAttempts: 0,
       lastActivationError: null,
       failedAt: null,
+      // Issue #2018: Default to passive mode disabled for temporary chats
+      passiveMode,
     };
 
     // Atomic write: write to temp file then rename

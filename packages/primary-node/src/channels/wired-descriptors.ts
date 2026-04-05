@@ -23,6 +23,7 @@ import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import { messageLogger } from './feishu/message-logger.js';
+import { startPassiveModeChatSync } from './feishu/passive-mode-chat-sync.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -169,6 +170,14 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       }
     }).catch(err => {
       context.logger.warn({ err }, 'Failed to initialize passive mode from chat store');
+    });
+
+    // 2c. Issue #2018: Start periodic sync from workspace/chats/ directory.
+    // This bridges the script-based chat system (create.ts / chats-activation.ts)
+    // with the runtime PassiveModeManager. Detects newly activated temp chats
+    // and applies their declarative passive mode settings.
+    startPassiveModeChatSync({
+      passiveModeManager: feishuChannel.getPassiveModeManager(),
     });
 
     // 3. Register IPC handlers for MCP Server connections

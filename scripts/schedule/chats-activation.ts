@@ -261,6 +261,8 @@ async function main() {
 
       if (newChatId) {
         // Success — update to active
+        // Issue #2018: Preserve passiveMode field (default: false for temp chats)
+        const passiveMode = currentChat.passiveMode ?? false;
         const updated = {
           ...currentChat,
           status: 'active' as const,
@@ -268,9 +270,10 @@ async function main() {
           activatedAt: now,
           activationAttempts: 0,
           lastActivationError: null,
+          passiveMode,
         };
         await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
-        console.log(`OK: Chat ${chatId} activated (chatId=${newChatId})`);
+        console.log(`OK: Chat ${chatId} activated (chatId=${newChatId}, passiveMode=${passiveMode})`);
       } else {
         // Failure — record error and check retry limit
         const errorMsg = (larkError ?? larkResult ?? 'unknown error').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

@@ -172,6 +172,22 @@ describe('schema', () => {
       expect(result.status).toBe('pending');
     });
 
+    it('should accept chat file with passiveMode: false (Issue #2018)', () => {
+      const result = validateChatFileData({ ...validChat, passiveMode: false }, '/path/to/test.json');
+      expect(result.id).toBe('test-123');
+      expect(result.passiveMode).toBe(false);
+    });
+
+    it('should accept chat file with passiveMode: true', () => {
+      const result = validateChatFileData({ ...validChat, passiveMode: true }, '/path/to/test.json');
+      expect(result.passiveMode).toBe(true);
+    });
+
+    it('should accept chat file without passiveMode field', () => {
+      const result = validateChatFileData(validChat, '/path/to/test.json');
+      expect(result.passiveMode).toBeUndefined();
+    });
+
     it('should reject non-object input', () => {
       expect(() => validateChatFileData(null, '/path')).toThrow(ValidationError);
       expect(() => validateChatFileData('string', '/path')).toThrow(ValidationError);

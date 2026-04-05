@@ -33,6 +33,14 @@ export interface ChatFile {
   activationAttempts: number;
   lastActivationError: string | null;
   failedAt: string | null;
+  /**
+   * Declarative passive mode configuration for this chat.
+   * When `false`, passive mode is disabled (bot responds to all messages).
+   * When `true` or undefined, default behavior applies (passive mode enabled).
+   *
+   * Issue #2018: Temporary chats default to passive mode disabled.
+   */
+  passiveMode?: boolean;
 }
 
 // ---- Constants ----
