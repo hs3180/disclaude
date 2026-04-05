@@ -159,6 +159,10 @@ async function handleMessage(message: unknown) {
                       type: 'string',
                       description: 'Chat ID to send the file to',
                     },
+                    parentMessageId: {
+                      type: 'string',
+                      description: 'Optional parent message ID for thread replies.',
+                    },
                   },
                   required: ['filePath', 'chatId'],
                 },
@@ -235,7 +239,7 @@ async function handleMessage(message: unknown) {
         }
 
         if (name === 'send_file') {
-          const args = toolArgs as { filePath: string; chatId: string };
+          const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
 
           return {

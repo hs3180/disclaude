@@ -1,5 +1,7 @@
 /**
  * Tests for send_file tool (packages/mcp-server/src/tools/send-file.ts)
+ *
+ * Issue #1619: Added tests for parentMessageId (thread reply) support.
  */
 
 import * as fs from 'fs/promises';
@@ -71,7 +73,7 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: 'file.txt', chatId: 'oc_test' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/workspace/file.txt');
+      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/workspace/file.txt', undefined);
     });
 
     it('should use absolute paths directly', async () => {
@@ -79,7 +81,7 @@ describe('send_file', () => {
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: '/absolute/path/file.txt', chatId: 'oc_test' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/absolute/path/file.txt');
+      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/absolute/path/file.txt', undefined);
     });
   });
 
@@ -168,6 +170,33 @@ describe('send_file', () => {
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.error).toBe('Unknown error');
+    });
+  });
+
+  describe('thread reply support (Issue #1619)', () => {
+    it('should pass parentMessageId to IPC uploadFile', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
+      });
+      await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', parentMessageId: 'thread_123' });
+      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/doc.pdf', 'thread_123');
+    });
+
+    it('should pass undefined when parentMessageId is not provided', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
+      });
+      await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/file.txt', undefined);
+    });
+
+    it('should send file successfully with thread reply', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'file_key_456', fileType: 'png', fileName: 'image.png', fileSize: 512000,
+      });
+      const result = await send_file({ filePath: '/test/image.png', chatId: 'oc_test', parentMessageId: 'root_msg_789' });
+      expect(result.success).toBe(true);
+      expect(result.fileName).toBe('image.png');
     });
   });
 });
