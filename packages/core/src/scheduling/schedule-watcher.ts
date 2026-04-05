@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchConfig } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -69,6 +69,83 @@ function stripQuotes(value: string): string {
 }
 
 /**
+ * Parse a YAML list block (e.g., `watch:` entries) from frontmatter lines.
+ *
+ * Handles the format:
+ * ```yaml
+ * watch:
+ *   - path: "workspace/chats"
+ *     pattern: "*.json"
+ *     debounce: 5000
+ *   - path: "workspace/other"
+ * ```
+ *
+ * @param lines - All frontmatter lines
+ * @param startIndex - Index of the `watch:` line
+ * @returns Array of parsed WatchConfig objects
+ */
+function parseWatchList(lines: string[], startIndex: number): WatchConfig[] {
+  const watches: WatchConfig[] = [];
+  let currentWatch: Partial<WatchConfig> | null = null;
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Stop at non-indented line (end of list block)
+    if (line.length > 0 && line[0] !== ' ' && line[0] !== '\t') {
+      break;
+    }
+
+    // Check for list item start: `  - key: value`
+    const listItemMatch = line.match(/^\s+-\s+(\w+):\s*(.*)$/);
+    if (listItemMatch) {
+      // Save previous watch entry if valid
+      if (currentWatch && currentWatch.path) {
+        watches.push(currentWatch as WatchConfig);
+      }
+      currentWatch = {};
+
+      const propKey = listItemMatch[1];
+      const propValue = listItemMatch[2].trim();
+      setWatchProperty(currentWatch, propKey, propValue);
+      continue;
+    }
+
+    // Check for continuation property: `    key: value`
+    const propMatch = line.match(/^\s+(\w+):\s*(.*)$/);
+    if (propMatch && currentWatch) {
+      const propKey = propMatch[1];
+      const propValue = propMatch[2].trim();
+      setWatchProperty(currentWatch, propKey, propValue);
+    }
+  }
+
+  // Don't forget the last entry
+  if (currentWatch && currentWatch.path) {
+    watches.push(currentWatch as WatchConfig);
+  }
+
+  return watches;
+}
+
+/**
+ * Set a property on a partial WatchConfig based on key name.
+ */
+function setWatchProperty(watch: Partial<WatchConfig>, key: string, value: string): void {
+  switch (key) {
+    case 'path':
+      watch.path = stripQuotes(value);
+      break;
+    case 'pattern':
+      watch.pattern = stripQuotes(value);
+      break;
+    case 'debounce':
+      watch.debounce = parseInt(value, 10);
+      break;
+  }
+}
+
+/**
  * Parse YAML frontmatter from schedule content.
  */
 function parseScheduleFrontmatter(content: string): {
@@ -86,7 +163,8 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
@@ -109,6 +187,10 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
+        break;
+      case 'watch':
+        // Parse YAML list block for watch configuration
+        frontmatter[key] = parseWatchList(lines, i);
         break;
     }
   }
@@ -216,6 +298,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as WatchConfig[] | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +350,18 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watch && task.watch.length > 0) {
+      frontmatter.push('watch:');
+      for (const w of task.watch) {
+        frontmatter.push(`  - path: "${w.path}"`);
+        if (w.pattern) {
+          frontmatter.push(`    pattern: "${w.pattern}"`);
+        }
+        if (w.debounce !== undefined) {
+          frontmatter.push(`    debounce: ${w.debounce}`);
+        }
+      }
     }
 
     frontmatter.push('---', '');

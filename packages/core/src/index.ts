@@ -201,6 +201,7 @@ export {
   ScheduleManager,
   Scheduler,
   type ScheduledTask,
+  type WatchConfig,
   type ScheduleFileTask,
   type ScheduleFileScannerOptions,
   type ScheduleFileWatcherOptions,
@@ -216,6 +217,9 @@ export {
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
+  // Issue #1953: Event-driven schedule trigger
+  EventTriggerWatcher,
+  type EventTriggerWatcherOptions,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)

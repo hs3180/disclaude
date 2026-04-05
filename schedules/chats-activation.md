@@ -1,10 +1,14 @@
 ---
 name: "Chats Activation"
-cron: "0 * * * * *"
+cron: "0 */5 * * * *"
 enabled: true
 blocking: true
 chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 createdAt: 2026-04-03T00:00:00.000Z
+watch:
+  - path: "workspace/chats"
+    pattern: "*.json"
+    debounce: 5000
 ---
 
 # Chats Activation

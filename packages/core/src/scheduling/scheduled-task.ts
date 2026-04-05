@@ -8,6 +8,37 @@
  */
 
 /**
+ * Configuration for event-driven file watching trigger.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ * When declared in schedule frontmatter, the scheduler will watch the
+ * specified directory for file changes and trigger execution immediately,
+ * rather than waiting for the next cron tick.
+ *
+ * Example frontmatter:
+ * ```yaml
+ * watch:
+ *   - path: "workspace/chats"
+ *     pattern: "*.json"
+ *     debounce: 5000
+ * ```
+ */
+export interface WatchConfig {
+  /** Directory to watch (relative to workspace root or absolute path) */
+  path: string;
+  /**
+   * Glob pattern to filter watched files (default: "*").
+   * Only files matching this pattern will trigger execution.
+   */
+  pattern?: string;
+  /**
+   * Debounce interval in milliseconds (default: 5000).
+   * Multiple file changes within this window are coalesced into a single trigger.
+   */
+  debounce?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +72,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional event-driven file watch triggers.
+   * When set, the scheduler will watch the specified paths and trigger
+   * execution immediately upon file changes, in addition to cron-based triggers.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watch?: WatchConfig[];
 }

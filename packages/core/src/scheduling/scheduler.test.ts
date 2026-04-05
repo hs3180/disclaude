@@ -535,4 +535,110 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerTask (Issue #1953)', () => {
+    it('should trigger task execution and return true for registered task', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = scheduler.triggerTask('trigger-1');
+      expect(result).toBe(true);
+
+      // Wait for async execution
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return false for non-existent task', () => {
+      const result = scheduler.triggerTask('nonexistent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking mechanism when triggered', async () => {
+      // Make executor hang (simulating long-running task)
+      let resolveExecution: () => void;
+      mockExecutor.mockImplementationOnce(() => new Promise<void>(resolve => {
+        resolveExecution = resolve;
+      }));
+
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger starts execution
+      const result1 = scheduler.triggerTask('blocking-trigger');
+      expect(result1).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-trigger')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger should be blocked (but return true since task exists)
+      const result2 = scheduler.triggerTask('blocking-trigger');
+      expect(result2).toBe(true);
+
+      // Executor should only be called once
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Clean up
+      resolveExecution!();
+    });
+
+    it('should respect cooldown mechanism when triggered', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cd-trigger', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      const result = cooldownScheduler.triggerTask('cd-trigger');
+      expect(result).toBe(true);
+
+      // Wait for cooldown check to happen
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
+
+      // Executor should NOT be called when in cooldown
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getTask (Issue #1953)', () => {
+    it('should return task for registered task ID', () => {
+      const task = createTask({ id: 'get-1', name: 'Gettable Task' });
+      scheduler.addTask(task);
+
+      const retrieved = scheduler.getTask('get-1');
+      expect(retrieved).toBeDefined();
+      expect(retrieved!.id).toBe('get-1');
+      expect(retrieved!.name).toBe('Gettable Task');
+    });
+
+    it('should return undefined for non-existent task ID', () => {
+      const retrieved = scheduler.getTask('nonexistent');
+      expect(retrieved).toBeUndefined();
+    });
+  });
 });

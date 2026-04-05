@@ -323,6 +323,41 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task execution externally (event-driven trigger).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Allows EventTriggerWatcher or other components to trigger a task
+   * immediately without waiting for the next cron tick.
+   *
+   * The task must already be registered (via addTask or start).
+   * Respects blocking and cooldown mechanisms.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was found and triggered, false otherwise
+   */
+  triggerTask(taskId: string): boolean {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found in active jobs');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Event-triggering task execution');
+    void this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
+   * Get a task by its ID from active jobs.
+   *
+   * @param taskId - Task ID to look up
+   * @returns The task if found, undefined otherwise
+   */
+  getTask(taskId: string): ScheduledTask | undefined {
+    return this.activeJobs.get(taskId)?.task;
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
