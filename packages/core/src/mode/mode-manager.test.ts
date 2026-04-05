@@ -134,7 +134,7 @@ describe('ModeManager', () => {
     });
 
     it('should return full state including research config', () => {
-      const state = manager.switchToResearch('chat-1', 'test-topic');
+      manager.switchToResearch('chat-1', 'test-topic');
       const retrieved = manager.getModeState('chat-1');
       expect(retrieved.mode).toBe('research');
       expect(retrieved.research).toBeDefined();

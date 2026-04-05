@@ -17,7 +17,7 @@
  */
 
 import { createLogger, type Logger } from '../utils/logger.js';
-import type { AgentMode, ModeState, ResearchModeConfig } from './types.js';
+import type { AgentMode, ModeState } from './types.js';
 import { createResearchModeConfig, sanitizeTopicName } from './research-soul.js';
 
 /**
@@ -120,7 +120,7 @@ export class ModeManager {
     // If switching from a different research topic, log the topic change
     if (existing?.mode === 'research' && existing.research?.topic !== sanitizedTopic) {
       this.logger.info(
-        { chatId, from: existing.research.topic, to: sanitizedTopic },
+        { chatId, from: existing.research!.topic, to: sanitizedTopic },
         'Switching research topic'
       );
     }
