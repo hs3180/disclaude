@@ -10,6 +10,30 @@ Manage temporary chats with a four-state lifecycle: **pending → active → exp
 
 Each chat is a JSON file in `workspace/chats/`. Chats are automatically activated (group created) by the companion Schedule (`chats-activation`).
 
+## Prerequisites
+
+| Dependency | Minimum Version | Purpose |
+|------------|----------------|---------|
+| Node.js | v20.12+ | Runtime (fs.flock for file locking) |
+| tsx | any | TypeScript execution (`npx tsx scripts/chat/*.ts`) |
+
+**Before first use**, run the dependency check:
+
+```bash
+npx tsx scripts/chat/check-deps.ts
+```
+
+This validates Node.js version, `tsx` availability, and chat directory writability.
+
+### Platform-Specific Installation
+
+| Platform | Install Node.js | Install tsx |
+|----------|----------------|-------------|
+| macOS | `brew install node` or [nodejs.org](https://nodejs.org/) | `npm install -g tsx` |
+| Debian/Ubuntu | `apt-get install nodejs npm` | `npm install -g tsx` |
+| Alpine | `apk add nodejs npm` | `npm install -g tsx` |
+| Fedora | `dnf install nodejs npm` | `npm install -g tsx` |
+
 ## Single Responsibility
 
 - ✅ Create chat files (pending state)
