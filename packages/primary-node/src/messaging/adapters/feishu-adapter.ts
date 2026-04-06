@@ -5,10 +5,13 @@
  * It converts Universal Message Format to Feishu's interactive card format.
  *
  * Issue #515: Universal Message Format + Channel Adapters (Phase 2)
+ * Issue #1619: File type support with proper upload and thread reply.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createLogger, type UniversalMessage, type SendResult, type MessageContent, type CardContent, type CardSection, type CardAction } from '@disclaude/core';
+import { createLogger, type UniversalMessage, type SendResult, type MessageContent, type FileContent, type CardContent, type CardSection, type CardAction } from '@disclaude/core';
 import type {
   IChannelAdapter,
   ChannelCapabilities,
@@ -27,6 +30,31 @@ export interface FeishuClientProvider {
 /**
  * Feishu card theme colors mapping.
  */
+/**
+ * Image file extensions recognized by Feishu image upload API.
+ */
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico', '.svg',
+]);
+
+/**
+ * File extension to Feishu file_type mapping for document uploads.
+ */
+const EXT_TO_FEISHU_FILE_TYPE: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+  '.opus': 'opus',
+  '.mp4': 'mp4',
+  '.pdf': 'pdf',
+  '.doc': 'doc', '.docx': 'doc',
+  '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
+  '.ppt': 'ppt', '.pptx': 'ppt',
+};
+
+/** Maximum image file size in bytes (10 MB). */
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+/** Maximum document file size in bytes (30 MB). */
+const MAX_FILE_SIZE = 30 * 1024 * 1024;
+
 const THEME_MAP: Record<string, string> = {
   blue: 'blue',
   wathet: 'wathet',
@@ -139,10 +167,12 @@ export class FeishuAdapter implements IChannelAdapter {
         };
 
       case 'file':
-        return {
-          msg_type: 'file',
-          content: JSON.stringify({ file_path: content.path }),
-        };
+        // File messages require async upload (handled in send()).
+        // convert() is synchronous and cannot perform file uploads.
+        throw new Error(
+          'File content cannot be converted synchronously. ' +
+          'Use send() directly for file messages, which handles upload via Feishu API.',
+        );
 
       case 'done':
         return {
@@ -342,18 +372,32 @@ export class FeishuAdapter implements IChannelAdapter {
 
   /**
    * Send a message through Feishu API.
+   *
+   * Issue #1619: File messages are handled with proper upload flow:
+   * 1. Upload file/image via Feishu API to get file_key/image_key
+   * 2. Send message with the key using create or reply (thread) API
+   *
+   * Thread reply support: when threadId is provided, messages are sent
+   * as replies using client.im.message.reply() instead of create().
    */
   async send(message: UniversalMessage): Promise<SendResult> {
     try {
       const client = this.getClient();
+
+      // Issue #1619: Handle file messages with proper upload flow.
+      // File upload is async and cannot be done in convert().
+      if (message.content.type === 'file') {
+        return this.sendFileMessage(client, message);
+      }
+
       const feishuMessage = this.convert(message) as {
         msg_type: string;
         content: string;
       };
 
-      // Use thread reply if threadId is provided
+      // Use thread reply if threadId is provided (Issue #1619)
       if (message.threadId) {
-        await client.im.message.reply({
+        const replyResp = await client.im.message.reply({
           path: {
             message_id: message.threadId,
           },
@@ -362,6 +406,9 @@ export class FeishuAdapter implements IChannelAdapter {
             content: feishuMessage.content,
           },
         });
+        const messageId = replyResp.data?.message_id;
+        logger.debug({ chatId: message.chatId, messageId, threadId: message.threadId }, 'Message sent as thread reply to Feishu');
+        return { success: true, messageId };
       } else {
         const response = await client.im.message.create({
           params: {
@@ -382,8 +429,6 @@ export class FeishuAdapter implements IChannelAdapter {
           messageId,
         };
       }
-
-      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, chatId: message.chatId }, 'Failed to send message to Feishu');
@@ -392,6 +437,106 @@ export class FeishuAdapter implements IChannelAdapter {
         error: errorMessage,
       };
     }
+  }
+
+  /**
+   * Send a file message with proper upload flow.
+   *
+   * Issue #1619: Uploads the file to Feishu API first, then sends
+   * the message with the obtained file_key or image_key.
+   * Supports both image and document file types, with thread reply.
+   *
+   * @param client - Lark client instance
+   * @param message - Universal message with file content
+   * @returns Send result with messageId
+   */
+  private async sendFileMessage(client: lark.Client, message: UniversalMessage): Promise<SendResult> {
+    const fileContent = message.content as FileContent;
+    const filePath = fileContent.path;
+    if (!filePath) {
+      return { success: false, error: 'File path is required for file messages' };
+    }
+
+    const fileName = fileContent.name || path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Stat file: check existence and get size in one call
+    let fileSize: number;
+    try {
+      fileSize = fs.statSync(filePath).size;
+    } catch {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    // Determine if image based on extension
+    const isImage = IMAGE_EXTENSIONS.has(ext);
+
+    let msgType: string;
+    let content: string;
+
+    if (isImage) {
+      // Upload image
+      if (fileSize > MAX_IMAGE_SIZE) {
+        return { success: false, error: `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)` };
+      }
+
+      const uploadResp = await client.im.image.create({
+        data: {
+          image_type: 'message',
+          image: fs.createReadStream(filePath),
+        },
+      });
+      const imageKey = uploadResp?.image_key;
+      if (!imageKey) {
+        return { success: false, error: `Failed to upload image: ${fileName} (no image_key returned)` };
+      }
+
+      msgType = 'image';
+      content = JSON.stringify({ image_key: imageKey });
+    } else {
+      // Upload file
+      if (fileSize > MAX_FILE_SIZE) {
+        return { success: false, error: `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
+      }
+
+      // Map file extension to Feishu file_type
+      const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
+
+      const uploadResp = await client.im.file.create({
+        data: {
+          file_type: fileType,
+          file_name: fileName,
+          file: fs.createReadStream(filePath),
+        },
+      });
+      const fileKey = uploadResp?.file_key;
+      if (!fileKey) {
+        return { success: false, error: `Failed to upload file: ${fileName} (no file_key returned)` };
+      }
+
+      msgType = 'file';
+      content = JSON.stringify({ file_key: fileKey });
+    }
+
+    // Send the message (thread reply or new message)
+    let messageId: string | undefined;
+    if (message.threadId) {
+      const replyResp = await client.im.message.reply({
+        path: { message_id: message.threadId },
+        data: { msg_type: msgType, content },
+      });
+      messageId = replyResp.data?.message_id;
+      logger.info({ chatId: message.chatId, messageId, threadId: message.threadId, fileName, isImage }, 'File sent as thread reply');
+    } else {
+      const createResp = await client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: message.chatId, msg_type: msgType, content },
+      });
+      messageId = createResp.data?.message_id;
+      logger.info({ chatId: message.chatId, messageId, fileName, isImage }, 'File sent');
+    }
+
+    return { success: true, messageId };
   }
 
   /**
