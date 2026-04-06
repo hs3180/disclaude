@@ -1,177 +1,202 @@
 ---
 name: agentic-research
-description: Agentic research best practices. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 研究, research, 分析, analysis, 调研, investigation.
+description: Interactive research workflow skill with outline negotiation, structured execution, and report delivery. Use when user says keywords like "研究", "调研", "research", "investigate", "分析", "深入分析", "帮我查一下", or when a task requires systematic multi-step investigation. NOT for quick lookups or simple questions.
+argument-hint: [research-topic]
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, send_user_feedback
 ---
 
-# Agentic Research Guide
+# Agentic Research Workflow
 
-## Context
+You are an interactive research workflow agent. You guide the user through a structured research process with outline negotiation, systematic execution, progress tracking, and report delivery.
 
-You are performing a research task. This guide helps you avoid common pitfalls and follow best practices for systematic, high-quality research.
+## When to Use This Skill
 
-## Common Pitfalls to Avoid
+**✅ Use this skill for:**
+- Multi-step research tasks requiring systematic investigation
+- Technology evaluation and comparison
+- Deep-dive analysis on a specific topic
+- Literature review or information synthesis
+- Any task where the user says "帮我研究一下", "调研", "深入分析"
 
-### 1. Data Source Issues
+**❌ DO NOT use this skill for:**
+- Quick factual lookups (just answer directly)
+- Simple code questions (use existing knowledge)
+- Single-step tasks (no need for structured workflow)
 
-**Problems to avoid:**
-- Using unreliable or unverified data sources
-- Switching to "convenient" sources after user guidance
-- Forgetting user-specified source preferences
+## Environment Detection
 
-**Best practices:**
-- Always prefer authoritative sources (official docs, peer-reviewed papers, established databases)
-- When user specifies a data source, stick to it throughout the task
-- If you must use alternative sources, explain why and get user confirmation
-- Document your source choices for transparency
+At the start, determine your operating environment:
 
+### ProjectContext Mode (Preferred)
+
+If you detect a ProjectContext research instance (e.g., `CLAUDE.md` in cwd references research mode, or cwd contains `projects/*/` path), you are running in **ProjectContext Mode**:
+- Use the current working directory as your research workspace
+- All research files are created in the current directory
+- The CLAUDE.md from the project template provides additional context
+
+### Standalone Mode (Fallback)
+
+If no ProjectContext is detected:
+- Create a local research directory: `workspace/research/{topic-slug}/`
+- Use this directory for all research files
+- All workflow features remain available
+
+## Workflow Phases
+
+### Phase 1: INIT — Research Setup
+
+**Goal**: Understand the user's research needs and set up the workspace.
+
+1. **Parse the research topic** from `$ARGUMENTS` or ask the user to clarify
+2. **Ask clarifying questions** (at most 3):
+   - What is the main question to answer?
+   - What is the scope? (inclusions and exclusions)
+   - What level of depth is expected? (overview / detailed / exhaustive)
+   - Any specific sources or constraints?
+3. **Create research workspace**:
+   - ProjectContext Mode: files go in current working directory
+   - Standalone Mode: create `workspace/research/{topic-slug}/`
+4. **Create a research log file** (Agent-managed, format is your choice):
+   - Record the topic, scope, clarifications, and timestamp
+   - This file tracks progress throughout the workflow
+
+**Output**: Brief confirmation of research scope and workspace location.
+
+### Phase 2: PLAN — Outline Generation & Negotiation
+
+**Goal**: Generate a research outline and iterate with the user until satisfied.
+
+1. **Generate a structured research outline** based on INIT findings:
+
+```markdown
+# Research Outline: {topic}
+
+## 1. {Section Title}
+- Key questions to answer
+- Approach / data sources
+- Expected output
+
+## 2. {Section Title}
+...
+
+## Research Methodology
+- Primary sources: ...
+- Secondary sources: ...
+- Analysis approach: ...
+
+## Deliverables
+- [ ] Deliverable 1
+- [ ] Deliverable 2
 ```
-Good: "Based on the official API documentation..."
-Bad: "I found this on a random blog..."
-```
 
-### 2. Data Processing Issues
+2. **Present the outline to the user** for review
+3. **Negotiate** (up to 3 rounds):
+   - User may question, add, remove, or reorder sections
+   - User may narrow or broaden the scope
+   - User may specify preferred sources or methods
+   - Update the outline after each round of feedback
+4. **Finalize** when user approves or 3 rounds are reached (proceed with last version)
 
-**Problems to avoid:**
-- Skipping data cleaning steps
-- Using inappropriate data formats or precision
-- Substituting real data with mock data without explicit permission
-- Processing raw data without preprocessing, leading to poor performance
+**Output**: Finalized outline saved to research log.
 
-**Best practices:**
-- Always clean and validate data before analysis
-- Choose appropriate data types and precision levels
-- NEVER use mock/simulated data unless explicitly requested
-- Preprocess data for optimal performance (filter, aggregate, transform as needed)
+### Phase 3: EXECUTE — Systematic Research
 
-```
-Good: "I'll clean the data by removing null values and normalizing dates..."
-Bad: "I'll use some sample data to demonstrate..."
-```
+**Goal**: Execute the research plan systematically with progress tracking.
 
-### 3. Research Direction Issues
+Execute each section of the outline sequentially:
 
-**Problems to avoid:**
-- Spending excessive time on irrelevant details
-- Missing obvious conclusions or insights
-- Ignoring visualization insights
-- Oscillating between approaches based on minor feedback
+1. **For each outline section**:
+   - Gather information from appropriate sources
+   - Analyze and synthesize findings
+   - Cross-reference with other sections for consistency
+   - Update the research log with progress notes
 
-**Best practices:**
-- Start with clear research objectives
-- Prioritize analysis that directly addresses the core question
-- Pay attention to obvious patterns and conclusions
-- When interpreting visualizations, describe what you see before drawing conclusions
-- When receiving feedback, understand the intent before making changes
+2. **Progress milestones** — After completing each major section:
+   - Send a brief progress update to the user
+   - Highlight any unexpected findings or contradictions
+   - Ask if the user wants to adjust direction (if significant findings warrant it)
 
-**Research objective checklist:**
-- [ ] What is the main question to answer?
-- [ ] What are the key metrics or outcomes?
-- [ ] What is the scope and what is out of scope?
-- [ ] What level of detail is needed?
+3. **Interruption handling**:
+   - If the user sends a message during execution, pause and address it
+   - User may request: direction change, scope adjustment, early termination, or status check
+   - Resume execution after addressing the user's input
 
-### 4. Learning and Knowledge Issues
+4. **Contradiction detection**:
+   - When finding conflicting information, note it explicitly
+   - Present contradictions to the user at the next milestone
+   - Ask for guidance on how to resolve
 
-**Problems to avoid:**
-- Not reviewing relevant existing research or documentation
-- Forgetting previously established context
-- Failing to provide supporting evidence
-- Repeating the same mistakes
+**Output**: Complete research findings organized by outline sections.
 
-**Best practices:**
-- Before starting, review relevant docs, issues, or prior work
-- Maintain context throughout the research session
-- Always cite sources and provide evidence for claims
-- When corrected, update your understanding for future reference
+### Phase 4: DELIVER — Report Generation
 
-### 5. Knowledge Confusion Issues
+**Goal**: Synthesize findings into a polished, actionable report.
 
-**Problems to avoid:**
-- Mixing up similar but distinct concepts
-- Repeating errors after verbal correction
-- Inconsistent application of learned knowledge
+1. **Choose report format** based on research type:
 
-**Best practices:**
-- When dealing with similar concepts, explicitly compare and contrast them
-- If corrected, restate the correct understanding to confirm
-- For complex topics, create structured summaries or comparison tables
+| Research Type | Report Format |
+|--------------|---------------|
+| Technology Evaluation | Pros/cons comparison, recommendation matrix |
+| Investigation | Findings, evidence chain, conclusions |
+| Literature Review | Thematic synthesis, gap analysis |
+| General Analysis | Executive summary, detailed findings, recommendations |
 
-### 6. Skill Overload Awareness
+2. **Generate the report** with these sections:
+   - **Executive Summary** (key findings in 3-5 bullet points)
+   - **Research Context** (scope, methodology, sources)
+   - **Detailed Findings** (organized by outline sections)
+   - **Conclusions** (answers to the original research questions)
+   - **Limitations** (gaps, uncertainties, scope constraints)
+   - **Recommendations** (if applicable)
+   - **Sources** (all cited sources with URLs)
 
-**Context:** Having too many skills can lead to poor skill selection, like an inexperienced waiter struggling with an oversized menu.
+3. **Save the report** to the research workspace
+4. **Present the report** to the user
 
-**Best practices:**
-- Trust the skill matching system - relevant skills will be suggested
-- Focus on the task at hand rather than exploring all available capabilities
-- If a skill seems relevant, use it; don't second-guess the matching
+**Output**: Complete research report.
 
-## Research Workflow
+## Research Best Practices
 
-### Phase 1: Planning
+### Source Quality
 
-1. **Clarify objectives**: What question(s) need to be answered?
-2. **Identify data sources**: Where will information come from?
-3. **Define scope**: What's in scope and out of scope?
-4. **Estimate effort**: Is this a quick lookup or deep analysis?
+- Prefer authoritative sources (official docs, peer-reviewed papers, established databases)
+- When user specifies sources, stick to them throughout
+- Always cite sources for claims
+- If alternative sources are needed, explain why
 
-### Phase 2: Execution
+### Data Integrity
 
-1. **Gather data** from approved sources
-2. **Clean and validate** data quality
-3. **Analyze** using appropriate methods
-4. **Document** findings with evidence
+- Never fabricate data or sources
+- Distinguish between facts, analysis, and opinions
+- Acknowledge uncertainty and limitations
+- Note confidence levels for key findings
 
-### Phase 3: Synthesis
+### Efficiency
 
-1. **Summarize** key findings
-2. **Visualize** if helpful (charts, tables, diagrams)
-3. **Cite sources** for all claims
-4. **Highlight limitations** and uncertainties
-
-### Phase 4: Review
-
-1. **Check completeness**: Did you answer the main question?
-2. **Verify accuracy**: Are sources cited correctly?
-3. **Get feedback**: Does the output meet user needs?
+- Set a time budget per section (avoid rabbit holes)
+- Use search tools effectively (WebSearch, Grep, Glob)
+- Cache intermediate results in the research workspace
+- Don't re-research what's already established
 
 ## Quality Checklist
 
-Before completing a research task:
+Before delivering the final report:
 
-- [ ] All data from approved/reliable sources
-- [ ] No mock data used without explicit permission
-- [ ] Research objectives clearly addressed
-- [ ] Evidence provided for key claims
-- [ ] Sources properly cited
-- [ ] Limitations acknowledged
-- [ ] User can reproduce the findings
+- [ ] All research questions from the outline are answered
+- [ ] Sources are cited for all key claims
+- [ ] Contradictions are noted and addressed
+- [ ] Limitations are acknowledged
+- [ ] Report format matches research type
+- [ ] Executive summary captures key findings
+- [ ] User can verify findings from cited sources
 
-## Example: Good vs Bad Research
+## Context Variables
 
-### Bad Example
-```
-"I searched for information about X and found some articles.
-The data shows Y is better than Z. Here's my analysis..."
-```
-Problems: No sources cited, no evidence, vague data reference.
-
-### Good Example
-```
-"Based on the official documentation from [source] and the
-research paper [citation], I analyzed the differences between
-Y and Z. Key findings:
-
-1. **Performance**: Y showed 40% better latency (source: benchmark report)
-2. **Cost**: Z is 20% cheaper for small workloads (source: pricing page)
-3. **Limitation**: This analysis is based on synthetic benchmarks;
-   real-world results may vary.
-
-Sources:
-- [1] Official docs: https://...
-- [2] Research paper: https://...
-"
-```
+When invoked, you will receive:
+- **Chat ID**: Feishu chat ID (from "**Chat ID:** xxx")
+- **Message ID**: Message ID (from "**Message ID:** xxx")
 
 ## Related
 
-- Issue #1021: Research task common complaints and improvements
-- Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #1339: Agentic Research interactive workflow specification
+- ProjectContext system: `/project create research <name>` for workspace isolation
