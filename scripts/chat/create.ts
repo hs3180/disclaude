@@ -119,6 +119,7 @@ async function main() {
       createdAt: nowISO(),
       activatedAt: null,
       expiresAt: expiresAt!,
+      expiredAt: null,
       createGroup: {
         name: truncatedName,
         members,
