@@ -27,6 +27,7 @@ export interface ChatFile {
   createdAt: string;
   activatedAt: string | null;
   expiresAt: string;
+  expiredAt: string | null;
   createGroup: CreateGroup;
   context: Record<string, unknown>;
   response: ChatResponse | null;
@@ -191,6 +192,12 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   }
   if (obj.activatedAt !== null && typeof obj.activatedAt !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'activatedAt'`);
+  }
+  if (obj.expiredAt !== null && typeof obj.expiredAt !== 'string') {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'expiredAt'`);
+  }
+  if (obj.expiredAt !== null && typeof obj.expiredAt === 'string' && !UTC_DATETIME_REGEX.test(obj.expiredAt)) {
+    throw new ValidationError(`Chat file '${filePath}' has invalid 'expiredAt' (must be UTC Z-suffix)`);
   }
   if (obj.failedAt !== null && typeof obj.failedAt !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'failedAt'`);

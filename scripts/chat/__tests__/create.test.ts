@@ -83,6 +83,7 @@ describe('chat scripts integration', () => {
       expect(data.context).toEqual({ key: 'value' });
       expect(data.response).toBeNull();
       expect(data.activationAttempts).toBe(0);
+      expect(data.expiredAt).toBeNull();
     });
 
     it('should reject duplicate chat ID', async () => {
@@ -152,6 +153,7 @@ describe('chat scripts integration', () => {
         createdAt: '2026-01-01T00:00:00Z',
         activatedAt: '2026-01-01T00:01:00Z',
         expiresAt: '2099-12-31T23:59:59Z',
+        expiredAt: null,
         createGroup: { name: 'Test', members: ['ou_test123'] },
         context: {},
         response: null,
@@ -195,6 +197,7 @@ describe('chat scripts integration', () => {
         createdAt: '2026-01-01T00:00:00Z',
         activatedAt: '2026-01-01T00:01:00Z',
         expiresAt: '2099-12-31T23:59:59Z',
+        expiredAt: null,
         createGroup: { name: 'Test', members: ['ou_test123'] },
         context: {},
         response: null,
@@ -252,6 +255,7 @@ describe('chat scripts integration', () => {
         createdAt: '2026-01-01T00:00:00Z',
         activatedAt: null,
         expiresAt: '2099-12-31T23:59:59Z',
+        expiredAt: null,
         createGroup: { name: 'Test', members: ['ou_test123'] },
         context: {},
         response: null,
