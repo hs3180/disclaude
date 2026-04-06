@@ -26,11 +26,7 @@ This skill is primarily triggered by the `chat-timeout` Schedule (every 5 minute
 ### Manual Execution
 
 ```bash
-# TypeScript version (recommended)
 npx tsx scripts/schedule/chat-timeout.ts
-
-# Bash version
-bash scripts/schedule/chat-timeout.sh
 ```
 
 ### Environment Variables
@@ -64,7 +60,7 @@ Step 4: Clean up expired files past retention period (default: 1 hour)
 ## Safety Guarantees
 
 - **Idempotent**: Repeated execution is safe (double-check under lock)
-- **Concurrency-safe**: Uses `flock` for file-level locking
+- **Concurrency-safe**: Uses `fs.flock` for file-level locking (Node 20.12+)
 - **Graceful degradation**: Group dissolution failure doesn't block status update
 - **Rate-limited**: Max 10 chats per execution to prevent API throttling
 - **Response-aware**: Groups with user responses are preserved for consumer reading
