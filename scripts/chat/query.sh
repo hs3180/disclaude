@@ -10,6 +10,16 @@
 
 set -euo pipefail
 
+# ---- Helper: resolve path (BusyBox-compatible) ----
+_resolve_chat_path() {
+  local dir="$1" name="$2"
+  if _resolved=$(realpath -m "${dir}/${name}" 2>/dev/null); then
+    echo "$_resolved"
+  else
+    echo "${dir}/${name}"
+  fi
+}
+
 if [ -z "${CHAT_ID:-}" ]; then
   echo "ERROR: CHAT_ID environment variable is required"
   exit 1
@@ -22,7 +32,7 @@ if ! echo "$CHAT_ID" | grep -qE '^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$'; then
 fi
 
 CHAT_DIR=$(cd workspace/chats && pwd)
-CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
+CHAT_FILE=$(_resolve_chat_path "$CHAT_DIR" "${CHAT_ID}.json")
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
   echo "ERROR: Path traversal detected for chat ID '$CHAT_ID'"
   exit 1

@@ -14,6 +14,19 @@
 
 set -euo pipefail
 
+# ---- Helper: resolve path (BusyBox-compatible) ----
+# realpath -m is not supported on BusyBox; fall back to string concatenation.
+# Safe because CHAT_ID is validated to match ^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$
+# and the result is checked against the expected directory prefix.
+_resolve_chat_path() {
+  local dir="$1" name="$2"
+  if _resolved=$(realpath -m "${dir}/${name}" 2>/dev/null); then
+    echo "$_resolved"
+  else
+    echo "${dir}/${name}"
+  fi
+}
+
 # ---- Step 1: Validate chat ID (path traversal protection) ----
 if [ -z "${CHAT_ID:-}" ]; then
   echo "ERROR: CHAT_ID environment variable is required"
@@ -27,7 +40,7 @@ fi
 
 mkdir -p workspace/chats
 CHAT_DIR=$(cd workspace/chats && pwd)
-CHAT_FILE=$(realpath -m "${CHAT_DIR}/${CHAT_ID}.json" 2>/dev/null)
+CHAT_FILE=$(_resolve_chat_path "$CHAT_DIR" "${CHAT_ID}.json")
 if [[ "$CHAT_FILE" != "${CHAT_DIR}/"* ]]; then
   echo "ERROR: Path traversal detected for chat ID '$CHAT_ID'"
   exit 1
@@ -61,7 +74,7 @@ if [ -z "${CHAT_MEMBERS:-}" ]; then
   exit 1
 fi
 
-CHAT_CONTEXT="${CHAT_CONTEXT:-{}}"
+CHAT_CONTEXT="${CHAT_CONTEXT:-"{}"}"
 
 # Validate CHAT_CONTEXT is valid JSON
 echo "$CHAT_CONTEXT" | jq empty 2>/dev/null || {

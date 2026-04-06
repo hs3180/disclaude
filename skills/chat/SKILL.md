@@ -10,6 +10,25 @@ Manage temporary chats with a four-state lifecycle: **pending → active → exp
 
 Each chat is a JSON file in `workspace/chats/`. Chats are automatically activated (group created) by the companion Schedule (`chats-activation`).
 
+## Prerequisites
+
+The Chat Skill scripts depend on the following external tools:
+
+| Dependency | Purpose | Required | Install |
+|------------|---------|----------|---------|
+| `jq` | JSON construction, validation, and querying | ✅ Yes | `apk add jq` / `apt-get install jq` / `brew install jq` |
+| `flock` | File locking for concurrent access safety | ✅ Yes* | `apk add util-linux` / `apt-get install util-linux` |
+| `date -u` | UTC ISO 8601 timestamp generation | ✅ Yes | (usually pre-installed) |
+| `realpath -m` | Path normalization for non-existent files | ⚠️ Optional | BusyBox uses fallback |
+
+\* `flock` is unavailable on macOS; scripts will fail at lock acquisition on macOS.
+
+Run the dependency check before first use:
+
+```bash
+bash scripts/chat/check-deps.sh
+```
+
 ## Single Responsibility
 
 - ✅ Create chat files (pending state)
