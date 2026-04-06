@@ -158,6 +158,7 @@ describe('schema', () => {
       createdAt: '2026-01-01T00:00:00Z',
       activatedAt: null,
       expiresAt: '2099-12-31T23:59:59Z',
+      expiredAt: null,
       createGroup: { name: 'Test', members: ['ou_abc'] },
       context: {},
       response: null,
@@ -184,6 +185,24 @@ describe('schema', () => {
     it('should reject invalid status', () => {
       expect(() => validateChatFileData({ ...validChat, status: 'unknown' }, '/path')).toThrow(ValidationError);
     });
+
+    it('should accept expiredAt as null', () => {
+      const result = validateChatFileData({ ...validChat, expiredAt: null }, '/path');
+      expect(result.expiredAt).toBeNull();
+    });
+
+    it('should accept expiredAt as valid UTC Z-suffix timestamp', () => {
+      const result = validateChatFileData({ ...validChat, expiredAt: '2026-03-25T10:00:00Z' }, '/path');
+      expect(result.expiredAt).toBe('2026-03-25T10:00:00Z');
+    });
+
+    it('should reject expiredAt with non-UTC timestamp', () => {
+      expect(() => validateChatFileData({ ...validChat, expiredAt: '2026-03-25T10:00:00+08:00' }, '/path')).toThrow(ValidationError);
+    });
+
+    it('should reject expiredAt with invalid type', () => {
+      expect(() => validateChatFileData({ ...validChat, expiredAt: 12345 }, '/path')).toThrow(ValidationError);
+    });
   });
 
   describe('parseChatFile', () => {
@@ -195,6 +214,7 @@ describe('schema', () => {
         createdAt: '2026-01-01T00:00:00Z',
         activatedAt: null,
         expiresAt: '2099-12-31T23:59:59Z',
+        expiredAt: null,
         createGroup: { name: 'Test', members: ['ou_abc'] },
         context: {},
         response: null,

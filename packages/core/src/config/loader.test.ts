@@ -8,7 +8,7 @@
  * - Error handling for invalid configs
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import {
   findConfigFile,
