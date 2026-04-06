@@ -91,3 +91,13 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// TCC-safe Spawn (Issue #1957)
+export type { TCCResource, TccSafeSpawnOptions, TccSafeExecOptions, PM2DetectionResult } from './tcc-safe-spawn.js';
+export {
+  isMacOS,
+  isUnderPM2,
+  resetPM2DetectionCache,
+  tccSafeSpawn,
+  tccSafeExec,
+} from './tcc-safe-spawn.js';
