@@ -91,3 +91,40 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// TCC Worker (Issue #1957: macOS TCC-safe process execution)
+export {
+  TccWorkerDaemon,
+  launchTccWorker,
+  generateTccWorkerSocketPath,
+  DEFAULT_TCC_WORKER_CONFIG,
+  runWorkerDaemon,
+} from './tcc-worker.js';
+export type {
+  TccWorkerRequestType,
+  TccWorkerExecPayload,
+  TccWorkerSpawnPayload,
+  TccWorkerRequest,
+  TccWorkerExecResult,
+  TccWorkerSpawnResult,
+  TccWorkerResponse,
+  TccWorkerConfig,
+  TccWorkerLaunchResult,
+  TccWorkerLaunchMode,
+} from './tcc-worker.js';
+
+// TCC-Safe Spawn (Issue #1957: Client API for TCC Worker)
+export {
+  isMacOS,
+  isUnderPM2,
+  needsTccWorker,
+  tccSafeExec,
+  tccSafeSpawn,
+  shutdownTccWorker,
+  resetTccWorkerClient,
+  TccWorkerClient,
+} from './tcc-safe-spawn.js';
+export type {
+  TccSafeExecOptions,
+  TccSafeExecResult,
+} from './tcc-safe-spawn.js';
