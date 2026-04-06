@@ -10,6 +10,22 @@ Manage temporary chats with a four-state lifecycle: **pending → active → exp
 
 Each chat is a JSON file in `workspace/chats/`. Chats are automatically activated (group created) by the companion Schedule (`chats-activation`).
 
+## Prerequisites
+
+| Dependency | Minimum Version | Purpose | Install |
+|------------|----------------|---------|---------|
+| Node.js | >= 20.12 (recommended) | Runtime; 20.12+ enables `fs.flock` for file locking | [nodejs.org](https://nodejs.org/) |
+| tsx | >= 4.19 | TypeScript executor (runs `*.ts` scripts) | `npm install` (devDependency) |
+| npm | >= 9.0 | Package manager | Included with Node.js |
+
+> **Note**: Node.js 18.x works but file locking (`fs.flock`) is unavailable — the scripts fall back to no-op locking with a warning. Node.js 20.12+ is recommended for production use.
+
+Run the dependency check before first use:
+
+```bash
+bash scripts/chat/check-deps.sh
+```
+
 ## Single Responsibility
 
 - ✅ Create chat files (pending state)
