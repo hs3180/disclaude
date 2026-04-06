@@ -17,7 +17,7 @@ import {
   CHAT_HISTORY,
   createLogger,
   stripLeadingMentions,
-  ensureFileExtension,
+  ensureFileExtensionFromPath,
   type FeishuEventData,
   type FeishuMessageEvent,
   type FeishuCardActionEvent,
@@ -611,8 +611,8 @@ export class MessageHandler {
         });
         await response.writeFile(localPath);
 
-        // Issue #1637: Ensure file has correct extension based on magic bytes
-        const correctedPath = await this.correctFileExtension(localPath);
+        // Issue #1637/#1663: Ensure file has correct extension (prefer headers for zero I/O)
+        const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
         if (correctedPath !== localPath) {
           localPath = correctedPath;
           fileName = path.basename(correctedPath);
@@ -737,8 +737,8 @@ export class MessageHandler {
           });
           await response.writeFile(localPath);
 
-          // Issue #1637: Ensure file has correct extension based on magic bytes
-          const correctedPath = await this.correctFileExtension(localPath);
+          // Issue #1637/#1663: Ensure file has correct extension (prefer headers for zero I/O)
+          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
           if (correctedPath !== localPath) {
             localPath = correctedPath;
             fileName = path.basename(correctedPath);
@@ -1117,41 +1117,4 @@ export class MessageHandler {
     }
   }
 
-  /**
-   * Detect and correct a downloaded file's extension based on its magic bytes.
-   *
-   * Reads only the first 12 bytes of the file (instead of the entire file)
-   * for magic bytes detection, then renames the file if an extension is needed.
-   *
-   * @param filePath - Current path of the downloaded file
-   * @returns The (possibly renamed) file path with correct extension
-   */
-  private async correctFileExtension(filePath: string): Promise<string> {
-    try {
-      const fd = await fs.open(filePath, 'r');
-      const header = Buffer.alloc(12);
-      await fd.read(header, 0, 12, 0);
-      await fd.close();
-
-      const correctedPath = ensureFileExtension(filePath, header);
-      if (correctedPath === filePath) {
-        return filePath;
-      }
-
-      try {
-        await fs.rename(filePath, correctedPath);
-        return correctedPath;
-      } catch (renameErr) {
-        // Rename may fail (e.g., cross-device link) — log and keep original
-        logger.warn(
-          { err: renameErr, from: filePath, to: correctedPath },
-          'Failed to rename file, keeping original name',
-        );
-        return filePath;
-      }
-    } catch {
-      // File read failed — return original path
-      return filePath;
-    }
-  }
 }
