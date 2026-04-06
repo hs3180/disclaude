@@ -30,6 +30,31 @@ export interface FeishuClientProvider {
 /**
  * Feishu card theme colors mapping.
  */
+/**
+ * Image file extensions recognized by Feishu image upload API.
+ */
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico', '.svg',
+]);
+
+/**
+ * File extension to Feishu file_type mapping for document uploads.
+ */
+const EXT_TO_FEISHU_FILE_TYPE: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+  '.opus': 'opus',
+  '.mp4': 'mp4',
+  '.pdf': 'pdf',
+  '.doc': 'doc', '.docx': 'doc',
+  '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
+  '.ppt': 'ppt', '.pptx': 'ppt',
+};
+
+/** Maximum image file size in bytes (10 MB). */
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+/** Maximum document file size in bytes (30 MB). */
+const MAX_FILE_SIZE = 30 * 1024 * 1024;
+
 const THEME_MAP: Record<string, string> = {
   blue: 'blue',
   wathet: 'wathet',
@@ -435,15 +460,15 @@ export class FeishuAdapter implements IChannelAdapter {
     const fileName = fileContent.name || path.basename(filePath);
     const ext = path.extname(filePath).toLowerCase();
 
-    // Check file exists
-    if (!fs.existsSync(filePath)) {
+    // Stat file: check existence and get size in one call
+    let fileSize: number;
+    try {
+      fileSize = fs.statSync(filePath).size;
+    } catch {
       return { success: false, error: `File not found: ${filePath}` };
     }
 
-    const { size: fileSize } = fs.statSync(filePath);
-
     // Determine if image based on extension
-    const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico']);
     const isImage = IMAGE_EXTENSIONS.has(ext);
 
     let msgType: string;
@@ -451,8 +476,8 @@ export class FeishuAdapter implements IChannelAdapter {
 
     if (isImage) {
       // Upload image
-      if (fileSize > 10 * 1024 * 1024) {
-        return { success: false, error: `Image file too large: ${fileSize} bytes (max 10MB)` };
+      if (fileSize > MAX_IMAGE_SIZE) {
+        return { success: false, error: `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)` };
       }
 
       const uploadResp = await client.im.image.create({
@@ -470,20 +495,12 @@ export class FeishuAdapter implements IChannelAdapter {
       content = JSON.stringify({ image_key: imageKey });
     } else {
       // Upload file
-      if (fileSize > 30 * 1024 * 1024) {
-        return { success: false, error: `File too large: ${fileSize} bytes (max 30MB)` };
+      if (fileSize > MAX_FILE_SIZE) {
+        return { success: false, error: `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
       }
 
       // Map file extension to Feishu file_type
-      const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
-        '.opus': 'opus',
-        '.mp4': 'mp4',
-        '.pdf': 'pdf',
-        '.doc': 'doc', '.docx': 'doc',
-        '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
-        '.ppt': 'ppt', '.pptx': 'ppt',
-      };
-      const fileType = extToType[ext] || 'stream';
+      const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
 
       const uploadResp = await client.im.file.create({
         data: {
