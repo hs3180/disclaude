@@ -1,25 +1,27 @@
 /**
- * WeChat Channel Implementation (MVP).
+ * WeChat Channel Implementation.
  *
- * Minimal channel implementation supporting:
+ * WeChat (Tencent ilink) bot integration with:
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
+ * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
- * Not included in MVP (future issues):
- * - Message listening / long polling (getupdates)
- * - Media handling (CDN upload)
- * - Typing indicator
- * - Unit tests
+ * Not yet implemented (future phases):
+ * - Media handling (CDN upload) — Issue #1556 Phase 3.3
+ * - Typing indicator — Issue #1556 Phase 3.2
+ * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
-import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities } from '@disclaude/core';
+import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
+import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
 
 const logger = createLogger('WeChatChannel');
@@ -28,11 +30,12 @@ const logger = createLogger('WeChatChannel');
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 
 /**
- * WeChat Channel - MVP implementation.
+ * WeChat Channel.
  *
  * Provides WeChat (Tencent ilink) bot integration with:
  * - QR code authentication on start
  * - Text message sending
+ * - Long-poll message listening
  *
  * Extends BaseChannel for lifecycle management and handler registration.
  */
@@ -41,6 +44,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private readonly routeTag?: string;
   private client?: WeChatApiClient;
   private auth?: WeChatAuth;
+  private messageListener?: WeChatMessageListener;
 
   constructor(config: WeChatChannelConfig = {}) {
     super(config, 'wechat', 'WeChat');
@@ -51,10 +55,11 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Start the WeChat channel.
    *
-   * MVP flow:
+   * Flow:
    * 1. Create API client
    * 2. If no pre-configured token, run QR code auth
    * 3. Set token on client
+   * 4. Start message listener (Issue #1556 Phase 3.1)
    */
   protected async doStart(): Promise<void> {
     // Create API client
@@ -67,39 +72,53 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     // If token is already configured, skip auth
     if (this.config.token) {
       logger.info('Using pre-configured bot token');
-      return;
+    } else {
+      // Run QR code authentication
+      this.auth = new WeChatAuth(this.client);
+
+      logger.info('Starting WeChat QR code authentication...');
+      const result = await this.auth.authenticate();
+
+      if (!result.success || !result.token) {
+        throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
+      }
+
+      this.client.setToken(result.token);
+      logger.info(
+        { botId: result.botId, userId: result.userId },
+        'WeChat channel authenticated successfully',
+      );
     }
 
-    // Run QR code authentication
-    this.auth = new WeChatAuth(this.client);
+    // Start message listener (Issue #1556 Phase 3.1)
+    const processor: MessageProcessor = async (message: IncomingMessage) => {
+      await this.emitMessage(message);
+    };
 
-    logger.info('Starting WeChat QR code authentication...');
-    const result = await this.auth.authenticate();
+    this.messageListener = new WeChatMessageListener(this.client, processor);
+    this.messageListener.start();
 
-    if (!result.success || !result.token) {
-      throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
-    }
-
-    this.client.setToken(result.token);
-    logger.info(
-      { botId: result.botId, userId: result.userId },
-      'WeChat channel authenticated successfully'
-    );
+    logger.info('WeChat channel started with message listening');
   }
 
   /**
    * Stop the WeChat channel.
    *
-   * Aborts any in-progress authentication.
+   * Stops message listener and aborts any in-progress authentication.
    */
-  protected doStop(): Promise<void> {
+  protected async doStop(): Promise<void> {
+    // Stop message listener first
+    if (this.messageListener) {
+      await this.messageListener.stop();
+      this.messageListener = undefined;
+    }
+
     if (this.auth?.isAuthenticating()) {
       this.auth.abort();
     }
     this.auth = undefined;
     this.client = undefined;
     logger.info('WeChat channel stopped');
-    return Promise.resolve();
   }
 
   /**
@@ -147,10 +166,10 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Check if the WeChat channel is healthy.
    *
-   * Returns true if the client has a valid token.
+   * Returns true if the client has a valid token and message listener is active.
    */
   protected checkHealth(): boolean {
-    return this.client?.hasToken() ?? false;
+    return (this.client?.hasToken() ?? false) && this.messageListener?.isListening() === true;
   }
 
   /**
@@ -175,5 +194,12 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    */
   getApiClient(): WeChatApiClient | undefined {
     return this.client;
+  }
+
+  /**
+   * Get the message listener (for testing/debugging).
+   */
+  getMessageListener(): WeChatMessageListener | undefined {
+    return this.messageListener;
   }
 }
