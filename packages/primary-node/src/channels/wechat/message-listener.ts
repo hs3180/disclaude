@@ -12,6 +12,7 @@ import { createLogger, type IncomingMessage } from '@disclaude/core';
 import type { WeChatApiClient } from './api-client.js';
 import type {
   WeChatUpdate,
+  WeChatMessageItem,
   WeChatTextItem,
   WeChatImageItem,
   WeChatFileItem,
@@ -305,7 +306,7 @@ export class WeChatMessageListener {
         const textParts = update.item_list
           .filter((item): item is WeChatTextItem => item.type === 1 && !!(item as WeChatTextItem).text_item?.text)
           .map((item) => (item as WeChatTextItem).text_item.text);
-        content = textParts.join('\n') || `[Unsupported message type: ${firstItem.type}]`;
+        content = textParts.join('\n') || `[Unsupported message type: ${(firstItem as WeChatMessageItem).type}]`;
         break;
       }
     }
