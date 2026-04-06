@@ -185,6 +185,61 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Agents run in SDK subprocesses and share state with the
+ * main process via a file-based `.runtime-env` mechanism. This guidance
+ * helps agents discover and leverage available runtime environment
+ * variables for cross-process state sharing.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment (Cross-Process State Sharing)
+
+You have access to **runtime environment variables** that are shared between the main process and your agent subprocess via a file-based mechanism.
+
+### What is \`.runtime-env\`?
+
+The main process and agent subprocesses communicate through a \`.runtime-env\` file in the workspace directory. This file uses a simple \`KEY=VALUE\` format (one entry per line, \`#\` comments supported).
+
+### Known Variables
+
+| Variable | Description | Written By |
+|----------|-------------|------------|
+| \`GH_TOKEN\` | GitHub App installation access token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration time (ISO 8601) | \`github-jwt-auth\` skill |
+
+### How to Read
+
+Runtime env vars are **pre-loaded into \`process.env\`** at agent startup. You can read them directly:
+- Via any tool that accesses environment variables (e.g., \`Bash\` tool with \`echo $GH_TOKEN\`)
+- By reading the file directly: \`{workspace}/.runtime-env\`
+
+### How to Write
+
+You can write new variables using the Write or Bash tools:
+\`\`\`bash
+# Append a new variable
+echo "MY_KEY=my_value" >> .runtime-env
+
+# Or use the Write tool to create/update the file
+\`\`\`
+
+**Format**: \`KEY=VALUE\` per line. Values are always strings.
+
+### Important Notes
+
+- \`.runtime-env\` is in \`.gitignore\` — never commit secrets
+- Changes written during a conversation are visible to **future** agent turns, not the current one
+- For tokens, check \`GH_TOKEN_EXPIRES_AT\` before use; if expired, invoke the \`github-jwt-auth\` skill to refresh`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
