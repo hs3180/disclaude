@@ -7,7 +7,7 @@
  * Issue #1617: Phase 2 - scheduling module test coverage.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
@@ -29,7 +29,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
-  let mockExecutor: TaskExecutor;
+  let mockExecutor: Mock<TaskExecutor>;
   let scheduler: Scheduler;
 
   beforeEach(() => {
@@ -272,7 +272,7 @@ describe('Scheduler', () => {
 
   describe('executeTask (via cron job trigger)', () => {
     /** Helper: fire a cron job and wait for async side-effects via vi.waitFor */
-    async function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
       void jobs[0].job.fireOnTick();
     }
 
