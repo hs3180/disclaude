@@ -60,6 +60,7 @@ Each chat is a single JSON file in `workspace/chats/`:
   "createdAt": "2026-03-24T10:00:00Z",
   "activatedAt": null,
   "expiresAt": "2026-03-25T10:00:00Z",
+  "expiredAt": null,
   "createGroup": {
     "name": "PR #123 Review",
     "members": ["ou_user1"]
@@ -82,6 +83,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 | `createdAt` | Yes | ISO 8601 timestamp |
 | `activatedAt` | No | ISO 8601 timestamp (filled by Schedule upon activation) |
 | `expiresAt` | Yes | ISO 8601 UTC Z-suffix timestamp (e.g. `2026-03-25T10:00:00Z`) |
+| `expiredAt` | No | ISO 8601 timestamp (set when marked as `expired` by Schedule) |
 | `createGroup` | Yes | Group creation config with `name` and `members` array |
 | `context` | No | Arbitrary key-value data for consumer use |
 | `response` | No | User response data (filled when user responds in group) |
