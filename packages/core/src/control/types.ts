@@ -6,6 +6,12 @@
 
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
+import type {
+  ProjectContextConfig,
+  ProjectTemplate,
+  InstanceInfo,
+  Result,
+} from '../project/types.js';
 
 /**
  * 执行节点信息
@@ -54,6 +60,16 @@ export interface ControlHandlerContext {
 
   /** 日志记录器 */
   logger?: Logger;
+
+  /** ProjectManager 实例 (Issue #1916) */
+  projectManager?: {
+    getActive(chatId: string): ProjectContextConfig;
+    create(chatId: string, templateName: string, name: string): Result<ProjectContextConfig>;
+    use(chatId: string, name: string): Result<ProjectContextConfig>;
+    reset(chatId: string): Result<ProjectContextConfig>;
+    listTemplates(): ProjectTemplate[];
+    listInstances(): InstanceInfo[];
+  };
 }
 
 /**

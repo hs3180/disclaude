@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData, type CwdProvider } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
@@ -82,6 +82,9 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryLoaded = false;
   private firstMessageHistoryLoadPromise?: Promise<void>;
 
+  // CwdProvider for project context switching (Issue #1916)
+  private cwdProvider?: CwdProvider;
+
   constructor(config: PilotConfig) {
     super(config);
 
@@ -115,6 +118,17 @@ export class Pilot extends BaseAgent implements ChatAgent {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Set the CwdProvider for project context switching (Issue #1916).
+   * When set, the Pilot will query this provider to determine the
+   * working directory for each session start.
+   *
+   * @param provider - Callback that returns the cwd for a given chatId
+   */
+  setCwdProvider(provider: CwdProvider): void {
+    this.cwdProvider = provider;
   }
 
   /**
@@ -443,9 +457,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916: Inject project cwd via CwdProvider
+    const projectCwd = this.cwdProvider?.(this.boundChatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(projectCwd && { cwd: projectCwd }),
     });
 
     // Get capabilities for message building
@@ -686,13 +703,16 @@ export class Pilot extends BaseAgent implements ChatAgent {
     }
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916: Inject project cwd via CwdProvider
+    const projectCwd = this.cwdProvider?.(this.boundChatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      ...(projectCwd && { cwd: projectCwd }),
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools, projectCwd },
       'Starting SDK query with message channel'
     );
 

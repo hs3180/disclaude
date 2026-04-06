@@ -8,10 +8,13 @@
  * message building (e.g., Feishu sections). This decouples Feishu-specific
  * logic from worker-node.
  *
+ * Issue #1916: Injects CwdProvider from ProjectManager for per-chatId
+ * project context switching.
+ *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type ProjectManager } from '@disclaude/core';
 import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
 
 /**
@@ -42,13 +45,27 @@ export interface PrimaryAgentPoolOptions {
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
+  private projectManager?: ProjectManager;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
   }
 
   /**
+   * Set the ProjectManager for project context switching (Issue #1916).
+   * When set, newly created Pilot instances will receive a CwdProvider
+   * that dynamically queries the active project's working directory.
+   *
+   * @param pm - ProjectManager instance
+   */
+  setProjectManager(pm: ProjectManager): void {
+    this.projectManager = pm;
+  }
+
+  /**
    * Get or create a ChatAgent instance for the given chatId.
+   *
+   * Issue #1916: Injects CwdProvider from ProjectManager if available.
    *
    * @param chatId - Chat ID to get/create agent for
    * @param callbacks - Callbacks for sending messages (required for new agents)
@@ -60,6 +77,14 @@ export class PrimaryAgentPool {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
+
+      // Issue #1916: Inject CwdProvider for project context switching
+      if (this.projectManager) {
+        agent.setCwdProvider(
+          (id) => this.projectManager!.createCwdProvider()(id),
+        );
+      }
+
       this.agents.set(chatId, agent);
     }
     return agent;
