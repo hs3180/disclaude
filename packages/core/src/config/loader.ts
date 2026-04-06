@@ -121,9 +121,11 @@ let preloadedConfig: LoadedConfig | null = null;
  *
  * @param config - Pre-loaded configuration
  */
-export function setLoadedConfig(config: LoadedConfig): void {
+export function setLoadedConfig(config: LoadedConfig | null): void {
   preloadedConfig = config;
-  logger.debug({ source: config._source }, 'Pre-loaded configuration set');
+  if (config) {
+    logger.debug({ source: config._source }, 'Pre-loaded configuration set');
+  }
 }
 
 /**
