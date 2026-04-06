@@ -319,6 +319,104 @@ describe('FeishuAdapter — Issue #1619', () => {
       const callData = mocks.fileCreateMock.mock.calls[0][0].data;
       expect(callData.file_type).toBe('xls');
     });
+
+    it('should return error when image exceeds 10MB size limit', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testLargeImgPath = path.join(os.tmpdir(), `test_adapter_large_img_${Date.now()}.png`);
+      // Write exactly 10MB + 1 byte
+      const largeBuffer = Buffer.alloc(10 * 1024 * 1024 + 1, 0x00);
+      largeBuffer[0] = 0x89; largeBuffer[1] = 0x50; largeBuffer[2] = 0x4e; largeBuffer[3] = 0x47; // PNG header
+      fs.writeFileSync(testLargeImgPath, largeBuffer);
+      tempFiles.push(testLargeImgPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testLargeImgPath },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Image file too large');
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+      expect(mocks.fileCreateMock).not.toHaveBeenCalled();
+    });
+
+    it('should return error when document exceeds 30MB size limit', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testLargeDocPath = path.join(os.tmpdir(), `test_adapter_large_doc_${Date.now()}.pdf`);
+      // Write exactly 30MB + 1 byte
+      const largeBuffer = Buffer.alloc(30 * 1024 * 1024 + 1, 0x25);
+      fs.writeFileSync(testLargeDocPath, largeBuffer);
+      tempFiles.push(testLargeDocPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testLargeDocPath },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('File too large');
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+      expect(mocks.fileCreateMock).not.toHaveBeenCalled();
+    });
+
+    it('should accept image at exactly 10MB', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testExactImgPath = path.join(os.tmpdir(), `test_adapter_exact_img_${Date.now()}.png`);
+      const exactBuffer = Buffer.alloc(10 * 1024 * 1024, 0x00);
+      exactBuffer[0] = 0x89; exactBuffer[1] = 0x50; exactBuffer[2] = 0x4e; exactBuffer[3] = 0x47;
+      fs.writeFileSync(testExactImgPath, exactBuffer);
+      tempFiles.push(testExactImgPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testExactImgPath },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should accept document at exactly 30MB', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testExactDocPath = path.join(os.tmpdir(), `test_adapter_exact_doc_${Date.now()}.pdf`);
+      const exactBuffer = Buffer.alloc(30 * 1024 * 1024, 0x25);
+      fs.writeFileSync(testExactDocPath, exactBuffer);
+      tempFiles.push(testExactDocPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testExactDocPath },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should detect SVG as image type', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testSvgPath = path.join(os.tmpdir(), `test_adapter_svg_${Date.now()}.svg`);
+      fs.writeFileSync(testSvgPath, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+      tempFiles.push(testSvgPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testSvgPath },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.fileCreateMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('canHandle', () => {
