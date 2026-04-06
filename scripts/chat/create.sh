@@ -133,6 +133,7 @@ jq -n \
     createdAt: (now | todate),
     activatedAt: null,
     expiresAt: $expires,
+    expiredAt: null,
     createGroup: { name: $group_name, members: $members },
     context: $context,
     response: null,
