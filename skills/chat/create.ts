@@ -8,6 +8,7 @@
  *   CHAT_GROUP_NAME (required) Group display name
  *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
  *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_PASSIVE_MODE (optional) 'true' or 'false' (default: 'false')
  *
  * Exit codes:
  *   0 — success
@@ -44,7 +45,20 @@ async function main() {
     exit(err instanceof ValidationError ? err.message : String(err));
   }
 
-  // ---- Step 2: Validate required fields ----
+  // ---- Step 2: Validate optional passiveMode field ----
+  const passiveModeRaw = process.env.CHAT_PASSIVE_MODE;
+  let passiveMode: boolean | undefined;
+  if (passiveModeRaw !== undefined) {
+    if (passiveModeRaw === 'false') {
+      passiveMode = false;
+    } else if (passiveModeRaw === 'true') {
+      passiveMode = true;
+    } else {
+      exit(`CHAT_PASSIVE_MODE must be 'true' or 'false', got '${passiveModeRaw}'`);
+    }
+  }
+
+  // ---- Step 3: Validate required fields ----
   const expiresAt = process.env.CHAT_EXPIRES_AT;
   try {
     validateExpiresAt(expiresAt ?? '');
@@ -85,7 +99,7 @@ async function main() {
 
   const truncatedName = truncateGroupName(groupName!);
 
-  // ---- Step 3: Setup directory and resolve path ----
+  // ---- Step 4: Setup directory and resolve path ----
   const chatDir = resolve(CHAT_DIR);
   await mkdir(chatDir, { recursive: true });
 
@@ -96,7 +110,7 @@ async function main() {
     exit(`Path traversal detected for chat ID '${chatId}'`);
   }
 
-  // ---- Step 4: Check uniqueness under lock ----
+  // ---- Step 5: Check uniqueness under lock ----
   const lockPath = `${chatFile}.lock`;
   await withExclusiveLock(lockPath, async () => {
     // Double-check file doesn't exist
@@ -111,7 +125,7 @@ async function main() {
       }
     }
 
-    // ---- Step 5: Write chat file ----
+    // ---- Step 6: Write chat file ----
     const chatData: ChatFile = {
       id: chatId!,
       status: 'pending',
@@ -125,6 +139,8 @@ async function main() {
         members,
       },
       context,
+      // Issue #2018: Default passive mode to false (disabled) for temporary chats
+      passiveMode: passiveMode ?? false,
       response: null,
       activationAttempts: 0,
       lastActivationError: null,

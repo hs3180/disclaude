@@ -30,6 +30,15 @@ export interface ChatFile {
   expiredAt: string | null;
   createGroup: CreateGroup;
   context: Record<string, unknown>;
+  /**
+   * Declarative passive mode configuration.
+   *
+   * Issue #2018: When `false` (default for temporary chats), passive mode is
+   * disabled for this chat — the bot responds to all messages without @mention.
+   * When `true`, default behavior applies (passive mode enabled, bot only responds
+   * to @mentions). When undefined, treated as `false` for backwards compatibility.
+   */
+  passiveMode?: boolean;
   response: ChatResponse | null;
   activationAttempts: number;
   lastActivationError: string | null;
