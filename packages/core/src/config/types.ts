@@ -324,6 +324,17 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+
+  /**
+   * Project templates configuration (Issue #1916).
+   * Controls which templates are available for project instantiation.
+   * CLAUDE.md source: {packageDir}/templates/{name}/CLAUDE.md (built-in).
+   * Instance workingDir: {workspace}/projects/{name}/ (convention).
+   *
+   * Only templates listed here are available. Default project is always
+   * implicitly available and does not need configuration.
+   */
+  projectTemplates?: Record<string, ProjectTemplateConfig>;
 }
 
 /**

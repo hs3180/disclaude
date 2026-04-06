@@ -7,6 +7,7 @@ import { handleStop } from './stop.js';
 import { handleListNodes } from './list-nodes.js';
 import { handleShowDebug, handleClearDebug } from './debug.js';
 import { handlePassive } from './passive.js';
+import { handleProject } from './project.js';
 
 /**
  * 命令注册表
@@ -21,6 +22,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'show-debug', handler: handleShowDebug, description: '显示 Debug 组' },
   { type: 'clear-debug', handler: handleClearDebug, description: '清除 Debug 组' },
   { type: 'passive', handler: handlePassive, description: '切换被动模式' },
+  { type: 'project', handler: handleProject, description: '项目上下文切换 (list|create|use|info|reset)' },
 ];
 
 /**

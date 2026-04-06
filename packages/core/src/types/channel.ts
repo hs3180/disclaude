@@ -123,7 +123,9 @@ export type ControlCommandType =
   | 'show-debug'
   | 'clear-debug'
   // Passive mode control (Issue #511)
-  | 'passive';
+  | 'passive'
+  // Project context switching (Issue #1916)
+  | 'project';
 
 /**
  * Control command from user to agent.
