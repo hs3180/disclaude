@@ -3,6 +3,7 @@
  *
  * Handles incoming message events and card actions for Feishu channel.
  * Issue #694: Extracted from feishu-channel.ts
+ * Issue #2052: Auto-disable passive mode for 2-member group chats.
  *
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
@@ -109,6 +110,25 @@ export class MessageHandler {
   private getHasControlHandler: () => boolean;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
+
+  /**
+   * Issue #2052: Threshold for auto-disabling passive mode.
+   * Groups with ≤ this many members (bot + users) are treated as small groups
+   * where passive mode is automatically disabled.
+   */
+  private static readonly SMALL_GROUP_THRESHOLD = 2;
+
+  /**
+   * Issue #2052: Cache TTL for member count lookups (5 minutes).
+   * Avoids redundant API calls for the same chat.
+   */
+  private static readonly MEMBER_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  /**
+   * Issue #2052: Cache for group member counts.
+   * Key: chatId, Value: { count, checkedAt }
+   */
+  private memberCountCache: Map<string, { count: number; checkedAt: number }> = new Map();
 
   /**
    * Create a MessageHandler.
@@ -641,6 +661,60 @@ export class MessageHandler {
   }
 
   /**
+   * Fetch member count for a group chat via Feishu API.
+   *
+   * Uses `GET /open-apis/im/v1/chats/{chat_id}` which returns
+   * `user_count` and `bot_count` (both as strings).
+   *
+   * Issue #2052: Used to detect 2-member group chats.
+   *
+   * @param chatId - The chat ID to query
+   * @returns Total member count, or Infinity if the call fails (safe default: keep passive mode on)
+   */
+  private async fetchMemberCount(chatId: string): Promise<number> {
+    if (!this.client) {
+      return Infinity;
+    }
+
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+      });
+      const data = response.data;
+      if (!data) {
+        return Infinity;
+      }
+      // user_count and bot_count are strings in the Feishu API response
+      const userCount = parseInt(data.user_count || '0', 10);
+      const botCount = parseInt(data.bot_count || '0', 10);
+      return userCount + botCount;
+    } catch (error) {
+      logger.debug({ err: error, chatId }, 'Failed to fetch member count for small group detection');
+      return Infinity;
+    }
+  }
+
+  /**
+   * Check if a group chat is a "small group" (≤2 members: bot + user).
+   *
+   * Caches the result to avoid redundant API calls.
+   * Issue #2052: Small groups auto-disable passive mode.
+   *
+   * @param chatId - The chat ID to check
+   * @returns true if the chat has ≤ SMALL_GROUP_THRESHOLD members
+   */
+  private async isSmallGroup(chatId: string): Promise<boolean> {
+    const cached = this.memberCountCache.get(chatId);
+    if (cached && Date.now() - cached.checkedAt < MessageHandler.MEMBER_COUNT_CACHE_TTL_MS) {
+      return cached.count <= MessageHandler.SMALL_GROUP_THRESHOLD;
+    }
+
+    const count = await this.fetchMemberCount(chatId);
+    this.memberCountCache.set(chatId, { count, checkedAt: Date.now() });
+    return count <= MessageHandler.SMALL_GROUP_THRESHOLD;
+  }
+
+  /**
    * Handle incoming message event from WebSocket.
    */
   async handleMessageReceive(data: FeishuEventData): Promise<void> {
@@ -830,9 +904,22 @@ export class MessageHandler {
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
     const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
     if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
-      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
-      return;
+      // Issue #2052: Auto-disable passive mode for 2-member group chats (bot + 1 user).
+      // Small groups are functionally equivalent to private conversations,
+      // so requiring @mention creates unnecessary friction.
+      const smallGroup = await this.isSmallGroup(chat_id);
+      if (smallGroup) {
+        this.passiveModeManager.setPassiveModeDisabled(chat_id, true);
+        logger.info(
+          { chatId: chat_id, messageId: message_id },
+          'Auto-disabled passive mode for small group (≤2 members)',
+        );
+        // Continue processing this message (don't filter)
+      } else {
+        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
+        this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+        return;
+      }
     }
 
     // Add typing reaction
