@@ -42,4 +42,9 @@ export {
   type ScheduleFileWatcherOptions,
   CooldownManager,
   type CooldownManagerOptions,
+  // Issue #1953: Event-driven schedule triggers
+  ScheduleTriggerWatcher,
+  triggerSchedule,
+  type OnTrigger,
+  type ScheduleTriggerWatcherOptions,
 } from '@disclaude/core';

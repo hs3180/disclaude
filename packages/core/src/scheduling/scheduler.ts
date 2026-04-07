@@ -210,6 +210,33 @@ export class Scheduler {
   }
 
   /**
+   * Trigger a task execution externally (event-driven).
+   *
+   * Issue #1953: Allows external processes to trigger immediate execution
+   * via ScheduleTriggerWatcher, bypassing the cron schedule.
+   * Respects blocking and cooldown constraints.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and execution was initiated, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger task — not found in active jobs');
+      return false;
+    }
+
+    if (!this.running) {
+      logger.warn({ taskId }, 'Cannot trigger task — scheduler is not running');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name, source: 'trigger' }, 'Triggering task execution');
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
    * Build wrapped prompt with anti-recursion instructions.
    * Provides defense-in-depth against infinite recursion.
    *

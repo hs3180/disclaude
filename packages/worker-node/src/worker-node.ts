@@ -30,6 +30,7 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
+  ScheduleTriggerWatcher,
 } from './schedule/index.js';
 import { FileClient } from './file-client/index.js';
 import { WorkerIpcServer, createIpcToWsBridge } from './ipc/index.js';
@@ -166,6 +167,7 @@ export class WorkerNode {
   // Scheduler
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
+  private scheduleTriggerWatcher?: ScheduleTriggerWatcher;
 
   constructor(options: WorkerNodeOptions) {
     const { config, dependencies } = options;
@@ -387,9 +389,20 @@ export class WorkerNode {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Start event-driven trigger watcher
+    this.scheduleTriggerWatcher = new ScheduleTriggerWatcher({
+      schedulesDir,
+      onTrigger: async (taskId: string) => {
+        this.deps.logger.info({ taskId, source: 'trigger-watcher' }, 'Event-driven trigger received');
+        await this.scheduler?.triggerTask(taskId);
+      },
+    });
+    await this.scheduleTriggerWatcher.start();
+
     console.log('✓ Execution capability initialized');
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Schedule trigger watcher started');
   }
 
   /**
@@ -811,6 +824,9 @@ export class WorkerNode {
 
     this.deps.logger.info('Shutting down Worker Node...');
     console.log('\nShutting down Worker Node...');
+
+    // Stop trigger watcher (Issue #1953)
+    this.scheduleTriggerWatcher?.stop();
 
     // Stop file watcher
     this.scheduleFileWatcher?.stop();

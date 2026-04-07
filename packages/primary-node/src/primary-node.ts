@@ -51,6 +51,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #1953: Event-driven schedule triggers
+  ScheduleTriggerWatcher,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
@@ -151,6 +153,7 @@ export class PrimaryNode extends EventEmitter {
   protected scheduler?: Scheduler;
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
+  protected scheduleTriggerWatcher?: ScheduleTriggerWatcher;
   protected cooldownManager?: CooldownManager;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
@@ -507,8 +510,19 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Start event-driven trigger watcher
+    this.scheduleTriggerWatcher = new ScheduleTriggerWatcher({
+      schedulesDir,
+      onTrigger: async (taskId: string) => {
+        logger.info({ taskId, source: 'trigger-watcher' }, 'Event-driven trigger received');
+        await this.scheduler?.triggerTask(taskId);
+      },
+    });
+    await this.scheduleTriggerWatcher.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Schedule trigger watcher started');
     logger.info('Scheduler initialized');
   }
 
@@ -516,6 +530,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.scheduleTriggerWatcher?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

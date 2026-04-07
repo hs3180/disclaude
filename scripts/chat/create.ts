@@ -15,7 +15,7 @@
  */
 
 import { mkdir, writeFile, stat, rename } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import {
   validateChatId,
   validateExpiresAt,
@@ -138,6 +138,20 @@ async function main() {
   });
 
   console.log(`OK: Chat ${chatId} created successfully`);
+
+  // ---- Step 6: Trigger chats-activation schedule (Issue #1953) ----
+  // Write a signal file to trigger immediate activation instead of waiting for next cron
+  const schedulesDir = resolve(dirname(chatDir), 'schedules');
+  const triggersDir = join(schedulesDir, '.triggers');
+  const triggerFile = join(triggersDir, 'schedule-chats-activation');
+  try {
+    await mkdir(triggersDir, { recursive: true });
+    await writeFile(triggerFile, new Date().toISOString(), 'utf-8');
+    console.log(`OK: Trigger signal written for chats-activation`);
+  } catch (err) {
+    // Trigger write failure is non-fatal — cron will pick it up eventually
+    console.error(`WARN: Failed to write trigger signal (non-fatal): ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 main().catch((err) => {

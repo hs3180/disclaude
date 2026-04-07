@@ -41,4 +41,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Whether this task can be triggered by external events (signal files).
+   * When true, ScheduleTriggerWatcher monitors `{schedulesDir}/.triggers/{taskId}`.
+   * External processes write/touch this file to trigger immediate execution.
+   * Cron schedule remains as fallback.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  triggerable?: boolean;
 }
