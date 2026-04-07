@@ -13,6 +13,11 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── acp/                     # ACP 协议基础设施 (Issue #1333)
+ * │   ├── index.ts
+ * │   ├── types.ts             # JSON-RPC 2.0 + ACP 类型定义
+ * │   ├── transport.ts         # stdio 传输层
+ * │   └── acp-client.ts        # ACP Client
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -131,3 +136,54 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP 协议导出 (Issue #1333)
+// ============================================================================
+
+export {
+  AcpClient,
+  AcpError,
+  AcpStdioTransport,
+  createNotification,
+} from './acp/index.js';
+
+export type {
+  // JSON-RPC 2.0
+  JsonRpcRequest,
+  JsonRpcSuccessResponse,
+  JsonRpcErrorResponse,
+  JsonRpcError,
+  JsonRpcNotification,
+  JsonRpcMessage,
+  // ACP
+  AcpClientCapabilities,
+  AcpServerCapabilities,
+  AcpInitializeParams,
+  AcpInitializeResult,
+  AcpClientInfo,
+  AcpServerInfo,
+  AcpTaskState,
+  AcpTaskPriority,
+  AcpTaskRole,
+  AcpTaskContent,
+  AcpTaskMessage,
+  AcpTaskSendParams,
+  AcpTaskMetadata,
+  AcpTaskSendResult,
+  AcpTaskCancelParams,
+  AcpTaskCancelResult,
+  AcpTaskStatusNotification,
+  AcpTaskProgressNotification,
+  AcpStdioTransportConfig,
+  AcpClientConfig,
+  AcpEventType,
+  AcpEvent,
+  AcpTaskStatusEvent,
+  AcpTaskProgressEvent,
+  AcpErrorEvent,
+  AcpClientState,
+  TransportMessageListener,
+  TransportErrorListener,
+  TransportCloseListener,
+} from './acp/index.js';
