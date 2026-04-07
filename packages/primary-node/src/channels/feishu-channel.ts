@@ -591,6 +591,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -614,6 +615,48 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getPassiveModeManager(): PassiveModeManager {
     return this.passiveModeManager;
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   * Issue #1919: Used by upload_image MCP tool for card embedding.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client is not initialized, file is too large, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const { size: fileSize } = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded via uploadImage');
+    return { imageKey, fileName, fileSize };
   }
 
   /**

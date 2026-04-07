@@ -454,6 +454,21 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Upload an image and return image_key for card embedding.
+   * Issue #1919: MCP tool for image upload → image_key.
+   */
+  async uploadImage(
+    filePath: string
+  ): Promise<{ success: boolean; imageKey?: string; fileName?: string; fileSize?: number }> {
+    try {
+      return await this.request('uploadImage', { filePath });
+    } catch (error) {
+      logger.error({ err: error, filePath }, 'uploadImage failed');
+      return { success: false };
+    }
+  }
+
+  /**
    * Send an interactive card with raw parameters via IPC.
    * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
    *

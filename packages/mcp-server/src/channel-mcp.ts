@@ -16,6 +16,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -148,6 +150,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image to Feishu and return image_key for card embedding.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -380,6 +393,40 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image to Feishu and return an image_key for embedding in card messages.
+
+Use this tool when you need to embed images in card messages (send_card / send_interactive).
+The returned image_key can be used in the card JSON's \`img\` element:
+
+\`\`\`json
+{ "tag": "img", "img_key": "<image_key from this tool>" }
+\`\`\`
+
+**Important**: This tool only uploads the image and returns the key. To actually send
+a card with the embedded image, use send_card or send_interactive separately.
+
+## Parameters
+- **filePath**: Path to the image file (string). Supported formats: jpg, jpeg, png, webp, gif, tiff, bmp, ico. Max size: 10MB.
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
