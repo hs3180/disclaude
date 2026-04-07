@@ -109,7 +109,7 @@ Agent implementations using the Template Method pattern:
 
 - **`base-agent.ts`** - Abstract base class with common functionality:
   - SDK configuration building via `createSdkOptions()`
-  - `queryOnce()` - For static prompts (Evaluator, Executor, Reporter)
+  - `queryOnce()` - For static prompts (Evaluator, Executor)
   - `createQueryStream()` - For streaming input (Pilot)
   - Error handling and logging
 
@@ -123,7 +123,6 @@ Agent implementations using the Template Method pattern:
 
 - **`evaluator.ts`** - Task completion evaluation
 - **`executor.ts`** - Task execution with progress reporting
-- **`reporter.ts`** - Progress reporting to user
 
 #### `src/task/` - Task Orchestration
 
@@ -379,7 +378,7 @@ To enable/disable tools, modify the `disallowedTools` array in `Pilot.processMes
 
 **IMPORTANT**: All Agent outputs MUST be logged in full, not just metadata (like length).
 
-- **Agent outputs** (Evaluator/Executor/Reporter): Must include a `content` field with the full text
+- **Agent outputs** (Evaluator/Executor): Must include a `content` field with the full text
 - **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
 - **Purpose**: Enables task retrospection and debugging by showing actual Agent output
 
@@ -408,7 +407,7 @@ logger.debug({
 
 ### Locations
 
-- `src/task/iteration-bridge.ts`: Evaluator, Executor, and Reporter outputs
+- `src/task/iteration-bridge.ts`: Evaluator and Executor outputs
 
 ## Debugging Tips
 
