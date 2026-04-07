@@ -9,6 +9,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
@@ -33,8 +35,14 @@ import { extractCardTextContent } from '../../platforms/feishu/card-builders/car
 import { messageLogger } from './message-logger.js';
 import type { PassiveModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import { detectDiscussionEndTrigger } from './discussion-end-trigger.js';
 
 const logger = createLogger('MessageHandler');
+
+const execFileAsync = promisify(execFile);
+
+/** Timeout for lark-cli API calls (same as chat-timeout.ts). */
+const LARK_CLI_TIMEOUT_MS = 30_000;
 
 /**
  * Callback interface for emitting messages and control events.
@@ -670,6 +678,35 @@ export class MessageHandler {
       return;
     }
 
+    // Issue #1229: Check for discussion-end trigger phrases BEFORE filtering bot messages.
+    // When the Chat Agent sends a [DISCUSSION_END] trigger, we intercept it here and
+    // dissolve the group via lark-cli, regardless of sender_type filtering.
+    if (message_type === 'text') {
+      const trigger = detectDiscussionEndTrigger(content, message_type);
+      if (trigger) {
+        logger.info(
+          { messageId: message_id, chatId: chat_id, trigger: trigger.match, reason: trigger.reason },
+          'Discussion end trigger detected — dissolving group',
+        );
+        // Log the message to mark it as processed (prevents duplicate processing on Feishu retry)
+        await messageLogger.logIncomingMessage(
+          message_id,
+          this.extractOpenId(sender) || 'bot',
+          chat_id,
+          `[DISCUSSION_END trigger: ${trigger.match}]`,
+          message_type,
+          create_time,
+        );
+        const dissolved = await this.dismissGroup(chat_id);
+        if (dissolved) {
+          logger.info({ chatId: chat_id }, 'Group dissolved successfully');
+        } else {
+          logger.warn({ chatId: chat_id }, 'Group dissolution failed');
+        }
+        return;
+      }
+    }
+
     // Ignore bot messages UNLESS the sender bot @mentions our bot (bot-to-bot communication)
     // Issue #1742: Allow bot-to-bot @mention conversations
     if (sender?.sender_type === 'app') {
@@ -1114,6 +1151,32 @@ export class MessageHandler {
         type: 'text',
         text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
       });
+    }
+  }
+
+  /**
+   * Dissolve a Feishu group via lark-cli.
+   *
+   * Issue #1229: Uses the raw API call pattern from chat-timeout.ts:
+   * `lark-cli api DELETE /open-apis/im/v1/chats/{chatId}`
+   *
+   * @param chatId - Feishu chat ID (e.g., oc_xxx)
+   * @returns Whether the dissolution succeeded
+   */
+  private async dismissGroup(chatId: string): Promise<boolean> {
+    try {
+      await execFileAsync(
+        'lark-cli',
+        ['api', 'DELETE', `/open-apis/im/v1/chats/${chatId}`],
+        { timeout: LARK_CLI_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      );
+      return true;
+    } catch (err: unknown) {
+      const execErr = err as { stderr?: string; message?: string };
+      const errorMsg = (execErr.stderr ?? execErr.message ?? 'unknown error')
+        .replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      logger.error({ chatId, error: errorMsg }, 'Failed to dissolve group via lark-cli');
+      return false;
     }
   }
 
