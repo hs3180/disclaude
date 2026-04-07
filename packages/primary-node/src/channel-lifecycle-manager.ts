@@ -65,11 +65,11 @@ export interface ChannelSetupContext {
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
-  /** Control handler context (for adding passive mode etc.) */
+  /** Control handler context (for adding trigger mode etc.) */
   controlHandlerContext: {
-    passiveMode?: {
-      isEnabled: (chatId: string) => boolean;
-      setEnabled: (chatId: string, enabled: boolean) => void;
+    triggerMode?: {
+      getMode(chatId: string): 'mention' | 'always';
+      setMode(chatId: string, mode: 'mention' | 'always'): void;
     };
   };
   /** Logger instance */

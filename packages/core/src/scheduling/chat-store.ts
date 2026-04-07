@@ -44,15 +44,15 @@ export interface TempChatRecord {
   /** Response data, populated when a user interacts */
   response?: TempChatResponse;
   /**
-   * Declarative passive mode configuration for this chat.
+   * Declarative trigger mode configuration for this chat.
    *
-   * Issue #2069: When `false`, passive mode is disabled for this chat,
-   * meaning the bot responds to all messages without requiring @mention.
-   * When `true` or undefined, default behavior applies (passive mode enabled).
+   * Issue #2193: Controls when the bot responds to messages.
+   * - `'mention'`: Only respond to @mentions (default).
+   * - `'always'`: Respond to all messages without requiring @mention.
    *
    * This is set at chat creation time (declarative), not via runtime API.
    */
-  passiveMode?: boolean;
+  triggerMode?: 'mention' | 'always';
 }
 
 /**
@@ -66,13 +66,13 @@ export interface RegisterTempChatOptions {
   /** Arbitrary context data */
   context?: Record<string, unknown>;
   /**
-   * Declarative passive mode configuration.
+   * Declarative trigger mode configuration.
    *
-   * Issue #2069: When `false`, passive mode is disabled for this chat
-   * (bot responds to all messages). When `true` or undefined, default
-   * behavior applies (passive mode enabled, bot only responds to @mentions).
+   * Issue #2193: Controls when the bot responds to messages.
+   * - `'mention'`: Only respond to @mentions (default).
+   * - `'always'`: Respond to all messages without requiring @mention.
    */
-  passiveMode?: boolean;
+  triggerMode?: 'mention' | 'always';
 }
 
 /**
@@ -146,6 +146,12 @@ export class ChatStore {
           const content = await fsPromises.readFile(filePath, 'utf-8');
           const record = JSON.parse(content) as TempChatRecord;
 
+          // Backward compat: migrate legacy passiveMode to triggerMode
+          if ((record as any).passiveMode !== undefined && record.triggerMode === undefined) {
+            record.triggerMode = (record as any).passiveMode === false ? 'always' : 'mention';
+            delete (record as any).passiveMode;
+          }
+
           // Always load into cache (expiry is checked lazily via getExpiredTempChats)
           this.cache.set(record.chatId, record);
         } catch {
@@ -190,7 +196,7 @@ export class ChatStore {
       expiresAt,
       creatorChatId: opts.creatorChatId,
       context: opts.context,
-      passiveMode: opts.passiveMode,
+      triggerMode: opts.triggerMode,
     };
 
     // Update memory cache

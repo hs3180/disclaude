@@ -366,7 +366,7 @@ class PrimaryAgentPool {
 export interface ControlHandlerContext {
   agentPool: { reset(chatId: string): void; stop(chatId: string): boolean };
   node: { /* ... */ };
-  passiveMode?: { /* ... */ };
+  triggerMode?: { /* ... */ };
   logger?: Logger;
 
   // 👇 新增

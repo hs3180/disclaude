@@ -180,7 +180,7 @@ describe('getHandler', () => {
 
     const registeredTypes: ControlCommandType[] = [
       'help', 'status', 'reset', 'restart', 'stop',
-      'list-nodes', 'show-debug', 'clear-debug', 'passive',
+      'list-nodes', 'show-debug', 'clear-debug', 'trigger',
       'list-group', 'create-group', 'add-group-member',
       'remove-group-member', 'dissolve-group',
     ];

@@ -109,8 +109,8 @@ describe('ChatStore', () => {
       await expect(store.registerTempChat('oc_test5')).resolves.not.toThrow();
     });
 
-    it('should store passiveMode field (Issue #2069)', async () => {
-      await store.registerTempChat('oc_test_pm', { passiveMode: false });
+    it('should store triggerMode field (Issue #2069)', async () => {
+      await store.registerTempChat('oc_test_pm', { triggerMode: 'always' });
 
       const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
         call => call[0].toString().includes('oc_test_pm.json')
@@ -118,10 +118,10 @@ describe('ChatStore', () => {
       expect(writeCall).toBeDefined();
 
       const record = JSON.parse(writeCall![1] as string);
-      expect(record.passiveMode).toBe(false);
+      expect(record.triggerMode).toBe('always');
     });
 
-    it('should persist passiveMode as undefined when not specified (Issue #2069)', async () => {
+    it('should persist triggerMode as undefined when not specified (Issue #2069)', async () => {
       await store.registerTempChat('oc_test_pm2');
 
       const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
@@ -130,7 +130,7 @@ describe('ChatStore', () => {
       expect(writeCall).toBeDefined();
 
       const record = JSON.parse(writeCall![1] as string);
-      expect(record.passiveMode).toBeUndefined();
+      expect(record.triggerMode).toBeUndefined();
     });
   });
 
@@ -328,12 +328,12 @@ describe('ChatStore', () => {
       expect(result).not.toBeNull();
     });
 
-    it('should load passiveMode from disk (Issue #2069)', async () => {
+    it('should load triggerMode from disk (Issue #2069)', async () => {
       const record = {
         chatId: 'oc_passive_off',
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        passiveMode: false,
+        triggerMode: 'always',
       };
 
       vi.mocked(fsPromises.readdir).mockResolvedValue(['oc_passive_off.json'] as any);
@@ -342,7 +342,7 @@ describe('ChatStore', () => {
       const freshStore = new ChatStore({ storeDir });
       const chat = await freshStore.getTempChat('oc_passive_off');
       expect(chat).not.toBeNull();
-      expect(chat!.passiveMode).toBe(false);
+      expect(chat!.triggerMode).toBe('always');
     });
   });
 });
