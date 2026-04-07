@@ -499,6 +499,7 @@ Disclaude bundles preset agent definitions that are automatically copied to `.cl
 | Agent | Description | Tools |
 |-------|-------------|-------|
 | `site-miner` | Website information mining via Playwright | Read, Write, Bash, Glob, Grep, mcp__playwright__* |
+| `discussion-focus` | Focused discussion partner — keeps group discussions on-topic (Issue #1228) | Read, Glob, Grep, Bash |
 
 ### Agent Definition Format
 
