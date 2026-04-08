@@ -324,6 +324,11 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** Project templates configuration (Issue #1916) */
+  projectTemplates?: Record<string, {
+    displayName?: string;
+    description?: string;
+  }>;
 }
 
 /**

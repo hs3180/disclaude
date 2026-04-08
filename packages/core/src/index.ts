@@ -309,3 +309,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module - unified ProjectContext system (Issue #1916)
+export {
+  ProjectManager,
+  type CwdProvider,
+  type ProjectTemplate,
+  type ProjectContextConfig,
+  type InstanceInfo,
+  type ProjectResult,
+  type ProjectTemplatesConfig,
+  type ProjectsPersistData,
+  type ProjectManagerOptions,
+} from './project/index.js';
