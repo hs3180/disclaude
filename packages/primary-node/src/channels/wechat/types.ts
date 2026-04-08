@@ -109,3 +109,17 @@ export interface WeChatGetUpdatesResponse {
   /** List of new updates/messages */
   update_list?: WeChatUpdate[];
 }
+
+// ---------------------------------------------------------------------------
+// Typing indicator API types (Issue #1556 Phase 3.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Response from the typing indicator API.
+ *
+ * POST /ilink/bot/typing
+ */
+export interface WeChatTypingResponse {
+  /** Return code (0 = success) */
+  ret?: number;
+}

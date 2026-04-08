@@ -5,12 +5,12 @@
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
  * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
+ * - Typing indicator on incoming messages (Issue #1556 Phase 3.2)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
  * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
@@ -91,7 +91,14 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     // Start message listener (Issue #1556 Phase 3.1)
+    // Send typing indicator before processing (Issue #1556 Phase 3.2)
     const processor: MessageProcessor = async (message: IncomingMessage) => {
+      try {
+        await this.client?.sendTyping({ to: message.chatId });
+      } catch {
+        // Non-fatal: typing indicator failure should not block processing
+      }
+
       await this.emitMessage(message);
     };
 

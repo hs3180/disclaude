@@ -18,4 +18,5 @@ export type {
   WeChatMessageItem,
   WeChatUpdate,
   WeChatGetUpdatesResponse,
+  WeChatTypingResponse,
 } from './types.js';
