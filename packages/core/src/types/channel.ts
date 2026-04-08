@@ -119,12 +119,6 @@ export type ControlCommandType =
   | 'help'
   | 'list-nodes'
   | 'switch-node' // Primary Node only — not forwarded via WebSocket
-  // Group management commands (Issue #486)
-  | 'create-group'
-  | 'add-group-member'
-  | 'remove-group-member'
-  | 'list-group'
-  | 'dissolve-group'
   // Debug group commands (Issue #487)
   | 'show-debug'
   | 'clear-debug'
