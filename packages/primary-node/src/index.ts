@@ -108,15 +108,6 @@ export {
 
 // Platform adapters (Issue #1040)
 export {
-  // Chat operations
-  createDiscussionChat,
-  addMembers,
-  removeMembers,
-  getMembers,
-  getBotChats,
-  type CreateDiscussionOptions,
-  type ChatOpsConfig,
-  type BotChatInfo,
   // Welcome service
   WelcomeService,
   initWelcomeService,

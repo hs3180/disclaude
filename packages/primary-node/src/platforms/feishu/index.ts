@@ -6,18 +6,6 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-// Chat operations
-export {
-  createDiscussionChat,
-  addMembers,
-  removeMembers,
-  getMembers,
-  getBotChats,
-  type CreateDiscussionOptions,
-  type ChatOpsConfig,
-  type BotChatInfo,
-} from './chat-ops.js';
-
 // Welcome service
 export {
   WelcomeService,
