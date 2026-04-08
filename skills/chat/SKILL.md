@@ -103,6 +103,22 @@ Each chat is a single JSON file in `workspace/chats/`:
 }
 ```
 
+## Prerequisites
+
+| Dependency | Version | Required | Notes |
+|------------|---------|----------|-------|
+| Node.js | ≥ 18.0.0 | ✅ Yes | ≥ 20.12.0 recommended for file locking (`fs.flock`) |
+| tsx | ≥ 4.0 | ✅ Yes | TypeScript execution runtime |
+| Chat directory | `workspace/chats/` | ✅ Yes | Auto-created if missing; must be readable + writable |
+
+Run the dependency check before first use:
+
+```bash
+npx tsx scripts/chat/check-deps.ts
+```
+
+This validates Node.js version, `tsx` availability, and chat directory accessibility. Exit code 0 = all good, 1 = missing dependency (with fix instructions).
+
 ## Operations
 
 All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (via `fs.flock`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
