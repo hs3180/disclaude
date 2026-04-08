@@ -329,20 +329,29 @@ describe('WeChatMessageListener', () => {
   describe('error handling and backoff', () => {
     it('should continue polling after transient error', async () => {
       let callCount = 0;
-      mockClient.getUpdates = vi.fn().mockImplementation(() => {
+      mockClient.getUpdates = vi.fn().mockImplementation(({ signal }) => {
         callCount++;
         if (callCount === 1) {
           throw new Error('Network error');
         }
-        return Promise.resolve([]);
+        if (callCount === 2) {
+          // Recovery: return empty results
+          return Promise.resolve([]);
+        }
+        // After recovery, simulate long-poll that responds to abort
+        return new Promise((_, reject) => {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          signal?.addEventListener('abort', () => reject(err), { once: true });
+        });
       });
 
       listener.start();
-      // Advance past the backoff period
+      // Advance past the backoff period (2000ms) plus recovery poll
       await vi.advanceTimersByTimeAsync(5000);
       await listener.stop();
 
-      // Should have retried after backoff
+      // Should have retried after backoff (call 1: error, call 2: recovery)
       expect(callCount).toBeGreaterThanOrEqual(2);
     });
 
