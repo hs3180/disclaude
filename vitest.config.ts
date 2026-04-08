@@ -30,6 +30,9 @@ export default defineConfig({
       'node_modules/',
       'dist/',
       '**/workspace/**',
+      // Feishu integration tests - run separately via `npm run test:feishu`
+      // @see Issue #1626
+      'tests/integration/feishu/**',
     ],
     env: {
       NODE_ENV: 'test',
