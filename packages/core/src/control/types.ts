@@ -46,10 +46,10 @@ export interface ControlHandlerContext {
     clearDebugGroup(): void;
   };
 
-  /** 被动模式管理（可选） */
-  passiveMode?: {
-    isEnabled(chatId: string): boolean;
-    setEnabled(chatId: string, enabled: boolean): void;
+  /** 触发模式管理（可选, Issue #2193 renamed from passiveMode） */
+  triggerMode?: {
+    getMode(chatId: string): 'mention' | 'always';
+    setMode(chatId: string, mode: 'mention' | 'always'): void;
   };
 
   /** 日志记录器 */

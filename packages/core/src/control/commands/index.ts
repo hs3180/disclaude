@@ -20,7 +20,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'list-nodes', handler: handleListNodes, description: '查看执行节点' },
   { type: 'show-debug', handler: handleShowDebug, description: '显示 Debug 组' },
   { type: 'clear-debug', handler: handleClearDebug, description: '清除 Debug 组' },
-  { type: 'passive', handler: handlePassive, description: '切换被动模式' },
+  { type: 'trigger', handler: handlePassive, description: '切换触发模式 (mention/always)' },
 ];
 
 /**

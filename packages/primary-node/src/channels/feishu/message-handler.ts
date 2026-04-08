@@ -31,7 +31,7 @@ import {
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
-import type { PassiveModeManager } from './passive-mode.js';
+import type { TriggerModeManager } from './trigger-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 
 const logger = createLogger('MessageHandler');
@@ -101,7 +101,7 @@ interface QuotedMessageResult {
 export class MessageHandler {
   private client?: lark.Client;
   private interactionManager: InteractionManager;
-  private passiveModeManager: PassiveModeManager;
+  private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
   private callbacks: MessageCallbacks;
   private isRunning: () => boolean;
@@ -114,14 +114,14 @@ export class MessageHandler {
    * Create a MessageHandler.
    */
   constructor(options: {
-    passiveModeManager: PassiveModeManager;
+    triggerModeManager: TriggerModeManager;
     mentionDetector: MentionDetector;
     interactionManager: InteractionManager;
     callbacks: MessageCallbacks;
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.passiveModeManager = options.passiveModeManager;
+    this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
@@ -826,12 +826,12 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat passive mode
-    const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
-      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+    // Group chat trigger mode (Issue #2193: renamed from passive mode)
+    const isTriggerCommand = textWithoutMentions.startsWith('/trigger') || textWithoutMentions.startsWith('/passive');
+    const isAlwaysMode = this.triggerModeManager.isAlwaysMode(chat_id);
+    if (this.isGroupChat(chat_type) && !botMentioned && !isAlwaysMode && !isTriggerCommand) {
+      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode: mention)');
+      this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;
     }
 
@@ -902,11 +902,11 @@ export class MessageHandler {
       quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
-    // Get chat history context for passive mode
-    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    // Get chat history context for mention-triggered messages
+    const isMentionTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
 
-    if (isPassiveModeTrigger) {
+    if (isMentionTrigger) {
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 

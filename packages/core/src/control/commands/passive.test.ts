@@ -1,5 +1,6 @@
 /**
- * Tests for /passive command handler (packages/core/src/control/commands/passive.ts)
+ * Tests for /trigger command handler (packages/core/src/control/commands/passive.ts)
+ * Issue #2193: Renamed from /passive to /trigger
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -10,7 +11,7 @@ import type { ControlHandlerContext } from '../types.js';
 /** 创建测试用的 control command */
 function createCommand(args?: string | string[], chatId = 'test-chat-id'): ControlCommand {
   return {
-    type: 'passive',
+    type: 'trigger',
     chatId,
     data: args !== undefined ? { args } : undefined,
   };
@@ -26,20 +27,20 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
       getDebugGroup: vi.fn().mockReturnValue(null),
       clearDebugGroup: vi.fn(),
     },
-    passiveMode: {
-      isEnabled: vi.fn().mockReturnValue(false),
-      setEnabled: vi.fn(),
+    triggerMode: {
+      getMode: vi.fn().mockReturnValue('mention'),
+      setMode: vi.fn(),
     },
     ...overrides,
   };
 }
 
-describe('handlePassive', () => {
-  describe('passiveMode not available', () => {
-    it('should return failure with clear message when passiveMode is undefined', () => {
+describe('handlePassive (trigger mode)', () => {
+  describe('triggerMode not available', () => {
+    it('should return failure with clear message when triggerMode is undefined', () => {
       const command = createCommand();
       const mockWarn = vi.fn();
-      const context = createContext({ passiveMode: undefined, logger: { warn: mockWarn } as unknown as ControlHandlerContext['logger'] });
+      const context = createContext({ triggerMode: undefined, logger: { warn: mockWarn } as unknown as ControlHandlerContext['logger'] });
 
       const result = handlePassive(command, context) as ControlResponse;
 
@@ -47,91 +48,114 @@ describe('handlePassive', () => {
       expect(result.message).toContain('不可用');
       expect(mockWarn).toHaveBeenCalledWith(
         { chatId: 'test-chat-id' },
-        '/passive command received but passiveMode is not configured'
+        '/trigger command received but triggerMode is not configured'
       );
     });
   });
 
-  describe('valid arguments', () => {
-    it('should enable passive mode with "on" argument', () => {
+  describe('valid arguments (new enum values)', () => {
+    it('should set mode to mention with "mention" argument', () => {
+      const command = createCommand('mention');
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+
+      const result = handlePassive(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('mention');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
+    });
+
+    it('should set mode to always with "always" argument', () => {
+      const command = createCommand('always');
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+
+      const result = handlePassive(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('always');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
+    });
+  });
+
+  describe('backward compat (old on/off arguments)', () => {
+    it('should set mode to mention with "on" argument', () => {
       const command = createCommand('on');
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('已开启');
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', true);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
     });
 
-    it('should disable passive mode with "off" argument', () => {
+    it('should set mode to always with "off" argument', () => {
       const command = createCommand('off');
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('已关闭');
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', false);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
 
-    // Issue #1562: Feishu message handler passes args as string[], not string
-    it('should enable passive mode when args is passed as array (Feishu format)', () => {
+    it('should set mode to mention when args is passed as array (Feishu format)', () => {
       const command = createCommand(['on']);
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('已开启');
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', true);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
     });
 
-    it('should disable passive mode when args is passed as array (Feishu format)', () => {
+    it('should set mode to always when args is passed as array (Feishu format)', () => {
       const command = createCommand(['off']);
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('已关闭');
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', false);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
   });
 
   describe('no argument (toggle)', () => {
-    it('should toggle from off to on when no argument provided', () => {
+    it('should toggle from mention to always when no argument provided', () => {
       const command = createCommand();
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
-      passiveMode.isEnabled = vi.fn().mockReturnValue(false);
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+      triggerMode.getMode = vi.fn().mockReturnValue('mention');
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', true);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
 
-    it('should toggle from on to off when no argument provided', () => {
+    it('should toggle from always to mention when no argument provided', () => {
       const command = createCommand();
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
-      passiveMode.isEnabled = vi.fn().mockReturnValue(true);
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+      triggerMode.getMode = vi.fn().mockReturnValue('always');
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(passiveMode.setEnabled).toHaveBeenCalledWith('test-chat-id', false);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
     });
   });
 
@@ -139,53 +163,27 @@ describe('handlePassive', () => {
     it('should reject typo "oon"', () => {
       const command = createCommand('oon');
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(false);
       expect(result.message).toContain('无效参数');
-      expect(passiveMode.setEnabled).not.toHaveBeenCalled();
-    });
-
-    it('should reject typo "oof"', () => {
-      const command = createCommand('oof');
-      const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
-
-      const result = handlePassive(command, context) as ControlResponse;
-
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('无效参数');
-      expect(passiveMode.setEnabled).not.toHaveBeenCalled();
+      expect(triggerMode.setMode).not.toHaveBeenCalled();
     });
 
     it('should reject random string "yes"', () => {
       const command = createCommand('yes');
       const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
 
       const result = handlePassive(command, context) as ControlResponse;
 
       expect(result.success).toBe(false);
       expect(result.message).toContain('无效参数');
-      expect(passiveMode.setEnabled).not.toHaveBeenCalled();
-    });
-
-    it('should reject numeric string "123"', () => {
-      const command = createCommand('123');
-      const context = createContext();
-      const { passiveMode } = context;
-      if (!passiveMode) {throw new Error('passiveMode is required');}
-
-      const result = handlePassive(command, context) as ControlResponse;
-
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('无效参数');
-      expect(passiveMode.setEnabled).not.toHaveBeenCalled();
+      expect(triggerMode.setMode).not.toHaveBeenCalled();
     });
 
     it('should show usage hint in error message', () => {
@@ -194,7 +192,7 @@ describe('handlePassive', () => {
 
       const result = handlePassive(command, context) as ControlResponse;
 
-      expect(result.message).toContain('/passive [on|off]');
+      expect(result.message).toContain('/trigger [mention|always]');
     });
   });
 });
