@@ -1,6 +1,6 @@
 ---
 name: deep-task
-description: Deep task initialization specialist for ONE-TIME execution tasks with full dialogue workflow (Evaluator → Executor → Reporter). Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor, deep task.
+description: Deep task initialization specialist for ONE-TIME execution tasks with full dialogue workflow (Evaluator → Executor). Creates Task.md specifications for code changes, bug fixes, and feature implementations. NOT for scheduled/recurring tasks - use /schedule skill instead. Keywords: task, feature, fix, implement, refactor, deep task.
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
@@ -55,7 +55,7 @@ When invoked, you will receive context in the system message:
    - Expected results with verification/testing steps
 5. Notify user that Task.md has been created
 
-**NOTE**: After Task.md is created, a background file watcher will automatically detect it and trigger the Dialogue phase (Evaluator → Executor → Reporter). No manual trigger is needed.
+**NOTE**: After Task.md is created, a background file watcher will automatically detect it and trigger the Dialogue phase (Evaluator → Executor). No manual trigger is needed.
 
 ## Task.md Path
 
