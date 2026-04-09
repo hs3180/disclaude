@@ -7,6 +7,7 @@
  * @see docs/proposals/unified-project-context.md §4 API Design
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — Persistence)
+ * @see Issue #2226 (Sub-Issue D — Filesystem operations)
  * @see Issue #1916 (parent)
  */
 
@@ -46,6 +47,9 @@ const DISCLAUDE_DIR_NAME = '.disclaude';
 /** Filename for persisted project data */
 const PROJECTS_FILENAME = 'projects.json';
 
+/** Filename for Agent context instructions */
+const CLAUDE_MD_FILENAME = 'CLAUDE.md';
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Instance Shape
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -76,11 +80,11 @@ export class ProjectManager {
   private instances: Map<string, InternalInstance>;
   private chatProjectMap: Map<string, string>; // chatId → instanceName
   private readonly workspaceDir: string;
+  private readonly packageDir: string | undefined;
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // Note: options.packageDir is stored for Sub-Issue D (filesystem operations)
-    // but not needed in Sub-Issue C (persistence only)
+    this.packageDir = options.packageDir || undefined;
     this.templates = new Map();
     this.instances = new Map();
     this.chatProjectMap = new Map();
@@ -196,9 +200,23 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
 
-    // Persist — rollback on failure
+    // Filesystem operations: create working directory + copy CLAUDE.md
+    const fsResult = this.instantiateFromTemplate(workingDir, templateName);
+    if (!fsResult.ok) {
+      // Rollback memory state
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return {
+        ok: false,
+        error: fsResult.error,
+      };
+    }
+
+    // Persist — rollback memory + filesystem on failure
     const persistResult = this.persist();
     if (!persistResult.ok) {
+      // Rollback filesystem
+      this.cleanupWorkingDir(workingDir);
       // Rollback memory state
       this.instances.delete(name);
       this.chatProjectMap.delete(chatId);
@@ -607,6 +625,115 @@ export class ProjectManager {
    */
   private getPersistencePath(): string {
     return path.join(this.workspaceDir, DISCLAUDE_DIR_NAME, PROJECTS_FILENAME);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Filesystem Helpers (Sub-Issue D)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Create working directory and copy CLAUDE.md from template.
+   *
+   * Steps:
+   * 1. Resolve workingDir path and verify it's within workspaceDir (path traversal protection)
+   * 2. Create the directory (mkdir -p equivalent)
+   * 3. Copy CLAUDE.md from template (if packageDir is configured and template file exists)
+   * 4. On CLAUDE.md copy failure → rollback: remove created directory
+   *
+   * @param workingDir - The instance's working directory path
+   * @param templateName - The template name (for CLAUDE.md source lookup)
+   */
+  private instantiateFromTemplate(
+    workingDir: string,
+    templateName: string,
+  ): ProjectResult<void> {
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const resolvedWorkingDir = path.resolve(workingDir);
+    const resolvedWorkspace = path.resolve(this.workspaceDir);
+    if (!resolvedWorkingDir.startsWith(resolvedWorkspace + path.sep) && resolvedWorkingDir !== resolvedWorkspace) {
+      return {
+        ok: false,
+        error: `工作目录路径超出工作空间范围`,
+      };
+    }
+
+    try {
+      // Create working directory
+      fs.mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(workingDir, templateName);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      this.cleanupWorkingDir(workingDir);
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from template source to instance working directory.
+   *
+   * - Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * - Target: `{workingDir}/CLAUDE.md`
+   * - If packageDir is not configured → skip (instance created without CLAUDE.md)
+   * - If template CLAUDE.md doesn't exist → return error
+   *
+   * @param workingDir - The instance's working directory
+   * @param templateName - The template name for source lookup
+   */
+  private copyClaudeMd(
+    workingDir: string,
+    templateName: string,
+  ): ProjectResult<void> {
+    // Skip if packageDir not configured
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = path.join(this.packageDir, 'templates', templateName, CLAUDE_MD_FILENAME);
+    const targetPath = path.join(workingDir, CLAUDE_MD_FILENAME);
+
+    if (!fs.existsSync(sourcePath)) {
+      return {
+        ok: false,
+        error: `模板 "${templateName}" 的 CLAUDE.md 不存在于 ${path.dirname(sourcePath)}`,
+      };
+    }
+
+    try {
+      fs.copyFileSync(sourcePath, targetPath);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Clean up a working directory (best-effort removal).
+   *
+   * Used during rollback when filesystem operations fail after directory creation.
+   * Silently ignores errors — this is cleanup, not a critical path.
+   */
+  private cleanupWorkingDir(workingDir: string): void {
+    try {
+      if (fs.existsSync(workingDir)) {
+        fs.rmSync(workingDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Best-effort cleanup — don't mask the original error
+    }
   }
 
   /**
