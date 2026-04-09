@@ -80,8 +80,10 @@ export class PrimaryAgentPool {
 
       // Issue #1916: Inject CwdProvider for project context switching
       if (this.projectManager) {
-        agent.setCwdProvider(
-          (id) => this.projectManager!.createCwdProvider()(id),
+        // Pilot implements setCwdProvider but factory returns base ChatAgent type
+        const pilot = agent as unknown as { setCwdProvider(p: (chatId: string) => string | undefined): void };
+        pilot.setCwdProvider(
+          (id: string) => this.projectManager!.createCwdProvider()(id),
         );
       }
 
