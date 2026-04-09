@@ -1,23 +1,27 @@
 /**
  * ProjectManager — core logic for unified per-chatId Agent context switching.
  *
- * Pure in-memory operations. No filesystem or persistence dependencies.
+ * In-memory operations with optional persistence via projects.json.
  * Persistence is handled by Sub-Issue C (#2225), filesystem by Sub-Issue D (#2226).
  *
  * @see docs/proposals/unified-project-context.md §4 API Design
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2225 (Sub-Issue C — Persistence)
  * @see Issue #1916 (parent)
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
   ProjectTemplate,
   ProjectTemplatesConfig,
+  ProjectsPersistData,
 } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -35,6 +39,12 @@ const MAX_NAME_LENGTH = 64;
 
 /** Characters forbidden in instance names (path traversal + injection risks) */
 const FORBIDDEN_NAME_CHARS = /[\x00\\/]/;
+
+/** Directory name under workspace for persistence metadata */
+const DISCLAUDE_DIR_NAME = '.disclaude';
+
+/** Filename for persisted project data */
+const PROJECTS_FILENAME = 'projects.json';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Instance Shape
@@ -70,7 +80,7 @@ export class ProjectManager {
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
     // Note: options.packageDir is stored for Sub-Issue D (filesystem operations)
-    // but not needed in pure-memory Phase B
+    // but not needed in Sub-Issue C (persistence only)
     this.templates = new Map();
     this.instances = new Map();
     this.chatProjectMap = new Map();
@@ -126,6 +136,8 @@ export class ProjectManager {
       }
       // Stale binding: instance was removed externally → self-heal
       this.chatProjectMap.delete(chatId);
+      // Best-effort persist for self-healing (failure shouldn't block getActive)
+      this.persist();
     }
 
     return this.getDefaultProject();
@@ -184,6 +196,18 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
 
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback memory state
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return {
+        ok: false,
+        error: persistResult.error,
+      };
+    }
+
     return {
       ok: true,
       data: {
@@ -227,7 +251,23 @@ export class ProjectManager {
     }
 
     // Bind
+    const prevBinding = this.chatProjectMap.get(chatId);
     this.chatProjectMap.set(chatId, name);
+
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback to previous state
+      if (prevBinding !== undefined) {
+        this.chatProjectMap.set(chatId, prevBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return {
+        ok: false,
+        error: persistResult.error,
+      };
+    }
 
     return {
       ok: true,
@@ -249,8 +289,21 @@ export class ProjectManager {
     const chatIdResult = this.validateChatId(chatId);
     if (!chatIdResult.ok) return chatIdResult as ProjectResult<ProjectContextConfig>;
 
+    // Capture previous binding for rollback
+    const prevBinding = this.chatProjectMap.get(chatId);
+
     // Remove binding if exists (silent no-op if not bound)
     this.chatProjectMap.delete(chatId);
+
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback
+      if (prevBinding !== undefined) {
+        this.chatProjectMap.set(chatId, prevBinding);
+      }
+      return persistResult as ProjectResult<ProjectContextConfig>;
+    }
 
     return {
       ok: true,
@@ -313,6 +366,138 @@ export class ProjectManager {
       }
       return active.workingDir;
     };
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Persistence Methods
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Load persisted state from projects.json.
+   *
+   * Restores instances and chatProjectMap from the persistence file.
+   * Should be called during initialization after `init()`.
+   *
+   * - If file doesn't exist → silently succeeds (fresh start)
+   * - If file is corrupted → returns error (does not crash)
+   * - Schema validation: workingDir must be string, createdAt must exist
+   */
+  loadPersistedData(): ProjectResult<void> {
+    const filePath = this.getPersistencePath();
+
+    if (!fs.existsSync(filePath)) {
+      return { ok: true, data: undefined };
+    }
+
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content) as ProjectsPersistData;
+
+      // Schema validation
+      if (typeof data.instances !== 'object' || data.instances === null) {
+        return {
+          ok: false,
+          error: 'projects.json 格式损坏: instances 必须是对象',
+        };
+      }
+      if (typeof data.chatProjectMap !== 'object' || data.chatProjectMap === null) {
+        return {
+          ok: false,
+          error: 'projects.json 格式损坏: chatProjectMap 必须是对象',
+        };
+      }
+
+      // Validate each instance entry
+      for (const [name, instance] of Object.entries(data.instances)) {
+        if (typeof instance.workingDir !== 'string') {
+          return {
+            ok: false,
+            error: `实例 "${name}" 的 workingDir 无效`,
+          };
+        }
+        if (!instance.createdAt || typeof instance.createdAt !== 'string') {
+          return {
+            ok: false,
+            error: `实例 "${name}" 缺少有效的 createdAt`,
+          };
+        }
+      }
+
+      // Restore state — clear first to avoid stale data
+      this.instances.clear();
+      this.chatProjectMap.clear();
+
+      for (const [name, instance] of Object.entries(data.instances)) {
+        this.instances.set(name, {
+          name: instance.name,
+          templateName: instance.templateName,
+          workingDir: instance.workingDir,
+          createdAt: instance.createdAt,
+        });
+      }
+
+      for (const [chatId, instanceName] of Object.entries(data.chatProjectMap)) {
+        this.chatProjectMap.set(chatId, instanceName);
+      }
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return {
+          ok: false,
+          error: `projects.json 解析失败: ${err.message}`,
+        };
+      }
+      return {
+        ok: false,
+        error: `加载持久化数据失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Delete a project instance by name.
+   *
+   * Removes the instance from memory and all associated chatId bindings.
+   * Persists the change to disk. On persist failure, rolls back memory state.
+   *
+   * Note: This only removes metadata. Working directory cleanup is
+   * handled by Sub-Issue D (#2226).
+   */
+  delete(name: string): ProjectResult<void> {
+    // Validate name
+    const nameResult = this.validateName(name);
+    if (!nameResult.ok) return nameResult;
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Capture state for rollback
+    const removedBindings: Array<[string, string]> = [];
+    for (const [cid, instName] of this.chatProjectMap.entries()) {
+      if (instName === name) {
+        removedBindings.push([cid, instName]);
+        this.chatProjectMap.delete(cid);
+      }
+    }
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and bindings
+      this.instances.set(name, instance);
+      for (const [cid, instName] of removedBindings) {
+        this.chatProjectMap.set(cid, instName);
+      }
+      return persistResult;
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -415,5 +600,69 @@ export class ProjectManager {
     const names = Array.from(this.templates.keys());
     if (names.length === 0) return '(无可用模板)';
     return names.join(', ');
+  }
+
+  /**
+   * Get the full path to the persistence file.
+   */
+  private getPersistencePath(): string {
+    return path.join(this.workspaceDir, DISCLAUDE_DIR_NAME, PROJECTS_FILENAME);
+  }
+
+  /**
+   * Persist current state to projects.json atomically.
+   *
+   * Uses write-to-temp + rename pattern to prevent corruption on crash.
+   * Creates .disclaude/ directory if it doesn't exist.
+   *
+   * Returns error if write fails (caller should rollback memory state).
+   */
+  private persist(): ProjectResult<void> {
+    const data: ProjectsPersistData = {
+      instances: {},
+      chatProjectMap: Object.fromEntries(this.chatProjectMap),
+    };
+
+    for (const [name, instance] of this.instances) {
+      data.instances[name] = {
+        name: instance.name,
+        templateName: instance.templateName,
+        workingDir: instance.workingDir,
+        createdAt: instance.createdAt,
+      } satisfies PersistedInstance;
+    }
+
+    const filePath = this.getPersistencePath();
+    const disclaudeDir = path.dirname(filePath);
+    const tmpPath = filePath + '.tmp';
+
+    try {
+      // Ensure .disclaude directory exists
+      if (!fs.existsSync(disclaudeDir)) {
+        fs.mkdirSync(disclaudeDir, { recursive: true });
+      }
+
+      // Write to temp file first
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+
+      // Atomic rename
+      fs.renameSync(tmpPath, filePath);
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      // Clean up temp file on failure
+      try {
+        if (fs.existsSync(tmpPath)) {
+          fs.unlinkSync(tmpPath);
+        }
+      } catch {
+        // Ignore cleanup errors — original error is more important
+      }
+
+      return {
+        ok: false,
+        error: `持久化失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 }
