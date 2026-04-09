@@ -61,7 +61,7 @@ describe('chat scripts integration', () => {
 
   describe('create', () => {
     it('should create a valid chat file', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test Group',
@@ -88,7 +88,7 @@ describe('chat scripts integration', () => {
 
     it('should reject duplicate chat ID', async () => {
       // Create first
-      await runScript('scripts/chat/create.ts', {
+      await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
@@ -96,7 +96,7 @@ describe('chat scripts integration', () => {
       });
 
       // Try to create duplicate
-      const result = await runScript('scripts/chat/create.ts', {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
@@ -108,7 +108,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should reject missing CHAT_ID', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
         CHAT_MEMBERS: '["ou_test123"]',
@@ -119,7 +119,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should reject invalid expiresAt format', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31',
         CHAT_GROUP_NAME: 'Test',
@@ -131,7 +131,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should reject invalid member format', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
@@ -165,7 +165,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should return chat file content', async () => {
-      const result = await runScript('scripts/chat/query.ts', {
+      const result = await runScript('skills/chat/query.ts', {
         CHAT_ID: 'test-query-1',
       });
 
@@ -176,7 +176,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should report chat not found', async () => {
-      const result = await runScript('scripts/chat/query.ts', {
+      const result = await runScript('skills/chat/query.ts', {
         CHAT_ID: 'nonexistent',
       });
 
@@ -209,7 +209,7 @@ describe('chat scripts integration', () => {
     });
 
     it('should record a response to an active chat', async () => {
-      const result = await runScript('scripts/chat/response.ts', {
+      const result = await runScript('skills/chat/response.ts', {
         CHAT_ID: 'test-response-1',
         CHAT_RESPONSE: 'Looks good, approved!',
         CHAT_RESPONDER: 'ou_test123',
@@ -229,14 +229,14 @@ describe('chat scripts integration', () => {
 
     it('should reject duplicate response', async () => {
       // Record first response
-      await runScript('scripts/chat/response.ts', {
+      await runScript('skills/chat/response.ts', {
         CHAT_ID: 'test-response-1',
         CHAT_RESPONSE: 'First response',
         CHAT_RESPONDER: 'ou_test123',
       });
 
       // Try to record second
-      const result = await runScript('scripts/chat/response.ts', {
+      const result = await runScript('skills/chat/response.ts', {
         CHAT_ID: 'test-response-1',
         CHAT_RESPONSE: 'Second response',
         CHAT_RESPONDER: 'ou_test456',
@@ -265,7 +265,7 @@ describe('chat scripts integration', () => {
       };
       await writeFile(chatFilePath, JSON.stringify(chatData, null, 2), 'utf-8');
 
-      const result = await runScript('scripts/chat/response.ts', {
+      const result = await runScript('skills/chat/response.ts', {
         CHAT_ID: 'test-response-1',
         CHAT_RESPONSE: 'Response',
         CHAT_RESPONDER: 'ou_test123',

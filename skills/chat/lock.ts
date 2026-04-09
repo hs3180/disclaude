@@ -3,7 +3,7 @@
  *
  * Provides exclusive and shared advisory locks for file-based concurrency safety.
  * Falls back to a no-op lock with warning if fs.flock is unavailable.
- * This is safe for CLI tools with low concurrency risk (e.g., scripts/chat/).
+ * This is safe for CLI tools with low concurrency risk (e.g., skills/chat/).
  */
 
 import { open, type FileHandle } from 'node:fs/promises';

@@ -16,12 +16,12 @@ import {
   parseChatFile,
   CHAT_DIR,
   type ChatFile,
-} from '../../chat/schema.js';
+} from '../schema.js';
 
 const execFileAsync = promisify(execFile);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, '../..');
+const PROJECT_ROOT = resolve(__dirname, '../../..');
 const CHAT_DIR_RESOLVED = resolve(PROJECT_ROOT, CHAT_DIR);
 
 const TEST_IDS = ['test-act-expired', 'test-act-active', 'test-act-pending'];

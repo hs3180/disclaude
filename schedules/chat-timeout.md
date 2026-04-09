@@ -38,7 +38,7 @@ createdAt: 2026-04-06T00:00:00.000Z
 ## 执行步骤
 
 ```bash
-npx tsx scripts/schedule/chat-timeout.ts
+npx tsx skills/chat-timeout/chat-timeout.ts
 ```
 
 脚本完整实现了以下逻辑：

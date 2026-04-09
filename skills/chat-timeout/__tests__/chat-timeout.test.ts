@@ -83,7 +83,7 @@ describe('chat-timeout script', () => {
   it('should exit successfully when no chats directory exists', async () => {
     // Remove the chats directory temporarily
     await rm(CHAT_DIR, { recursive: true, force: true });
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('No chats directory');
   });
@@ -93,7 +93,7 @@ describe('chat-timeout script', () => {
       resolve(CHAT_DIR, 'test-timeout-1.json'),
       createChatData({ id: 'test-timeout-1', status: 'pending', expiresAt: '2099-12-31T23:59:59Z' }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('No expired chats');
   });
@@ -103,7 +103,7 @@ describe('chat-timeout script', () => {
       resolve(CHAT_DIR, 'test-timeout-1.json'),
       createChatData({ id: 'test-timeout-1', response: null }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
 
     // Verify status was updated to expired
@@ -125,7 +125,7 @@ describe('chat-timeout script', () => {
         },
       }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
 
     // Verify status was updated to expired
@@ -143,7 +143,7 @@ describe('chat-timeout script', () => {
       resolve(CHAT_DIR, 'test-timeout-1.json'),
       createChatData({ id: 'test-timeout-1', expiresAt: '2099-12-31T23:59:59Z' }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('No expired chats');
 
@@ -158,7 +158,7 @@ describe('chat-timeout script', () => {
       resolve(CHAT_DIR, 'test-timeout-1.json'),
       createChatData({ id: 'test-timeout-1', status: 'expired', expiredAt: '2020-01-01T01:00:00Z' }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     // Should not process as expired active
     expect(result.stdout).not.toContain('marked as expired');
@@ -166,7 +166,7 @@ describe('chat-timeout script', () => {
 
   it('should skip corrupted JSON files', async () => {
     await writeFile(resolve(CHAT_DIR, 'test-timeout-1.json'), 'not valid json {{{');
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('corrupted');
   });
@@ -180,7 +180,7 @@ describe('chat-timeout script', () => {
       );
     }
 
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {
       CHAT_MAX_PER_RUN: '2',
     });
     expect(result.code).toBe(0);
@@ -199,7 +199,7 @@ describe('chat-timeout script', () => {
       }),
     );
 
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {
       CHAT_EXPIRED_RETENTION_HOURS: '1',
     });
     expect(result.code).toBe(0);
@@ -222,7 +222,7 @@ describe('chat-timeout script', () => {
       }),
     );
 
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {
       CHAT_EXPIRED_RETENTION_HOURS: '1',
     });
     expect(result.code).toBe(0);
@@ -237,7 +237,7 @@ describe('chat-timeout script', () => {
       resolve(CHAT_DIR, 'test-timeout-1.json'),
       createChatData({ id: 'test-timeout-1', chatId: null }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
 
     // Should still mark as expired (no group to dissolve)
@@ -254,7 +254,7 @@ describe('chat-timeout script', () => {
         expiresAt: '2020-01-01T00:00:00+08:00', // Non-UTC format
       }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
 
     // Non-UTC format should be skipped (fail-open)
@@ -271,7 +271,7 @@ describe('chat-timeout script', () => {
         expiresAt: '2020-01-01T00:00:00Z',
       }),
     );
-    const result = await runScript('scripts/schedule/chat-timeout.ts', {});
+    const result = await runScript('skills/chat-timeout/chat-timeout.ts', {});
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('No expired chats');
   });

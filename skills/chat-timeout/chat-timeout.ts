@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * schedule/chat-timeout.ts — Detect expired active chats, dissolve groups, and clean up.
+ * skills/chat-timeout/chat-timeout.ts — Detect expired active chats, dissolve groups, and clean up.
  *
  * Reads all active chats from workspace/chats/, checks if expiresAt has passed,
  * dissolves the group via lark-cli (if no user response), and marks as expired.
