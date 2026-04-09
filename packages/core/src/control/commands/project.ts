@@ -37,8 +37,7 @@ export const handleProject: CommandHandler = (
   switch (sub) {
     case 'create': {
       const rawArgs = Array.isArray(args) ? args.slice(1) : [];
-      const templateName = rawArgs[0];
-      const name = rawArgs[1];
+      const [templateName, name] = rawArgs;
 
       if (!templateName || !name) {
         return {
@@ -60,13 +59,13 @@ export const handleProject: CommandHandler = (
         message: `✅ **项目已创建**: ${name}\n\n` +
           `📂 工作目录: \`${result.data.workingDir}\`\n` +
           `📋 模板: ${templateName}\n\n` +
-          `会话已重置，下一条消息将使用新项目上下文。`,
+          '会话已重置，下一条消息将使用新项目上下文。',
       };
     }
 
     case 'use': {
       const rawArgs = Array.isArray(args) ? args.slice(1) : [];
-      const name = rawArgs[0];
+      const [name] = rawArgs;
 
       if (!name) {
         return {
@@ -87,7 +86,7 @@ export const handleProject: CommandHandler = (
         success: true,
         message: `✅ **已切换到**: ${name}\n\n` +
           `📂 工作目录: \`${result.data.workingDir}\`\n\n` +
-          `会话已重置，下一条消息将使用新项目上下文。`,
+          '会话已重置，下一条消息将使用新项目上下文。',
       };
     }
 
@@ -119,8 +118,8 @@ export const handleProject: CommandHandler = (
       } else {
         for (const t of templates) {
           message += `- **${t.name}**`;
-          if (t.displayName) message += ` (${t.displayName})`;
-          if (t.description) message += ` — ${t.description}`;
+          if (t.displayName) { message += ` (${t.displayName})`; }
+          if (t.description) { message += ` — ${t.description}`; }
           message += '\n';
         }
         message += '\n';
@@ -158,7 +157,8 @@ export const handleProject: CommandHandler = (
     }
 
     case undefined:
-    case null: {
+    case null:
+    {
       return {
         success: false,
         message: '⚠️ 用法: `/project <子命令>`\n\n' +
