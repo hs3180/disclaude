@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleProject } from './project.js';
 import type { ControlHandlerContext } from '../types.js';
+import type { ControlResponse } from '../../types/channel.js';
 
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
@@ -22,7 +23,7 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 function createMockProjectManager() {
-  const instances: Map<string, { templateName: string; workingDir: string }> = new Map();
+  const instances: Map<string, { name: string; templateName: string; workingDir: string }> = new Map();
   const bindings = new Map<string, string>();
 
   return {
@@ -63,14 +64,18 @@ function createMockProjectManager() {
   };
 }
 
+function callProject(args: unknown, context: ControlHandlerContext): ControlResponse {
+  return handleProject(
+    { type: 'project', chatId: 'chat-1', data: { args } } as any,
+    context,
+  ) as ControlResponse;
+}
+
 describe('handleProject', () => {
   describe('without ProjectManager', () => {
     it('should return error when ProjectManager is not configured', () => {
       const context = createMockContext();
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['list'] } },
-        context,
-      );
+      const result = callProject(['list'], context);
       expect(result.success).toBe(false);
       expect(result.message).toContain('未初始化');
     });
@@ -79,11 +84,8 @@ describe('handleProject', () => {
   describe('/project list', () => {
     it('should list templates and instances', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['list'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['list'], context);
       expect(result.success).toBe(true);
       expect(result.message).toContain('可用模板');
       expect(result.message).toContain('research');
@@ -94,11 +96,8 @@ describe('handleProject', () => {
   describe('/project create', () => {
     it('should create project and reset session', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['create', 'research', 'my-research'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['create', 'research', 'my-research'], context);
       expect(result.success).toBe(true);
       expect(pm.create).toHaveBeenCalledWith('chat-1', 'research', 'my-research');
       expect(context.agentPool.reset).toHaveBeenCalledWith('chat-1');
@@ -107,11 +106,8 @@ describe('handleProject', () => {
 
     it('should return error for missing arguments', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['create', 'research'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['create', 'research'], context);
       expect(result.success).toBe(false);
       expect(result.message).toContain('用法');
     });
@@ -122,11 +118,8 @@ describe('handleProject', () => {
       const pm = createMockProjectManager();
       // Pre-create an instance so 'use' can find it
       pm.create('chat-0', 'research', 'my-research');
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['use', 'my-research'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['use', 'my-research'], context);
       expect(result.success).toBe(true);
       expect(pm.use).toHaveBeenCalledWith('chat-1', 'my-research');
       expect(context.agentPool.reset).toHaveBeenCalledWith('chat-1');
@@ -134,11 +127,8 @@ describe('handleProject', () => {
 
     it('should return error for non-existent instance', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['use', 'nonexistent'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['use', 'nonexistent'], context);
       expect(result.success).toBe(false);
       expect(result.message).toContain('不存在');
     });
@@ -147,11 +137,8 @@ describe('handleProject', () => {
   describe('/project reset', () => {
     it('should reset to default and reset session', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['reset'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['reset'], context);
       expect(result.success).toBe(true);
       expect(pm.reset).toHaveBeenCalledWith('chat-1');
       expect(context.agentPool.reset).toHaveBeenCalledWith('chat-1');
@@ -161,11 +148,8 @@ describe('handleProject', () => {
   describe('/project info', () => {
     it('should show current project info', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['info'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['info'], context);
       expect(result.success).toBe(true);
       expect(result.message).toContain('当前项目');
     });
@@ -174,11 +158,8 @@ describe('handleProject', () => {
   describe('no subcommand', () => {
     it('should show usage help', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: {} },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(undefined, context);
       expect(result.success).toBe(false);
       expect(result.message).toContain('用法');
     });
@@ -187,11 +168,8 @@ describe('handleProject', () => {
   describe('unknown subcommand', () => {
     it('should return error for unknown subcommand', () => {
       const pm = createMockProjectManager();
-      const context = createMockContext({ projectManager: pm });
-      const result = handleProject(
-        { type: 'project', chatId: 'chat-1', data: { args: ['unknown'] } },
-        context,
-      );
+      const context = createMockContext({ projectManager: pm as any });
+      const result = callProject(['unknown'], context);
       expect(result.success).toBe(false);
       expect(result.message).toContain('未知子命令');
     });

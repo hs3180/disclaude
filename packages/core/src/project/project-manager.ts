@@ -323,8 +323,8 @@ export class ProjectManager {
         { projectsCount: this.projects.size, bindingsCount: this.chatProjectMap.size },
         'Loaded persisted project data',
       );
-    } catch (_error) {
-      logger.warn({ error, dataPath }, 'Failed to load projects.json, starting fresh');
+    } catch (_loadError) {
+      logger.warn({ error: _loadError, dataPath }, 'Failed to load projects.json, starting fresh');
     }
   }
 
@@ -355,7 +355,6 @@ export class ProjectManager {
     }
 
     // Atomic write: write to temp file, then rename
-    // eslint-disable-next-line prefer-template
     const tmpPath = `${dataPath}.tmp`;
     try {
       fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');

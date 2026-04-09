@@ -8,6 +8,8 @@
  * are NOT included here - they are defined in the main project's config/types.ts.
  */
 
+import type { ProjectTemplateConfig } from '../project/types.js';
+
 /**
  * Workspace configuration section.
  */
