@@ -309,3 +309,36 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Mac Control module (Issue #2216: macOS screen/keyboard/mouse automation)
+export type {
+  Point,
+  Rect,
+  ScreenshotOptions,
+  ScreenshotResult,
+  ClickOptions,
+  WindowInfo,
+  CalibrationResult,
+} from './mac-control/index.js';
+export {
+  captureScreen,
+  MacControlError,
+  parsePngDimensions,
+  click,
+  move,
+  drag,
+  doubleClick,
+  rightClick,
+  isCliclickAvailable,
+  getAppWindow,
+  activateApp,
+  listAppWindows,
+  getScreenResolution,
+  calibrate,
+  getCachedCalibration,
+  clearCalibrationCache,
+  pixelToLogical,
+  logicalToPixel,
+  pixelToWindowRelative,
+  fullCalibration,
+} from './mac-control/index.js';
