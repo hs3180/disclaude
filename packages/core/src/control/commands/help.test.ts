@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { handleHelp } from './help.js';
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
-import type { ControlHandlerContext, CommandHandler } from '../types.js';
+import type { ControlHandlerContext } from '../types.js';
 
 describe('handleHelp', () => {
   const mockContext = {} as ControlHandlerContext;

@@ -16,7 +16,6 @@ import {
   isProviderAvailable,
 } from './factory.js';
 import type { IAgentSDKProvider, ProviderFactory } from './interface.js';
-import type { ProviderInfo } from './types.js';
 
 // Mock skills/agents setup to prevent side effects
 vi.mock('../utils/skills-setup.js', () => ({
@@ -40,7 +39,7 @@ function createMockProvider(name = 'test', version = '1.0.0', available = true):
     name,
     version,
     getInfo: () => ({ name, version, available, unavailableReason: available ? undefined : 'test reason' }),
-    queryOnce: async function* () { yield { type: 'text', content: '', role: 'assistant' }; },
+    async *queryOnce() { yield { type: 'text', content: '', role: 'assistant' }; },
     queryStream: () => ({
       handle: { close: vi.fn(), cancel: vi.fn(), sessionId: undefined },
       iterator: (async function* () { yield { type: 'text', content: '', role: 'assistant' }; })(),

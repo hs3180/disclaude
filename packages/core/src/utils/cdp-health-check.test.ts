@@ -9,8 +9,8 @@ import {
   parseCdpEndpoint,
   checkCdpEndpointHealth,
   formatCdpHealthError,
+  type CdpHealthCheckResult,
 } from './cdp-health-check.js';
-import type { CdpHealthCheckResult } from './cdp-health-check.js';
 
 describe('CDP Health Check', () => {
   describe('parseCdpEndpoint', () => {
@@ -49,22 +49,23 @@ describe('CDP Health Check', () => {
 
   describe('checkCdpEndpointHealth', () => {
     const originalFetch = globalThis.fetch;
-    const originalSetTimeout = globalThis.setTimeout;
 
     beforeEach(() => {
-      vi.stubGlobal('setTimeout', vi.fn((cb: () => void) => cb()));
+      // No need to mock setTimeout — mock fetch resolves in microtask,
+      // which executes before setTimeout macrotask. clearTimeout cancels
+      // the real timeout before it ever fires.
     });
 
     afterEach(() => {
       globalThis.fetch = originalFetch;
-      globalThis.setTimeout = originalSetTimeout;
+      vi.useRealTimers();
       vi.restoreAllMocks();
     });
 
     it('should return healthy when endpoint responds OK', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ Browser: 'Chrome/120.0' }),
+        json: () => Promise.resolve({ Browser: 'Chrome/120.0' }),
       }));
 
       const result = await checkCdpEndpointHealth('http://localhost:9222');
@@ -77,7 +78,7 @@ describe('CDP Health Check', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: false,
         status: 503,
-        json: async () => ({}),
+        json: () => Promise.resolve({}),
       }));
 
       const result = await checkCdpEndpointHealth('http://localhost:9222');
@@ -108,11 +109,26 @@ describe('CDP Health Check', () => {
     });
 
     it('should return unhealthy on timeout', async () => {
-      const abortError = new Error('The operation was aborted');
-      abortError.name = 'AbortError';
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+      vi.useFakeTimers();
 
-      const result = await checkCdpEndpointHealth('http://localhost:9222');
+      // Mock fetch that never resolves, but listens to abort signal
+      // This tests the real setTimeout → abort → AbortError chain
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, options) => {
+        return new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }));
+
+      const resultPromise = checkCdpEndpointHealth('http://localhost:9222');
+
+      // Advance past the 5-second timeout to trigger abort
+      await vi.advanceTimersByTimeAsync(5100);
+
+      const result = await resultPromise;
       expect(result.healthy).toBe(false);
       expect(result.error).toContain('timeout');
     });
@@ -130,7 +146,7 @@ describe('CDP Health Check', () => {
     it('should strip trailing slash from endpoint URL', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ Browser: 'Chrome' }),
+        json: () => Promise.resolve({ Browser: 'Chrome' }),
       }));
 
       await checkCdpEndpointHealth('http://localhost:9222/');
