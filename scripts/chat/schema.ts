@@ -187,19 +187,20 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   }
 
   // Validate optional fields with type checks
-  if (obj.chatId !== null && typeof obj.chatId !== 'string') {
+  // Use != null (loose equality) to treat both null and undefined as "not set"
+  if (obj.chatId != null && typeof obj.chatId !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'chatId'`);
   }
-  if (obj.activatedAt !== null && typeof obj.activatedAt !== 'string') {
+  if (obj.activatedAt != null && typeof obj.activatedAt !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'activatedAt'`);
   }
-  if (obj.expiredAt !== null && typeof obj.expiredAt !== 'string') {
+  if (obj.expiredAt != null && typeof obj.expiredAt !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'expiredAt'`);
   }
-  if (obj.expiredAt !== null && typeof obj.expiredAt === 'string' && !UTC_DATETIME_REGEX.test(obj.expiredAt)) {
+  if (obj.expiredAt != null && typeof obj.expiredAt === 'string' && !UTC_DATETIME_REGEX.test(obj.expiredAt)) {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'expiredAt' (must be UTC Z-suffix)`);
   }
-  if (obj.failedAt !== null && typeof obj.failedAt !== 'string') {
+  if (obj.failedAt != null && typeof obj.failedAt !== 'string') {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'failedAt'`);
   }
   if (typeof obj.activationAttempts !== 'number' || obj.activationAttempts < 0) {
