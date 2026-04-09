@@ -20,7 +20,7 @@ export const handleHelp: CommandHandler = (
       '| `/stop` | 停止当前响应 | `/stop` |',
       '| `/status` | 查看服务状态 | `/status` |',
       '| `/restart` | 重启 Agent 实例 | `/restart` |',
-      '| `/passive` | 切换被动模式 | `/passive on\\|off` |',
+      '| `/trigger` | 切换触发模式 | `/trigger mention\\|always` |',
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
       '| `/show-debug` | 显示 Debug 组信息 | `/show-debug` |',
       '| `/clear-debug` | 清除 Debug 组 | `/clear-debug` |',

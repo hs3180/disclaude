@@ -31,7 +31,7 @@ import {
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
-import type { PassiveModeManager } from './passive-mode.js';
+import type { TriggerModeManager } from './trigger-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 
 const logger = createLogger('MessageHandler');
@@ -101,7 +101,7 @@ interface QuotedMessageResult {
 export class MessageHandler {
   private client?: lark.Client;
   private interactionManager: InteractionManager;
-  private passiveModeManager: PassiveModeManager;
+  private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
   private callbacks: MessageCallbacks;
   private isRunning: () => boolean;
@@ -114,14 +114,14 @@ export class MessageHandler {
    * Create a MessageHandler.
    */
   constructor(options: {
-    passiveModeManager: PassiveModeManager;
+    passiveModeManager: TriggerModeManager;
     mentionDetector: MentionDetector;
     interactionManager: InteractionManager;
     callbacks: MessageCallbacks;
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.passiveModeManager = options.passiveModeManager;
+    this.triggerModeManager = options.passiveModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
@@ -826,12 +826,12 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat passive mode
-    const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
-      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+    // Group chat trigger mode
+    const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
+    const isAlwaysTrigger = this.triggerModeManager.getTriggerMode(chat_id) === 'always';
+    if (this.isGroupChat(chat_type) && !botMentioned && !isAlwaysTrigger && !isTriggerCommand) {
+      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode: mention)');
+      this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
       return;
     }
 
@@ -852,7 +852,7 @@ export class MessageHandler {
 
         // Issue #1562: Relay both success messages and error messages from control handler.
         // Previously, success:false responses with error messages were silently dropped,
-        // causing commands like /passive to appear unrecognized.
+        // causing commands like /trigger to appear unrecognized.
         if (response.success || response.message) {
           if (response.message) {
             await this.callbacks.sendMessage({
