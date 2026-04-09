@@ -357,7 +357,7 @@ export class ProjectManager {
     // Atomic write: write to temp file, then rename
     const tmpPath = dataPath + '.tmp';
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8'); // eslint-disable-line prefer-template
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8'); // eslint-disable-line
       fs.renameSync(tmpPath, dataPath);
     } catch (persistError) {
       logger.error({ error: persistError, dataPath }, 'Failed to persist project data');
