@@ -323,7 +323,7 @@ export class ProjectManager {
         { projectsCount: this.projects.size, bindingsCount: this.chatProjectMap.size },
         'Loaded persisted project data',
       );
-    } catch (error) {
+    } catch (_error) {
       logger.warn({ error, dataPath }, 'Failed to load projects.json, starting fresh');
     }
   }
@@ -382,7 +382,7 @@ export class ProjectManager {
     // Create working directory
     try {
       fs.mkdirSync(workingDir, { recursive: true });
-    } catch (error) {
+    } catch (_error) {
       return { ok: false, error: `无法创建项目目录: ${workingDir}` };
     }
 
