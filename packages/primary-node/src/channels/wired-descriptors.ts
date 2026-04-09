@@ -3,7 +3,7 @@
  *
  * Issue #1594 Phase 2: Each descriptor encapsulates the full wiring lifecycle
  * for its channel type, including PilotCallbacks creation, message handling,
- * and post-registration setup (passive mode, IPC handlers).
+ * and post-registration setup (trigger mode, IPC handlers).
  *
  * Issue #1555 Phase 2: Shared handler utilities extracted to utils/channel-handlers.ts
  * for reuse across all channel types. This file now only contains
@@ -83,7 +83,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
  * Provides full wiring for the Feishu channel:
  * - PilotCallbacks without done signal (async mode)
  * - Message handler with attachment conversion
- * - Post-registration setup: action prompt resolver, passive mode, IPC handlers
+ * - Post-registration setup: action prompt resolver, trigger mode, IPC handlers
  */
 export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig> = {
   type: 'feishu',
@@ -131,7 +131,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
    * Post-registration setup for Feishu channel.
    *
    * 1. Set up action prompt resolver (Issue #1572)
-   * 2. Configure passive mode adapter (Issue #1464)
+   * 2. Configure trigger mode adapter (Issue #2193)
    * 3. Register IPC handlers (Issue #1042, #1571)
    */
   setup: (channel: IChannel, config: FeishuChannelConfig, context: ChannelSetupContext) => {
@@ -146,29 +146,29 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
-    // 2. Set up passive mode adapter
-    // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
-    // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
-    context.controlHandlerContext.passiveMode = {
-      isEnabled: (chatId: string) => !feishuChannel.isPassiveModeDisabled(chatId),
-      setEnabled: (chatId: string, enabled: boolean) =>
-        feishuChannel.setPassiveModeDisabled(chatId, !enabled),
+    // 2. Set up trigger mode adapter
+    // Adapter layer: ControlHandlerContext uses getMode/setMode semantics,
+    // while FeishuChannel exposes getTriggerMode/setTriggerMode.
+    context.controlHandlerContext.triggerMode = {
+      getMode: (chatId: string) => feishuChannel.getTriggerMode(chatId),
+      setMode: (chatId: string, mode: 'mention' | 'always') =>
+        feishuChannel.setTriggerMode(chatId, mode),
     };
 
-    // 2b. Issue #2069: Initialize passive mode from persisted temp chat records.
-    // This ensures declarative passive mode settings survive restarts.
-    // Only loads records where passiveMode is explicitly set to false.
+    // 2b. Issue #2069: Initialize trigger mode from persisted temp chat records.
+    // This ensures declarative trigger mode settings survive restarts.
+    // Only loads records where triggerMode is explicitly set to 'always'.
     const chatStore = context.primaryNode.getChatStore();
     chatStore.listTempChats().then(records => {
-      const passiveModeManager = feishuChannel.getPassiveModeManager();
-      const loaded = passiveModeManager.initFromRecords(
-        records.map(r => ({ chatId: r.chatId, passiveMode: r.passiveMode }))
+      const triggerModeManager = feishuChannel.getTriggerModeManager();
+      const loaded = triggerModeManager.initFromRecords(
+        records.map(r => ({ chatId: r.chatId, triggerMode: r.triggerMode }))
       );
       if (loaded > 0) {
-        context.logger.info({ count: loaded }, 'Initialized passive mode from chat store records');
+        context.logger.info({ count: loaded }, 'Initialized trigger mode from chat store records');
       }
     }).catch(err => {
-      context.logger.warn({ err }, 'Failed to initialize passive mode from chat store');
+      context.logger.warn({ err }, 'Failed to initialize trigger mode from chat store');
     });
 
     // 3. Register IPC handlers for MCP Server connections
@@ -216,19 +216,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
-      // Issue #2069: Added passiveMode for declarative passive mode configuration
-      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; passiveMode?: boolean }) => {
+      // Issue #2193: Added triggerMode for declarative trigger mode configuration
+      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {
         const store = context.primaryNode.getChatStore();
         await store.registerTempChat(chatId, {
           expiresAt: opts?.expiresAt,
           creatorChatId: opts?.creatorChatId,
           context: opts?.context,
-          passiveMode: opts?.passiveMode,
+          triggerMode: opts?.triggerMode,
         });
-        // Issue #2069: Apply passive mode to PassiveModeManager immediately
-        if (opts?.passiveMode === false) {
-          feishuChannel.setPassiveModeDisabled(chatId, true);
-          context.logger.info({ chatId }, 'Passive mode disabled via declarative config');
+        // Issue #2193: Apply trigger mode to TriggerModeManager immediately
+        if (opts?.triggerMode === 'always') {
+          feishuChannel.setTriggerMode(chatId, 'always');
+          context.logger.info({ chatId }, 'Trigger mode set to always via declarative config');
         }
         const record = await store.getTempChat(chatId);
         return { success: true, expiresAt: record?.expiresAt };
@@ -272,7 +272,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * Provides full wiring for the WeChat channel (MVP):
  * - PilotCallbacks without done signal (async mode)
  * - Message handler with basic text processing
- * - No post-registration setup (MVP: no passive mode, no IPC handlers)
+ * - No post-registration setup (MVP: no trigger mode, no IPC handlers)
  *
  * MVP limitations:
  * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)

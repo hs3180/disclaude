@@ -65,11 +65,11 @@ export interface ChannelSetupContext {
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
-  /** Control handler context (for adding passive mode etc.) */
+  /** Control handler context (for adding trigger mode etc.) */
   controlHandlerContext: {
-    passiveMode?: {
-      isEnabled: (chatId: string) => boolean;
-      setEnabled: (chatId: string, enabled: boolean) => void;
+    triggerMode?: {
+      getMode: (chatId: string) => 'mention' | 'always';
+      setMode: (chatId: string, mode: 'mention' | 'always') => void;
     };
   };
   /** Logger instance */
@@ -99,7 +99,7 @@ export interface WiredContext extends ChannelSetupContext {
  * this includes hooks for:
  * - Creating PilotCallbacks (wraps channel.sendMessage into agent interface)
  * - Creating message handlers (processes incoming messages through agentPool)
- * - Post-registration setup (passive mode, IPC handlers, etc.)
+ * - Post-registration setup (trigger mode, IPC handlers, etc.)
  */
 export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelConfig>
   extends ChannelDescriptor<TConfig> {
@@ -128,7 +128,7 @@ export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelC
    *
    * Called after the channel is registered and handlers are wired,
    * but before the channel starts. Use for:
-   * - Setting up passive mode adapters
+   * - Setting up trigger mode adapters
    * - Configuring action prompt resolvers
    * - Registering IPC handlers
    */
