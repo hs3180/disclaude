@@ -46,7 +46,9 @@ export function _resetFfmpegCache(): void {
 }
 
 export function isFfmpegAvailable(): boolean {
-  if (_ffmpegAvailable !== undefined) return _ffmpegAvailable;
+  if (_ffmpegAvailable !== undefined) {
+    return _ffmpegAvailable;
+  }
   try {
     const result = child_process.spawnSync('ffmpeg', ['-version'], {
       timeout: 5000,

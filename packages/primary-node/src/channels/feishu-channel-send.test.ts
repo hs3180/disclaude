@@ -583,7 +583,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
       // Should send as 'file' message type (fallback when ffmpeg unavailable)
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
-      const createCall = mocks.createMock.mock.calls[0][0];
+      const [[createCall]] = mocks.createMock.mock.calls;
       expect(createCall.data.msg_type).toBe('file');
       const content = JSON.parse(createCall.data.content);
       expect(content.file_key).toBe('file_key_001');
