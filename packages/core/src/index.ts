@@ -309,3 +309,17 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #1916, Issue #2227 — per-chatId Agent context switching)
+export {
+  ProjectManager,
+  type CwdProvider,
+  type InstanceInfo,
+  type PersistedInstance,
+  type ProjectContextConfig,
+  type ProjectManagerOptions,
+  type ProjectResult,
+  type ProjectTemplate,
+  type ProjectTemplatesConfig,
+  type ProjectsPersistData,
+} from './project/index.js';

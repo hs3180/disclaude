@@ -24,6 +24,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -492,6 +493,17 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get project templates configuration from config file.
+   * Used by ProjectManager to initialize available templates.
+   * @see Issue #1916, Issue #2227
+   *
+   * @returns Project templates configuration, or empty object if not configured
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig {
+    return fileConfigOnly.projectTemplates ?? {};
   }
 }
 
