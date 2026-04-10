@@ -56,14 +56,9 @@ describe('handleHelp', () => {
     expect(result.message).toContain('/list-nodes');
   });
 
-  it('should include /show-debug command', () => {
+  it('should include /debug command', () => {
     const result = handleHelp(mockCommand, mockContext);
-    expect(result.message).toContain('/show-debug');
-  });
-
-  it('should include /clear-debug command', () => {
-    const result = handleHelp(mockCommand, mockContext);
-    expect(result.message).toContain('/clear-debug');
+    expect(result.message).toContain('/debug');
   });
 
   it('should format output as markdown table', () => {

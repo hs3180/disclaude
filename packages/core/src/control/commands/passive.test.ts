@@ -24,6 +24,7 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
       nodeId: 'test-node',
       getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
+      setDebugGroup: vi.fn().mockReturnValue(null),
       clearDebugGroup: vi.fn(),
     },
     passiveMode: {

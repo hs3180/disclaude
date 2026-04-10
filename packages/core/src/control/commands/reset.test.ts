@@ -15,6 +15,7 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
       nodeId: 'node-1',
       getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
+      setDebugGroup: vi.fn().mockReturnValue(null),
       clearDebugGroup: vi.fn(),
     },
     ...overrides,

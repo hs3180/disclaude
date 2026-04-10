@@ -43,6 +43,7 @@ export interface ControlHandlerContext {
     nodeId: string;
     getExecNodes(): ExecNodeInfo[];
     getDebugGroup(): DebugGroup | null;
+    setDebugGroup(chatId: string, name?: string): DebugGroup | null;
     clearDebugGroup(): void;
   };
 
