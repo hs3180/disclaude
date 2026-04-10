@@ -38,6 +38,7 @@ export default [
       parserOptions: {
         project: [
           './tsconfig.json',
+          './tsconfig.scripts.json',
           './packages/core/tsconfig.json',
           './packages/primary-node/tsconfig.json',
           './packages/mcp-server/tsconfig.json',
