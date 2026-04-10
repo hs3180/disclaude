@@ -552,4 +552,66 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(result).toBe('new_msg_001');
     });
   });
+
+  describe('video file messages — Issue #2265', () => {
+    const tempFiles: string[] = [];
+
+    afterAll(() => {
+      for (const f of tempFiles) {
+        try { fs.unlinkSync(f); } catch { /* ignore */ }
+      }
+    });
+
+    it('should upload mp4 as file_type:mp4 and send as file (ffmpeg unavailable fallback)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_video_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testMp4Path,
+      });
+
+      // Should upload video via file.create with file_type:'mp4'
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      const fileCallData = mocks.fileCreateMock.mock.calls[0][0].data;
+      expect(fileCallData.file_type).toBe('mp4');
+
+      // Should send as 'file' message type (fallback when ffmpeg unavailable)
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[createCall]] = mocks.createMock.mock.calls;
+      expect(createCall.data.msg_type).toBe('file');
+      const content = JSON.parse(createCall.data.content);
+      expect(content.file_key).toBe('file_key_001');
+
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('should send mp4 via thread reply when threadId provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_video_tr_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testMp4Path,
+        threadId: 'root_msg_888',
+      });
+
+      // Should upload video via file.create
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      // Should use reply API since threadId is provided
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(result).toBe('reply_msg_001');
+    });
+  });
 });

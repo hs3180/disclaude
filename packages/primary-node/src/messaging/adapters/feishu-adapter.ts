@@ -16,6 +16,7 @@ import type {
   IChannelAdapter,
   ChannelCapabilities,
 } from '../channel-adapter.js';
+import { VIDEO_EXTENSIONS, extractVideoCover } from '../../utils/video-cover-extractor.js';
 
 const logger = createLogger('FeishuAdapter');
 
@@ -42,7 +43,6 @@ const IMAGE_EXTENSIONS = new Set([
  */
 const EXT_TO_FEISHU_FILE_TYPE: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
   '.opus': 'opus',
-  '.mp4': 'mp4',
   '.pdf': 'pdf',
   '.doc': 'doc', '.docx': 'doc',
   '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
@@ -493,6 +493,53 @@ export class FeishuAdapter implements IChannelAdapter {
 
       msgType = 'image';
       content = JSON.stringify({ image_key: imageKey });
+    } else if (VIDEO_EXTENSIONS.has(ext)) {
+      // Upload video — use msg_type:'media' with auto-generated cover image
+      // Issue #2265: Proper video support via Feishu media message type.
+      if (fileSize > MAX_FILE_SIZE) {
+        return { success: false, error: `Video file too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
+      }
+
+      // Upload video with file_type:'mp4' → get file_key
+      const uploadResp = await client.im.file.create({
+        data: {
+          file_type: 'mp4',
+          file_name: fileName,
+          file: fs.createReadStream(filePath),
+        },
+      });
+      const fileKey = uploadResp?.file_key;
+      if (!fileKey) {
+        return { success: false, error: `Failed to upload video: ${fileName} (no file_key returned)` };
+      }
+
+      // Extract first frame as cover image
+      const coverResult = extractVideoCover(filePath);
+      let imageKey: string | undefined;
+
+      if (coverResult.success && coverResult.coverPath) {
+        // Upload cover image → get image_key
+        const coverUploadResp = await client.im.image.create({
+          data: {
+            image_type: 'message',
+            image: fs.createReadStream(coverResult.coverPath),
+          },
+        });
+        imageKey = coverUploadResp?.image_key;
+        // Clean up temp cover file
+        try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
+      }
+
+      if (!imageKey) {
+        // Fallback: send as generic file if cover extraction/upload fails
+        logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover image unavailable, sending video as file attachment');
+        msgType = 'file';
+        content = JSON.stringify({ file_key: fileKey });
+      } else {
+        // Send as media message with video + cover image
+        msgType = 'media';
+        content = JSON.stringify({ file_key: fileKey, image_key: imageKey });
+      }
     } else {
       // Upload file
       if (fileSize > MAX_FILE_SIZE) {
