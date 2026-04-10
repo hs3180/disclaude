@@ -439,4 +439,56 @@ describe('FeishuAdapter — Issue #1619', () => {
       expect(adapter.canHandle('cli_123')).toBe(false);
     });
   });
+
+  describe('video file upload — Issue #2265', () => {
+    const tempFiles: string[] = [];
+
+    afterAll(() => {
+      for (const f of tempFiles) {
+        try { fs.unlinkSync(f); } catch { /* ignore */ }
+      }
+    });
+
+    it('should upload mp4 as file_type:mp4 and send via video path', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_adapter_video_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testMp4Path, name: 'video.mp4' },
+      });
+
+      expect(result.success).toBe(true);
+      // Should upload via file.create with file_type:'mp4'
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      const fileCallData = mocks.fileCreateMock.mock.calls[0][0].data;
+      expect(fileCallData.file_type).toBe('mp4');
+
+      // In test env without ffmpeg, it falls back to 'file' msg_type
+      // or if cover extraction works, uses 'media' msg_type
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock).not.toHaveBeenCalled();
+    });
+
+    it('should upload mov file via video path', async () => {
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testMovPath = path.join(os.tmpdir(), `test_adapter_video_${Date.now()}.mov`);
+      fs.writeFileSync(testMovPath, Buffer.from('fake mov content'));
+      tempFiles.push(testMovPath);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testMovPath, name: 'video.mov' },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });
