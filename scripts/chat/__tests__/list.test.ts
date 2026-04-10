@@ -61,6 +61,7 @@ function makeChatData(id: string, status: string) {
     activationAttempts: 0,
     lastActivationError: null,
     failedAt: null,
+    expiredAt: null,
   };
 }
 

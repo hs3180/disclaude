@@ -51,6 +51,7 @@ function makeChatData(id: string, status: string, overrides: Record<string, unkn
     activationAttempts: 0,
     lastActivationError: null,
     failedAt: null,
+    expiredAt: null,
     ...overrides,
   };
 }

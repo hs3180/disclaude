@@ -53,6 +53,7 @@ function createChatData(overrides: Record<string, unknown> = {}): string {
     activationAttempts: 0,
     lastActivationError: null,
     failedAt: null,
+    expiredAt: null,
   };
   return JSON.stringify({ ...defaults, ...overrides }, null, 2);
 }
