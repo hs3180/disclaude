@@ -1,224 +1,307 @@
 /**
- * Tests for SDK Provider Factory (packages/core/src/sdk/factory.ts)
+ * Tests for SDK Provider factory (Issue #1617 Phase 2/3)
  *
- * Validates provider registration, caching, retrieval, and lifecycle.
+ * Tests the provider registry, caching, default management,
+ * and availability checking logic in the factory module.
  */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { IAgentSDKProvider } from './interface.js';
+import type { ProviderInfo } from './types.js';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  getProvider,
-  registerProvider,
-  registerProviderClass,
-  setDefaultProvider,
-  getDefaultProviderType,
-  getAvailableProviders,
-  clearProviderCache,
-  isProviderAvailable,
-} from './factory.js';
-import type { IAgentSDKProvider, ProviderFactory } from './interface.js';
+// Mock functions defined at module scope (available for vi.doMock closures)
+const mockSetupSkills = vi.fn().mockResolvedValue({ success: true });
+const mockSetupAgents = vi.fn().mockResolvedValue({ success: true });
+const mockCreateLogger = vi.fn().mockReturnValue({
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  error: vi.fn(),
+});
 
-// Mock skills/agents setup to prevent side effects
-vi.mock('../utils/skills-setup.js', () => ({
-  setupSkillsInWorkspace: vi.fn().mockResolvedValue({ success: true }),
-}));
-vi.mock('../utils/agents-setup.js', () => ({
-  setupAgentsInWorkspace: vi.fn().mockResolvedValue({ success: true }),
-}));
-vi.mock('../utils/logger.js', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
-/** Create a mock provider with given name and version */
-function createMockProvider(name = 'test', version = '1.0.0', available = true): IAgentSDKProvider {
+// Create a mock provider for testing
+function createMockProvider(overrides: Partial<IAgentSDKProvider> = {}): IAgentSDKProvider {
   return {
-    name,
-    version,
-    getInfo: () => ({ name, version, available, unavailableReason: available ? undefined : 'test reason' }),
-    async *queryOnce() { yield { type: 'text', content: '', role: 'assistant' }; },
-    queryStream: () => ({
-      handle: { close: vi.fn(), cancel: vi.fn(), sessionId: undefined },
-      iterator: (async function* () { yield { type: 'text', content: '', role: 'assistant' }; })(),
+    name: 'mock-provider',
+    version: '1.0.0',
+    getInfo: vi.fn().mockReturnValue({
+      name: 'mock-provider',
+      version: '1.0.0',
+      available: true,
     }),
+    validateConfig: vi.fn().mockReturnValue(true),
+    dispose: vi.fn(),
+    queryOnce: vi.fn(),
+    queryStream: vi.fn(),
     createInlineTool: vi.fn(),
     createMcpServer: vi.fn(),
-    validateConfig: () => available,
-    dispose: vi.fn(),
+    ...overrides,
   };
 }
 
-describe('SDK Factory', () => {
-  beforeEach(() => {
-    clearProviderCache();
-  });
+describe('Provider Factory', () => {
+  let getProvider: typeof import('./factory.js').getProvider;
+  let registerProvider: typeof import('./factory.js').registerProvider;
+  let registerProviderClass: typeof import('./factory.js').registerProviderClass;
+  let setDefaultProvider: typeof import('./factory.js').setDefaultProvider;
+  let getDefaultProviderType: typeof import('./factory.js').getDefaultProviderType;
+  let getAvailableProviders: typeof import('./factory.js').getAvailableProviders;
+  let clearProviderCache: typeof import('./factory.js').clearProviderCache;
+  let isProviderAvailable: typeof import('./factory.js').isProviderAvailable;
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    // Use vi.doMock for dynamic mocking that works with vi.resetModules
+    vi.doMock('../utils/skills-setup.js', () => ({
+      setupSkillsInWorkspace: (...args: unknown[]) => mockSetupSkills(...args),
+    }));
+    vi.doMock('../utils/agents-setup.js', () => ({
+      setupAgentsInWorkspace: (...args: unknown[]) => mockSetupAgents(...args),
+    }));
+    vi.doMock('../utils/logger.js', () => ({
+      createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+    }));
+
+    vi.resetModules();
+
+    const mod = await import('./factory.js');
+    ({
+      getProvider,
+      registerProvider,
+      registerProviderClass,
+      setDefaultProvider,
+      getDefaultProviderType,
+      getAvailableProviders,
+      clearProviderCache,
+      isProviderAvailable,
+    } = mod);
   });
 
   describe('getProvider', () => {
-    it('should return the default claude provider', () => {
+    it('should return a provider for the default type (claude)', () => {
       const provider = getProvider();
       expect(provider).toBeDefined();
       expect(provider.name).toBe('claude');
     });
 
-    it('should return cached provider on second call', () => {
+    it('should return the same cached instance on subsequent calls', () => {
       const provider1 = getProvider('claude');
       const provider2 = getProvider('claude');
       expect(provider1).toBe(provider2);
     });
 
     it('should throw for unknown provider type', () => {
-      expect(() => getProvider('nonexistent')).toThrow('Unknown provider type');
+      expect(() => getProvider('nonexistent')).toThrow(
+        /Unknown provider type: nonexistent/,
+      );
     });
 
-    it('should use default provider type when no type specified', () => {
-      const provider = getProvider();
-      expect(provider.name).toBe(getDefaultProviderType());
+    it('should include available types in error message', () => {
+      expect(() => getProvider('nonexistent')).toThrow(/Available: claude/);
+    });
+
+    it('should trigger one-time skills setup on first call', () => {
+      getProvider('claude');
+      expect(mockSetupSkills).toHaveBeenCalledTimes(1);
+    });
+
+    it('should trigger one-time agents setup on first call', () => {
+      getProvider('claude');
+      expect(mockSetupAgents).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not trigger setup again on subsequent calls', () => {
+      getProvider('claude');
+      getProvider('claude');
+      expect(mockSetupSkills).toHaveBeenCalledTimes(1);
+      expect(mockSetupAgents).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return provider for a custom registered type', () => {
+      const mockProvider = createMockProvider();
+      registerProvider('custom', () => mockProvider);
+
+      const provider = getProvider('custom');
+      expect(provider).toBe(mockProvider);
+    });
+
+    it('should cache provider for custom registered type', () => {
+      const factory = vi.fn().mockReturnValue(createMockProvider());
+      registerProvider('custom', factory);
+
+      getProvider('custom');
+      getProvider('custom');
+      expect(factory).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('registerProvider', () => {
-    it('should register a new provider type', () => {
-      const mockFactory: ProviderFactory = () => createMockProvider('custom', '2.0.0');
-      registerProvider('custom', mockFactory);
+    it('should register a new provider factory', () => {
+      const mockProvider = createMockProvider();
+      registerProvider('test', () => mockProvider);
 
-      const provider = getProvider('custom');
-      expect(provider.name).toBe('custom');
+      const provider = getProvider('test');
+      expect(provider).toBe(mockProvider);
     });
 
-    it('should clear cache for existing provider type when re-registering', async () => {
-      const { ClaudeSDKProvider } = await import('./providers/claude/provider.js');
-      const originalFactory = () => new ClaudeSDKProvider();
+    it('should clear cache for the registered type', () => {
+      const factory1 = vi.fn().mockReturnValue(createMockProvider());
+      registerProvider('test', factory1);
 
-      const provider1 = getProvider('claude');
+      getProvider('test');
+      expect(factory1).toHaveBeenCalledTimes(1);
 
-      registerProvider('claude', () => createMockProvider('claude-new', '2.0.0'));
+      // Re-register with a new factory
+      const factory2 = vi.fn().mockReturnValue(createMockProvider());
+      registerProvider('test', factory2);
 
-      const provider2 = getProvider('claude');
-      expect(provider2).not.toBe(provider1);
-      expect(provider2.name).toBe('claude-new');
+      getProvider('test');
+      expect(factory2).toHaveBeenCalledTimes(1);
+    });
 
-      // Restore original claude provider for other tests
-      registerProvider('claude', originalFactory);
+    it('should allow overwriting an existing provider', () => {
+      const mockProvider1 = createMockProvider({ name: 'provider-v1' });
+      const mockProvider2 = createMockProvider({ name: 'provider-v2' });
+
+      registerProvider('test', () => mockProvider1);
+      expect(getProvider('test').name).toBe('provider-v1');
+
+      registerProvider('test', () => mockProvider2);
+      expect(getProvider('test').name).toBe('provider-v2');
     });
   });
 
   describe('registerProviderClass', () => {
-    it('should register provider from constructor', () => {
-      class MockProvider implements IAgentSDKProvider {
-        readonly name = 'class-provider';
-        readonly version = '1.0.0';
-        getInfo = () => ({ name: this.name, version: this.version, available: true });
-        queryOnce = async function* () {};
-        queryStream = () => ({
-          handle: { close: vi.fn(), cancel: vi.fn(), sessionId: undefined },
-          iterator: (async function* () {})(),
-        });
-        createInlineTool = vi.fn();
-        createMcpServer = vi.fn();
-        validateConfig = () => true;
-        dispose = vi.fn();
+    it('should register a provider constructor', () => {
+      const mockProvider = createMockProvider();
+      class TestProvider {
+        constructor() {
+          Object.assign(this, mockProvider);
+        }
       }
 
-      registerProviderClass('class-provider', MockProvider);
-      const provider = getProvider('class-provider');
-      expect(provider.name).toBe('class-provider');
+      registerProviderClass('class-test', TestProvider as unknown as new () => IAgentSDKProvider);
+
+      const provider = getProvider('class-test');
+      expect(provider.name).toBe('mock-provider');
     });
   });
 
   describe('setDefaultProvider', () => {
-    afterEach(() => {
-      // Reset to claude default
-      setDefaultProvider('claude');
+    it('should set the default provider type', () => {
+      registerProvider('new-default', () => createMockProvider());
+      setDefaultProvider('new-default');
+
+      expect(getDefaultProviderType()).toBe('new-default');
     });
 
-    it('should change the default provider type', () => {
-      registerProvider('glm', () => createMockProvider('glm'));
-      setDefaultProvider('glm');
-      expect(getDefaultProviderType()).toBe('glm');
+    it('should throw for unknown provider type', () => {
+      expect(() => setDefaultProvider('unknown')).toThrow(
+        /Unknown provider type: unknown/,
+      );
     });
 
-    it('should throw for unregistered provider type', () => {
-      expect(() => setDefaultProvider('nonexistent')).toThrow('Unknown provider type');
+    it('should affect getProvider when no type is specified', () => {
+      const mockProvider = createMockProvider({ name: 'my-default' });
+      registerProvider('my-default', () => mockProvider);
+      setDefaultProvider('my-default');
+
+      const provider = getProvider();
+      expect(provider.name).toBe('my-default');
     });
   });
 
   describe('getDefaultProviderType', () => {
-    it('should return claude by default', () => {
+    it('should return "claude" by default', () => {
       expect(getDefaultProviderType()).toBe('claude');
     });
   });
 
   describe('getAvailableProviders', () => {
-    it('should return info for claude provider', () => {
+    it('should return info for all registered providers', () => {
       const infos = getAvailableProviders();
       expect(infos.length).toBeGreaterThanOrEqual(1);
-      const claudeInfo = infos.find(i => i.name === 'claude');
+
+      const claudeInfo = infos.find((i: ProviderInfo) => i.name === 'claude');
       expect(claudeInfo).toBeDefined();
+      expect(claudeInfo!.version).toBeDefined();
     });
 
-    it('should include available=false for failed provider creation', () => {
+    it('should return unavailable info when factory throws', () => {
       registerProvider('broken', () => {
-        throw new Error('creation failed');
+        throw new Error('Factory error');
       });
 
       const infos = getAvailableProviders();
-      const brokenInfo = infos.find(i => i.name === 'broken');
-      expect(brokenInfo?.available).toBe(false);
-      expect(brokenInfo?.unavailableReason).toContain('Failed to create');
+      const brokenInfo = infos.find((i: ProviderInfo) => i.name === 'broken');
+      expect(brokenInfo).toBeDefined();
+      expect(brokenInfo!.available).toBe(false);
+      expect(brokenInfo!.unavailableReason).toBe('Failed to create provider instance');
+    });
+
+    it('should return version "unknown" for failed providers', () => {
+      registerProvider('broken', () => {
+        throw new Error('Factory error');
+      });
+
+      const infos = getAvailableProviders();
+      const brokenInfo = infos.find((i: ProviderInfo) => i.name === 'broken');
+      expect(brokenInfo!.version).toBe('unknown');
     });
   });
 
   describe('clearProviderCache', () => {
-    it('should clear all provider cache', () => {
-      getProvider('claude');
-      clearProviderCache();
-      // Next call should create a new instance
-      const provider = getProvider('claude');
-      expect(provider).toBeDefined();
+    it('should clear cache for a specific type', () => {
+      const factory = vi.fn().mockReturnValue(createMockProvider());
+      registerProvider('cached', factory);
+
+      getProvider('cached');
+      expect(factory).toHaveBeenCalledTimes(1);
+
+      clearProviderCache('cached');
+
+      getProvider('cached');
+      expect(factory).toHaveBeenCalledTimes(2);
     });
 
-    it('should clear cache for specific provider type', () => {
-      registerProvider('a', () => createMockProvider('a'));
-      registerProvider('b', () => createMockProvider('b'));
+    it('should clear all caches when no type specified', () => {
+      const factory1 = vi.fn().mockReturnValue(createMockProvider());
+      const factory2 = vi.fn().mockReturnValue(createMockProvider());
+      registerProvider('a', factory1);
+      registerProvider('b', factory2);
 
-      const a1 = getProvider('a');
-      const b1 = getProvider('b');
+      getProvider('a');
+      getProvider('b');
+      expect(factory1).toHaveBeenCalledTimes(1);
+      expect(factory2).toHaveBeenCalledTimes(1);
 
-      clearProviderCache('a');
+      clearProviderCache();
 
-      const a2 = getProvider('a');
-      const b2 = getProvider('b');
-
-      expect(a2).not.toBe(a1); // a was cleared
-      expect(b2).toBe(b1);     // b was not cleared
+      getProvider('a');
+      getProvider('b');
+      expect(factory1).toHaveBeenCalledTimes(2);
+      expect(factory2).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('isProviderAvailable', () => {
-    it('should return true for registered provider with valid config', () => {
-      registerProvider('valid', () => createMockProvider('valid', '1.0.0', true));
-      expect(isProviderAvailable('valid')).toBe(true);
-    });
-
     it('should return false for unregistered provider', () => {
       expect(isProviderAvailable('nonexistent')).toBe(false);
     });
 
-    it('should return false when validateConfig returns false', () => {
-      registerProvider('invalid', () => createMockProvider('invalid', '1.0.0', false));
+    it('should return true when provider validateConfig returns true', () => {
+      registerProvider('valid', () => createMockProvider({ validateConfig: () => true }));
+      expect(isProviderAvailable('valid')).toBe(true);
+    });
+
+    it('should return false when provider validateConfig returns false', () => {
+      registerProvider('invalid', () => createMockProvider({ validateConfig: () => false }));
       expect(isProviderAvailable('invalid')).toBe(false);
     });
 
     it('should return false when factory throws', () => {
       registerProvider('throws', () => {
-        throw new Error('fail');
+        throw new Error('Cannot create');
       });
       expect(isProviderAvailable('throws')).toBe(false);
     });

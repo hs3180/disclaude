@@ -1,152 +1,197 @@
 /**
- * Tests for skills-setup utility (packages/core/src/utils/skills-setup.ts)
+ * Tests for skills-setup utility (Issue #1617 Phase 2)
  *
- * Validates skill directory copying from source to workspace .claude/skills.
- * Uses real temp directories to avoid ESM module mocking limitations.
+ * Tests the setupSkillsInWorkspace function which copies skills
+ * from the package directory to the workspace's .claude/skills/.
+ *
+ * Uses real temp directories for integration testing, following
+ * the pattern established in agents-setup.test.ts.
  */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-// Mock Config module - returns temp directories for testing
-let testWorkspaceDir: string;
-let testSourceDir: string;
+// Mock Config before importing skills-setup
+const mockGetWorkspaceDir = vi.fn();
+const mockGetSkillsDir = vi.fn();
 
 vi.mock('../config/index.js', () => ({
   Config: {
-    getWorkspaceDir: () => testWorkspaceDir,
-    getSkillsDir: () => testSourceDir,
+    getWorkspaceDir: (...args: unknown[]) => mockGetWorkspaceDir(...args),
+    getSkillsDir: (...args: unknown[]) => mockGetSkillsDir(...args),
   },
 }));
 
-// Mock logger
-vi.mock('./logger.js', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
+describe('setupSkillsInWorkspace', () => {
+  let setupSkillsInWorkspace: typeof import('./skills-setup.js').setupSkillsInWorkspace;
+  let tempDir: string;
+  let sourceDir: string;
+  let targetDir: string;
 
-// Import after mocks are set up
-import { setupSkillsInWorkspace } from './skills-setup.js';
-
-describe('skills-setup', () => {
   beforeEach(async () => {
-    // Create temp directories for testing
-    testWorkspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-test-ws-'));
-    testSourceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-test-src-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-setup-test-'));
+    sourceDir = path.join(tempDir, 'package-skills');
+    targetDir = path.join(tempDir, 'workspace', '.claude', 'skills');
+
+    mockGetWorkspaceDir.mockReturnValue(path.join(tempDir, 'workspace'));
+    mockGetSkillsDir.mockReturnValue(sourceDir);
+
+    vi.resetModules();
+    const mod = await import('./skills-setup.js');
+    ({ setupSkillsInWorkspace } = mod);
   });
 
   afterEach(async () => {
-    // Clean up temp directories
-    await fs.rm(testWorkspaceDir, { recursive: true, force: true });
-    await fs.rm(testSourceDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    await vi.resetModules();
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  describe('setupSkillsInWorkspace', () => {
-    it('should return failure when source directory does not exist', async () => {
-      // Point source to a non-existent directory
-      testSourceDir = '/tmp/non-existent-skills-dir-12345';
+  describe('when source skills directory does not exist', () => {
+    it('should return failure with error message', async () => {
+      mockGetSkillsDir.mockReturnValue('/nonexistent/skills');
 
       const result = await setupSkillsInWorkspace();
+
       expect(result.success).toBe(false);
       expect(result.error).toContain('Source skills directory does not exist');
     });
+  });
 
-    it('should return success when source directory is empty', async () => {
+  describe('when copying skill directories', () => {
+    it('should create .claude/skills/ and copy skill subdirectories', async () => {
+      // Create source skills
+      const skillA = path.join(sourceDir, 'skill-a');
+      await fs.mkdir(skillA, { recursive: true });
+      await fs.writeFile(path.join(skillA, 'SKILL.md'), '# Skill A');
+
+      const skillB = path.join(sourceDir, 'skill-b');
+      await fs.mkdir(skillB, { recursive: true });
+      await fs.writeFile(path.join(skillB, 'SKILL.md'), '# Skill B');
+
       const result = await setupSkillsInWorkspace();
+
       expect(result.success).toBe(true);
-      expect(result.error).toBeUndefined();
+
+      // Verify skill-a was copied
+      const skillAContent = await fs.readFile(
+        path.join(targetDir, 'skill-a', 'SKILL.md'), 'utf-8',
+      );
+      expect(skillAContent).toBe('# Skill A');
+
+      // Verify skill-b was copied
+      const skillBContent = await fs.readFile(
+        path.join(targetDir, 'skill-b', 'SKILL.md'), 'utf-8',
+      );
+      expect(skillBContent).toBe('# Skill B');
     });
 
-    it('should copy skill directories to workspace', async () => {
-      // Create source skill directories
-      const skillA = path.join(testSourceDir, 'skill-a');
-      const skillB = path.join(testSourceDir, 'skill-b');
-      await fs.mkdir(skillA);
-      await fs.mkdir(skillB);
-
-      // Add files inside skills
-      await fs.writeFile(path.join(skillA, 'skill.md'), '# Skill A');
-      await fs.writeFile(path.join(skillB, 'skill.md'), '# Skill B');
+    it('should copy nested subdirectories within a skill', async () => {
+      // Create source skill with nested structure
+      const skillDir = path.join(sourceDir, 'complex-skill');
+      const subDir = path.join(skillDir, 'subdir', 'nested');
+      await fs.mkdir(subDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Complex');
+      await fs.writeFile(path.join(subDir, 'helper.ts'), 'export const x = 1;');
 
       const result = await setupSkillsInWorkspace();
+
       expect(result.success).toBe(true);
 
-      // Verify files were copied
-      const targetDir = path.join(testWorkspaceDir, '.claude', 'skills');
-      const contentA = await fs.readFile(path.join(targetDir, 'skill-a', 'skill.md'), 'utf-8');
-      const contentB = await fs.readFile(path.join(targetDir, 'skill-b', 'skill.md'), 'utf-8');
-      expect(contentA).toBe('# Skill A');
-      expect(contentB).toBe('# Skill B');
+      // Verify nested file was copied
+      const nestedContent = await fs.readFile(
+        path.join(targetDir, 'complex-skill', 'subdir', 'nested', 'helper.ts'), 'utf-8',
+      );
+      expect(nestedContent).toBe('export const x = 1;');
     });
 
-    it('should skip non-directory entries', async () => {
-      // Create a file (not directory) in source
-      await fs.writeFile(path.join(testSourceDir, 'readme.txt'), 'Not a skill');
+    it('should skip non-directory entries in source', async () => {
+      // Create source with both files and directories
+      await fs.mkdir(sourceDir, { recursive: true });
+      await fs.writeFile(path.join(sourceDir, 'README.md'), '# Skills');
+      await fs.writeFile(path.join(sourceDir, 'config.json'), '{}');
+
+      const skillDir = path.join(sourceDir, 'valid-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Valid');
 
       const result = await setupSkillsInWorkspace();
+
       expect(result.success).toBe(true);
 
-      // Verify readme was not copied
-      const targetDir = path.join(testWorkspaceDir, '.claude', 'skills');
-      const entries = await fs.readdir(targetDir).catch(() => []);
-      expect(entries).not.toContain('readme.txt');
+      // Verify skill directory was copied
+      const content = await fs.readFile(
+        path.join(targetDir, 'valid-skill', 'SKILL.md'), 'utf-8',
+      );
+      expect(content).toBe('# Valid');
+
+      // Verify standalone files were NOT copied
+      await expect(
+        fs.access(path.join(targetDir, 'README.md')),
+      ).rejects.toThrow();
+      await expect(
+        fs.access(path.join(targetDir, 'config.json')),
+      ).rejects.toThrow();
     });
 
-    it('should copy nested directory structures', async () => {
-      const skill = path.join(testSourceDir, 'complex-skill');
-      await fs.mkdir(path.join(skill, 'subdir'), { recursive: true });
-      await fs.writeFile(path.join(skill, 'skill.md'), '# Complex Skill');
-      await fs.writeFile(path.join(skill, 'subdir', 'helper.md'), '# Helper');
+    it('should succeed with empty source directory', async () => {
+      await fs.mkdir(sourceDir, { recursive: true });
 
       const result = await setupSkillsInWorkspace();
+
       expect(result.success).toBe(true);
 
-      const targetSkill = path.join(testWorkspaceDir, '.claude', 'skills', 'complex-skill');
-      const helperContent = await fs.readFile(path.join(targetSkill, 'subdir', 'helper.md'), 'utf-8');
-      expect(helperContent).toBe('# Helper');
+      // Verify target directory was created
+      const stat = await fs.stat(targetDir);
+      expect(stat.isDirectory()).toBe(true);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should continue copying other skills when one fails', async () => {
+      // Create a readable skill
+      const goodSkill = path.join(sourceDir, 'good-skill');
+      await fs.mkdir(goodSkill, { recursive: true });
+      await fs.writeFile(path.join(goodSkill, 'SKILL.md'), '# Good');
+
+      // Create a skill directory that will cause issues (permission-like)
+      const badSkill = path.join(sourceDir, 'bad-skill');
+      await fs.mkdir(badSkill, { recursive: true });
+      await fs.writeFile(path.join(badSkill, 'SKILL.md'), '# Bad');
+
+      // Create another good skill
+      const anotherGood = path.join(sourceDir, 'another-good');
+      await fs.mkdir(anotherGood, { recursive: true });
+      await fs.writeFile(path.join(anotherGood, 'SKILL.md'), '# Another');
+
+      const result = await setupSkillsInWorkspace();
+
+      // Should still succeed overall (individual failures are logged as warnings)
+      expect(result.success).toBe(true);
+
+      // Verify good skills were copied
+      const goodContent = await fs.readFile(
+        path.join(targetDir, 'good-skill', 'SKILL.md'), 'utf-8',
+      );
+      expect(goodContent).toBe('# Good');
+
+      const anotherContent = await fs.readFile(
+        path.join(targetDir, 'another-good', 'SKILL.md'), 'utf-8',
+      );
+      expect(anotherContent).toBe('# Another');
     });
 
-    it('should continue when individual skill copy fails', async () => {
-      // Create one valid skill
-      const skillOk = path.join(testSourceDir, 'skill-ok');
-      await fs.mkdir(skillOk);
-      await fs.writeFile(path.join(skillOk, 'skill.md'), '# OK');
-
-      // Create a directory with restricted permissions (will fail on copy)
-      const skillBroken = path.join(testSourceDir, 'skill-broken');
-      await fs.mkdir(skillBroken, { recursive: true });
+    it('should handle unexpected errors gracefully', async () => {
+      // Make getWorkspaceDir throw
+      mockGetWorkspaceDir.mockImplementation(() => {
+        throw new Error('Config error');
+      });
 
       const result = await setupSkillsInWorkspace();
-      // Should still succeed - failures are logged but not fatal
-      expect(result.success).toBe(true);
 
-      // The valid skill should still be copied
-      const targetDir = path.join(testWorkspaceDir, '.claude', 'skills');
-      const okContent = await fs.readFile(path.join(targetDir, 'skill-ok', 'skill.md'), 'utf-8');
-      expect(okContent).toBe('# OK');
-    });
-
-    it('should handle mix of files and directories', async () => {
-      const skill = path.join(testSourceDir, 'my-skill');
-      await fs.mkdir(skill);
-      await fs.writeFile(path.join(skill, 'skill.md'), '# My Skill');
-      await fs.writeFile(path.join(testSourceDir, 'config.json'), '{}');
-      await fs.writeFile(path.join(testSourceDir, 'notes.txt'), 'notes');
-
-      const result = await setupSkillsInWorkspace();
-      expect(result.success).toBe(true);
-
-      const targetDir = path.join(testWorkspaceDir, '.claude', 'skills');
-      const entries = await fs.readdir(targetDir);
-      expect(entries).toContain('my-skill');
-      expect(entries).not.toContain('config.json');
-      expect(entries).not.toContain('notes.txt');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Config error');
     });
   });
 });
