@@ -387,7 +387,7 @@ describe('adaptUserInput', () => {
   it('should handle content array', () => {
     const input = {
       role: 'user' as const,
-      content: [{ type: 'text', text: 'Hello' }],
+      content: [{ type: 'text' as const, text: 'Hello' }],
     };
 
     const result = adaptUserInput(input);
