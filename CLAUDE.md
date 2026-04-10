@@ -14,7 +14,7 @@ npm run lint:fix     # ESLint with auto-fix
 npm run test         # Run tests
 npm run test:coverage # Run tests with coverage
 
-# === Production (PM2) ===
+# === Production (PM2 — Linux) ===
 npm run pm2:start     # Build and start PM2 service
 npm run pm2:restart   # Restart after code changes (manual only - not automatic)
 npm run pm2:reload    # Zero-downtime reload
@@ -25,6 +25,13 @@ npm run pm2:logs:out  # View output logs only (nostream)
 npm run pm2:status    # Check status
 npm run pm2:stop      # Stop service
 npm run pm2:delete    # Remove from PM2
+
+# === Production (launchd — macOS, fixes TCC permissions) ===
+npm run launchd:install   # Build and install as LaunchAgent
+npm run launchd:restart   # Build and restart service
+npm run launchd:status    # Check service status
+npm run launchd:logs      # Tail logs (Ctrl+C to exit)
+npm run launchd:uninstall # Remove LaunchAgent
 
 # === CLI usage ===
 disclaude feishu              # Start Feishu bot

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Disclaude LaunchAgent plist for macOS
+
+    This plist replaces PM2 on macOS to avoid TCC (Transparency, Consent, and Control)
+    permission issues. When running under PM2, the process chain:
+      PM2 (node) → claude → zsh → python/audio-tool
+    causes TCC to deny microphone (and other protected resource) access because the
+    PM2 node ancestor lacks the necessary TCC entitlements.
+
+    By using launchd instead, the process chain becomes:
+      launchd → node → disclaude
+    which is clean and TCC-compatible. On first launch, macOS will automatically
+    prompt for TCC authorization (microphone, camera, etc.).
+
+    SETUP:
+      1. Copy this file: cp com.disclaude.plist.example ~/Library/LaunchAgents/com.disclaude.plist
+      2. Edit the copy — replace ALL placeholder paths with your actual paths
+      3. Load the service: launchctl load ~/Library/LaunchAgents/com.disclaude.plist
+
+    Or use the automated setup script:
+      ./scripts/launchd-setup.sh install
+
+    See docs/macos-launchd.md for the full migration guide.
+  -->
+
+  <!-- Unique identifier for this LaunchAgent -->
+  <key>Label</key>
+  <string>com.disclaude</string>
+
+  <!-- Command to run: node + path to compiled CLI entry point -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/path/to/disclaude/packages/primary-node/dist/cli.js</string>
+    <string>start</string>
+  </array>
+
+  <!-- Working directory — must be the disclaude project root -->
+  <key>WorkingDirectory</key>
+  <string>/path/to/disclaude</string>
+
+  <!-- Start automatically on login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart automatically on crash -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Throttle crash restarts: wait 10 seconds between restart attempts -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!--
+    Environment variables.
+    IMPORTANT: disclaude.config.yaml is the preferred way to configure the app.
+    Only set NODE_ENV here; all other config goes in the YAML file.
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+
+  <!--
+    Path to config file (optional).
+    If set, disclaude will load config from this path instead of searching.
+    Uncomment and set to your actual config path.
+  -->
+  <!--
+  <key>Arguments</key>
+  <array>
+    <string>--config</string>
+    <string>/path/to/disclaude/disclaude.config.yaml</string>
+  </array>
+  -->
+
+  <!-- Log output (stdout) — adjust path as needed -->
+  <key>StandardOutPath</key>
+  <string>/path/to/disclaude/logs/launchd-stdout.log</string>
+
+  <!-- Log output (stderr) — adjust path as needed -->
+  <key>StandardErrorPath</key>
+  <string>/path/to/disclaude/logs/launchd-stderr.log</string>
+
+  <!--
+    Soft resource limits (optional).
+    These prevent runaway resource consumption.
+  -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <!-- Limit resident set size to 1GB -->
+    <key>RSS</key>
+    <integer>1073741824</integer>
+  </dict>
+
+  <!--
+    Process type: tells launchd this is a background daemon.
+    "Background" means launchd will throttle it slightly to favor foreground apps.
+  -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

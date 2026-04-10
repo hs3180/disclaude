@@ -50,7 +50,12 @@
     "pm2:status": "pm2 status",
     "pm2:delete": "pm2 delete disclaude-primary",
     "pm2:monit": "pm2 monit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "launchd:install": "./scripts/launchd-setup.sh install",
+    "launchd:uninstall": "./scripts/launchd-setup.sh uninstall",
+    "launchd:status": "./scripts/launchd-setup.sh status",
+    "launchd:logs": "./scripts/launchd-setup.sh logs",
+    "launchd:restart": "npm run build && ./scripts/launchd-setup.sh restart"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

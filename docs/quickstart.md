@@ -67,9 +67,14 @@ glm:
 # 开发模式（自动重载）
 npm run dev
 
-# 生产模式（PM2 守护进程）
+# 生产模式 — macOS（推荐，解决 TCC 权限问题）
+npm run launchd:install
+
+# 生产模式 — Linux（使用 PM2）
 npm run pm2:start
 ```
+
+> ⚠️ **macOS 用户注意**: 推荐使用 `launchd` 而非 PM2。PM2 的进程链会导致 macOS TCC 系统拒绝麦克风等权限。[详细说明](./macos-launchd.md)
 
 ## 第 5 步：验证
 
