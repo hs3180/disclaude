@@ -4,14 +4,14 @@
  * WeChat (Tencent ilink) bot integration with:
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
+ * - Image and file sending via CDN upload (Issue #1556 Phase 3.2)
  * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Typing indicator — Issue #1556 Phase 3.2 (removed from scope)
+ * - Thread send support via context_token — Issue #1556 Phase 3.4 (removed from scope)
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -19,6 +19,8 @@
  */
 
 import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
@@ -28,6 +30,41 @@ const logger = createLogger('WeChatChannel');
 
 /** Default API base URL for WeChat ilink Bot API. */
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
+
+/** Image file extensions for auto-detecting image vs file messages. */
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']);
+
+/**
+ * Determine if a file is an image based on its extension.
+ */
+function isImageFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Guess MIME type from file extension.
+ */
+function guessMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.zip': 'application/zip',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
 
 /**
  * WeChat Channel.
@@ -124,8 +161,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
-   * Other types are logged as warnings and silently ignored.
+   * Supports 'text', 'card' (downgraded to JSON text), and 'file' types.
+   * File messages are uploaded to WeChat CDN and sent as image/file messages.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
@@ -151,16 +188,76 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       });
       logger.debug(
         { chatId: message.chatId, cardLength: cardText.length },
-        'Card downgraded to text for WeChat MVP'
+        'Card downgraded to text for WeChat'
       );
+      return;
+    }
+
+    // File message: upload to CDN and send as image or file
+    if (message.type === 'file' && message.filePath) {
+      await this.sendFileMessage(message);
       return;
     }
 
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
+  }
+
+  /**
+   * Upload a file to CDN and send as image or file message.
+   */
+  private async sendFileMessage(message: OutgoingMessage): Promise<void> {
+    if (!this.client || !message.filePath) return;
+
+    const filePath = message.filePath;
+    const fileName = path.basename(filePath);
+
+    // Read file from disk
+    let fileData: Buffer;
+    try {
+      fileData = await fs.promises.readFile(filePath);
+    } catch (error) {
+      logger.error(
+        { err: error instanceof Error ? error.message : String(error), filePath },
+        'Failed to read file for upload'
+      );
+      throw new Error(`Failed to read file: ${filePath}`);
+    }
+
+    // Upload to WeChat CDN
+    const mimeType = guessMimeType(filePath);
+    const uploadResult = await this.client.uploadMedia({
+      fileData,
+      fileName,
+      mimeType,
+    });
+
+    // Send as image or file based on extension
+    if (isImageFile(filePath)) {
+      await this.client.sendImage({
+        to: message.chatId,
+        imageUrl: uploadResult.url,
+        contextToken: message.threadId,
+      });
+      logger.debug(
+        { chatId: message.chatId, fileName, imageUrl: uploadResult.url },
+        'Image sent via CDN'
+      );
+    } else {
+      await this.client.sendFile({
+        to: message.chatId,
+        fileUrl: uploadResult.url,
+        fileName,
+        contextToken: message.threadId,
+      });
+      logger.debug(
+        { chatId: message.chatId, fileName, fileUrl: uploadResult.url },
+        'File sent via CDN'
+      );
+    }
   }
 
   /**
@@ -175,17 +272,17 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text messaging and file/image sending via CDN upload.
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
