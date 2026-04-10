@@ -25,12 +25,14 @@ import {
 interface MockWSClient {
   start: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  removeAllListeners?: ReturnType<typeof vi.fn>;
 }
 
 function createMockWSClient(shouldFail = false): MockWSClient {
   return {
     start: vi.fn().mockResolvedValue(shouldFail ? false : undefined),
     close: vi.fn(),
+    removeAllListeners: vi.fn(),
   };
 }
 
@@ -84,6 +86,7 @@ function createTestManager(overrides: {
   maxAttempts?: number;
   deadTimeoutMs?: number;
   healthCheckMs?: number;
+  dnsCheckHost?: string;
 } = {}): WsConnectionManager {
   const manager = new WsConnectionManager({
     appId: 'test-app-id',
@@ -91,6 +94,9 @@ function createTestManager(overrides: {
     reconnectMaxAttempts: overrides.maxAttempts ?? MOCK_WS_HEALTH.RECONNECT.MAX_ATTEMPTS,
     deadConnectionTimeoutMs: overrides.deadTimeoutMs ?? MOCK_WS_HEALTH.DEAD_CONNECTION_TIMEOUT_MS,
     healthCheckIntervalMs: overrides.healthCheckMs ?? MOCK_WS_HEALTH.HEALTH_CHECK_INTERVAL_MS,
+    // Disable DNS pre-check by default for existing tests; individual tests
+    // in the Issue #2259 describe block enable it explicitly.
+    dnsCheckHost: overrides.dnsCheckHost ?? '',
   });
 
   // Monkey-patch the larkSDK reference to use our mock WSClient constructor
@@ -549,6 +555,126 @@ describe('WsConnectionManager', () => {
       expect(metrics).not.toHaveProperty('lastPongAt');
       expect(metrics).not.toHaveProperty('timeSinceLastPongMs');
       expect(metrics).not.toHaveProperty('hasWsInterception');
+    });
+  });
+
+  describe('Issue #2259 — MaxListeners leak & DNS pre-check', () => {
+    it('should call removeAllListeners on WSClient before closing', async () => {
+      const mockClient = createMockWSClient(false);
+      const removeAllListenersSpy = vi.fn();
+      mockClient.removeAllListeners = removeAllListenersSpy;
+
+      manager = createTestManager({
+        deadTimeoutMs: 2000,
+        healthCheckMs: 500,
+        maxAttempts: 3,
+        wsClient: mockClient,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      manager.recordMessageReceived();
+
+      // Trigger dead connection to force reconnect (which calls closeClient)
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // removeAllListeners should have been called on the old client
+      expect(removeAllListenersSpy).toHaveBeenCalled();
+    });
+
+    it('should skip reconnect when DNS pre-check fails', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        deadTimeoutMs: 2000,
+        healthCheckMs: 500,
+        maxAttempts: 3,
+        wsClient: mockClient,
+        dnsCheckHost: 'open.feishu.cn',
+      });
+
+      // Stub checkDns to fail (simulates macOS wake from sleep)
+      const checkDnsSpy = vi.spyOn(
+        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
+        'checkDns',
+      ).mockResolvedValue(false);
+
+      await manager.start(mockEventDispatcher as never);
+      manager.recordMessageReceived();
+
+      // Trigger dead connection
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // Wait for reconnect attempt cycle
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // WSClient.start() should only have been called once (initial connect),
+      // NOT a second time for reconnect since DNS pre-check failed
+      expect(mockClient.start.mock.calls.length).toBe(1);
+
+      // checkDns should have been called during reconnect
+      expect(checkDnsSpy).toHaveBeenCalledWith('open.feishu.cn');
+
+      checkDnsSpy.mockRestore();
+    });
+
+    it('should call checkDns during reconnect when dnsCheckHost is configured', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        deadTimeoutMs: 2000,
+        healthCheckMs: 500,
+        maxAttempts: 3,
+        wsClient: mockClient,
+        dnsCheckHost: 'open.feishu.cn',
+      });
+
+      // Stub checkDns to succeed
+      const checkDnsSpy = vi.spyOn(
+        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
+        'checkDns',
+      ).mockResolvedValue(true);
+
+      await manager.start(mockEventDispatcher as never);
+      manager.recordMessageReceived();
+
+      // checkDns should NOT have been called during initial connect
+      expect(checkDnsSpy).not.toHaveBeenCalled();
+
+      // Trigger dead connection
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // checkDns should have been called during reconnect attempt
+      expect(checkDnsSpy).toHaveBeenCalledWith('open.feishu.cn');
+
+      checkDnsSpy.mockRestore();
+    });
+
+    it('should not call checkDns when dnsCheckHost is empty', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({
+        deadTimeoutMs: 2000,
+        healthCheckMs: 500,
+        maxAttempts: 3,
+        wsClient: mockClient,
+        // dnsCheckHost defaults to '' in tests → DNS check disabled
+      });
+
+      const checkDnsSpy = vi.spyOn(
+        WsConnectionManager.prototype as unknown as { checkDns: () => Promise<boolean> },
+        'checkDns',
+      ).mockResolvedValue(true);
+
+      await manager.start(mockEventDispatcher as never);
+      manager.recordMessageReceived();
+
+      // Trigger dead connection
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // Wait for reconnect
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // checkDns should NOT have been called (dnsCheckHost is empty)
+      expect(checkDnsSpy).not.toHaveBeenCalled();
+
+      checkDnsSpy.mockRestore();
     });
   });
 });
