@@ -205,10 +205,12 @@ export class WeChatAuth {
    */
   private logQrCode(qrUrl: string): void {
     try {
-      QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
+      void QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
         width: 400,
         margin: 2,
         color: { dark: '#000000', light: '#ffffff' },
+      }).catch(() => {
+        // Ignore QR image generation errors — fallback to URL below
       });
       execSync(`open "${QR_IMAGE_PATH}"`);
       process.stdout.write(`\nQR code image: ${QR_IMAGE_PATH}\n`);

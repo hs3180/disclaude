@@ -381,8 +381,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     ): Promise<string | undefined> => {
       if (useThreadReply) {
         // useThreadReply is !!message.threadId — guaranteed truthy here.
-        // TypeScript can't narrow from boolean, so we use non-null assertion.
-        const threadId = message.threadId!;
+        // TypeScript can't narrow from boolean, so we use type assertion.
+        const threadId = message.threadId as string;
         try {
           const replyResp = await client.im.message.reply({
             path: {
