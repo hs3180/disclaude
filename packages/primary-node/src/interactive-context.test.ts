@@ -209,6 +209,49 @@ describe('InteractiveContextStore', () => {
       const promptsLatest = store.findActionPromptsByChatId('chat-perf', 'action_9');
       expect(promptsLatest).toEqual({ action_9: 'Prompt 9' });
     });
+
+    it('should resolve actionValue naming collision via exact messageId (#2247)', () => {
+      // Two cards in the same chat with overlapping actionValue names
+      store.register('om_card_1', 'oc_chat', {
+        confirm: '确认部署到生产',
+        cancel: '取消部署',
+      });
+      store.register('om_card_2', 'oc_chat', {
+        confirm: '确认删除文件',
+        cancel: '取消删除',
+      });
+
+      // Exact messageId match should return the correct card's prompts
+      expect(store.generatePrompt('om_card_1', 'oc_chat', 'confirm', '确认'))
+        .toBe('确认部署到生产');
+      expect(store.generatePrompt('om_card_2', 'oc_chat', 'confirm', '确认'))
+        .toBe('确认删除文件');
+    });
+
+    it('should find correct prompts for older card via inverted index after collision (#2247)', () => {
+      // Card A with confirm/cancel
+      store.register('om_card_1', 'oc_chat', {
+        confirm: '确认部署',
+        cancel: '取消部署',
+        deploy_specific: 'Deploy specific',
+      });
+      // Card B with same confirm/cancel (naming collision)
+      store.register('om_card_2', 'oc_chat', {
+        confirm: '确认删除',
+        cancel: '取消删除',
+        delete_specific: 'Delete specific',
+      });
+
+      // Unique actionValues should resolve correctly via inverted index
+      expect(store.findActionPromptsByChatId('oc_chat', 'deploy_specific'))
+        .toEqual({ confirm: '确认部署', cancel: '取消部署', deploy_specific: 'Deploy specific' });
+      expect(store.findActionPromptsByChatId('oc_chat', 'delete_specific'))
+        .toEqual({ confirm: '确认删除', cancel: '取消删除', delete_specific: 'Delete specific' });
+
+      // Colliding actionValues should prefer the newer card (last-writer-wins)
+      const collidingPrompts = store.findActionPromptsByChatId('oc_chat', 'confirm');
+      expect(collidingPrompts?.confirm).toBe('确认删除');
+    });
   });
 
   describe('generatePrompt', () => {
@@ -345,6 +388,63 @@ describe('InteractiveContextStore', () => {
       );
 
       expect(prompt).toBe('用户选择了 select_static: 选项A');
+    });
+
+    it('should escape template placeholders in formData to prevent injection (#2247)', () => {
+      store.register('msg-injection', 'chat-1', {
+        submit: '用户输入: {{form.input}}, 值: {{actionValue}}',
+      });
+
+      // Malicious form input containing template placeholders
+      const prompt = store.generatePrompt(
+        'msg-injection',
+        'chat-1',
+        'submit',
+        undefined,
+        undefined,
+        { input: '{{actionValue}}' },
+      );
+
+      // The injected {{actionValue}} in form data should be escaped,
+      // NOT interpreted as a template placeholder
+      expect(prompt).not.toBe('用户输入: submit, 值: submit');
+      // The escaped value should contain literal braces
+      expect(prompt).toContain('\\{\\{actionValue\\}\\}');
+    });
+
+    it('should escape template placeholders in actionText to prevent injection (#2247)', () => {
+      store.register('msg-text-inject', 'chat-1', {
+        click: 'Text: {{actionText}}, Value: {{actionValue}}',
+      });
+
+      const prompt = store.generatePrompt(
+        'msg-text-inject',
+        'chat-1',
+        'click',
+        '{{actionValue}}', // Malicious actionText
+      );
+
+      // The injected placeholder in actionText should be escaped
+      expect(prompt).not.toBe('Text: click, Value: click');
+      expect(prompt).toContain('\\{\\{actionValue\\}\\}');
+    });
+
+    it('should handle normal special characters in values without escaping (#2247)', () => {
+      store.register('msg-special', 'chat-1', {
+        action: 'Name: {{form.name}}',
+      });
+
+      const prompt = store.generatePrompt(
+        'msg-special',
+        'chat-1',
+        'action',
+        undefined,
+        undefined,
+        { name: 'Hello "world" & <friends>' },
+      );
+
+      // Non-placeholder special characters should pass through unchanged
+      expect(prompt).toBe('Name: Hello "world" & <friends>');
     });
   });
 

@@ -40,14 +40,14 @@ describe('CardActionRouter', () => {
     it('should register a chat context', () => {
       router.registerChatContext('chat-1', 'node-1', true);
       const ctx = router.getChatContext('chat-1');
-      expect(ctx).toEqual({ nodeId: 'node-1', isRemote: true });
+      expect(ctx).toEqual({ status: 'active', context: { nodeId: 'node-1', isRemote: true } });
     });
 
     it('should unregister a chat context', () => {
       router.registerChatContext('chat-1', 'node-1', true);
       router.unregisterChatContext('chat-1');
       const ctx = router.getChatContext('chat-1');
-      expect(ctx).toBeUndefined();
+      expect(ctx).toEqual({ status: 'not_found' });
     });
   });
 
@@ -113,6 +113,51 @@ describe('CardActionRouter', () => {
       expect(sendToRemoteNode).not.toHaveBeenCalled();
 
       expiredRouter.dispose();
+    });
+
+    it('should distinguish between expired and not_found contexts (#2247)', async () => {
+      const expiredRouter = new CardActionRouter({
+        sendToRemoteNode,
+        isNodeConnected,
+        maxAge: 1,
+      });
+
+      // Not registered at all
+      const notFound = expiredRouter.getChatContext('chat-never');
+      expect(notFound).toEqual({ status: 'not_found' });
+
+      // Register and let expire
+      expiredRouter.registerChatContext('chat-expired', 'node-1', true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const expired = expiredRouter.getChatContext('chat-expired');
+      expect(expired).toEqual({ status: 'expired' });
+
+      // Active context
+      const activeRouter = new CardActionRouter({
+        sendToRemoteNode,
+        isNodeConnected,
+        maxAge: 60 * 60 * 1000, // 1 hour
+      });
+      activeRouter.registerChatContext('chat-active', 'node-1', true);
+      const active = activeRouter.getChatContext('chat-active');
+      expect(active).toEqual({ status: 'active', context: { nodeId: 'node-1', isRemote: true } });
+
+      expiredRouter.dispose();
+      activeRouter.dispose();
+    });
+
+    it('should provide getActiveChatContext convenience method (#2247)', () => {
+      router.registerChatContext('chat-1', 'node-1', true);
+
+      // Active context returns the context object
+      const active = router.getActiveChatContext('chat-1');
+      expect(active).toEqual({ nodeId: 'node-1', isRemote: true });
+
+      // Unregistered returns undefined
+      router.unregisterChatContext('chat-1');
+      const gone = router.getActiveChatContext('chat-1');
+      expect(gone).toBeUndefined();
     });
 
     it('should route to different nodes for different chatIds', async () => {
