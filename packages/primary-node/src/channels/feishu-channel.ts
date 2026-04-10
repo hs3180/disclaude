@@ -595,6 +595,58 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Upload an image to Feishu and return the image_key for card embedding.
+   *
+   * Issue #1919: Agents need image_key to embed images in card messages.
+   * This method uploads the image via Feishu's im.image.create API
+   * WITHOUT sending a message — the image_key is returned for use in
+   * send_card or send_interactive card JSON.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Validate image extension
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (supported: ${imageExtensions.join(', ')})`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+
+    // Validate file size (Feishu limit: 10MB for images)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
+  }
+
   // Delegate passive mode methods to PassiveModeManager
   isPassiveModeDisabled(chatId: string): boolean {
     return this.passiveModeManager.isPassiveModeDisabled(chatId);
