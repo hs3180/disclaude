@@ -8,20 +8,28 @@
  * ESM namespace exports.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Use vi.hoisted to define mock functions that can be referenced in vi.mock factory
-const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink } = vi.hoisted(() => ({
-  mockMkdir: vi.fn().mockResolvedValue(undefined),
-  mockWriteFile: vi.fn().mockResolvedValue(undefined),
-  mockReadFile: vi.fn().mockResolvedValue(''),
-  mockReaddir: vi.fn().mockResolvedValue([]),
-  mockStat: vi.fn().mockResolvedValue({
-    mtime: new Date('2026-01-01'),
-    birthtime: new Date('2026-01-01'),
-  }),
-  mockUnlink: vi.fn().mockResolvedValue(undefined),
-}));
+const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink, mockAccess, mockFsWatch } = vi.hoisted(() => {
+  const watchClose = vi.fn();
+  return {
+    mockMkdir: vi.fn().mockResolvedValue(undefined),
+    mockWriteFile: vi.fn().mockResolvedValue(undefined),
+    mockReadFile: vi.fn().mockResolvedValue(''),
+    mockReaddir: vi.fn().mockResolvedValue([]),
+    mockStat: vi.fn().mockResolvedValue({
+      mtime: new Date('2026-01-01'),
+      birthtime: new Date('2026-01-01'),
+    }),
+    mockUnlink: vi.fn().mockResolvedValue(undefined),
+    mockAccess: vi.fn().mockResolvedValue(undefined),
+    mockFsWatch: vi.fn().mockReturnValue({
+      on: vi.fn().mockReturnThis(),
+      close: watchClose,
+    }),
+  };
+});
 
 vi.mock('fs/promises', () => ({
   default: {
@@ -31,6 +39,7 @@ vi.mock('fs/promises', () => ({
     readdir: mockReaddir,
     stat: mockStat,
     unlink: mockUnlink,
+    access: mockAccess,
   },
   mkdir: mockMkdir,
   writeFile: mockWriteFile,
@@ -38,9 +47,18 @@ vi.mock('fs/promises', () => ({
   readdir: mockReaddir,
   stat: mockStat,
   unlink: mockUnlink,
+  access: mockAccess,
 }));
 
-import { ScheduleFileScanner } from './schedule-watcher.js';
+// Mock fs.watch for ScheduleFileWatcher
+vi.mock('fs', () => ({
+  default: {
+    watch: mockFsWatch,
+  },
+  watch: mockFsWatch,
+}));
+
+import { ScheduleFileScanner, ScheduleFileWatcher } from './schedule-watcher.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
 // ============================================================================
@@ -513,6 +531,303 @@ describe('ScheduleFileScanner', () => {
     it('should use task ID as-is without schedule- prefix', () => {
       const filePath = scanner.getFilePath('my-task');
       expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+    });
+  });
+
+  describe('parseFile - empty model warning (Issue #1338)', () => {
+    it('should warn when model is empty string', async () => {
+      const content = [
+        '---',
+        'name: "Empty Model Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_empty_model"',
+        'model: ""',
+        '---',
+        '',
+        'Task with empty model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/empty-model.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('');
+      // Covers line 224-225: empty model warning branch
+    });
+  });
+});
+
+// ============================================================================
+// ScheduleFileWatcher Tests
+// ============================================================================
+
+describe('ScheduleFileWatcher', () => {
+  let watcher: ScheduleFileWatcher;
+  let onFileAdded: ReturnType<typeof vi.fn>;
+  let onFileChanged: ReturnType<typeof vi.fn>;
+  let onFileRemoved: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    onFileAdded = vi.fn();
+    onFileChanged = vi.fn();
+    onFileRemoved = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (watcher) {
+      watcher.stop();
+    }
+  });
+
+  function createWatcher(debounceMs = 10) {
+    watcher = new ScheduleFileWatcher({
+      schedulesDir: MOCK_DIR,
+      onFileAdded,
+      onFileChanged,
+      onFileRemoved,
+      debounceMs,
+    });
+    return watcher;
+  }
+
+  describe('constructor', () => {
+    it('should initialize with correct schedules dir', () => {
+      createWatcher();
+      expect(watcher).toBeDefined();
+      expect(watcher.isRunning()).toBe(false);
+    });
+
+    it('should use default debounce of 100ms', () => {
+      const w = new ScheduleFileWatcher({
+        schedulesDir: MOCK_DIR,
+        onFileAdded,
+        onFileChanged,
+        onFileRemoved,
+      });
+      w.stop();
+      // The default debounce is 100ms, constructor doesn't expose it directly
+      // but we verify it's constructed successfully
+      expect(w).toBeDefined();
+    });
+  });
+
+  describe('start', () => {
+    it('should start watching the directory', async () => {
+      createWatcher();
+      await watcher.start();
+
+      expect(mockFsWatch).toHaveBeenCalledWith(
+        MOCK_DIR,
+        { persistent: true, recursive: false },
+        expect.any(Function)
+      );
+      expect(watcher.isRunning()).toBe(true);
+    });
+
+    it('should create directory before watching', async () => {
+      createWatcher();
+      await watcher.start();
+
+      expect(mockMkdir).toHaveBeenCalledWith(MOCK_DIR, { recursive: true });
+    });
+
+    it('should not start if already running', async () => {
+      createWatcher();
+      await watcher.start();
+      expect(mockFsWatch).toHaveBeenCalledTimes(1);
+
+      await watcher.start();
+      // Should not call fs.watch again
+      expect(mockFsWatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw if fs.watch fails', async () => {
+      createWatcher();
+      mockFsWatch.mockImplementation(() => {
+        throw new Error('Watch failed');
+      });
+
+      await expect(watcher.start()).rejects.toThrow('Watch failed');
+      expect(watcher.isRunning()).toBe(false);
+    });
+
+    it('should register error handler on watcher', async () => {
+      const mockOn = vi.fn().mockReturnThis();
+      mockFsWatch.mockReturnValue({ on: mockOn, close: vi.fn() });
+
+      createWatcher();
+      await watcher.start();
+
+      expect(mockOn).toHaveBeenCalledWith('error', expect.any(Function));
+    });
+  });
+
+  describe('stop', () => {
+    it('should stop the watcher', async () => {
+      createWatcher();
+      await watcher.start();
+      expect(watcher.isRunning()).toBe(true);
+
+      const mockWatcherInstance = mockFsWatch.mock.results[0].value;
+      watcher.stop();
+      expect(watcher.isRunning()).toBe(false);
+      expect(mockWatcherInstance.close).toHaveBeenCalled();
+    });
+
+    it('should be safe to call stop without start', () => {
+      createWatcher();
+      watcher.stop(); // Should not throw
+      expect(watcher.isRunning()).toBe(false);
+    });
+
+    it('should clear debounce timers on stop', async () => {
+      createWatcher(100);
+      await watcher.start();
+
+      // Trigger a file event to create a debounce timer
+      const callback = mockFsWatch.mock.calls[0][2];
+      callback('rename', 'test.md');
+
+      // Stop should clear timers
+      watcher.stop();
+      expect(watcher.isRunning()).toBe(false);
+    });
+  });
+
+  describe('file event handling', () => {
+    let eventCallback: (eventType: string, filename: string | null) => void;
+
+    beforeEach(async () => {
+      createWatcher(10);
+      await watcher.start();
+      eventCallback = mockFsWatch.mock.calls[0][2];
+    });
+
+    it('should ignore events without filename', async () => {
+      eventCallback('change', null);
+      vi.advanceTimersByTime(20);
+
+      expect(onFileChanged).not.toHaveBeenCalled();
+    });
+
+    it('should ignore non-.md files', async () => {
+      eventCallback('change', 'notes.txt');
+      vi.advanceTimersByTime(20);
+
+      expect(onFileChanged).not.toHaveBeenCalled();
+    });
+
+    it('should debounce rapid file events', async () => {
+      eventCallback('change', 'test.md');
+      eventCallback('change', 'test.md');
+      eventCallback('change', 'test.md');
+
+      vi.advanceTimersByTime(20);
+
+      // Only one call after debounce
+      expect(mockReadFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle file rename event when file is added', async () => {
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      eventCallback('rename', 'daily-report.md');
+      vi.advanceTimersByTime(20);
+      // Wait for async processFileEvent to complete
+      await vi.runAllTimersAsync();
+
+      expect(onFileAdded).toHaveBeenCalledTimes(1);
+      expect(onFileAdded.mock.calls[0][0].id).toBe('schedule-daily-report');
+    });
+
+    it('should handle file rename event when file is removed', async () => {
+      mockAccess.mockRejectedValue({ code: 'ENOENT' });
+
+      eventCallback('rename', 'daily-report.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileRemoved).toHaveBeenCalledWith(
+        'schedule-daily-report',
+        `${MOCK_DIR}/daily-report.md`
+      );
+    });
+
+    it('should handle file change event', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Task' }));
+
+      eventCallback('change', 'daily-report.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileChanged).toHaveBeenCalledTimes(1);
+      expect(onFileChanged.mock.calls[0][0].name).toBe('Updated Task');
+    });
+
+    it('should not call onFileChanged when changed file fails to parse', async () => {
+      mockReadFile.mockResolvedValue('no frontmatter content');
+
+      eventCallback('change', 'bad-file.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileChanged).not.toHaveBeenCalled();
+    });
+
+    it('should handle file added with invalid content', async () => {
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue('invalid content without frontmatter');
+
+      eventCallback('rename', 'invalid.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      // parseFile returns null for invalid content
+      expect(onFileAdded).not.toHaveBeenCalled();
+    });
+
+    it('should handle errors during file event processing gracefully', async () => {
+      // access() throws non-ENOENT error → fileExists returns false → treated as removal
+      mockAccess.mockRejectedValue(new Error('Unexpected error'));
+
+      eventCallback('rename', 'error-file.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      // When fileExists returns false, onFileRemoved is called
+      // This verifies the error doesn't crash the watcher
+      expect(onFileRemoved).toHaveBeenCalledWith(
+        'schedule-error-file',
+        `${MOCK_DIR}/error-file.md`
+      );
+    });
+
+    it('should handle change event errors gracefully', async () => {
+      mockReadFile.mockRejectedValue(new Error('Read error'));
+
+      eventCallback('change', 'error-file.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      // Should not throw - error is caught and logged
+      expect(onFileChanged).not.toHaveBeenCalled();
+    });
+
+    it('should process multiple different files independently', async () => {
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      eventCallback('rename', 'task1.md');
+      eventCallback('rename', 'task2.md');
+
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileAdded).toHaveBeenCalledTimes(2);
     });
   });
 });

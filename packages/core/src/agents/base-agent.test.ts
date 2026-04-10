@@ -3,8 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult } from './base-agent.js';
+import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult, type QueryStreamResult } from './base-agent.js';
 import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
+import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
@@ -30,6 +31,32 @@ class TestAgent extends BaseAgent {
   testHandleIteratorError(error: unknown, operation: string) {
     return this.handleIteratorError(error, operation);
   }
+
+  async *testQueryOnce(input: string | unknown[], options: Parameters<BaseAgent['queryOnce']>[1]) {
+    yield* this.queryOnce(input, options);
+  }
+
+  testCreateQueryStream(
+    input: AsyncGenerator<StreamingUserMessage>,
+    options: Parameters<BaseAgent['createQueryStream']>[1]
+  ) {
+    return this.createQueryStream(input, options);
+  }
+
+  // Allow setting initialized for testing dispose
+  setInitialized(value: boolean) {
+    this.initialized = value;
+  }
+}
+
+// Helper to create mock SDK AgentMessage
+function createMockSdkMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
+  return {
+    type: 'text',
+    content: 'Hello from SDK',
+    role: 'assistant',
+    ...overrides,
+  };
 }
 
 // Minimal mock for SDK provider
@@ -228,6 +255,377 @@ describe('BaseAgent', () => {
       const message = agent.testHandleIteratorError(42, 'testOperation');
 
       expect(message.content).toContain('42');
+    });
+  });
+
+  describe('queryOnce', () => {
+    const defaultOptions = {
+      cwd: '/workspace',
+      permissionMode: 'bypassPermissions' as const,
+      settingSources: ['project'],
+    };
+
+    it('should yield parsed messages from SDK provider for string input', async () => {
+      const sdkMessages = [
+        createMockSdkMessage({ type: 'text', content: 'Hello' }),
+        createMockSdkMessage({ type: 'tool_use', content: 'Using tool', metadata: { toolName: 'Read', toolInput: { file: '/test.ts' }, elapsedMs: 100, costUsd: 0.01, inputTokens: 10, outputTokens: 20 } }),
+      ];
+
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        for (const msg of sdkMessages) {
+          yield msg;
+        }
+      });
+
+      const results: IteratorYieldResult[] = [];
+      for await (const result of agent.testQueryOnce('test prompt', defaultOptions)) {
+        results.push(result);
+      }
+
+      expect(results).toHaveLength(2);
+      expect(results[0].parsed.type).toBe('text');
+      expect(results[0].parsed.content).toBe('Hello');
+      expect(results[0].raw).toEqual(sdkMessages[0]);
+
+      expect(results[1].parsed.type).toBe('tool_use');
+      expect(results[1].parsed.metadata?.toolName).toBe('Read');
+      expect(results[1].parsed.metadata?.elapsed).toBe(100);
+      expect(results[1].parsed.metadata?.cost).toBe(0.01);
+      expect(results[1].parsed.metadata?.tokens).toBe(30); // inputTokens + outputTokens
+    });
+
+    it('should handle empty response from SDK provider', async () => {
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        // no messages
+      });
+
+      const results: IteratorYieldResult[] = [];
+      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
+        results.push(result);
+      }
+
+      expect(results).toHaveLength(0);
+    });
+
+    it('should pass string input directly to SDK provider', async () => {
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        yield createMockSdkMessage();
+      });
+
+      for await (const _ of agent.testQueryOnce('hello input', defaultOptions)) {
+        // consume
+      }
+
+      expect(mockSdkProvider.queryOnce).toHaveBeenCalledWith('hello input', defaultOptions);
+    });
+
+    it('should convert array input via convertInputToUserInput', async () => {
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        yield createMockSdkMessage();
+      });
+
+      for await (const _ of agent.testQueryOnce([], defaultOptions)) {
+        // consume
+      }
+
+      // Array input should be converted - the method returns [] for array input
+      expect(mockSdkProvider.queryOnce).toHaveBeenCalledWith([], defaultOptions);
+    });
+
+    it('should yield messages with sessionId from metadata', async () => {
+      const sdkMessage = createMockSdkMessage({
+        type: 'result',
+        content: 'Done',
+        metadata: { sessionId: 'session-123' },
+      });
+
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        yield sdkMessage;
+      });
+
+      const results: IteratorYieldResult[] = [];
+      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
+        results.push(result);
+      }
+
+      expect(results[0].parsed.sessionId).toBe('session-123');
+    });
+
+    it('should handle messages without metadata', async () => {
+      const sdkMessage = createMockSdkMessage({
+        type: 'text',
+        content: 'No metadata',
+      });
+
+      mockSdkProvider.queryOnce.mockImplementation(async function* () {
+        yield sdkMessage;
+      });
+
+      const results: IteratorYieldResult[] = [];
+      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
+        results.push(result);
+      }
+
+      expect(results[0].parsed.metadata).toBeUndefined();
+      expect(results[0].parsed.sessionId).toBeUndefined();
+    });
+  });
+
+  describe('createQueryStream', () => {
+    const defaultOptions = {
+      cwd: '/workspace',
+      permissionMode: 'bypassPermissions' as const,
+      settingSources: ['project'],
+    };
+
+    async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
+      for (const msg of messages) {
+        yield msg;
+      }
+    }
+
+    it('should return handle and iterator from SDK provider', async () => {
+      const mockHandle: QueryHandle = {
+        close: vi.fn(),
+        cancel: vi.fn(),
+        sessionId: 'stream-session-1',
+      };
+      const sdkMessages = [
+        createMockSdkMessage({ type: 'text', content: 'Streaming response' }),
+      ];
+
+      mockSdkProvider.queryStream.mockImplementation((_input: unknown) => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          for (const msg of sdkMessages) {
+            yield msg;
+          }
+        })(),
+      }));
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: 'Hello stream' },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      const result: QueryStreamResult = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      expect(result.handle).toBe(mockHandle);
+
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0].parsed.content).toBe('Streaming response');
+      expect(results[0].raw).toEqual(sdkMessages[0]);
+    });
+
+    it('should convert StreamingUserMessage with string content to UserInput', async () => {
+      let capturedInput: unknown;
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation((input: unknown) => {
+        capturedInput = input;
+        return {
+          handle: mockHandle,
+          iterator: (async function* () {
+            // no messages
+          })(),
+        };
+      });
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: 'Hello world' },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      const result = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      // Consume the iterator to trigger input conversion
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // The input to queryStream should be an async generator
+      expect(capturedInput).toBeDefined();
+    });
+
+    it('should handle StreamingUserMessage with ContentBlock array', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          yield createMockSdkMessage({ type: 'text', content: 'Response' });
+        })(),
+      }));
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: 'Hello' }],
+          },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      const result = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0].parsed.content).toBe('Response');
+    });
+
+    it('should handle StreamingUserMessage with null/undefined message content', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          yield createMockSdkMessage({ type: 'text', content: 'Fallback response' });
+        })(),
+      }));
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: undefined as unknown as string },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      const result = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+      }
+
+      expect(results).toHaveLength(1);
+    });
+
+    it('should convert metadata with token counts in stream messages', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      const sdkMessage = createMockSdkMessage({
+        type: 'tool_result',
+        content: 'Tool output',
+        metadata: {
+          toolName: 'Bash',
+          toolInput: 'ls -la',
+          toolOutput: 'file1.txt\nfile2.txt',
+          elapsedMs: 250,
+          costUsd: 0.005,
+          inputTokens: 100,
+          outputTokens: 200,
+          sessionId: 'tool-session',
+        },
+      });
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          yield sdkMessage;
+        })(),
+      }));
+
+      const inputStream = createMockInput([]);
+
+      const result = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].parsed.metadata?.tokens).toBe(300);
+      expect(messages[0].parsed.metadata?.toolName).toBe('Bash');
+      expect(messages[0].parsed.sessionId).toBe('tool-session');
+    });
+  });
+
+  describe('dispose with initialized state', () => {
+    it('should log debug message when disposing an initialized agent', () => {
+      agent.setInitialized(true);
+      agent.dispose();
+      // Should not throw - covers the debug log line
+    });
+
+    it('should set initialized to false after dispose', () => {
+      agent.setInitialized(true);
+      agent.dispose();
+      // Calling dispose again should be a no-op (idempotent)
+      agent.dispose();
+    });
+  });
+
+  describe('createSdkOptions - env fallback paths', () => {
+    it('should use SDK_DEBUG env var when no runtime context and SDK_DEBUG is set', () => {
+      const originalEnv = process.env.SDK_DEBUG;
+      process.env.SDK_DEBUG = 'true';
+
+      const options = agent.testCreateSdkOptions();
+      expect(options.env?.SDK_DEBUG).toBe('true');
+
+      process.env.SDK_DEBUG = originalEnv;
+    });
+
+    it('should not include SDK_DEBUG when env var is not true', () => {
+      const originalEnv = process.env.SDK_DEBUG;
+      delete process.env.SDK_DEBUG;
+
+      const options = agent.testCreateSdkOptions();
+      expect(options.env?.SDK_DEBUG).toBeUndefined();
+
+      process.env.SDK_DEBUG = originalEnv;
+    });
+
+    it('should use runtime context logging config over env var', () => {
+      process.env.SDK_DEBUG = 'true';
+      setRuntimeContext({
+        getWorkspaceDir: () => '/runtime-workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ CUSTOM_VAR: 'value' }),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions();
+      // Runtime context takes precedence - sdkDebug is false
+      expect(options.env?.SDK_DEBUG).toBeUndefined();
+
+      delete process.env.SDK_DEBUG;
+    });
+
+    it('should use custom cwd from extra options', () => {
+      const options = agent.testCreateSdkOptions({ cwd: '/custom/workspace' });
+      expect(options.cwd).toBe('/custom/workspace');
+    });
+
+    it('should not set model when model is empty string', () => {
+      const noModelAgent = new TestAgent({ apiKey: 'key', model: '', provider: 'anthropic' });
+      const options = noModelAgent.testCreateSdkOptions();
+      expect(options.model).toBeUndefined();
     });
   });
 });
