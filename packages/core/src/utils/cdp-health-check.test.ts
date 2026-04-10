@@ -9,8 +9,8 @@ import {
   parseCdpEndpoint,
   checkCdpEndpointHealth,
   formatCdpHealthError,
+  type CdpHealthCheckResult,
 } from './cdp-health-check.js';
-import type { CdpHealthCheckResult } from './cdp-health-check.js';
 
 describe('CDP Health Check', () => {
   describe('parseCdpEndpoint', () => {
@@ -64,7 +64,7 @@ describe('CDP Health Check', () => {
     it('should return healthy when endpoint responds OK', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ Browser: 'Chrome/120.0' }),
+        json: () => Promise.resolve({ Browser: 'Chrome/120.0' }),
       }));
 
       const result = await checkCdpEndpointHealth('http://localhost:9222');
@@ -77,7 +77,7 @@ describe('CDP Health Check', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: false,
         status: 503,
-        json: async () => ({}),
+        json: () => Promise.resolve({}),
       }));
 
       const result = await checkCdpEndpointHealth('http://localhost:9222');
@@ -130,7 +130,7 @@ describe('CDP Health Check', () => {
     it('should strip trailing slash from endpoint URL', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ Browser: 'Chrome' }),
+        json: () => Promise.resolve({ Browser: 'Chrome' }),
       }));
 
       await checkCdpEndpointHealth('http://localhost:9222/');
