@@ -402,4 +402,31 @@ ${task.prompt}`;
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
   }
+
+  /**
+   * Trigger a task immediately by task ID.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * This method is called by the ScheduleTriggerWatcher when a file change
+   * event is detected. It finds the task in the active jobs and executes it
+   * immediately, bypassing the cron timer.
+   *
+   * Respects the same rules as cron-triggered execution:
+   * - Cooldown period is checked and enforced
+   * - Blocking mechanism prevents concurrent executions
+   * - Anti-recursion wrapping is applied
+   *
+   * @param taskId - The ID of the task to trigger
+   */
+  async triggerTask(taskId: string): Promise<void> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.debug({ taskId }, 'Cannot trigger task - not found in active jobs');
+      return;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Triggering task via watch event');
+    await this.executeTask(entry.task);
+  }
 }

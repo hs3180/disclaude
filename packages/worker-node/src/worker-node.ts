@@ -30,6 +30,7 @@ import {
   ScheduleManager,
   Scheduler,
   ScheduleFileWatcher,
+  ScheduleTriggerWatcher,
 } from './schedule/index.js';
 import { FileClient } from './file-client/index.js';
 import { WorkerIpcServer, createIpcToWsBridge } from './ipc/index.js';
@@ -166,6 +167,8 @@ export class WorkerNode {
   // Scheduler
   private scheduler?: Scheduler;
   private scheduleFileWatcher?: ScheduleFileWatcher;
+  // Issue #1953: Event-driven schedule trigger watcher
+  private scheduleTriggerWatcher?: ScheduleTriggerWatcher;
 
   constructor(options: WorkerNodeOptions) {
     const { config, dependencies } = options;
@@ -372,24 +375,49 @@ export class WorkerNode {
       onFileAdded: (task: ScheduledTask) => {
         this.deps.logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Also register watch trigger if task has watch config
+        this.scheduleTriggerWatcher?.addWatch(task);
       },
       onFileChanged: (task: ScheduledTask) => {
         this.deps.logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Update watch trigger config when task changes
+        this.scheduleTriggerWatcher?.addWatch(task);
       },
       onFileRemoved: (taskId: string) => {
         this.deps.logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
         this.scheduler?.removeTask(taskId);
+        // Issue #1953: Remove watch trigger when task is removed
+        this.scheduleTriggerWatcher?.removeWatch(taskId);
       },
     });
 
-    // Start scheduler and file watcher
+    // Issue #1953: Initialize trigger watcher for event-driven schedule execution
+    this.scheduleTriggerWatcher = new ScheduleTriggerWatcher({
+      workspaceDir,
+      onTrigger: (taskId: string) => {
+        this.deps.logger.info({ taskId }, 'Watch trigger fired, triggering task');
+        void this.scheduler?.triggerTask(taskId);
+      },
+    });
+
+    // Start scheduler, file watcher, and trigger watcher
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
+
+    // Register watch triggers for all enabled tasks that have watch config
+    const enabledTasks = await scheduleManager.listEnabled();
+    for (const task of enabledTasks) {
+      if (task.watch) {
+        this.scheduleTriggerWatcher.addWatch(task);
+      }
+    }
+    await this.scheduleTriggerWatcher.start();
 
     console.log('✓ Execution capability initialized');
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log(`✓ Trigger watcher started (${this.scheduleTriggerWatcher.getWatchCount()} watches)`);
   }
 
   /**
@@ -811,6 +839,9 @@ export class WorkerNode {
 
     this.deps.logger.info('Shutting down Worker Node...');
     console.log('\nShutting down Worker Node...');
+
+    // Stop trigger watcher (Issue #1953)
+    this.scheduleTriggerWatcher?.stop();
 
     // Stop file watcher
     this.scheduleFileWatcher?.stop();

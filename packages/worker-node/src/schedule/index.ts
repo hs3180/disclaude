@@ -43,3 +43,9 @@ export {
   CooldownManager,
   type CooldownManagerOptions,
 } from '@disclaude/core';
+// ScheduleTriggerWatcher re-exported from core (Issue #1953)
+export {
+  ScheduleTriggerWatcher,
+  type OnTriggerCallback,
+  type ScheduleTriggerWatcherOptions,
+} from '@disclaude/core';
