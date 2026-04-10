@@ -159,17 +159,17 @@ describe('Pilot', () => {
 
   describe('processMessage', () => {
     it('should ignore messages for wrong chatId', () => {
-      pilot.processMessage('oc_wrong', 'hello', 'msg_1');
+      void pilot.processMessage('oc_wrong', 'hello', 'msg_1');
       expect(pilot.hasActiveSession()).toBe(false);
     });
 
     it('should start a session when processing first message', () => {
-      pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(pilot.hasActiveSession()).toBe(true);
     });
 
     it('should push message to channel after session starts', () => {
-      pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(MessageChannel).toHaveBeenCalled();
     });
   });
@@ -237,7 +237,7 @@ describe('Pilot', () => {
 
   describe('session lifecycle', () => {
     it('should allow reset after processMessage', () => {
-      pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(pilot.hasActiveSession()).toBe(true);
 
       pilot.reset();
@@ -245,13 +245,13 @@ describe('Pilot', () => {
     });
 
     it('should allow new session after reset', () => {
-      pilot.processMessage('oc_test_chat', 'first', 'msg_1');
+      void pilot.processMessage('oc_test_chat', 'first', 'msg_1');
       expect(pilot.hasActiveSession()).toBe(true);
 
       pilot.reset();
       expect(pilot.hasActiveSession()).toBe(false);
 
-      pilot.processMessage('oc_test_chat', 'second', 'msg_2');
+      void pilot.processMessage('oc_test_chat', 'second', 'msg_2');
       expect(pilot.hasActiveSession()).toBe(true);
     });
 
@@ -265,7 +265,7 @@ describe('Pilot', () => {
 
   describe('history loading', () => {
     it('should call getChatHistory callback if available during session start', () => {
-      pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(callbacks.getChatHistory).toHaveBeenCalled();
     });
 
@@ -281,7 +281,7 @@ describe('Pilot', () => {
         model: 'model',
         provider: 'anthropic',
       });
-      p.processMessage('oc_test', 'hello', 'msg_1');
+      void p.processMessage('oc_test', 'hello', 'msg_1');
       expect(p.hasActiveSession()).toBe(true);
     });
   });

@@ -4,7 +4,7 @@
  * Part of the PrimaryNode/WorkerNode architecture.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChannelManager } from './channel-manager.js';

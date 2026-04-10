@@ -7,7 +7,7 @@
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { describe, it, expect, vi } from 'vitest';
 import {

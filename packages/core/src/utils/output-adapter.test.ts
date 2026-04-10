@@ -186,9 +186,9 @@ describe('FeishuOutputAdapter', () => {
       });
       // Default interval is 2000ms - verify by sending two messages quickly
       // First message sent
-      adapter2.write('Using Read: test', 'tool_progress');
+      void adapter2.write('Using Read: test', 'tool_progress');
       // Second within 2000ms should be throttled
-      adapter2.write('Using Read: test2', 'tool_progress');
+      void adapter2.write('Using Read: test2', 'tool_progress');
       // We can't easily test timing here, but the constructor should not throw
       expect(adapter2).toBeDefined();
     });

@@ -82,7 +82,7 @@ describe('handleStop', () => {
       chatId: 'test-chat-id',
     };
 
-    handleStop(command, context);
+    void handleStop(command, context);
 
     expect(context.agentPool.reset).not.toHaveBeenCalled();
   });

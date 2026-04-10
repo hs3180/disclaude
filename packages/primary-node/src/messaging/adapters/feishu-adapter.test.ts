@@ -13,7 +13,7 @@
  * - convert() throws for file content type (async upload required)
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import * as fs from 'fs';
 import * as path from 'path';

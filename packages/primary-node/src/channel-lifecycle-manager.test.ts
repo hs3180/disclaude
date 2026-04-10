@@ -5,7 +5,7 @@
  * Issue #1594 Phase 3: Tests config-driven type-based channel creation.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {

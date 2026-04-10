@@ -6,7 +6,7 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatChannel } from './wechat-channel.js';
