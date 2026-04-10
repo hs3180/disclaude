@@ -9,8 +9,7 @@ import {
   RoutedOutputAdapter,
   SimpleUserOutputAdapter,
 } from './routed-output-adapter.js';
-import type { IMessageRouter } from './types.js';
-import { MessageLevel } from './types.js';
+import { MessageLevel, type IMessageRouter } from './types.js';
 
 function createMockRouter(): IMessageRouter {
   return {

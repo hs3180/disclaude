@@ -22,9 +22,8 @@ import {
   getMessageService,
   resetMessageService,
 } from './message-service.js';
-import type { IChannelAdapter, ChannelCapabilities } from './channel-adapter.js';
-import { DEFAULT_CAPABILITIES } from './channel-adapter.js';
-import type { UniversalMessage, SendResult } from '@disclaude/core';
+import { DEFAULT_CAPABILITIES, type IChannelAdapter, type ChannelCapabilities } from './channel-adapter.js';
+import type { UniversalMessage } from '@disclaude/core';
 
 function createMockAdapter(
   name: string,
@@ -78,11 +77,11 @@ describe('MessageService', () => {
       // Test indirectly: unsupported content type should fallback
       const msg: UniversalMessage = {
         chatId: 'oc_test',
-        content: { type: 'file', text: 'file content' },
+        content: { type: 'file', path: 'file content' },
       };
 
       // Should not throw and should try to send
-      expect(service.send(msg)).resolves.toBeDefined();
+      void expect(service.send(msg)).resolves.toBeDefined();
     });
   });
 
@@ -201,7 +200,7 @@ describe('MessageService', () => {
         adapters: [cliAdapter],
       });
 
-      const result = await service.send({
+      await service.send({
         chatId: 'cli_test',
         content: {
           type: 'card',

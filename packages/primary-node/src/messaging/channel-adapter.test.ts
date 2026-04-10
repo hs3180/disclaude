@@ -21,13 +21,14 @@ import {
   DEFAULT_CAPABILITIES,
   FEISHU_CAPABILITIES,
   CLI_CAPABILITIES,
-  REST_CAPABILITIES,
+  REST_CAPABILITIES as _REST_CAPABILITIES,
 } from './channel-adapter.js';
 import type { CardContent } from '@disclaude/core';
 
 describe('cardToText', () => {
   it('should convert card with title and text section', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Test Card',
       sections: [{ type: 'text', content: 'Hello world' }],
     };
@@ -39,6 +40,7 @@ describe('cardToText', () => {
 
   it('should include subtitle when present', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       subtitle: 'A subtitle',
       sections: [],
@@ -50,6 +52,7 @@ describe('cardToText', () => {
 
   it('should handle markdown sections', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       sections: [{ type: 'markdown', content: '**bold** text' }],
     };
@@ -60,6 +63,7 @@ describe('cardToText', () => {
 
   it('should handle divider sections', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       sections: [{ type: 'divider' }],
     };
@@ -70,6 +74,7 @@ describe('cardToText', () => {
 
   it('should handle field sections', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       sections: [{
         type: 'fields',
@@ -87,6 +92,7 @@ describe('cardToText', () => {
 
   it('should handle image sections', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       sections: [{ type: 'image', imageUrl: 'https://example.com/img.png' }],
     };
@@ -97,11 +103,12 @@ describe('cardToText', () => {
 
   it('should handle actions', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Card',
       sections: [],
       actions: [
-        { label: 'Approve', value: 'approve' },
-        { label: 'Reject', value: 'reject' },
+        { type: 'button', label: 'Approve', value: 'approve' },
+        { type: 'button', label: 'Reject', value: 'reject' },
       ],
     };
 
@@ -113,6 +120,7 @@ describe('cardToText', () => {
 
   it('should handle empty card', () => {
     const card: CardContent = {
+      type: 'card',
       title: 'Empty',
       sections: [],
     };

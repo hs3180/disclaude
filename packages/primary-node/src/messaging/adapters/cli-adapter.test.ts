@@ -3,7 +3,7 @@
  * @see Issue #1617 Phase 4
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CliAdapter, createCliAdapter } from './cli-adapter.js';
 
 describe('CliAdapter', () => {

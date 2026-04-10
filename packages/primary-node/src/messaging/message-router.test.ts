@@ -13,14 +13,13 @@
  * @see Issue #1617 Phase 4
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   MessageRouter,
   createDefaultRouteConfig,
   type MessageRouterOptions,
 } from './message-router.js';
-import { MessageLevel, DEFAULT_USER_LEVELS } from './types.js';
-import type { IMessageSender, MessageRouteConfig, RoutedMessage } from './types.js';
+import { MessageLevel, DEFAULT_USER_LEVELS, type IMessageSender, type MessageRouteConfig } from './types.js';
 
 function createMockSender(): IMessageSender {
   return {
