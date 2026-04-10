@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { checkMacAutoSleep } from './utils/mac-sleep-check.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -211,6 +212,12 @@ async function main(): Promise<void> {
   // Config-driven: cli.ts no longer hard-codes channel type checks.
   for (const { type, config } of channelEntries) {
     await lifecycleManager.createAndWireByType(type, config);
+  }
+
+  // Check macOS auto-sleep when Feishu channel is configured (Issue #2263)
+  // System sleep causes WebSocket disconnections that are non-obvious to users
+  if (channelEntries.some((e) => e.type === 'feishu')) {
+    checkMacAutoSleep();
   }
 
   // Handle graceful shutdown
