@@ -225,12 +225,13 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
       // Should use message.create with post type (no threadId)
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
-      const createCall = mocks.createMock.mock.calls[0][0];
+      const [[createCall]] = mocks.createMock.mock.calls;
       expect(createCall.data.msg_type).toBe('post');
-      // Content should be JSON with Feishu post structure (zh_cn with title and content)
+      // Content should be JSON with Feishu post structure
       const content = JSON.parse(createCall.data.content);
-      expect(content).toHaveProperty('zh_cn');
-      expect(content.zh_cn).toHaveProperty('content');
+      expect(content.zh_cn.title).toBe('');
+      expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_user123' });
+      expect(content.zh_cn.content[0][1]).toEqual({ tag: 'text', text: ' Hello @Alice' });
       expect(mocks.replyMock).not.toHaveBeenCalled();
       expect(result).toBe('new_msg_001');
     });
@@ -250,13 +251,14 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
       // Should use message.reply with post type
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
-      const replyCall = mocks.replyMock.mock.calls[0][0];
+      const [[replyCall]] = mocks.replyMock.mock.calls;
       expect(replyCall.path.message_id).toBe('root_msg_999');
       expect(replyCall.data.msg_type).toBe('post');
-      // Content should be JSON with Feishu post structure (zh_cn with title and content)
+      // Content should be JSON with Feishu post structure
       const content = JSON.parse(replyCall.data.content);
-      expect(content).toHaveProperty('zh_cn');
-      expect(content.zh_cn).toHaveProperty('content');
+      expect(content.zh_cn.title).toBe('');
+      expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_user456' });
+      expect(content.zh_cn.content[0][1]).toEqual({ tag: 'text', text: ' Reply @Bob' });
       expect(mocks.createMock).not.toHaveBeenCalled();
       expect(result).toBe('reply_msg_001');
     });
@@ -278,8 +280,37 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       // Reply attempted then fell back to create
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
-      const createCall = mocks.createMock.mock.calls[0][0];
+      const [[createCall]] = mocks.createMock.mock.calls;
       expect(createCall.data.msg_type).toBe('post');
+      const content = JSON.parse(createCall.data.content);
+      expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_user789' });
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('should handle multiple mentions in a single post message', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const mentions = [
+        { openId: 'ou_user_a', name: 'Alice' },
+        { openId: 'ou_user_b', name: 'Bob' },
+      ];
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Hello team',
+        mentions,
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[createCall]] = mocks.createMock.mock.calls;
+      expect(createCall.data.msg_type).toBe('post');
+      const content = JSON.parse(createCall.data.content);
+      // Both mentions should be at tags before the text element
+      expect(content.zh_cn.content[0][0]).toEqual({ tag: 'at', user_id: 'ou_user_a' });
+      expect(content.zh_cn.content[0][1]).toEqual({ tag: 'at', user_id: 'ou_user_b' });
+      expect(content.zh_cn.content[0][2]).toEqual({ tag: 'text', text: ' Hello team' });
+      expect(mocks.replyMock).not.toHaveBeenCalled();
       expect(result).toBe('new_msg_001');
     });
   });
