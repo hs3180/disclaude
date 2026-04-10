@@ -101,7 +101,7 @@ export class WeChatAuth {
     try {
       // Step 1: Get initial QR code
       let qrData = await this.client.getBotQrCode();
-      this.logQrCode(qrData.qrUrl);
+      await this.logQrCode(qrData.qrUrl);
 
       // Step 2: Poll login status
       while (!signal.aborted && Date.now() < deadline) {
@@ -131,7 +131,7 @@ export class WeChatAuth {
               logger.info(`QR expired, refreshing (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})`);
 
               qrData = await this.client.getBotQrCode();
-              this.logQrCode(qrData.qrUrl);
+              await this.logQrCode(qrData.qrUrl);
               scannedPrinted = false;
               break;
             }
@@ -202,15 +202,15 @@ export class WeChatAuth {
 
   /**
    * Render QR code as PNG image and open it.
+   * Awaits file creation before attempting to open — avoids race condition
+   * where `open` runs before the async QR image write completes.
    */
-  private logQrCode(qrUrl: string): void {
+  private async logQrCode(qrUrl: string): Promise<void> {
     try {
-      void QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
+      await QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
         width: 400,
         margin: 2,
         color: { dark: '#000000', light: '#ffffff' },
-      }).catch(() => {
-        // Ignore QR image generation errors — fallback to URL below
       });
       execSync(`open "${QR_IMAGE_PATH}"`);
       process.stdout.write(`\nQR code image: ${QR_IMAGE_PATH}\n`);

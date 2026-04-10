@@ -29,6 +29,13 @@ function createFsError(message: string, code: string): NodeJS.ErrnoException {
   return err;
 }
 
+/** Minimal Dirent-like type for readdirSync with withFileTypes */
+type MockDirent = {
+  name: string;
+  isDirectory: () => boolean;
+  isFile: () => boolean;
+};
+
 const mockFs = {
   existsSync: vi.fn((p: string): boolean => vfs.has(norm(p))),
 
@@ -70,7 +77,7 @@ const mockFs = {
     return val as string;
   }),
 
-  readdirSync: vi.fn((p: string, opts?: { withFileTypes?: boolean }): string[] | Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }> => {
+  readdirSync: vi.fn((p: string, opts?: { withFileTypes?: boolean }): string[] | MockDirent[] => {
     const np = norm(p);
     if (!vfs.has(np) || vfs.get(np) !== null) {
       throw createFsError(`ENOENT: no such file or directory, scandir '${p}'`, 'ENOENT');
