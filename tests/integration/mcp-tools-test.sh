@@ -55,7 +55,7 @@ test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
     local chat_id="test-mcp-send-text-$$"
-    assert_sync_chat_ok "请尝试使用 send_text 工具发送消息 'Hello from MCP test' 到当前聊天。如果工具不可用，请告诉我原因。" "$chat_id" || return 1
+    assert_sync_chat_ok "请使用 send_text 工具发送消息 'Hello from MCP test'。只需调用一次工具并直接报告结果即可，不要进行任何诊断、排查或重试操作。" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送"; then
         log_pass "Agent acknowledged tool usage"
@@ -69,20 +69,12 @@ test_send_file_tool() {
 
     create_test_file
 
-    # Issue #1634: Use extended timeout — Agent tool failure handling can exceed 120s
-    # when it enters diagnostic mode. The prompt is optimized to prevent this, but
-    # the extra buffer ensures the test completes reliably in CI.
-    local original_timeout="$TIMEOUT"
-    TIMEOUT=180
-
     local chat_id="test-mcp-send-file-$$"
     assert_sync_chat_ok "请使用 send_file 工具发送文件 $TEST_FILE_PATH。只需调用一次工具并直接报告结果即可，不要进行任何诊断、排查或重试操作。" "$chat_id" || {
-        TIMEOUT="$original_timeout"
         cleanup_test_file
         return 1
     }
 
-    TIMEOUT="$original_timeout"
     cleanup_test_file
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
