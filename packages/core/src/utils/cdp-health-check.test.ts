@@ -4,7 +4,7 @@
  * Validates CDP endpoint parsing, health checking, and error formatting.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   parseCdpEndpoint,
   checkCdpEndpointHealth,
@@ -49,15 +49,9 @@ describe('CDP Health Check', () => {
 
   describe('checkCdpEndpointHealth', () => {
     const originalFetch = globalThis.fetch;
-    const originalSetTimeout = globalThis.setTimeout;
-
-    beforeEach(() => {
-      vi.stubGlobal('setTimeout', vi.fn((cb: () => void) => cb()));
-    });
 
     afterEach(() => {
       globalThis.fetch = originalFetch;
-      globalThis.setTimeout = originalSetTimeout;
       vi.restoreAllMocks();
     });
 
@@ -107,14 +101,38 @@ describe('CDP Health Check', () => {
       expect(result.error).toContain('DNS');
     });
 
+    // P0 fix (#2243): Use vi.useFakeTimers + signal-aware fetch mock to test the
+    // real setTimeout(5000) → AbortController.abort() → AbortError chain.
+    // Previously, a global beforeEach mock made setTimeout synchronous, bypassing
+    // the abort mechanism entirely — the test only passed because the mock reject
+    // value happened to match, not because the timeout logic was verified.
     it('should return unhealthy on timeout', async () => {
-      const abortError = new Error('The operation was aborted');
-      abortError.name = 'AbortError';
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+      vi.useFakeTimers();
 
-      const result = await checkCdpEndpointHealth('http://localhost:9222');
-      expect(result.healthy).toBe(false);
-      expect(result.error).toContain('timeout');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          });
+        }),
+      );
+
+      try {
+        const resultPromise = checkCdpEndpointHealth('http://localhost:9222');
+        // Advance past the 5s timeout threshold to trigger controller.abort()
+        await vi.advanceTimersByTimeAsync(5100);
+        const result = await resultPromise;
+
+        expect(result.healthy).toBe(false);
+        expect(result.error).toContain('timeout');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should return unhealthy on generic error', async () => {
