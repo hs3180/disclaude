@@ -526,6 +526,32 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(result).toBe('reply_msg_001');
     });
 
+    it('should send mp4 video as stream file_type (not mp4)', async () => {
+      // Regression test for #2265: mp4 files must be sent as 'stream' because
+      // Feishu requires msg_type:'media' + cover image for video playback.
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_video_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'file',
+        filePath: testMp4Path,
+        threadId: 'root_msg_video',
+      });
+
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+
+      // Verify file_type is 'stream', not 'mp4'
+      const callData = mocks.fileCreateMock.mock.calls[0][0].data;
+      expect(callData.file_type).toBe('stream');
+      expect(result).toBe('reply_msg_001');
+    });
+
     it('should fall back to create when reply fails during file send', async () => {
       const { client, mocks } = createMockClient();
       mocks.replyMock.mockRejectedValueOnce(new Error('Thread expired'));

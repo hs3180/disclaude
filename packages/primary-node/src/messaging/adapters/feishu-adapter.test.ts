@@ -320,6 +320,31 @@ describe('FeishuAdapter — Issue #1619', () => {
       expect(callData.file_type).toBe('xls');
     });
 
+    it('should upload mp4 video as stream file_type (not mp4)', async () => {
+      // Regression test for #2265: mp4 files must be sent as 'stream' because
+      // Feishu requires msg_type:'media' + cover image for video playback.
+      // Using 'stream' allows mp4 to be sent as a regular file attachment.
+      const { client, mocks } = createMockClient();
+      const adapter = createTestAdapter(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_adapter_video_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testMp4Path },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+
+      // Verify file_type is 'stream', not 'mp4'
+      const callData = mocks.fileCreateMock.mock.calls[0][0].data;
+      expect(callData.file_type).toBe('stream');
+    });
+
     it('should return error when image exceeds 10MB size limit', async () => {
       const { client, mocks } = createMockClient();
       const adapter = createTestAdapter(client);

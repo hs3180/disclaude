@@ -491,9 +491,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           }
 
           // Map file extension to Feishu file_type
-          const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+          const extToType: Record<string, 'opus' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
             '.opus': 'opus',
-            '.mp4': 'mp4',
+            // Note: .mp4 is intentionally mapped to 'stream' because Feishu requires
+            // video files to be sent with msg_type:'media' + cover image. Using 'stream'
+            // allows mp4 files to be sent as regular file attachments.
+            // See: https://github.com/hs3180/disclaude/issues/2265
+            '.mp4': 'stream',
             '.pdf': 'pdf',
             '.doc': 'doc', '.docx': 'doc',
             '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
