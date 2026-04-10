@@ -3,7 +3,7 @@
  *
  * Verifies that:
  * - Recognized commands are dispatched to their handlers
- * - Unrecognized commands (including skill-only commands like /feedback) return
+ * - Unrecognized commands (e.g. skill names like /site-miner) return
  *   { success: false } with no message, allowing fallthrough to agent/skill processing
  */
 
@@ -73,13 +73,13 @@ describe('createControlHandler', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should return failure with no message for unrecognized skill-only command "feedback"', async () => {
+  it('should return failure with no message for unrecognized skill-only command "site-miner"', async () => {
     const context = createMockContext();
     const handler = createControlHandler(context);
 
-    // Simulate /feedback which is a skill, not a system command
+    // site-miner is a skill, not a system command — should fall through to skill processing
     const command: ControlCommand = {
-      type: 'feedback' as ControlCommandType,
+      type: 'site-miner' as ControlCommandType,
       chatId: 'test-chat',
     };
 
@@ -90,21 +90,6 @@ describe('createControlHandler', () => {
     expect(result.success).toBe(false);
     expect(result.message).toBeUndefined();
     expect(result.error).toContain('Unknown command');
-  });
-
-  it('should return failure with no message for unrecognized command "site-miner"', async () => {
-    const context = createMockContext();
-    const handler = createControlHandler(context);
-
-    const command: ControlCommand = {
-      type: 'site-miner' as ControlCommandType,
-      chatId: 'test-chat',
-    };
-
-    const result = await handler(command);
-
-    expect(result.success).toBe(false);
-    expect(result.message).toBeUndefined();
   });
 
   it('should return failure for completely unknown command', async () => {
@@ -168,7 +153,6 @@ describe('getHandler', () => {
     const { getHandler } = await import('./commands/index.js');
 
     // Skill-only commands should not have registered handlers
-    expect(getHandler('feedback' as ControlCommandType)).toBeUndefined();
     expect(getHandler('site-miner' as ControlCommandType)).toBeUndefined();
     expect(getHandler('skill-creator' as ControlCommandType)).toBeUndefined();
     // switch-node is a valid type but handler not yet implemented
