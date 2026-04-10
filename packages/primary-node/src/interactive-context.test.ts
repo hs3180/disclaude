@@ -542,4 +542,138 @@ describe('InteractiveContextStore', () => {
       expect(store.getActionPrompts('msg-2')).toBeUndefined();
     });
   });
+
+  describe('actionValue naming conflict (#2247 Problem 4)', () => {
+    it('should resolve actionValue to the correct card when cards share action names', () => {
+      // Card A: Deploy confirmation
+      store.register('card-deploy', 'chat-ops', {
+        confirm: '[用户操作] 确认部署到生产环境',
+        cancel: '[用户操作] 取消部署',
+      });
+      // Card B: Delete confirmation (same chat, same action names)
+      store.register('card-delete', 'chat-ops', {
+        confirm: '[用户操作] 确认删除文件',
+        cancel: '[用户操作] 取消删除',
+      });
+
+      // When card-deploy's confirm button is clicked (exact messageId match)
+      const deployPrompt = store.generatePrompt('card-deploy', 'chat-ops', 'confirm', '确认');
+      expect(deployPrompt).toBe('[用户操作] 确认部署到生产环境');
+
+      // When card-delete's confirm button is clicked (exact messageId match)
+      const deletePrompt = store.generatePrompt('card-delete', 'chat-ops', 'confirm', '确认');
+      expect(deletePrompt).toBe('[用户操作] 确认删除文件');
+    });
+
+    it('should find correct card via inverted index for older card with conflicting actionValue', () => {
+      // Card A with unique action
+      store.register('card-a', 'chat-1', {
+        confirm: 'Card A confirm prompt',
+        special_a: 'Card A special action',
+      });
+      // Card B with overlapping 'confirm' action
+      store.register('card-b', 'chat-1', {
+        confirm: 'Card B confirm prompt',
+        special_b: 'Card B special action',
+      });
+
+      // Card A's unique action should still be findable via inverted index
+      expect(store.findActionPromptsByChatId('chat-1', 'special_a')).toEqual({
+        confirm: 'Card A confirm prompt',
+        special_a: 'Card A special action',
+      });
+
+      // Card B's unique action should also be findable
+      expect(store.findActionPromptsByChatId('chat-1', 'special_b')).toEqual({
+        confirm: 'Card B confirm prompt',
+        special_b: 'Card B special action',
+      });
+
+      // 'confirm' should resolve to the newer card (Card B) when searching
+      expect(store.findActionPromptsByChatId('chat-1', 'confirm')).toEqual({
+        confirm: 'Card B confirm prompt',
+        special_b: 'Card B special action',
+      });
+    });
+
+    it('should fall back to older card after unregistering newer card with same actionValue', () => {
+      store.register('card-old', 'chat-1', {
+        confirm: 'Old confirm prompt',
+      });
+      store.register('card-new', 'chat-1', {
+        confirm: 'New confirm prompt',
+      });
+
+      // Before unregister: confirm resolves to card-new
+      expect(store.findActionPromptsByChatId('chat-1', 'confirm')).toEqual({
+        confirm: 'New confirm prompt',
+      });
+
+      // Unregister the newer card
+      store.unregister('card-new');
+
+      // Now confirm should fall back to card-old
+      expect(store.findActionPromptsByChatId('chat-1', 'confirm')).toEqual({
+        confirm: 'Old confirm prompt',
+      });
+    });
+  });
+
+  describe('template injection prevention (#2247 Problem 5)', () => {
+    it('should escape template placeholders in formData values', () => {
+      store.register('msg-form', 'chat-1', {
+        submit: 'Feedback: {{form.comment}}, Rating: {{form.rating}}',
+      });
+
+      // User tries to inject a template placeholder via form input
+      const prompt = store.generatePrompt('msg-form', 'chat-1', 'submit', undefined, undefined, {
+        comment: '{{form.rating}}',
+        rating: '5',
+      });
+
+      // The injected {{form.rating}} should be escaped (opening {{), not double-replaced
+      expect(prompt).toBe('Feedback: \\{\\{form.rating}}, Rating: 5');
+    });
+
+    it('should escape {{actionText}} injection via formData', () => {
+      store.register('msg-form', 'chat-1', {
+        submit: 'Name: {{form.name}}, Action: {{actionText}}',
+      });
+
+      const prompt = store.generatePrompt('msg-form', 'chat-1', 'submit', 'clicked', undefined, {
+        name: '{{actionText}}',
+      });
+
+      // The {{actionText}} from form.name should be escaped (opening {{ only)
+      // The real {{actionText}} placeholder should still work
+      expect(prompt).toBe('Name: \\{\\{actionText}}, Action: clicked');
+    });
+
+    it('should not affect normal formData replacement', () => {
+      store.register('msg-form', 'chat-1', {
+        submit: 'Name: {{form.name}}, Age: {{form.age}}',
+      });
+
+      const prompt = store.generatePrompt('msg-form', 'chat-1', 'submit', undefined, undefined, {
+        name: 'Alice',
+        age: '30',
+      });
+
+      expect(prompt).toBe('Name: Alice, Age: 30');
+    });
+
+    it('should handle multiple levels of injection attempts', () => {
+      store.register('msg-form', 'chat-1', {
+        submit: 'Result: {{form.a}} + {{form.b}}',
+      });
+
+      const prompt = store.generatePrompt('msg-form', 'chat-1', 'submit', undefined, undefined, {
+        a: '{{form.b}}',
+        b: '{{form.a}}',
+      });
+
+      // Both should be escaped (opening {{), no circular replacement
+      expect(prompt).toBe('Result: \\{\\{form.b}} + \\{\\{form.a}}');
+    });
+  });
 });

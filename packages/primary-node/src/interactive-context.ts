@@ -41,6 +41,18 @@ export interface InteractiveContext {
 const DEFAULT_MAX_ENTRIES_PER_CHAT = 10;
 
 /**
+ * Escape template placeholders in a string to prevent injection during
+ * prompt generation. Replaces `{{` with a safe alternative so that
+ * user-supplied values cannot introduce new template placeholders (#2247).
+ *
+ * @param value - The string to escape
+ * @returns The escaped string with `{{` replaced by `\{\{`
+ */
+function escapeTemplatePlaceholders(value: string): string {
+  return value.replace(/\{\{/g, '\\{\\{');
+}
+
+/**
  * InteractiveContextStore - Manages interactive message contexts.
  *
  * Provides methods for registering, looking up, and cleaning up
@@ -57,6 +69,9 @@ const DEFAULT_MAX_ENTRIES_PER_CHAT = 10;
  *
  * An inverted index (actionValueIndex) provides O(1) lookup of actionValue
  * to messageId within a chat, optimizing the cross-card search path.
+ *
+ * The inverted index stores arrays of messageIds per actionValue to correctly
+ * handle naming conflicts when multiple cards share the same actionValue (#2247).
  */
 export class InteractiveContextStore {
   private readonly contexts = new Map<string, InteractiveContext>();
@@ -69,11 +84,12 @@ export class InteractiveContextStore {
   private readonly chatIdIndex = new Map<string, string[]>();
 
   /**
-   * Inverted index: chatId → (actionValue → messageId).
+   * Inverted index: chatId → (actionValue → messageId[]).
    * Enables O(1) lookup for findActionPromptsByChatId() instead of O(n×m).
    * Updated on register/unregister/cleanupExpired/clear.
+   * Stores arrays to handle actionValue naming conflicts across cards (#2247).
    */
-  private readonly actionValueIndex = new Map<string, Map<string, string>>();
+  private readonly actionValueIndex = new Map<string, Map<string, string[]>>();
 
   /** Maximum age for contexts before cleanup (default: 24 hours) */
   private readonly maxAge: number;
@@ -124,14 +140,23 @@ export class InteractiveContextStore {
 
     this.chatIdIndex.set(chatId, filtered);
 
-    // Update inverted index: chatId → actionValue → messageId
+    // Update inverted index: chatId → actionValue → messageId[]
+    // Append rather than overwrite to preserve references from older cards (#2247)
     let avMap = this.actionValueIndex.get(chatId);
     if (!avMap) {
       avMap = new Map();
       this.actionValueIndex.set(chatId, avMap);
     }
     for (const actionValue of Object.keys(actionPrompts)) {
-      avMap.set(actionValue, messageId);
+      const existing = avMap.get(actionValue);
+      if (existing) {
+        // Remove previous entry for this messageId if it exists (re-registration)
+        const filtered = existing.filter((id) => id !== messageId);
+        filtered.push(messageId);
+        avMap.set(actionValue, filtered);
+      } else {
+        avMap.set(actionValue, [messageId]);
+      }
     }
 
     logger.debug(
@@ -148,10 +173,14 @@ export class InteractiveContextStore {
     if (!avMap) { return; }
 
     for (const actionValue of Object.keys(actionPrompts)) {
-      // Only remove if the entry still points to this messageId
-      // (it may have been overwritten by a newer registration)
-      if (avMap.get(actionValue) === messageId) {
-        avMap.delete(actionValue);
+      const entries = avMap.get(actionValue);
+      if (entries) {
+        const filtered = entries.filter((id) => id !== messageId);
+        if (filtered.length === 0) {
+          avMap.delete(actionValue);
+        } else {
+          avMap.set(actionValue, filtered);
+        }
       }
     }
 
@@ -216,31 +245,37 @@ export class InteractiveContextStore {
     // Fast path: use inverted index for O(1) lookup
     const avMap = this.actionValueIndex.get(chatId);
     if (avMap) {
-      const messageId = avMap.get(actionValue);
-      if (messageId) {
-        const context = this.contexts.get(messageId);
-        if (context) {
-          return context.actionPrompts;
+      const messageIds = avMap.get(actionValue);
+      if (messageIds && messageIds.length > 0) {
+        // Search from newest (last) to oldest to find the most recent valid context
+        for (let i = messageIds.length - 1; i >= 0; i--) {
+          const context = this.contexts.get(messageIds[i]);
+          if (context) {
+            return context.actionPrompts;
+          }
         }
-        // Stale entry — inverted index points to a deleted/expired context.
-        // Clean up and fall through to linear scan.
+        // All entries stale — clean up and fall through to linear scan
         avMap.delete(actionValue);
       }
     }
 
     // Slow path: linear scan through chatIdIndex (fallback for stale entries)
-    const messageIds = this.chatIdIndex.get(chatId);
-    if (!messageIds || messageIds.length === 0) {
+    const chatMessageIds = this.chatIdIndex.get(chatId);
+    if (!chatMessageIds || chatMessageIds.length === 0) {
       return undefined;
     }
 
     // Search from newest to oldest
-    for (let i = messageIds.length - 1; i >= 0; i--) {
-      const context = this.contexts.get(messageIds[i]);
+    for (let i = chatMessageIds.length - 1; i >= 0; i--) {
+      const context = this.contexts.get(chatMessageIds[i]);
       if (context && context.actionPrompts[actionValue]) {
         // Repair inverted index while we're at it
         if (avMap) {
-          avMap.set(actionValue, messageIds[i]);
+          const existing = avMap.get(actionValue) || [];
+          if (!existing.includes(chatMessageIds[i])) {
+            existing.push(chatMessageIds[i]);
+            avMap.set(actionValue, existing);
+          }
         }
         return context.actionPrompts;
       }
@@ -318,7 +353,8 @@ export class InteractiveContextStore {
     if (formData) {
       for (const [key, value] of Object.entries(formData)) {
         const placeholder = new RegExp(`\\{\\{form\\.${key}\\}\\}`, 'g');
-        prompt = prompt.replace(placeholder, String(value));
+        // Escape template placeholders in formData values to prevent injection (#2247)
+        prompt = prompt.replace(placeholder, escapeTemplatePlaceholders(String(value)));
       }
     }
 
@@ -386,9 +422,12 @@ export class InteractiveContextStore {
           // Clean up inverted index for expired entries
           const avMap = this.actionValueIndex.get(chatId);
           if (avMap) {
-            for (const [actionValue, msgId] of avMap) {
-              if (expiredIds.includes(msgId)) {
+            for (const [actionValue, msgIds] of avMap) {
+              const filtered = msgIds.filter((id) => !expiredIds.includes(id));
+              if (filtered.length === 0) {
                 avMap.delete(actionValue);
+              } else {
+                avMap.set(actionValue, filtered);
               }
             }
             if (avMap.size === 0) {
