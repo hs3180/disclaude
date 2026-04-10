@@ -5,7 +5,8 @@
  * and availability checking logic in the factory module.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { IAgentSDKProvider, ProviderInfo } from './interface.js';
+import type { IAgentSDKProvider } from './interface.js';
+import type { ProviderInfo } from './types.js';
 
 // Mock functions defined at module scope (available for vi.doMock closures)
 const mockSetupSkills = vi.fn().mockResolvedValue({ success: true });
