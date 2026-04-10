@@ -57,6 +57,7 @@
  * @see https://github.com/hs3180/disclaude/issues/1666
  */
 
+import dns from 'dns/promises';
 import { EventEmitter } from 'events';
 import { WS_HEALTH, createLogger } from '@disclaude/core';
 import * as lark from '@larksuiteoapi/node-sdk';
@@ -121,6 +122,17 @@ export interface WsConnectionManagerConfig {
   reconnectMaxDelayMs?: number;
   /** Override reconnect max attempts (-1 = infinite) */
   reconnectMaxAttempts?: number;
+  /**
+   * DNS pre-check host for reconnect attempts (Issue #2259).
+   *
+   * Before each reconnect attempt, the manager resolves this hostname to verify
+   * that the network is available.  This prevents futile WebSocket connection
+   * attempts during macOS DarkWake or similar transient network-outage windows.
+   *
+   * Set to empty string (`''`) to disable the DNS pre-check.
+   * @default 'open.feishu.cn'
+   */
+  dnsCheckHost?: string;
 }
 
 /**
@@ -230,6 +242,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private readonly reconnectMaxDelayMs: number;
   private readonly reconnectMaxAttempts: number;
 
+  // DNS pre-check (Issue #2259)
+  private readonly dnsCheckHost: string;
+
   constructor(config: WsConnectionManagerConfig) {
     super();
     this.config = config;
@@ -248,6 +263,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       ?? WS_HEALTH.RECONNECT.MAX_DELAY_MS;
     this.reconnectMaxAttempts = config.reconnectMaxAttempts
       ?? WS_HEALTH.RECONNECT.MAX_ATTEMPTS;
+
+    // DNS pre-check: enabled by default for 'open.feishu.cn'
+    // Set to '' in tests or config to disable
+    this.dnsCheckHost = config.dnsCheckHost ?? 'open.feishu.cn';
 
     logger.info(
       {
@@ -399,10 +418,18 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   /**
    * Force-close the current WSClient.
+   *
+   * Calls `removeAllListeners()` before closing to prevent event listener
+   * accumulation across reconnect cycles (Issue #2259 — MaxListenersExceededWarning).
    */
   private closeClient(): void {
     if (this.wsClient) {
       try {
+        // Prevent listener accumulation: old WSClient instances may hold
+        // registered event listeners that pile up across reconnect cycles.
+        if (typeof this.wsClient.removeAllListeners === 'function') {
+          this.wsClient.removeAllListeners();
+        }
         this.wsClient.close({ force: true });
       } catch (error) {
         logger.debug({ err: error }, 'Error while closing WSClient');
@@ -536,6 +563,12 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   /**
    * Perform a single reconnect attempt.
+   *
+   * Includes a configurable DNS pre-check (Issue #2259): on macOS, after waking
+   * from sleep, DNS resolution may briefly fail.  When `dnsCheckHost` is set, we
+   * probe that hostname before trying the expensive WSClient startup; if DNS is
+   * not ready we skip this round and let the normal back-off schedule the next
+   * attempt.
    */
   private async performReconnectAttempt(): Promise<void> {
     this.reconnectAttempt++;
@@ -544,6 +577,20 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       logger.error('No event dispatcher available for reconnect');
       this.isReconnecting = false;
       return;
+    }
+
+    // DNS pre-check: skip reconnect when DNS is not yet available
+    // (e.g. macOS DarkWake after sleep — Issue #2259)
+    if (this.dnsCheckHost) {
+      const dnsReady = await this.checkDns(this.dnsCheckHost);
+      if (!dnsReady) {
+        logger.warn(
+          { attempt: this.reconnectAttempt, host: this.dnsCheckHost },
+          'DNS pre-check failed — network not ready, skipping reconnect attempt',
+        );
+        this.scheduleReconnectAttempt();
+        return;
+      }
     }
 
     const success = await this.connectFresh();
@@ -558,6 +605,23 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         'Reconnect attempt failed, scheduling next',
       );
       this.scheduleReconnectAttempt();
+    }
+  }
+
+  /**
+   * Check whether DNS resolution works for the given host.
+   *
+   * Protected (instead of private) so tests can spy on or override it via
+   * the prototype without module-level mocking of `dns/promises`.
+   *
+   * @returns `true` if resolution succeeded, `false` otherwise
+   */
+  protected async checkDns(host: string): Promise<boolean> {
+    try {
+      await dns.resolve(host);
+      return true;
+    } catch {
+      return false;
     }
   }
 
