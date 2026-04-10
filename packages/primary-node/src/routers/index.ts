@@ -9,4 +9,4 @@ export type {
   CardActionMessage,
 } from '@disclaude/core';
 
-export { CardActionRouter, type CardActionRouterConfig } from './card-action-router.js';
+export { CardActionRouter, type CardActionRouterConfig, type ChatContextResult } from './card-action-router.js';
