@@ -189,6 +189,13 @@ export {
   type IPrimaryNodeForSetup,
 } from './channel-lifecycle-manager.js';
 
+// Interactive context store (Issue #1626, #1572)
+export {
+  InteractiveContextStore,
+  type ActionPromptMap,
+  type InteractiveContext,
+} from './interactive-context.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
