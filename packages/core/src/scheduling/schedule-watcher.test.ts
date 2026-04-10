@@ -607,10 +607,11 @@ describe('ScheduleFileWatcher', () => {
         onFileChanged,
         onFileRemoved,
       });
-      w.stop();
       // The default debounce is 100ms, constructor doesn't expose it directly
-      // but we verify it's constructed successfully
+      // but we verify it's constructed successfully and isRunning is false
       expect(w).toBeDefined();
+      expect(w.isRunning()).toBe(false);
+      w.stop();
     });
   });
 
@@ -688,8 +689,8 @@ describe('ScheduleFileWatcher', () => {
       await watcher.start();
 
       // Trigger a file event to create a debounce timer
-      const callback = mockFsWatch.mock.calls[0][2];
-      callback('rename', 'test.md');
+      const [[,,debounceCallback]] = mockFsWatch.mock.calls;
+      debounceCallback('rename', 'test.md');
 
       // Stop should clear timers
       watcher.stop();
@@ -703,24 +704,25 @@ describe('ScheduleFileWatcher', () => {
     beforeEach(async () => {
       createWatcher(10);
       await watcher.start();
-      eventCallback = mockFsWatch.mock.calls[0][2];
+      const [[,,cb]] = mockFsWatch.mock.calls;
+      eventCallback = cb;
     });
 
-    it('should ignore events without filename', async () => {
+    it('should ignore events without filename', () => {
       eventCallback('change', null);
       vi.advanceTimersByTime(20);
 
       expect(onFileChanged).not.toHaveBeenCalled();
     });
 
-    it('should ignore non-.md files', async () => {
+    it('should ignore non-.md files', () => {
       eventCallback('change', 'notes.txt');
       vi.advanceTimersByTime(20);
 
       expect(onFileChanged).not.toHaveBeenCalled();
     });
 
-    it('should debounce rapid file events', async () => {
+    it('should debounce rapid file events', () => {
       eventCallback('change', 'test.md');
       eventCallback('change', 'test.md');
       eventCallback('change', 'test.md');
