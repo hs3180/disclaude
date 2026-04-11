@@ -23,7 +23,8 @@ function createMockContext(): ControlHandlerContext {
       nodeId: 'test-node',
       getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
-      clearDebugGroup: vi.fn(),
+      setDebugGroup: vi.fn(),
+      clearDebugGroup: vi.fn().mockReturnValue(null),
     },
   };
 }
@@ -164,7 +165,7 @@ describe('getHandler', () => {
 
     const registeredTypes: ControlCommandType[] = [
       'help', 'status', 'reset', 'restart', 'stop',
-      'list-nodes', 'show-debug', 'clear-debug', 'passive',
+      'list-nodes', 'debug', 'passive',
     ];
 
     for (const type of registeredTypes) {

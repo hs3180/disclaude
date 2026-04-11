@@ -22,8 +22,7 @@ export const handleHelp: CommandHandler = (
       '| `/restart` | 重启 Agent 实例 | `/restart` |',
       '| `/passive` | 切换被动模式 | `/passive on\\|off` |',
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
-      '| `/show-debug` | 显示 Debug 组信息 | `/show-debug` |',
-      '| `/clear-debug` | 清除 Debug 组 | `/clear-debug` |',
+      '| `/debug` | 设置/取消 Debug 群 | `/debug` |',
     ].join('\n'),
   };
 };

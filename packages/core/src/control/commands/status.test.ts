@@ -15,7 +15,8 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
       nodeId: 'test-node-id',
       getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
-      clearDebugGroup: vi.fn(),
+      setDebugGroup: vi.fn(),
+      clearDebugGroup: vi.fn().mockReturnValue(null),
     },
     ...overrides,
   };
@@ -50,7 +51,8 @@ describe('handleStatus', () => {
         nodeId: 'test-node-id',
         getExecNodes: vi.fn().mockReturnValue(nodes),
         getDebugGroup: vi.fn().mockReturnValue(null),
-        clearDebugGroup: vi.fn(),
+        setDebugGroup: vi.fn(),
+        clearDebugGroup: vi.fn().mockReturnValue(null),
       },
     });
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
