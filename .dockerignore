@@ -62,8 +62,8 @@ logs/
 # Task records
 tasks/
 
-# Workspace (mounted as volume)
-workspace/*
+# Workspace (mounted as volume - never needed in build)
+workspace/
 
 # Build output (will be generated in container)
 dist/

@@ -18,6 +18,9 @@
 FROM docker.m.daocloud.io/library/node:22-alpine AS builder
 WORKDIR /app
 
+# Use USTC mirror for faster apk downloads
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+
 # Install build dependencies
 RUN apk add --no-cache python3 make g++
 
@@ -29,8 +32,9 @@ COPY packages ./packages
 RUN npm config set registry https://registry.npmmirror.com && \
     npm install
 
-# Copy source code
-COPY . .
+# Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
+COPY skills ./skills
+COPY ecosystem.primary.config.json ./ecosystem.primary.config.json
 
 # Build the project
 RUN npm run build
@@ -44,6 +48,9 @@ RUN npm prune --production && \
 # -----------------------------------------------------------------------------
 FROM docker.m.daocloud.io/library/node:22-alpine AS production
 WORKDIR /app
+
+# Use USTC mirror for faster apk downloads
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
 
 # Install runtime dependencies
 RUN apk add --no-cache \
