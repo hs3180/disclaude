@@ -79,7 +79,7 @@ describe('list script', () => {
     await writeFile(resolve(CHAT_DIR, 'test-list-a.json'), JSON.stringify(makeChatData('test-list-a', 'pending'), null, 2), 'utf-8');
     await writeFile(resolve(CHAT_DIR, 'test-list-b.json'), JSON.stringify(makeChatData('test-list-b', 'active'), null, 2), 'utf-8');
 
-    const result = await runScript('scripts/chat/list.ts');
+    const result = await runScript('skills/chat/list.ts');
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('test-list-a.json');
@@ -91,7 +91,7 @@ describe('list script', () => {
     await writeFile(resolve(CHAT_DIR, 'test-list-b.json'), JSON.stringify(makeChatData('test-list-b', 'active'), null, 2), 'utf-8');
     await writeFile(resolve(CHAT_DIR, 'test-list-c.json'), JSON.stringify(makeChatData('test-list-c', 'expired'), null, 2), 'utf-8');
 
-    const result = await runScript('scripts/chat/list.ts', { CHAT_STATUS: 'active' });
+    const result = await runScript('skills/chat/list.ts', { CHAT_STATUS: 'active' });
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('test-list-b.json');
@@ -102,14 +102,14 @@ describe('list script', () => {
   it('should return empty when no chats match filter', async () => {
     await writeFile(resolve(CHAT_DIR, 'test-list-a.json'), JSON.stringify(makeChatData('test-list-a', 'pending'), null, 2), 'utf-8');
 
-    const result = await runScript('scripts/chat/list.ts', { CHAT_STATUS: 'active' });
+    const result = await runScript('skills/chat/list.ts', { CHAT_STATUS: 'active' });
 
     expect(result.code).toBe(0);
     expect(result.stdout).not.toContain('test-list-a.json');
   });
 
   it('should reject invalid CHAT_STATUS', async () => {
-    const result = await runScript('scripts/chat/list.ts', { CHAT_STATUS: 'invalid' });
+    const result = await runScript('skills/chat/list.ts', { CHAT_STATUS: 'invalid' });
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('Invalid CHAT_STATUS');
@@ -119,7 +119,7 @@ describe('list script', () => {
     await writeFile(resolve(CHAT_DIR, 'test-list-a.json'), JSON.stringify(makeChatData('test-list-a', 'pending'), null, 2), 'utf-8');
     await writeFile(resolve(CHAT_DIR, 'test-list-b.json'), 'not valid json{{{', 'utf-8');
 
-    const result = await runScript('scripts/chat/list.ts');
+    const result = await runScript('skills/chat/list.ts');
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('test-list-a.json');
@@ -128,7 +128,7 @@ describe('list script', () => {
   });
 
   it('should handle empty chat directory', async () => {
-    const result = await runScript('scripts/chat/list.ts');
+    const result = await runScript('skills/chat/list.ts');
 
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('');

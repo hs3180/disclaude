@@ -105,7 +105,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
-All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `scripts/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (via `fs.flock`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
+All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `skills/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (via `fs.flock`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
 
 ### 1. Create Chat
 
@@ -117,7 +117,7 @@ CHAT_EXPIRES_AT="2026-03-25T10:00:00Z" \
 CHAT_GROUP_NAME="PR #123 Review" \
 CHAT_MEMBERS='["ou_developer"]' \
 CHAT_CONTEXT='{"prNumber": 123}' \
-npx tsx scripts/chat/create.ts
+npx tsx skills/chat/create.ts
 ```
 
 **Validation** (built into script):
@@ -132,7 +132,7 @@ npx tsx scripts/chat/create.ts
 **Usage**: `/chat query {id}`
 
 ```bash
-CHAT_ID="pr-123" npx tsx scripts/chat/query.ts
+CHAT_ID="pr-123" npx tsx skills/chat/query.ts
 ```
 
 Output is the raw JSON chat file. Display in readable format:
@@ -152,10 +152,10 @@ Output is the raw JSON chat file. Display in readable format:
 
 ```bash
 # List all chats
-npx tsx scripts/chat/list.ts
+npx tsx skills/chat/list.ts
 
 # Filter by status
-CHAT_STATUS="active" npx tsx scripts/chat/list.ts
+CHAT_STATUS="active" npx tsx skills/chat/list.ts
 ```
 
 Display in table format:
@@ -178,7 +178,7 @@ Display in table format:
 CHAT_ID="pr-123" \
 CHAT_RESPONSE="Looks good, approve it" \
 CHAT_RESPONDER="ou_developer" \
-npx tsx scripts/chat/response.ts
+npx tsx skills/chat/response.ts
 ```
 
 **Idempotency**: If a response already exists, the script rejects the write (prevents accidental overwrites).
@@ -269,7 +269,7 @@ CHAT_EXPIRES_AT="2026-03-24T22:00:00Z" \
 CHAT_GROUP_NAME="PR #123: Fix auth bug" \
 CHAT_MEMBERS='["ou_developer"]' \
 CHAT_CONTEXT='{"prNumber": 123, "repository": "hs3180/disclaude"}' \
-npx tsx scripts/chat/create.ts
+npx tsx skills/chat/create.ts
 ```
 
 ### Schedule Activates (automatic)

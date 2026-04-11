@@ -26,7 +26,7 @@ This skill is primarily triggered by the `chat-timeout` Schedule (every 5 minute
 ### Manual Execution
 
 ```bash
-npx tsx scripts/schedule/chat-timeout.ts
+npx tsx skills/chat-timeout/chat-timeout.ts
 ```
 
 ### Environment Variables
