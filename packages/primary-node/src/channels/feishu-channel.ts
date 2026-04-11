@@ -36,6 +36,7 @@ import {
   type MessageCallbacks,
   WsConnectionManager,
 } from './feishu/index.js';
+import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -103,6 +104,7 @@ export interface FeishuChannelConfig {
    * Route card action to Worker Node if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
    * so remote Worker Nodes receive the contextual prompt.
+   * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -119,7 +121,7 @@ export interface FeishuChannelConfig {
       text?: string;
       trigger?: string;
     };
-  }) => Promise<boolean>;
+  }) => Promise<{ routed: boolean; expired?: boolean }>;
   /**
    * Resolve action prompt for a card action.
    * Issue #1572: Looks up the prompt template from InteractiveContextStore.
@@ -380,8 +382,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     ): Promise<string | undefined> => {
       if (useThreadReply) {
         // useThreadReply is !!message.threadId — guaranteed truthy here.
-        // TypeScript can't narrow from boolean, so we use non-null assertion.
-        const threadId = message.threadId!;
+        // TypeScript can't narrow from boolean, so we use type assertion.
+        const threadId = message.threadId as string;
         try {
           const replyResp = await client.im.message.reply({
             path: {
@@ -484,6 +486,60 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             JSON.stringify({ image_key: imageKey }),
           );
           logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'Image message sent');
+        } else if (VIDEO_EXTENSIONS.has(ext)) {
+          // Upload video file — use msg_type:'media' with auto-generated cover image
+          // Issue #2265: Proper video support via Feishu media message type.
+          if (fileSize > 30 * 1024 * 1024) {
+            throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
+          }
+
+          // Upload video with file_type:'mp4' → get file_key
+          const uploadResp = await this.client.im.file.create({
+            data: {
+              file_type: 'mp4',
+              file_name: fileName,
+              file: fs.createReadStream(filePath),
+            },
+          });
+          const fileKey = uploadResp?.file_key;
+          if (!fileKey) {
+            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload video, no file_key returned');
+            throw new Error(`Failed to upload video: ${fileName}`);
+          }
+          logger.info({ chatId: message.chatId, fileKey, fileName }, 'Video uploaded, extracting cover image');
+
+          // Extract first frame as cover image
+          const coverResult = extractVideoCover(filePath);
+          let imageKey: string | undefined;
+
+          if (coverResult.success && coverResult.coverPath) {
+            // Upload cover image → get image_key
+            const coverUploadResp = await this.client.im.image.create({
+              data: {
+                image_type: 'message',
+                image: fs.createReadStream(coverResult.coverPath),
+              },
+            });
+            imageKey = coverUploadResp?.image_key;
+            // Clean up temp cover file
+            try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
+          }
+
+          if (!imageKey) {
+            // Fallback: send as generic file if cover extraction/upload fails
+            logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover image unavailable, sending video as file attachment');
+            fileMessageId = await sendFeishuMessage(
+              'file',
+              JSON.stringify({ file_key: fileKey }),
+            );
+          } else {
+            // Send as media message with video + cover image
+            fileMessageId = await sendFeishuMessage(
+              'media',
+              JSON.stringify({ file_key: fileKey, image_key: imageKey }),
+            );
+          }
+          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply, hasCover: !!imageKey }, 'Video message sent');
         } else {
           // Upload file using im.file.create
           if (fileSize > 30 * 1024 * 1024) {
@@ -493,7 +549,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           // Map file extension to Feishu file_type
           const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
             '.opus': 'opus',
-            '.mp4': 'mp4',
             '.pdf': 'pdf',
             '.doc': 'doc', '.docx': 'doc',
             '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',

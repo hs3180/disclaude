@@ -47,6 +47,7 @@ export interface MessageCallbacks {
    * Route card action to Worker Node if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
    * so remote Worker Nodes receive the contextual prompt.
+   * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -63,7 +64,7 @@ export interface MessageCallbacks {
       text?: string;
       trigger?: string;
     };
-  }) => Promise<boolean>;
+  }) => Promise<{ routed: boolean; expired?: boolean }>;
   /**
    * Resolve action prompt for a card action.
    * Issue #1572: Looks up the prompt template from InteractiveContextStore.
@@ -1035,7 +1036,7 @@ export class MessageHandler {
         { messageId: message_id, chatId: chat_id, actionValue: action.value },
         'Attempting to route card action'
       );
-      const routed = await this.callbacks.routeCardAction({
+      const result = await this.callbacks.routeCardAction({
         chatId: chat_id,
         cardMessageId: message_id,
         actionType: action.type,
@@ -1051,8 +1052,22 @@ export class MessageHandler {
         },
       });
 
-      if (routed) {
+      if (result.routed) {
         logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed to Worker Node');
+        return;
+      }
+
+      // Issue #2247 Problem 7: When the card context has expired, notify the user
+      // instead of falling through to local emit (which may silently discard the action).
+      if (result.expired) {
+        logger.info({ messageId: message_id, chatId: chat_id }, 'Card context expired, notifying user');
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: '⏰ 您的操作已超时，请重新开始对话。',
+        }).catch((notifyErr) => {
+          logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action expiry notification');
+        });
         return;
       }
       logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action not routed, falling back to local emit');

@@ -22,6 +22,20 @@ function resetVfs(): void {
   vfs.clear();
 }
 
+/** Helper to create a filesystem error with a code property */
+function createFsError(message: string, code: string): NodeJS.ErrnoException {
+  const err = new Error(message) as NodeJS.ErrnoException;
+  err.code = code;
+  return err;
+}
+
+/** Minimal Dirent-like type for readdirSync with withFileTypes */
+type MockDirent = {
+  name: string;
+  isDirectory: () => boolean;
+  isFile: () => boolean;
+};
+
 const mockFs = {
   existsSync: vi.fn((p: string): boolean => vfs.has(norm(p))),
 
@@ -29,9 +43,7 @@ const mockFs = {
     const np = norm(p);
     if (!opts?.recursive) {
       if (vfs.has(np)) {
-        const err: NodeJS.ErrnoException = new Error(`EEXIST: file already exists, mkdir '${p}'`) as any;
-        err.code = 'EEXIST';
-        throw err;
+        throw createFsError(`EEXIST: file already exists, mkdir '${p}'`, 'EEXIST');
       }
       vfs.set(np, null);
       return;
@@ -54,25 +66,21 @@ const mockFs = {
   readFileSync: vi.fn((p: string, _encoding?: string): string => {
     const np = norm(p);
     if (!vfs.has(np)) {
-      const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, open '${p}'`) as any;
-      err.code = 'ENOENT';
-      throw err;
+      throw createFsError(`ENOENT: no such file or directory, open '${p}'`, 'ENOENT');
     }
-    const val = vfs.get(np)!;
+    const val = vfs.get(np);
     if (val === null) {
-      const err: NodeJS.ErrnoException = new Error('EISDIR: illegal operation on a directory, read') as any;
-      err.code = 'EISDIR';
-      throw err;
+      throw createFsError('EISDIR: illegal operation on a directory, read', 'EISDIR');
     }
-    return val;
+    // At this point: vfs.has(np) is true (checked above) and val !== null,
+    // so the value must be a string.
+    return val as string;
   }),
 
-  readdirSync: vi.fn((p: string, opts?: { withFileTypes?: boolean }): any[] => {
+  readdirSync: vi.fn((p: string, opts?: { withFileTypes?: boolean }): string[] | MockDirent[] => {
     const np = norm(p);
     if (!vfs.has(np) || vfs.get(np) !== null) {
-      const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, scandir '${p}'`) as any;
-      err.code = 'ENOENT';
-      throw err;
+      throw createFsError(`ENOENT: no such file or directory, scandir '${p}'`, 'ENOENT');
     }
     const prefix = `${np}/`;
     const seen = new Map<string, boolean>();
@@ -100,9 +108,7 @@ const mockFs = {
     const np = norm(p);
     if (!vfs.has(np)) {
       if (opts?.force) { return; }
-      const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file or directory, rm '${p}'`) as any;
-      err.code = 'ENOENT';
-      throw err;
+      throw createFsError(`ENOENT: no such file or directory, rm '${p}'`, 'ENOENT');
     }
     if (opts?.recursive) {
       const prefix = `${np}/`;
@@ -120,18 +126,16 @@ const mockFs = {
     const onp = norm(oldP);
     const nnp = norm(newP);
     if (!vfs.has(onp)) {
-      const err: NodeJS.ErrnoException = new Error('ENOENT: no such file or directory, rename') as any;
-      err.code = 'ENOENT';
-      throw err;
+      throw createFsError('ENOENT: no such file or directory, rename', 'ENOENT');
     }
-    vfs.set(nnp, vfs.get(onp)!);
+    vfs.set(nnp, vfs.get(onp) as string | null);
     vfs.delete(onp);
     if (vfs.get(nnp) === null) {
       const oldPrefix = `${onp}/`;
       const newPrefix = `${nnp}/`;
       for (const key of [...vfs.keys()]) {
         if (key.startsWith(oldPrefix)) {
-          vfs.set(newPrefix + key.slice(oldPrefix.length), vfs.get(key)!);
+          vfs.set(newPrefix + key.slice(oldPrefix.length), vfs.get(key) as string | null);
           vfs.delete(key);
         }
       }

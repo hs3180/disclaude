@@ -124,6 +124,11 @@ export default [
             '禁止对 @larksuiteoapi/node-sdk 使用 vi.mock()。请使用 nock VCR 录制回放模式进行网络拦截。参见 Issue #918。',
         },
       ],
+      // Relax type strictness for test files — test mocks/helpers often
+      // legitimately use `any` and non-null assertions after explicit expects.
+      // Related: #2243 (CI strict enforcement for production code only)
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
 ];

@@ -47,7 +47,6 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
       - DISCLAUDE_MODE=primary
 
     volumes:
@@ -100,7 +99,6 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
       - DISCLAUDE_MODE=worker
       - COMM_URL=${COMM_URL:-ws://localhost:3001}
 
@@ -157,7 +155,6 @@ services:
     environment:
       - NODE_ENV=test
       - TZ=Asia/Shanghai
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
       - DISCLAUDE_MODE=primary
       - PORT=3011                    # WebSocket port (different from primary's 3001)
       - HOST=0.0.0.0

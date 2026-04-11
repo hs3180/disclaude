@@ -28,6 +28,33 @@ interface CardContextEntry {
 }
 
 /**
+ * Result of chat context lookup, distinguishing between states.
+ * Allows callers to provide appropriate user feedback (#2247).
+ */
+export interface ChatContextResult {
+  /** The lookup status */
+  status: 'active' | 'expired' | 'not_found';
+  /** Context data, only present when status is 'active' */
+  context?: { nodeId: string; isRemote: boolean };
+}
+
+/**
+ * Result of routing a card action, distinguishing between outcomes.
+ * Allows callers to provide appropriate user feedback when the context
+ * has expired (#2247 Problem 7).
+ */
+export interface RouteCardActionResult {
+  /** Whether the action was successfully routed to a remote node */
+  routed: boolean;
+  /**
+   * Whether the card context has expired.
+   * When true, the caller should notify the user that their operation
+   * has timed out, rather than falling through to local emit.
+   */
+  expired?: boolean;
+}
+
+/**
  * Configuration for CardActionRouter.
  */
 export interface CardActionRouterConfig {
@@ -64,13 +91,15 @@ export interface CardActionRouterConfig {
  * router.registerChatContext(chatId, nodeId, true);
  *
  * // When card action is received
- * const handled = await router.routeCardAction({
+ * const result = await router.routeCardAction({
  *   type: 'card_action',
  *   chatId,
  *   cardMessageId,
  *   actionType: 'button',
  *   actionValue: 'confirm',
  * });
+ * // result.routed: boolean — whether the action was sent to a remote node
+ * // result.expired: boolean | undefined — whether the card context has expired (#2247)
  * ```
  */
 export class CardActionRouter {
@@ -127,54 +156,83 @@ export class CardActionRouter {
   /**
    * Get the node ID handling cards for a chat.
    *
+   * Returns a ChatContextResult that distinguishes between 'active',
+   * 'expired', and 'not_found' states, allowing callers to provide
+   * appropriate user feedback (#2247).
+   *
    * @param chatId - Chat ID to look up
-   * @returns Node ID and whether it's remote, or undefined if not registered
+   * @returns ChatContextResult with status and optional context data
    */
-  getChatContext(chatId: string): { nodeId: string; isRemote: boolean } | undefined {
+  getChatContext(chatId: string): ChatContextResult {
     const entry = this.contextMap.get(chatId);
     if (!entry) {
-      return undefined;
+      return { status: 'not_found' };
     }
 
     // Check if entry is expired
     if (Date.now() - entry.createdAt > this.maxAge) {
       this.contextMap.delete(chatId);
       logger.debug({ chatId }, 'Chat context expired');
-      return undefined;
+      return { status: 'expired' };
     }
 
-    return { nodeId: entry.nodeId, isRemote: entry.isRemote };
+    return { status: 'active', context: { nodeId: entry.nodeId, isRemote: entry.isRemote } };
+  }
+
+  /**
+   * Check if a chat context is registered and active.
+   * Convenience method for callers that only need a boolean check.
+   *
+   * @param chatId - Chat ID to look up
+   * @returns Node ID and whether it's remote, or undefined if not active
+   */
+  getActiveChatContext(chatId: string): { nodeId: string; isRemote: boolean } | undefined {
+    const result = this.getChatContext(chatId);
+    return result.status === 'active' ? result.context : undefined;
   }
 
   /**
    * Route a card action to the appropriate node.
    *
+   * Returns a result object that distinguishes between routing outcomes,
+   * allowing callers to provide appropriate user feedback (#2247).
+   *
    * @param message - Card action message to route
-   * @returns True if the action was handled (routed to remote or no routing needed)
+   * @returns RouteCardActionResult with routed status and optional expired flag
    */
-  async routeCardAction(message: CardActionMessage): Promise<boolean> {
+  async routeCardAction(message: CardActionMessage): Promise<RouteCardActionResult> {
     const { chatId } = message;
-    const context = this.getChatContext(chatId);
+    const contextResult = this.getChatContext(chatId);
 
-    if (!context) {
+    if (contextResult.status === 'expired') {
+      // Context expired — log prominently and return with expired flag.
+      // Caller should notify user that their operation has timed out (#2247).
+      logger.info({ chatId }, 'Chat context expired, card action cannot be routed');
+      return { routed: false, expired: true };
+    }
+
+    if (contextResult.status === 'not_found') {
       // No registered context, let local handler process it
       logger.debug({ chatId }, 'No card context registered, using local handler');
-      return false;
+      return { routed: false };
     }
+
+    // status is 'active', context is guaranteed to be present
+    const context = contextResult.context as { nodeId: string; isRemote: boolean };
 
     const { nodeId, isRemote } = context;
 
     if (!isRemote) {
       // Local node, no routing needed
       logger.debug({ chatId, nodeId }, 'Card context is local, no routing needed');
-      return false;
+      return { routed: false };
     }
 
     // Check if remote node is still connected
     if (!this.isNodeConnected(nodeId)) {
       logger.warn({ chatId, nodeId }, 'Remote node not connected, falling back to local handler');
       this.contextMap.delete(chatId);
-      return false;
+      return { routed: false };
     }
 
     // Route to remote node
@@ -184,14 +242,14 @@ export class CardActionRouter {
       const sent = await this.sendToRemoteNode(nodeId, message);
       if (sent) {
         logger.debug({ chatId, nodeId }, 'Card action routed successfully');
-        return true;
+        return { routed: true };
       } else {
         logger.warn({ chatId, nodeId }, 'Failed to route card action');
-        return false;
+        return { routed: false };
       }
     } catch (error) {
       logger.error({ err: error, chatId, nodeId }, 'Error routing card action');
-      return false;
+      return { routed: false };
     }
   }
 
