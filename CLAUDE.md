@@ -285,6 +285,140 @@ All tests run with network isolation enabled via `tests/setup.ts`:
 - Only `localhost` and `127.0.0.1` are allowed
 - Use `allowHost()` helper for specific test scenarios requiring real network access
 
+## Test Anti-Patterns (Mandatory)
+
+Rules derived from systematic quality issues found in PR reviews (#2243). Violating these patterns produces misleading green tests that don't verify real behavior.
+
+### 4. Don't Mock the Mechanism Under Test
+
+**永远不要 mock 你正在测试的机制本身。** If testing timeout behavior, preserve the real `setTimeout` → `AbortController` → abort chain. Mocking `setTimeout` to fire synchronously makes the test pass for the wrong reason.
+
+```typescript
+// ❌ WRONG - Mocks setTimeout, bypassing the real abort chain entirely
+beforeEach(() => {
+  globalThis.setTimeout = ((cb: () => void) => cb()) as typeof setTimeout;
+});
+it('should timeout', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('Aborted', 'AbortError')));
+  const result = await checkHealth('http://localhost:9222');
+  expect(result.healthy).toBe(false); // passes by coincidence
+});
+
+// ✅ CORRECT - Use vi.useFakeTimers to advance time while preserving real abort logic
+it('should timeout', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, options) => {
+    return new Promise((_, reject) => {
+      options?.signal?.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    });
+  }));
+  const resultPromise = checkHealth('http://localhost:9222');
+  await vi.advanceTimersByTimeAsync(5100);
+  const result = await resultPromise;
+  expect(result.healthy).toBe(false);
+  vi.useRealTimers();
+});
+```
+
+### 5. No Unnecessary `async` in Mock Implementations
+
+**不要在 mock 函数中使用无 `await` 的 `async`。** This triggers `no-floating-promises` ESLint errors. Use `Promise.resolve()` instead.
+
+```typescript
+// ❌ WRONG - async without await (ESLint: no-floating-promises)
+sendInteractive: async (_chatId, _params) => {
+  messageIdCounter++;
+  return { messageId: `om_card_${messageIdCounter}` };
+},
+
+// ✅ CORRECT - synchronous return wrapped in Promise
+sendInteractive: (_chatId, _params) => {
+  messageIdCounter++;
+  return Promise.resolve({ messageId: `om_card_${messageIdCounter}` });
+},
+```
+
+### 6. Use Correct Async Generator Syntax
+
+**异步生成器必须使用方法简写语法**，不要使用 `function*` 属性写法。
+
+```typescript
+// ❌ WRONG - incorrect async generator property syntax
+const handler = {
+  queryOnce: async function* () { yield 'data'; },
+};
+
+// ✅ CORRECT - method shorthand syntax
+const handler = {
+  async *queryOnce() { yield 'data'; },
+};
+```
+
+### 7. Resource Cleanup with try/finally
+
+**测试中获取的资源（IPC 连接、临时文件、socket）必须使用 try/finally 清理。** Assertion failures must not leak resources.
+
+```typescript
+// ❌ WRONG - leaked resources if assertion fails
+it('should handle eviction', async () => {
+  const server = new UnixSocketIpcServer(handler, { socketPath });
+  const client = new UnixSocketIpcClient({ socketPath });
+  await server.start();
+  await client.connect();
+  // if this throws, server/client never close
+  expect(store.size).toBe(3);
+  await client.disconnect();
+  await server.stop();
+});
+
+// ✅ CORRECT - cleanup guaranteed even on assertion failure
+it('should handle eviction', async () => {
+  const server = new UnixSocketIpcServer(handler, { socketPath });
+  const client = new UnixSocketIpcClient({ socketPath });
+  try {
+    await server.start();
+    await client.connect();
+    expect(store.size).toBe(3);
+  } finally {
+    await client.disconnect().catch(() => {});
+    await server.stop().catch(() => {});
+    cleanupSocket(socketPath);
+  }
+});
+```
+
+### 8. Integration Tests Belong in `tests/integration/`
+
+**集成测试放在 `tests/integration/`，不要放在 `src/__tests__/integration/`。** Unit test directories (`src/__tests__/`) run under default `npm test`. Integration tests:
+- Depend on IPC, external modules, or environment
+- Require independent execution (e.g., `FEISHU_INTEGRATION_TEST=true`)
+- Should NOT run in default `npm test`
+
+```
+✅ tests/integration/feishu/           ← Correct location
+❌ packages/*/src/__tests__/integration/ ← Wrong location
+```
+
+### 9. Merge Imports from Same Module
+
+**合并来自同一模块的 import 语句。** Separate `import type` and `import` from the same module is an ESLint violation.
+
+```typescript
+// ❌ WRONG - duplicate module imports
+import { parseEndpoint } from './cdp.js';
+import type { CdpResult } from './cdp.js';
+
+// ✅ CORRECT - merged with inline type keyword
+import {
+  parseEndpoint,
+  type CdpResult,
+} from './cdp.js';
+```
+
 ## Development Workflow
 
 ### PM2 Restart Policy
