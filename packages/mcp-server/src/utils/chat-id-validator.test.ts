@@ -59,6 +59,24 @@ describe('isValidChatId', () => {
     });
   });
 
+  describe('Integration test IDs (test-)', () => {
+    it('should accept a valid test- ID', () => {
+      expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
+    });
+
+    it('should accept a minimal test- ID (10 chars)', () => {
+      expect(isValidChatId('test-abcde')).toBe(true);
+    });
+
+    it('should reject a test- ID that is too short', () => {
+      expect(isValidChatId('test-abcd')).toBe(false);
+    });
+
+    it('should reject a bare test- prefix', () => {
+      expect(isValidChatId('test-')).toBe(false);
+    });
+  });
+
   describe('invalid formats', () => {
     it('should reject an empty string', () => {
       expect(isValidChatId('')).toBe(false);
@@ -93,6 +111,10 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('cli-session-42')).toBeNull();
   });
 
+  it('should return null for a valid test- ID', () => {
+    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
+  });
+
   it('should return an error for an empty string', () => {
     const error = getChatIdValidationError('');
     expect(error).not.toBeNull();
@@ -105,6 +127,7 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('oc_');
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
+    expect(error).toContain('test-');
   });
 
   it('should truncate long chatIds in error messages', () => {

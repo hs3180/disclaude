@@ -13,6 +13,7 @@ const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
   { prefix: 'cli-', label: 'CLI session', minLength: 5 },
+  { prefix: 'test-', label: 'Integration test session', minLength: 10 },
 ] as const;
 
 /**
