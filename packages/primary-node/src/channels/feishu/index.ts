@@ -16,8 +16,8 @@ export type {
   FeishuP2PChatEnteredEventData,
 } from '@disclaude/core';
 
-// Passive Mode
-export { PassiveModeManager } from './passive-mode.js';
+// Trigger Mode (Issue #2193: renamed from PassiveMode)
+export { TriggerModeManager, PassiveModeManager, type TriggerModeRecord, type PassiveModeRecord } from './passive-mode.js';
 
 // Mention Detection
 export { MentionDetector, type BotInfo } from './mention-detector.js';

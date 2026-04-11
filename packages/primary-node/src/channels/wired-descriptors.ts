@@ -147,30 +147,30 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
     // 2. Set up trigger mode adapter (Issue #2193: renamed from passiveMode)
-    // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
-    // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
+    // Now that FeishuChannel exposes isTriggerEnabled/setTriggerEnabled directly,
+    // no logic inversion is needed.
     const triggerModeAdapter = {
-      isEnabled: (chatId: string) => !feishuChannel.isPassiveModeDisabled(chatId),
+      isEnabled: (chatId: string) => feishuChannel.isTriggerEnabled(chatId),
       setEnabled: (chatId: string, enabled: boolean) =>
-        feishuChannel.setPassiveModeDisabled(chatId, !enabled),
+        feishuChannel.setTriggerEnabled(chatId, enabled),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
     context.controlHandlerContext.passiveMode = triggerModeAdapter;
 
-    // 2b. Issue #2069: Initialize passive mode from persisted temp chat records.
-    // This ensures declarative passive mode settings survive restarts.
-    // Only loads records where passiveMode is explicitly set to false.
+    // 2b. Issue #2069: Initialize trigger mode from persisted temp chat records.
+    // This ensures declarative trigger mode settings survive restarts.
+    // Only loads records where passiveMode is explicitly set to false (= trigger mode enabled).
     const chatStore = context.primaryNode.getChatStore();
     chatStore.listTempChats().then(records => {
-      const passiveModeManager = feishuChannel.getPassiveModeManager();
-      const loaded = passiveModeManager.initFromRecords(
+      const triggerModeManager = feishuChannel.getTriggerModeManager();
+      const loaded = triggerModeManager.initFromRecords(
         records.map(r => ({ chatId: r.chatId, passiveMode: r.passiveMode }))
       );
       if (loaded > 0) {
-        context.logger.info({ count: loaded }, 'Initialized passive mode from chat store records');
+        context.logger.info({ count: loaded }, 'Initialized trigger mode from chat store records');
       }
     }).catch(err => {
-      context.logger.warn({ err }, 'Failed to initialize passive mode from chat store');
+      context.logger.warn({ err }, 'Failed to initialize trigger mode from chat store');
     });
 
     // 3. Register IPC handlers for MCP Server connections
@@ -227,10 +227,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
           context: opts?.context,
           passiveMode: opts?.passiveMode,
         });
-        // Issue #2069: Apply passive mode to PassiveModeManager immediately
+        // Issue #2069: Apply trigger mode to TriggerModeManager immediately
         if (opts?.passiveMode === false) {
-          feishuChannel.setPassiveModeDisabled(chatId, true);
-          context.logger.info({ chatId }, 'Passive mode disabled via declarative config');
+          feishuChannel.setTriggerEnabled(chatId, true);
+          context.logger.info({ chatId }, 'Trigger mode enabled via declarative config');
         }
         const record = await store.getTempChat(chatId);
         return { success: true, expiresAt: record?.expiresAt };
