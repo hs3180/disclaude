@@ -146,14 +146,16 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
-    // 2. Set up passive mode adapter
+    // 2. Set up trigger mode adapter (Issue #2193: renamed from passiveMode)
     // Adapter layer: ControlHandlerContext uses isEnabled/setEnabled semantics,
     // while FeishuChannel exposes isPassiveModeDisabled/setPassiveModeDisabled.
-    context.controlHandlerContext.passiveMode = {
+    const triggerModeAdapter = {
       isEnabled: (chatId: string) => !feishuChannel.isPassiveModeDisabled(chatId),
       setEnabled: (chatId: string, enabled: boolean) =>
         feishuChannel.setPassiveModeDisabled(chatId, !enabled),
     };
+    context.controlHandlerContext.triggerMode = triggerModeAdapter;
+    context.controlHandlerContext.passiveMode = triggerModeAdapter;
 
     // 2b. Issue #2069: Initialize passive mode from persisted temp chat records.
     // This ensures declarative passive mode settings survive restarts.

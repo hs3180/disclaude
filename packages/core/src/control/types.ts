@@ -48,7 +48,12 @@ export interface ControlHandlerContext {
     clearDebugGroup(): DebugGroup | null;
   };
 
-  /** 被动模式管理（可选） */
+  /** 触发模式管理（可选） (Issue #2193: renamed from passiveMode) */
+  triggerMode?: {
+    isEnabled(chatId: string): boolean;
+    setEnabled(chatId: string, enabled: boolean): void;
+  };
+  /** @deprecated Use triggerMode instead. Kept for backward compatibility during transition. */
   passiveMode?: {
     isEnabled(chatId: string): boolean;
     setEnabled(chatId: string, enabled: boolean): void;

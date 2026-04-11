@@ -121,8 +121,9 @@ export type ControlCommandType =
   | 'switch-node' // Primary Node only — not forwarded via WebSocket
   // Debug group command (Issue #2244: merged /show-debug & /clear-debug into /debug toggle)
   | 'debug'
-  // Passive mode control (Issue #511)
-  | 'passive';
+  // Trigger mode control (Issue #511, renamed #2193)
+  | 'passive'
+  | 'trigger';
 
 /**
  * Control command from user to agent.
