@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * schedule/chats-activation.ts — Auto-activate pending chats via lark-cli.
+ * skills/chat/chats-activation.ts — Auto-activate pending chats via lark-cli.
  *
  * Reads all pending chats from workspace/chats/, creates groups via lark-cli,
  * updates status to active. Marks expired or failed chats appropriately.
@@ -29,8 +29,8 @@ import {
   MAX_GROUP_NAME_LENGTH,
   truncateGroupName,
   type ChatFile,
-} from '../chat/schema.js';
-import { acquireLock } from '../chat/lock.js';
+} from './schema.js';
+import { acquireLock } from './lock.js';
 
 const execFileAsync = promisify(execFile);
 
