@@ -1083,7 +1083,7 @@ export class MessageHandler {
         'Emitting card action as local message to agent'
       );
       await this.callbacks.emitMessage({
-        messageId: `${message_id}-${action.value}`,
+        messageId: message_id,  // Use original Feishu message ID (not synthetic) to prevent threadRoot pollution (fixes #2285)
         chatId: chat_id,
         userId: user?.sender_id?.open_id,
         content: messageContent,

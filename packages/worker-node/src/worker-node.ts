@@ -634,7 +634,7 @@ export class WorkerNode {
               agent.processMessage(
                 chatId,
                 messageContent,
-                `${cardMessageId}-${actionValue}`,
+                cardMessageId,  // Use original Feishu message ID (not synthetic) to prevent threadRoot pollution (fixes #2285)
                 userId,
                 undefined, // no attachments
                 undefined  // no chat history context
