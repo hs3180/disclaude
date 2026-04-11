@@ -23,6 +23,7 @@ export interface ExecNodeInfo {
  * Debug 组信息
  */
 export interface DebugGroup {
+  chatId: string;
   name?: string;
   setAt: number;
 }
@@ -43,7 +44,8 @@ export interface ControlHandlerContext {
     nodeId: string;
     getExecNodes(): ExecNodeInfo[];
     getDebugGroup(): DebugGroup | null;
-    clearDebugGroup(): void;
+    setDebugGroup(chatId: string, name?: string): void;
+    clearDebugGroup(): DebugGroup | null;
   };
 
   /** 被动模式管理（可选） */

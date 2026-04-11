@@ -1,11 +1,11 @@
 /**
- * Unit tests for debug control commands.
+ * Unit tests for /debug toggle command.
  *
- * Issue #1617 Phase 1: Tests for control commands.
+ * Issue #2244: Merged /show-debug and /clear-debug into single /debug toggle.
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { handleShowDebug, handleClearDebug } from './debug.js';
+import { handleDebug } from './debug.js';
 import type { ControlHandlerContext } from '../types.js';
 
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
@@ -15,46 +15,64 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
       nodeId: 'node-1',
       getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
-      clearDebugGroup: vi.fn(),
+      setDebugGroup: vi.fn(),
+      clearDebugGroup: vi.fn().mockReturnValue(null),
     },
     logger: undefined,
     ...overrides,
   };
 }
 
-describe('handleShowDebug', () => {
-  it('should return message when no debug group is set', async () => {
+describe('handleDebug', () => {
+  it('should set debug group when none is set', async () => {
     const context = createMockContext();
-    const result = await handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
+    const result = await handleDebug({ type: 'debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('没有设置 Debug 组');
+    expect(result.message).toContain('Debug 群已设置');
+    expect(context.node.setDebugGroup).toHaveBeenCalledWith('chat-1');
+    expect(context.node.clearDebugGroup).not.toHaveBeenCalled();
   });
 
-  it('should return debug group info when set', async () => {
-    const debugGroup = { name: 'Test Group', setAt: Date.now() };
+  it('should clear debug group when same chat toggles off', async () => {
+    const previousGroup = { chatId: 'chat-1', name: 'Test Group', setAt: Date.now() };
+    const mockClearDebugGroup = vi.fn().mockReturnValue(previousGroup);
     const context = createMockContext({
       node: {
         nodeId: 'node-1',
         getExecNodes: vi.fn().mockReturnValue([]),
-        getDebugGroup: vi.fn().mockReturnValue(debugGroup),
-        clearDebugGroup: vi.fn(),
+        getDebugGroup: vi.fn().mockReturnValue(previousGroup),
+        setDebugGroup: vi.fn(),
+        clearDebugGroup: mockClearDebugGroup,
       },
     });
-    const result = await handleShowDebug({ type: 'show-debug', chatId: 'chat-1' }, context);
+
+    const result = await handleDebug({ type: 'debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('Test Group');
+    expect(result.message).toContain('已取消设置');
+    expect(mockClearDebugGroup).toHaveBeenCalledOnce();
+    expect(context.node.setDebugGroup).not.toHaveBeenCalled();
   });
-});
 
-describe('handleClearDebug', () => {
-  it('should clear debug group and return success', async () => {
-    const context = createMockContext();
-    const result = await handleClearDebug({ type: 'clear-debug', chatId: 'chat-1' }, context);
+  it('should switch debug group when a different chat sets it', async () => {
+    const existingGroup = { chatId: 'chat-other', name: 'Other Group', setAt: Date.now() };
+    const mockClearDebugGroup = vi.fn().mockReturnValue(existingGroup);
+    const context = createMockContext({
+      node: {
+        nodeId: 'node-1',
+        getExecNodes: vi.fn().mockReturnValue([]),
+        getDebugGroup: vi.fn().mockReturnValue(existingGroup),
+        setDebugGroup: vi.fn(),
+        clearDebugGroup: mockClearDebugGroup,
+      },
+    });
+
+    const result = await handleDebug({ type: 'debug', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
-    expect(context.node.clearDebugGroup).toHaveBeenCalledOnce();
-    expect(result.message).toContain('已清除');
+    expect(result.message).toContain('切换到当前群');
+    expect(mockClearDebugGroup).toHaveBeenCalledOnce();
+    expect(context.node.setDebugGroup).toHaveBeenCalledWith('chat-1');
   });
 });
