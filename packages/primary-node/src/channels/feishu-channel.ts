@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'rename_chat',
       ],
     };
   }
@@ -676,6 +677,43 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getInteractionManager(): InteractionManager {
     return this.interactionManager;
+  }
+
+  /**
+   * Update a group chat's display name via Feishu API.
+   *
+   * Uses the Lark SDK's im.chat.update to rename a group chat.
+   * Issue #2284: Auto-rename group chats based on task topic.
+   *
+   * @param chatId - The chat ID to rename (must start with 'oc_')
+   * @param name - The new display name (max 100 characters)
+   * @returns Success status
+   */
+  async updateChatName(chatId: string, name: string): Promise<{ success: boolean }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    // Validate: only group chats can be renamed (IDs starting with 'oc_')
+    if (!chatId.startsWith('oc_')) {
+      logger.warn({ chatId }, 'updateChatName: only group chats (oc_*) can be renamed');
+      return { success: false };
+    }
+
+    // Truncate name to 100 characters (Feishu API limit)
+    const truncatedName = name.length > 100 ? `${name.substring(0, 97)  }...` : name;
+
+    try {
+      await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name: truncatedName },
+      });
+      logger.info({ chatId, name: truncatedName }, 'Chat name updated successfully');
+      return { success: true };
+    } catch (error) {
+      logger.error({ err: error, chatId, name: truncatedName }, 'Failed to update chat name');
+      return { success: false };
+    }
   }
 
   /**

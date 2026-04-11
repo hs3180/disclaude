@@ -16,6 +16,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  rename_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -29,6 +30,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { rename_chat } from './tools/rename-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -148,6 +150,19 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  rename_chat: {
+    description: `Rename a group chat's display name.
+Use this to update the group chat name to reflect the task topic when the bot is pulled into a new group for a specific task.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target group chat ID (must start with oc_)' },
+        name: { type: 'string', description: 'New display name for the group chat' },
+      },
+      required: ['chatId', 'name'],
+    },
+    handler: rename_chat,
   },
 };
 
@@ -420,6 +435,40 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, passiveMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2284: Rename group chat
+  {
+    name: 'rename_chat',
+    description: `Rename a group chat's display name.
+
+Use this to update the group chat name to reflect the task topic when the bot is pulled into a new group for a specific task.
+
+## Parameters
+- **chatId**: Target group chat ID (must start with oc_)
+- **name**: New display name for the group chat (max 100 characters)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "name": "周报生成"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID (must start with oc_)'),
+      name: z.string().describe('New display name for the group chat'),
+    }),
+    handler: async ({ chatId, name }: { chatId: string; name: string }) => {
+      // Validate chatId format
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await rename_chat({ chatId, name });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Chat rename failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

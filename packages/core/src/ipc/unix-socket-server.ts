@@ -63,6 +63,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Update a chat's display name (Issue #2284) */
+  updateChatName?: (chatId: string, name: string) => Promise<{ success: boolean }>;
 }
 
 /**
@@ -290,6 +292,34 @@ export function createInteractiveMessageHandler(
             request.payload as IpcRequestPayloads['markChatResponded'];
           try {
             const result = await handlers.markChatResponded(chatId, response);
+            return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Chat management (Issue #2284)
+        case 'updateChatName': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.updateChatName) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'updateChatName not supported by this channel',
+            };
+          }
+          const { chatId, name } =
+            request.payload as IpcRequestPayloads['updateChatName'];
+          try {
+            const result = await handlers.updateChatName(chatId, name);
             return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

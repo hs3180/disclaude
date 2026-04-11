@@ -21,7 +21,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message, rename_chat } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +167,24 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'rename_chat',
+                description: "Rename a group chat's display name. Use this to update the group chat name to reflect the task topic when the bot is pulled into a new group for a specific task.",
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    chatId: {
+                      type: 'string',
+                      description: 'Target group chat ID (must start with oc_)',
+                    },
+                    name: {
+                      type: 'string',
+                      description: 'New display name for the group chat',
+                    },
+                  },
+                  required: ['chatId', 'name'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +259,24 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'rename_chat') {
+          const args = toolArgs as { chatId: string; name: string };
+          const result = await rename_chat(args);
 
           return {
             jsonrpc: '2.0',

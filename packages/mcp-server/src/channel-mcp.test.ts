@@ -14,6 +14,7 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   register_temp_chat: vi.fn(),
+  rename_chat: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
