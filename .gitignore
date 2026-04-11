@@ -5,6 +5,9 @@
 disclaude.config.yaml
 disclaude.config.test.yaml
 
+# Docker source mirror configuration (user-specific)
+docker-source.env
+
 # Environment initialization (user-specific)
 .disclauderc
 
