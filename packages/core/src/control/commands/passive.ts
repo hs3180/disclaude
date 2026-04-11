@@ -1,21 +1,29 @@
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 
+/** User-facing messages for mode toggle commands */
+interface ModeMessages {
+  unavailable: string;
+  enabled: string;
+  disabled: string;
+  invalidArgs: string;
+}
+
 /** User-facing messages for /passive command style */
-const PASSIVE_MESSAGES = {
+const PASSIVE_MESSAGES: ModeMessages = {
   unavailable: '⚠️ 被动模式功能当前不可用。请检查频道配置是否正确。',
   enabled: '🔕 被动模式已开启',
   disabled: '🔔 被动模式已关闭',
   invalidArgs: '⚠️ 无效参数。用法: `/passive [on|off]` 或 `/trigger [on|off]`',
-} as const;
+};
 
 /** User-facing messages for /trigger command style */
-const TRIGGER_MESSAGES = {
+const TRIGGER_MESSAGES: ModeMessages = {
   unavailable: '⚠️ 触发模式功能当前不可用。请检查频道配置是否正确。',
   enabled: '🔕 仅 @触发模式已开启（bot 仅响应 @提及）',
   disabled: '🔔 全响应模式已开启（bot 响应所有消息）',
   invalidArgs: '⚠️ 无效参数。用法: `/trigger [on|off]`',
-} as const;
+};
 
 /**
  * Internal mode toggle handler (Issue #2193).
@@ -27,7 +35,7 @@ function handleModeToggle(
   command: ControlCommand,
   context: ControlHandlerContext,
   commandName: string,
-  messages: typeof PASSIVE_MESSAGES,
+  messages: ModeMessages,
 ): ControlResponse {
   // Issue #2193: Support both triggerMode (new) and passiveMode (deprecated)
   const modeManager = context.triggerMode ?? context.passiveMode;
