@@ -5,6 +5,7 @@
  * Issue #511: Group chat passive mode control
  * Issue #694: Extracted from feishu-channel.ts
  * Issue #2069: Declarative passive mode via chat config files
+ * Issue #2052: Auto-disable passive mode for 2-member group chats
  *
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
@@ -44,14 +45,49 @@ export class PassiveModeManager {
   private passiveModeDisabled: Map<string, boolean> = new Map();
 
   /**
+   * Auto-detected small groups (≤2 members: bot + 1 user).
+   * Once detected, passive mode is permanently disabled for these chats,
+   * even if more members join later (Issue #2052).
+   */
+  private smallGroups: Set<string> = new Set();
+
+  /**
    * Check if passive mode is disabled for a specific chat.
    * When passive mode is disabled, the bot responds to all messages in group chats.
+   *
+   * Also returns true for auto-detected small groups (Issue #2052):
+   * 2-member group chats (bot + 1 user) are treated as 1-on-1 conversations.
    *
    * @param chatId - Chat ID to check
    * @returns true if passive mode is disabled (bot responds to all messages)
    */
   isPassiveModeDisabled(chatId: string): boolean {
-    return this.passiveModeDisabled.get(chatId) === true;
+    return this.passiveModeDisabled.get(chatId) === true || this.smallGroups.has(chatId);
+  }
+
+  /**
+   * Check if a chat has been identified as a small group.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the chat is a small group (≤2 members)
+   */
+  isSmallGroup(chatId: string): boolean {
+    return this.smallGroups.has(chatId);
+  }
+
+  /**
+   * Mark a chat as a small group, auto-disabling passive mode.
+   *
+   * Once marked, passive mode stays disabled even if members join later,
+   * to avoid disruptive behavior changes (Issue #2052).
+   *
+   * @param chatId - Chat ID to mark
+   */
+  markAsSmallGroup(chatId: string): void {
+    if (!this.smallGroups.has(chatId)) {
+      this.smallGroups.add(chatId);
+      logger.info({ chatId }, 'Auto-disabled passive mode for small group (≤2 members)');
+    }
   }
 
   /**
@@ -72,11 +108,16 @@ export class PassiveModeManager {
 
   /**
    * Get all chats with passive mode disabled.
+   * Includes both manually disabled and auto-detected small groups.
    *
    * @returns Array of chat IDs with passive mode disabled
    */
   getPassiveModeDisabledChats(): string[] {
-    return Array.from(this.passiveModeDisabled.keys());
+    const manual = Array.from(this.passiveModeDisabled.keys());
+    const auto = Array.from(this.smallGroups.keys());
+    // Deduplicate: small groups might also be in passiveModeDisabled
+    const all = new Set([...manual, ...auto]);
+    return Array.from(all);
   }
 
   /**

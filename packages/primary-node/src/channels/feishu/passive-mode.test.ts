@@ -2,6 +2,7 @@
  * Unit tests for PassiveModeManager
  *
  * Issue #2069: Declarative passive mode via chat config files.
+ * Issue #2052: Auto-disable passive mode for 2-member group chats.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -117,6 +118,67 @@ describe('PassiveModeManager', () => {
       manager.initFromRecords([{ chatId: 'oc_manual', passiveMode: false }]);
       // Should be enabled now (initFromRecords loads false as disabled)
       expect(manager.isPassiveModeDisabled('oc_manual')).toBe(true);
+    });
+  });
+
+  describe('small group auto-detection (Issue #2052)', () => {
+    it('should not be a small group by default', () => {
+      const manager = new PassiveModeManager();
+      expect(manager.isSmallGroup('oc_test')).toBe(false);
+    });
+
+    it('should mark a chat as small group', () => {
+      const manager = new PassiveModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(true);
+    });
+
+    it('should auto-disable passive mode for small groups', () => {
+      const manager = new PassiveModeManager();
+      expect(manager.isPassiveModeDisabled('oc_small')).toBe(false);
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isPassiveModeDisabled('oc_small')).toBe(true);
+    });
+
+    it('should not mark the same chat twice', () => {
+      const manager = new PassiveModeManager();
+      manager.markAsSmallGroup('oc_small');
+      manager.markAsSmallGroup('oc_small');
+      // getPassiveModeDisabledChats should not have duplicates
+      const disabled = manager.getPassiveModeDisabledChats();
+      const count = disabled.filter((id) => id === 'oc_small').length;
+      expect(count).toBe(1);
+    });
+
+    it('should include small groups in getPassiveModeDisabledChats', () => {
+      const manager = new PassiveModeManager();
+      manager.setPassiveModeDisabled('oc_manual', true);
+      manager.markAsSmallGroup('oc_small');
+
+      const disabled = manager.getPassiveModeDisabledChats();
+      expect(disabled).toContain('oc_manual');
+      expect(disabled).toContain('oc_small');
+      expect(disabled).toHaveLength(2);
+    });
+
+    it('should deduplicate when chat is both manually disabled and small group', () => {
+      const manager = new PassiveModeManager();
+      manager.setPassiveModeDisabled('oc_both', true);
+      manager.markAsSmallGroup('oc_both');
+
+      const disabled = manager.getPassiveModeDisabledChats();
+      const count = disabled.filter((id) => id === 'oc_both').length;
+      expect(count).toBe(1);
+    });
+
+    it('should keep passive mode disabled for small group even when manually re-enabled', () => {
+      const manager = new PassiveModeManager();
+      manager.markAsSmallGroup('oc_small');
+      // User tries to re-enable passive mode via /passive on
+      manager.setPassiveModeDisabled('oc_small', false);
+      // Small group status persists — passive mode stays disabled
+      expect(manager.isPassiveModeDisabled('oc_small')).toBe(true);
+      expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
   });
 });

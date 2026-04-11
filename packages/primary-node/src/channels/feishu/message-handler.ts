@@ -828,12 +828,19 @@ export class MessageHandler {
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
     // Group chat passive mode
+    // Issue #2052: Auto-disable passive mode for 2-member group chats (bot + 1 user)
     const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    const passiveModeDisabled = this.passiveModeManager.isPassiveModeDisabled(chat_id);
-    if (this.isGroupChat(chat_type) && !botMentioned && !passiveModeDisabled && !isPassiveCommand) {
-      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-      this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
-      return;
+    if (this.isGroupChat(chat_type) && !botMentioned && !isPassiveCommand && !this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
+      // Check if this is a small group on first encounter
+      if (!this.passiveModeManager.isSmallGroup(chat_id)) {
+        await this.checkAndAutoDisableSmallGroup(chat_id);
+      }
+      // Re-check after potential auto-detection
+      if (!this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
+        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
+        this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+        return;
+      }
     }
 
     // Add typing reaction
@@ -1132,4 +1139,54 @@ export class MessageHandler {
     }
   }
 
+  /**
+   * Check if a group chat has ≤2 members and auto-disable passive mode.
+   *
+   * Uses Feishu API `GET /open-apis/im/v1/chats/{chat_id}` to get member counts.
+   * A group with user_count=1 and bot_count=1 (or fewer) is considered a small group.
+   *
+   * Once detected, the chat is permanently marked as a small group — even if
+   * more members join later, passive mode stays off to avoid disruptive changes.
+   *
+   * Issue #2052: Disable passive mode by default for 2-member group chats.
+   *
+   * @param chatId - Chat ID to check
+   */
+  private async checkAndAutoDisableSmallGroup(chatId: string): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+      });
+
+      const chatData = response.data;
+      if (!chatData) {
+        return;
+      }
+
+      // user_count and bot_count are strings in Feishu API
+      const userCount = parseInt(chatData.user_count || '0', 10);
+      const botCount = parseInt(chatData.bot_count || '0', 10);
+      const totalMembers = userCount + botCount;
+
+      if (totalMembers > 0 && totalMembers <= 2) {
+        this.passiveModeManager.markAsSmallGroup(chatId);
+        logger.info(
+          { chatId, userCount, botCount, totalMembers },
+          'Small group detected (≤2 members), auto-disabling passive mode',
+        );
+      } else {
+        logger.debug(
+          { chatId, userCount, botCount, totalMembers },
+          'Group has more than 2 members, keeping passive mode',
+        );
+      }
+    } catch (error) {
+      // Don't block message processing if member count check fails
+      logger.debug({ err: error, chatId }, 'Failed to check group member count for auto-detection');
+    }
+  }
 }
