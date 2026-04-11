@@ -104,6 +104,7 @@ export interface FeishuChannelConfig {
    * Route card action to Worker Node if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
    * so remote Worker Nodes receive the contextual prompt.
+   * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
     chatId: string;
@@ -120,7 +121,7 @@ export interface FeishuChannelConfig {
       text?: string;
       trigger?: string;
     };
-  }) => Promise<boolean>;
+  }) => Promise<{ routed: boolean; expired?: boolean }>;
   /**
    * Resolve action prompt for a card action.
    * Issue #1572: Looks up the prompt template from InteractiveContextStore.
