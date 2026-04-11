@@ -827,10 +827,10 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat passive mode
+    // Group chat trigger mode (Issue #2193: /trigger is an alias for /passive)
     // Issue #2052: Auto-disable passive mode for 2-member group chats (bot + 1 user)
-    const isPassiveCommand = textWithoutMentions.startsWith('/passive');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isPassiveCommand && !this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
+    const isTriggerCommand = textWithoutMentions.startsWith('/passive') || textWithoutMentions.startsWith('/trigger');
+    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
       // Check if this is a small group on first encounter
       if (!this.passiveModeManager.isSmallGroup(chat_id)) {
         await this.checkAndAutoDisableSmallGroup(chat_id);
@@ -910,7 +910,7 @@ export class MessageHandler {
       quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
-    // Get chat history context for passive mode
+    // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
     const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
 
