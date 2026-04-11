@@ -19,6 +19,7 @@ import {
   type FileRef,
   type FeishuApiHandlers,
 } from '@disclaude/core';
+import { insertDocxImage } from '../utils/docx-image-inserter.js';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
@@ -248,6 +249,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const chatStore = context.primaryNode.getChatStore();
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
+      },
+      // Issue #2278: Insert image into Feishu document at specific position
+      insertDocxImage: (documentId: string, imagePath: string, index?: number) => {
+        const client = feishuChannel.getLarkClient();
+        return insertDocxImage(client, documentId, imagePath, index);
       },
     };
 
