@@ -183,6 +183,7 @@ async function main(): Promise<void> {
       nodeId: primaryNode.getNodeId(),
       getExecNodes: () => primaryNode.getExecNodeRegistry().getNodes(),
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
+      setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
     logger,

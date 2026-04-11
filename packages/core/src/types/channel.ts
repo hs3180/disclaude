@@ -119,9 +119,8 @@ export type ControlCommandType =
   | 'help'
   | 'list-nodes'
   | 'switch-node' // Primary Node only — not forwarded via WebSocket
-  // Debug group commands (Issue #487)
-  | 'show-debug'
-  | 'clear-debug'
+  // Debug group command (Issue #2244: merged /show-debug & /clear-debug into /debug toggle)
+  | 'debug'
   // Passive mode control (Issue #511)
   | 'passive';
 
