@@ -16,13 +16,27 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Build arguments for configurable source mirrors (Issue #2283)
+# Defaults use official sources; override via docker-source.env for mirrors.
+# -----------------------------------------------------------------------------
+ARG DOCKER_IMAGE_PREFIX=
+ARG APK_MIRROR=dl-cdn.alpinelinux.org
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
+# -----------------------------------------------------------------------------
 # Stage 1: Builder
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/node:22-alpine AS builder
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS builder
+
+# Re-declare build args for use in this stage
+ARG APK_MIRROR
+ARG NPM_REGISTRY
+
 WORKDIR /app
 
-# Use USTC mirror for faster apk downloads
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+# Configure apk mirror (default: official Alpine CDN)
+RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
 
 # Install build dependencies
 RUN apk add --no-cache python3 make g++
@@ -31,8 +45,8 @@ RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 COPY packages ./packages
 
-# Configure npm mirror and install all dependencies (including devDependencies for building)
-RUN npm config set registry https://registry.npmmirror.com && \
+# Configure npm registry and install all dependencies (including devDependencies for building)
+RUN npm config set registry ${NPM_REGISTRY} && \
     npm install
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
@@ -50,11 +64,17 @@ RUN npm prune --production && \
 # Stage 2: Production Image (Node.js 22 + Python for data analysis)
 # Uses node:22-alpine as base to guarantee globalThis.WebSocket support.
 # -----------------------------------------------------------------------------
-FROM docker.m.daocloud.io/library/node:22-alpine AS production
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS production
+
+# Re-declare build args for use in this stage
+ARG APK_MIRROR
+ARG NPM_REGISTRY
+ARG PIP_INDEX_URL
+
 WORKDIR /app
 
-# Use USTC mirror for faster apk downloads
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+# Configure apk mirror (default: official Alpine CDN)
+RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
 
 # Install Python and runtime dependencies via apk
 # Note: Alpine uses musl libc instead of glibc
@@ -81,6 +101,7 @@ RUN apk add --no-cache \
 # Use --break-system-packages for Alpine's externally managed environment
 RUN pip install --no-cache-dir --break-system-packages --upgrade pip && \
     pip install --no-cache-dir --break-system-packages \
+    --index-url ${PIP_INDEX_URL} \
     pandas \
     numpy \
     scipy \
@@ -94,7 +115,7 @@ RUN pip install --no-cache-dir --break-system-packages --upgrade pip && \
     pydantic
 
 # Install PM2 globally for process management
-RUN npm config set registry https://registry.npmmirror.com && \
+RUN npm config set registry ${NPM_REGISTRY} && \
     npm install -g pm2@latest
 
 # Create non-root user for running the application (Alpine style)
