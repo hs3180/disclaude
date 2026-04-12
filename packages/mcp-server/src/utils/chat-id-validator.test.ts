@@ -75,6 +75,12 @@ describe('isValidChatId', () => {
     it('should reject a bare test- prefix', () => {
       expect(isValidChatId('test-')).toBe(false);
     });
+
+    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
+      // Previously used multimodal-test-* which was rejected;
+      // renamed to test-multimodal-* to match the test- prefix pattern.
+      expect(isValidChatId('test-multimodal-12345')).toBe(true);
+    });
   });
 
   describe('invalid formats', () => {
