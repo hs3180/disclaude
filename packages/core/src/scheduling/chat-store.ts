@@ -12,6 +12,7 @@
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import type { TriggerMode } from '../config/types.js';
 
 const logger = createLogger('ChatStore');
 
@@ -51,8 +52,22 @@ export interface TempChatRecord {
    * When `true` or undefined, default behavior applies (passive mode enabled).
    *
    * This is set at chat creation time (declarative), not via runtime API.
+   *
+   * @deprecated Use `triggerMode` instead (Issue #2291). Retained for backward
+   * compatibility with persisted records.
    */
   passiveMode?: boolean;
+  /**
+   * Trigger mode configuration for this chat (Issue #2291).
+   *
+   * - `'mention'`: Bot only responds to @mentions (default)
+   * - `'always'`: Bot responds to all messages
+   * - `undefined`: Use default behavior (`'mention'`)
+   *
+   * When both `triggerMode` and `passiveMode` are present, `triggerMode` takes precedence.
+   * Migration: `passiveMode: false` → `triggerMode: 'always'`, `passiveMode: true/undefined` → `triggerMode: 'mention'`
+   */
+  triggerMode?: TriggerMode;
 }
 
 /**
@@ -71,8 +86,15 @@ export interface RegisterTempChatOptions {
    * Issue #2069: When `false`, passive mode is disabled for this chat
    * (bot responds to all messages). When `true` or undefined, default
    * behavior applies (passive mode enabled, bot only responds to @mentions).
+   *
+   * @deprecated Use `triggerMode` instead (Issue #2291).
    */
   passiveMode?: boolean;
+  /**
+   * Trigger mode configuration (Issue #2291).
+   * Takes precedence over `passiveMode` when both are provided.
+   */
+  triggerMode?: TriggerMode;
 }
 
 /**
@@ -190,6 +212,8 @@ export class ChatStore {
       expiresAt,
       creatorChatId: opts.creatorChatId,
       context: opts.context,
+      // Issue #2291: Prefer triggerMode over passiveMode
+      triggerMode: opts.triggerMode,
       passiveMode: opts.passiveMode,
     };
 
