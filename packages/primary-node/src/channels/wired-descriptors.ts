@@ -147,12 +147,14 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
     // 2. Set up trigger mode adapter (Issue #2193: renamed from passiveMode)
-    // Now that FeishuChannel exposes isTriggerEnabled/setTriggerEnabled directly,
-    // no logic inversion is needed.
+    // Adapter bridges semantics: isEnabled(true) = "trigger mode ON = mention-only",
+    // while TriggerModeManager.isTriggerEnabled(true) = "respond to all messages".
+    // Inversion is necessary because triggerEnabled maps to "respond to all",
+    // but the command handler expects isEnabled(true) = mention-only.
     const triggerModeAdapter = {
-      isEnabled: (chatId: string) => feishuChannel.isTriggerEnabled(chatId),
+      isEnabled: (chatId: string) => !feishuChannel.isTriggerEnabled(chatId),
       setEnabled: (chatId: string, enabled: boolean) =>
-        feishuChannel.setTriggerEnabled(chatId, enabled),
+        feishuChannel.setTriggerEnabled(chatId, !enabled),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
     context.controlHandlerContext.passiveMode = triggerModeAdapter;

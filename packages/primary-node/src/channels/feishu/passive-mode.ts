@@ -155,13 +155,3 @@ export class TriggerModeManager {
     return loaded;
   }
 }
-
-/**
- * @deprecated Use TriggerModeManager instead. Kept for backward compatibility during transition (Issue #2193).
- */
-export const PassiveModeManager = TriggerModeManager;
-
-/**
- * @deprecated Use TriggerModeRecord instead. Kept for backward compatibility during transition (Issue #2193).
- */
-export type PassiveModeRecord = TriggerModeRecord;
