@@ -16,3 +16,12 @@ export type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+
+export {
+  getDisclaudeDir,
+  getProjectsFilePath,
+  loadPersistedProjects,
+  persistProjects,
+  deletePersistedInstance,
+  validatePersistData,
+} from './persistence.js';
