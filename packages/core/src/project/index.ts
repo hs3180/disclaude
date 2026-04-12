@@ -16,3 +16,15 @@ export type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+
+export {
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './template-discovery.js';
+
+export type {
+  DiscoveryResult,
+  DiscoveryError,
+  DiscoveryOptions,
+} from './template-discovery.js';
