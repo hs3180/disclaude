@@ -203,7 +203,7 @@ describe('ProjectsPersistData', () => {
 describe('CwdProvider', () => {
   it('should accept valid provider function', () => {
     const provider: CwdProvider = (chatId) => {
-      if (chatId === 'oc_special') return '/workspace/projects/special';
+      if (chatId === 'oc_special') {return '/workspace/projects/special';}
       return undefined; // default
     };
     expect(provider('oc_special')).toBe('/workspace/projects/special');
