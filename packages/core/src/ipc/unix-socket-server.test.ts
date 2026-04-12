@@ -9,8 +9,8 @@
  * - UnixSocketIpcServer: start/stop lifecycle, connection handling, message routing
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtempSync, existsSync } from 'fs';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -421,6 +421,14 @@ describe('UnixSocketIpcServer', () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'ipc-server-test-'));
     socketPath = join(tempDir, 'test.ipc');
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors in afterEach
+    }
   });
 
   describe('lifecycle', () => {

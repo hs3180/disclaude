@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -25,14 +25,17 @@ import {
 // Test helpers
 // ============================================================================
 
-/** Start a test IPC server and return its socket path */
-async function startTestServer(tempDir: string): Promise<string> {
+/** Start a test IPC server and return its socket path + cleanup handle */
+async function startTestServer(tempDir: string): Promise<{ socketPath: string; stop: () => Promise<void> }> {
   const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
   const socketPath = join(tempDir, `server-${Date.now()}.ipc`);
   const handler = createInteractiveMessageHandler(vi.fn());
   const server = new UnixSocketIpcServer(handler, { socketPath });
   await server.start();
-  return socketPath;
+  return {
+    socketPath,
+    stop: () => server.stop(),
+  };
 }
 
 // ============================================================================
@@ -42,10 +45,26 @@ async function startTestServer(tempDir: string): Promise<string> {
 describe('UnixSocketIpcClient', () => {
   let tempDir: string;
   let socketPath: string;
+  /** Active servers to stop in afterEach */
+  const activeServers: Array<() => Promise<void>> = [];
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'ipc-client-test-'));
     socketPath = join(tempDir, 'test.ipc');
+  });
+
+  afterEach(async () => {
+    // Stop all active servers
+    for (const stop of activeServers) {
+      try { await stop(); } catch { /* ignore */ }
+    }
+    activeServers.length = 0;
+    // Clean up temp directory
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
   });
 
   describe('constructor', () => {
@@ -82,7 +101,8 @@ describe('UnixSocketIpcClient', () => {
     });
 
     it('should connect to a running server', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -96,7 +116,8 @@ describe('UnixSocketIpcClient', () => {
     });
 
     it('should be no-op when already connected', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -113,7 +134,8 @@ describe('UnixSocketIpcClient', () => {
 
   describe('disconnect', () => {
     it('should disconnect and clear state', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -136,7 +158,8 @@ describe('UnixSocketIpcClient', () => {
 
   describe('request', () => {
     it('should send ping and receive pong', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -150,7 +173,8 @@ describe('UnixSocketIpcClient', () => {
     });
 
     it('should auto-connect if not connected', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -378,7 +402,8 @@ describe('UnixSocketIpcClient', () => {
 
   describe('ping', () => {
     it('should return true when server responds', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
@@ -403,7 +428,8 @@ describe('UnixSocketIpcClient', () => {
 
   describe('availability', () => {
     it('should return available when connected', async () => {
-      const serverSocketPath = await startTestServer(tempDir);
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
       const client = new UnixSocketIpcClient({
         socketPath: serverSocketPath,
         timeout: 2000,
