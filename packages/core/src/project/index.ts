@@ -16,3 +16,5 @@ export type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+
+export { ProjectManager } from './project-manager.js';
