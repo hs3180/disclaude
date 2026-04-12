@@ -28,7 +28,7 @@ import {
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
 import {
-  PassiveModeManager,
+  TriggerModeManager,
   MentionDetector,
   WelcomeHandler,
   MessageHandler as FeishuMessageHandler,
@@ -155,7 +155,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private wsConnectionManager?: WsConnectionManager;
 
   // Modular components
-  private passiveModeManager: PassiveModeManager;
+  private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
   private welcomeHandler: WelcomeHandler;
   private feishuMessageHandler: FeishuMessageHandler;
@@ -176,7 +176,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
 
     // Initialize modular components
-    this.passiveModeManager = new PassiveModeManager();
+    this.triggerModeManager = new TriggerModeManager();
     this.mentionDetector = new MentionDetector();
     this.interactionManager = new InteractionManager();
     this.welcomeHandler = new WelcomeHandler(this.appId, () => this.isRunning);
@@ -200,7 +200,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({
-      passiveModeManager: this.passiveModeManager,
+      triggerModeManager: this.triggerModeManager,
       mentionDetector: this.mentionDetector,
       interactionManager: this.interactionManager,
       callbacks,
@@ -650,25 +650,26 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
-  // Delegate passive mode methods to PassiveModeManager
-  isPassiveModeDisabled(chatId: string): boolean {
-    return this.passiveModeManager.isPassiveModeDisabled(chatId);
+  // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
+  isTriggerEnabled(chatId: string): boolean {
+    return this.triggerModeManager.isTriggerEnabled(chatId);
   }
 
-  setPassiveModeDisabled(chatId: string, disabled: boolean): void {
-    this.passiveModeManager.setPassiveModeDisabled(chatId, disabled);
+  setTriggerEnabled(chatId: string, enabled: boolean): void {
+    this.triggerModeManager.setTriggerEnabled(chatId, enabled);
   }
 
-  getPassiveModeDisabledChats(): string[] {
-    return this.passiveModeManager.getPassiveModeDisabledChats();
+  getTriggerEnabledChats(): string[] {
+    return this.triggerModeManager.getTriggerEnabledChats();
   }
 
   /**
-   * Get the PassiveModeManager instance.
+   * Get the TriggerModeManager instance.
    * Issue #2069: Allows external initialization from persisted records.
+   * Issue #2193: Renamed from getPassiveModeManager.
    */
-  getPassiveModeManager(): PassiveModeManager {
-    return this.passiveModeManager;
+  getTriggerModeManager(): TriggerModeManager {
+    return this.triggerModeManager;
   }
 
   /**

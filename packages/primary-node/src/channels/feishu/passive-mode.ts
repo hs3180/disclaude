@@ -1,68 +1,74 @@
 /**
- * Passive Mode Manager.
+ * Trigger Mode Manager.
  *
- * Manages passive mode state for group chats.
+ * Manages trigger mode state for group chats.
  * Issue #511: Group chat passive mode control
  * Issue #694: Extracted from feishu-channel.ts
  * Issue #2069: Declarative passive mode via chat config files
  * Issue #2052: Auto-disable passive mode for 2-member group chats
+ * Issue #2193: Renamed from PassiveModeManager to TriggerModeManager
  *
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
 import { createLogger } from '@disclaude/core';
 
-const logger = createLogger('PassiveMode');
+const logger = createLogger('TriggerMode');
 
 /**
- * A record with passive mode configuration, used for initialization.
+ * A record with trigger mode configuration, used for initialization.
+ * The `passiveMode` field is retained for backward compatibility with
+ * persisted data (Issue #2193).
  */
-export interface PassiveModeRecord {
+export interface TriggerModeRecord {
   /** The chat ID */
   chatId: string;
   /**
-   * Passive mode setting.
-   * When `false`, passive mode is disabled (bot responds to all messages).
-   * When `true` or undefined, default behavior applies (passive mode enabled).
+   * Trigger mode setting.
+   * When `true`, trigger mode is enabled (bot responds to all messages).
+   * When `false` or undefined, default behavior applies (bot only responds to @mentions).
+   *
+   * Retained as `passiveMode` for backward compatibility with persisted records.
+   * The value is inverted internally: `passiveMode: false` → trigger mode enabled.
    */
   passiveMode?: boolean;
 }
 
 /**
- * Passive Mode Manager.
+ * Trigger Mode Manager (Issue #2193: renamed from PassiveModeManager).
  *
- * In passive mode, the bot only responds when mentioned (@bot).
- * This can be disabled per chat to make the bot respond to all messages.
+ * In the default state (trigger mode disabled), the bot only responds when
+ * mentioned (@bot). When trigger mode is enabled, the bot responds to all messages.
  *
  * State can be initialized declaratively from persisted records (e.g., TempChatRecord)
- * via `initFromRecords()`, ensuring passive mode settings survive restarts.
+ * via `initFromRecords()`, ensuring trigger mode settings survive restarts.
  */
-export class PassiveModeManager {
+export class TriggerModeManager {
   /**
-   * Passive mode state storage.
-   * Key: chatId, Value: true if passive mode is disabled (bot responds to all messages)
+   * Trigger mode state storage.
+   * Key: chatId, Value: true if trigger mode is enabled (bot responds to all messages)
    */
-  private passiveModeDisabled: Map<string, boolean> = new Map();
+  private triggerEnabled: Map<string, boolean> = new Map();
 
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
-   * Once detected, passive mode is permanently disabled for these chats,
+   * Once detected, trigger mode is permanently enabled for these chats,
    * even if more members join later (Issue #2052).
    */
   private smallGroups: Set<string> = new Set();
 
   /**
-   * Check if passive mode is disabled for a specific chat.
-   * When passive mode is disabled, the bot responds to all messages in group chats.
+   * Check if trigger mode is enabled for a specific chat.
+   * When trigger mode is enabled, the bot responds to all messages in group chats.
    *
    * Also returns true for auto-detected small groups (Issue #2052):
    * 2-member group chats (bot + 1 user) are treated as 1-on-1 conversations.
    *
    * @param chatId - Chat ID to check
-   * @returns true if passive mode is disabled (bot responds to all messages)
+   * @returns true if trigger mode is enabled (bot responds to all messages)
    */
-  isPassiveModeDisabled(chatId: string): boolean {
-    return this.passiveModeDisabled.get(chatId) === true || this.smallGroups.has(chatId);
+  isTriggerEnabled(chatId: string): boolean {
+    return this.triggerEnabled.get(chatId) === true || this.smallGroups.has(chatId);
   }
 
   /**
@@ -76,9 +82,9 @@ export class PassiveModeManager {
   }
 
   /**
-   * Mark a chat as a small group, auto-disabling passive mode.
+   * Mark a chat as a small group, auto-enabling trigger mode.
    *
-   * Once marked, passive mode stays disabled even if members join later,
+   * Once marked, trigger mode stays enabled even if members join later,
    * to avoid disruptive behavior changes (Issue #2052).
    *
    * @param chatId - Chat ID to mark
@@ -86,64 +92,65 @@ export class PassiveModeManager {
   markAsSmallGroup(chatId: string): void {
     if (!this.smallGroups.has(chatId)) {
       this.smallGroups.add(chatId);
-      logger.info({ chatId }, 'Auto-disabled passive mode for small group (≤2 members)');
+      logger.info({ chatId }, 'Auto-enabled trigger mode for small group (≤2 members)');
     }
   }
 
   /**
-   * Set passive mode state for a specific chat.
+   * Set trigger mode state for a specific chat.
    *
    * @param chatId - Chat ID to configure
-   * @param disabled - true to disable passive mode (respond to all messages)
+   * @param enabled - true to enable trigger mode (respond to all messages)
    */
-  setPassiveModeDisabled(chatId: string, disabled: boolean): void {
-    if (disabled) {
-      this.passiveModeDisabled.set(chatId, true);
-      logger.info({ chatId }, 'Passive mode disabled for chat');
+  setTriggerEnabled(chatId: string, enabled: boolean): void {
+    if (enabled) {
+      this.triggerEnabled.set(chatId, true);
+      logger.info({ chatId }, 'Trigger mode enabled for chat');
     } else {
-      this.passiveModeDisabled.delete(chatId);
-      logger.info({ chatId }, 'Passive mode enabled for chat');
+      this.triggerEnabled.delete(chatId);
+      logger.info({ chatId }, 'Trigger mode disabled for chat');
     }
   }
 
   /**
-   * Get all chats with passive mode disabled.
-   * Includes both manually disabled and auto-detected small groups.
+   * Get all chats with trigger mode enabled.
+   * Includes both manually enabled and auto-detected small groups.
    *
-   * @returns Array of chat IDs with passive mode disabled
+   * @returns Array of chat IDs with trigger mode enabled
    */
-  getPassiveModeDisabledChats(): string[] {
-    const manual = Array.from(this.passiveModeDisabled.keys());
+  getTriggerEnabledChats(): string[] {
+    const manual = Array.from(this.triggerEnabled.keys());
     const auto = Array.from(this.smallGroups.keys());
-    // Deduplicate: small groups might also be in passiveModeDisabled
+    // Deduplicate: small groups might also be in triggerEnabled
     const all = new Set([...manual, ...auto]);
     return Array.from(all);
   }
 
   /**
-   * Initialize passive mode state from persisted records.
+   * Initialize trigger mode state from persisted records.
    *
-   * Issue #2069: Loads declarative passive mode configuration from
-   * TempChatRecord or similar sources. This ensures that passive mode
+   * Issue #2069: Loads declarative trigger mode configuration from
+   * TempChatRecord or similar sources. This ensures that trigger mode
    * settings survive restarts and are applied at startup.
    *
-   * Only records with `passiveMode: false` are loaded (passive mode disabled).
+   * Records with `passiveMode: false` are loaded as trigger mode enabled
+   * (passive mode disabled = trigger mode enabled, Issue #2193).
    * Records with `passiveMode: true` or undefined use the default behavior
-   * (passive mode enabled), so they don't need explicit loading.
+   * (trigger mode disabled), so they don't need explicit loading.
    *
    * @param records - Array of records with chatId and optional passiveMode
-   * @returns Number of chats that had passive mode disabled
+   * @returns Number of chats that had trigger mode enabled
    */
-  initFromRecords(records: PassiveModeRecord[]): number {
+  initFromRecords(records: TriggerModeRecord[]): number {
     let loaded = 0;
     for (const record of records) {
       if (record.passiveMode === false) {
-        this.passiveModeDisabled.set(record.chatId, true);
+        this.triggerEnabled.set(record.chatId, true);
         loaded++;
       }
     }
     if (loaded > 0) {
-      logger.info({ count: loaded }, 'Loaded passive mode state from records');
+      logger.info({ count: loaded }, 'Loaded trigger mode state from records');
     }
     return loaded;
   }

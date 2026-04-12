@@ -204,7 +204,7 @@ export type FilterReason =
   | 'old'
   | 'unsupported'
   | 'empty'
-  | 'passive_mode';
+  | 'trigger_mode';
 
 /**
  * Debug configuration for filtered message forwarding.
