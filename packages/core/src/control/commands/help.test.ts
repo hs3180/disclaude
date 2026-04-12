@@ -51,6 +51,11 @@ describe('handleHelp', () => {
     expect(result.message).toContain('/passive');
   });
 
+  it('should include /trigger command', async () => {
+    const result = await handleHelp(mockCommand, mockContext);
+    expect(result.message).toContain('/trigger');
+  });
+
   it('should include /list-nodes command', async () => {
     const result = await handleHelp(mockCommand, mockContext);
     expect(result.message).toContain('/list-nodes');

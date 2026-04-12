@@ -31,7 +31,7 @@ import {
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
-import type { PassiveModeManager } from './passive-mode.js';
+import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 
 const logger = createLogger('MessageHandler');
@@ -102,7 +102,7 @@ interface QuotedMessageResult {
 export class MessageHandler {
   private client?: lark.Client;
   private interactionManager: InteractionManager;
-  private passiveModeManager: PassiveModeManager;
+  private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
   private callbacks: MessageCallbacks;
   private isRunning: () => boolean;
@@ -115,14 +115,14 @@ export class MessageHandler {
    * Create a MessageHandler.
    */
   constructor(options: {
-    passiveModeManager: PassiveModeManager;
+    triggerModeManager: TriggerModeManager;
     mentionDetector: MentionDetector;
     interactionManager: InteractionManager;
     callbacks: MessageCallbacks;
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
   }) {
-    this.passiveModeManager = options.passiveModeManager;
+    this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
@@ -827,18 +827,18 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat trigger mode (Issue #2193: /trigger is an alias for /passive)
-    // Issue #2052: Auto-disable passive mode for 2-member group chats (bot + 1 user)
+    // Group chat trigger mode (Issue #2193: renamed from passiveMode)
+    // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
     const isTriggerCommand = textWithoutMentions.startsWith('/passive') || textWithoutMentions.startsWith('/trigger');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
+    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
       // Check if this is a small group on first encounter
-      if (!this.passiveModeManager.isSmallGroup(chat_id)) {
+      if (!this.triggerModeManager.isSmallGroup(chat_id)) {
         await this.checkAndAutoDisableSmallGroup(chat_id);
       }
       // Re-check after potential auto-detection
-      if (!this.passiveModeManager.isPassiveModeDisabled(chat_id)) {
-        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (passive mode)');
-        this.forwardFilteredMessage('passive_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
+        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
         return;
       }
     }
@@ -911,10 +911,10 @@ export class MessageHandler {
     }
 
     // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
-    const isPassiveModeTrigger = this.isGroupChat(chat_type) && botMentioned;
+    const isTriggerModeMention = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
 
-    if (isPassiveModeTrigger) {
+    if (isTriggerModeMention) {
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 
@@ -1173,15 +1173,15 @@ export class MessageHandler {
       const totalMembers = userCount + botCount;
 
       if (totalMembers > 0 && totalMembers <= 2) {
-        this.passiveModeManager.markAsSmallGroup(chatId);
+        this.triggerModeManager.markAsSmallGroup(chatId);
         logger.info(
           { chatId, userCount, botCount, totalMembers },
-          'Small group detected (≤2 members), auto-disabling passive mode',
+          'Small group detected (≤2 members), auto-enabling trigger mode',
         );
       } else {
         logger.debug(
           { chatId, userCount, botCount, totalMembers },
-          'Group has more than 2 members, keeping passive mode',
+          'Group has more than 2 members, keeping trigger mode disabled',
         );
       }
     } catch (error) {

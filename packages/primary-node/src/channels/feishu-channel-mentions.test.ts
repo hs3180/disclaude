@@ -69,10 +69,10 @@ vi.mock('../platforms/feishu/index.js', () => ({
 }));
 
 vi.mock('./feishu/index.js', () => ({
-  PassiveModeManager: vi.fn().mockImplementation(() => ({
-    isPassiveModeDisabled: vi.fn().mockReturnValue(false),
-    setPassiveModeDisabled: vi.fn(),
-    getPassiveModeDisabledChats: vi.fn().mockReturnValue([]),
+  TriggerModeManager: vi.fn().mockImplementation(() => ({
+    isTriggerEnabled: vi.fn().mockReturnValue(false),
+    setTriggerEnabled: vi.fn(),
+    getTriggerEnabledChats: vi.fn().mockReturnValue([]),
   })),
   MentionDetector: vi.fn().mockImplementation(() => ({
     setClient: vi.fn(),
