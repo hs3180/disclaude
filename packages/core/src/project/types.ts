@@ -35,8 +35,12 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from `{packageDir}/templates/` by default.
+ * Optional config overrides can be provided via `projectTemplates` in config.
  * The "default" project is always implicitly available (no template needed).
+ *
+ * @see discoverTemplates — auto-discovery from filesystem
+ * @see resolveTemplates — merge auto-discovered with config overrides
  */
 export interface ProjectTemplate {
   /** Template name (unique identifier, e.g. "research", "book-reader") */
@@ -54,12 +58,19 @@ export interface ProjectTemplate {
  *
  * Key = template name, Value = optional display metadata.
  *
+ * This is now **optional** — templates are auto-discovered from
+ * `{packageDir}/templates/` by default. Config entries act as overrides
+ * or additions to auto-discovered templates.
+ *
  * ```yaml
+ * # Optional: override display metadata for auto-discovered templates
  * projectTemplates:
  *   research:
  *     displayName: "研究模式"
  *     description: "专注研究的独立空间"
  * ```
+ *
+ * @see resolveTemplates — merges auto-discovered templates with config overrides
  */
 export type ProjectTemplatesConfig = Record<
   string,
@@ -189,6 +200,18 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Optional template configuration overrides from disclaude.config.yaml.
+   *
+   * When provided, these are merged with auto-discovered templates:
+   * - Templates discovered from filesystem are used as the base
+   * - Config entries override display metadata for matching template names
+   * - Config entries for templates not found on disk are added as "virtual" templates
+   *
+   * When omitted (recommended), all templates are auto-discovered from
+   * `{packageDir}/templates/`.
+   *
+   * @see resolveTemplates — handles the merge logic
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

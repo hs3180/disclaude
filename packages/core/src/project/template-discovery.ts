@@ -191,6 +191,81 @@ export function discoverTemplatesAsConfig(packageDir: string): ProjectTemplatesC
   return discoveryResultToConfig(discoverTemplates(packageDir));
 }
 
+/**
+ * Resolve templates by merging auto-discovered templates with config overrides.
+ *
+ * This is the recommended entry point for ProjectManager initialization:
+ * 1. Auto-discovers templates from `{packageDir}/templates/`
+ * 2. Merges with optional config overrides from `disclaude.config.yaml`
+ * 3. Returns the final set of templates ready for use
+ *
+ * Merge behavior:
+ * - **Discovered templates** are always included as the base
+ * - **Config overrides** update display metadata for matching template names
+ * - **Config-only entries** (not on disk) are included as "virtual" templates
+ *   (useful for templates from external sources or future dynamic loading)
+ *
+ * @param packageDir - The package root directory containing a `templates/` subdirectory
+ * @param configOverrides - Optional template config from `disclaude.config.yaml`
+ * @returns Resolved templates with discovery errors (if any)
+ *
+ * @example
+ * ```typescript
+ * // No config — pure auto-discovery (recommended)
+ * const result = resolveTemplates(packageDir);
+ *
+ * // With config overrides
+ * const result = resolveTemplates(packageDir, config.projectTemplates);
+ *
+ * // Use resolved templates for ProjectManager
+ * const templateMap = new Map(result.templates.map(t => [t.name, t]));
+ * ```
+ */
+export function resolveTemplates(
+  packageDir: string,
+  configOverrides?: ProjectTemplatesConfig,
+): DiscoveryResult {
+  // Step 1: Auto-discover from filesystem
+  const discovered = discoverTemplates(packageDir);
+
+  // Step 2: If no config overrides, return discovered as-is
+  if (!configOverrides || Object.keys(configOverrides).length === 0) {
+    return discovered;
+  }
+
+  // Step 3: Build merged template map
+  const templateMap = new Map<string, ProjectTemplate>();
+  for (const template of discovered.templates) {
+    templateMap.set(template.name, template);
+  }
+
+  // Step 4: Apply config overrides / add virtual templates
+  for (const [name, config] of Object.entries(configOverrides)) {
+    const existing = templateMap.get(name);
+    if (existing) {
+      // Override display metadata for discovered template
+      if (config.displayName !== undefined) {
+        existing.displayName = config.displayName;
+      }
+      if (config.description !== undefined) {
+        existing.description = config.description;
+      }
+    } else {
+      // Virtual template (not on disk but in config)
+      templateMap.set(name, {
+        name,
+        displayName: config.displayName,
+        description: config.description,
+      });
+    }
+  }
+
+  return {
+    templates: Array.from(templateMap.values()),
+    errors: discovered.errors,
+  };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Discovery Options
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

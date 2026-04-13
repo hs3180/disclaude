@@ -21,6 +21,7 @@ export {
   discoverTemplates,
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
+  resolveTemplates,
 } from './template-discovery.js';
 
 export type {

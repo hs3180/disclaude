@@ -12,6 +12,7 @@ import {
   discoverTemplates,
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
+  resolveTemplates,
 } from './template-discovery.js';
 
 describe('discoverTemplates', () => {
@@ -333,5 +334,152 @@ describe('discoverTemplatesAsConfig', () => {
     expect(config).toEqual({
       research: { displayName: '研究模式' },
     });
+  });
+});
+
+describe('resolveTemplates', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should return auto-discovered templates when no config provided', () => {
+    const templateDir = path.join(tempDir, 'templates', 'research');
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), '# Research');
+    fs.writeFileSync(
+      path.join(templateDir, 'template.yaml'),
+      'displayName: "研究模式"',
+    );
+
+    const result = resolveTemplates(tempDir);
+    expect(result.templates).toHaveLength(1);
+    expect(result.templates[0]).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+    });
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should return empty templates when no discovery and no config', () => {
+    const result = resolveTemplates(tempDir);
+    expect(result.templates).toEqual([]);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should override discovered template metadata with config', () => {
+    const templateDir = path.join(tempDir, 'templates', 'research');
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), '# Research');
+    fs.writeFileSync(
+      path.join(templateDir, 'template.yaml'),
+      'displayName: "Original Name"',
+    );
+
+    const result = resolveTemplates(tempDir, {
+      research: { displayName: 'Overridden Name', description: 'New description' },
+    });
+
+    expect(result.templates).toHaveLength(1);
+    expect(result.templates[0]).toEqual({
+      name: 'research',
+      displayName: 'Overridden Name',
+      description: 'New description',
+    });
+  });
+
+  it('should add virtual templates from config not found on disk', () => {
+    const templateDir = path.join(tempDir, 'templates', 'research');
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), '# Research');
+
+    const result = resolveTemplates(tempDir, {
+      research: { displayName: '研究模式' },
+      'virtual-template': { displayName: 'Virtual', description: 'Not on disk' },
+    });
+
+    expect(result.templates).toHaveLength(2);
+    const names = result.templates.map((t) => t.name).sort();
+    expect(names).toEqual(['research', 'virtual-template']);
+
+    const virtual = result.templates.find((t) => t.name === 'virtual-template');
+    expect(virtual).toEqual({
+      name: 'virtual-template',
+      displayName: 'Virtual',
+      description: 'Not on disk',
+    });
+  });
+
+  it('should only override specified metadata fields, keeping discovered ones', () => {
+    const templateDir = path.join(tempDir, 'templates', 'research');
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), '# Research');
+    fs.writeFileSync(
+      path.join(templateDir, 'template.yaml'),
+      'displayName: "Original"\ndescription: "Original desc"',
+    );
+
+    // Only override displayName, keep description from discovery
+    const result = resolveTemplates(tempDir, {
+      research: { displayName: 'New Name' },
+    });
+
+    expect(result.templates[0]).toEqual({
+      name: 'research',
+      displayName: 'New Name',
+      description: 'Original desc',
+    });
+  });
+
+  it('should preserve discovery errors in result', () => {
+    const badDir = path.join(tempDir, 'templates', 'default');
+    fs.mkdirSync(badDir, { recursive: true });
+    fs.writeFileSync(path.join(badDir, 'CLAUDE.md'), '# Default');
+
+    const result = resolveTemplates(tempDir, {});
+    expect(result.templates).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].dirName).toBe('default');
+  });
+
+  it('should handle empty config object same as no config', () => {
+    const templateDir = path.join(tempDir, 'templates', 'research');
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), '# Research');
+
+    const noConfig = resolveTemplates(tempDir);
+    const emptyConfig = resolveTemplates(tempDir, {});
+
+    expect(noConfig.templates).toEqual(emptyConfig.templates);
+  });
+
+  it('should merge multiple discovered templates with config overrides', () => {
+    for (const name of ['research', 'book-reader', 'code-review']) {
+      const dir = path.join(tempDir, 'templates', name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `# ${name}`);
+    }
+
+    const result = resolveTemplates(tempDir, {
+      research: { displayName: '研究模式' },
+      'book-reader': { displayName: '图书阅读器', description: '专注阅读' },
+      // code-review: no override, uses discovered metadata (none)
+    });
+
+    expect(result.templates).toHaveLength(3);
+    const research = result.templates.find((t) => t.name === 'research');
+    expect(research?.displayName).toBe('研究模式');
+
+    const bookReader = result.templates.find((t) => t.name === 'book-reader');
+    expect(bookReader?.displayName).toBe('图书阅读器');
+    expect(bookReader?.description).toBe('专注阅读');
+
+    const codeReview = result.templates.find((t) => t.name === 'code-review');
+    expect(codeReview?.displayName).toBeUndefined();
   });
 });
