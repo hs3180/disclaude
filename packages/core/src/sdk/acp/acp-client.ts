@@ -449,8 +449,8 @@ export class AcpClient {
    */
   private handleResponse(msg: JsonRpcResponse | JsonRpcErrorResponse): void {
     const {id} = msg;
-    if (id === null) {
-      logger.debug('Received response with null id');
+    if (id === null || id === undefined) {
+      logger.debug('Received response with null id, ignoring');
       return;
     }
     const pending = this.pendingRequests.get(id);

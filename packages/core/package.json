@@ -16,7 +16,6 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.62",
     "@anthropic-ai/sdk": "^0.78.0",
     "@playwright/mcp": "^0.0.61",
     "cron": "^3.1.6",
