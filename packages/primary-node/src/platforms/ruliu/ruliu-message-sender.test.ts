@@ -295,7 +295,7 @@ describe('RuliuMessageSender', () => {
   describe('retry', () => {
     it('should pass retry options when sending message', async () => {
       const sender = createSender();
-      const mockFetch = mockTokenAndSend();
+      mockTokenAndSend();
 
       await sender.sendText('chat_1', 'test retry');
 
