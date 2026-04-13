@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
 import {
   createInteractiveMessageHandler,
   UnixSocketIpcServer,
@@ -417,24 +418,42 @@ describe('createInteractiveMessageHandler', () => {
 describe('UnixSocketIpcServer', () => {
   let tempDir: string;
   let socketPath: string;
+  /** Active servers to stop in afterEach */
+  const activeServers: Array<() => Promise<void>> = [];
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'ipc-server-test-'));
     socketPath = join(tempDir, 'test.ipc');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Stop all running servers first (release socket files)
+    for (const stop of activeServers) {
+      try { await stop(); } catch { /* ignore */ }
+    }
+    activeServers.length = 0;
+    // Clean up temp directory
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {
-      // Ignore cleanup errors in afterEach
+      // Ignore cleanup errors
     }
   });
+
+  /**
+   * Helper: create a server and register it for automatic cleanup.
+   * Returns the server so tests can make assertions on it.
+   */
+  function createTrackedServer(handler: ReturnType<typeof createInteractiveMessageHandler>, options?: { socketPath?: string }): UnixSocketIpcServer {
+    const server = new UnixSocketIpcServer(handler, { socketPath: options?.socketPath ?? socketPath });
+    activeServers.push(() => server.stop());
+    return server;
+  }
 
   describe('lifecycle', () => {
     it('should start and stop successfully', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       expect(server.isRunning()).toBe(false);
 
@@ -449,14 +468,14 @@ describe('UnixSocketIpcServer', () => {
 
     it('should return socket path', () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       expect(server.getSocketPath()).toBe(socketPath);
     });
 
     it('should be no-op when stopping already stopped server', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.stop(); // should not throw
       expect(server.isRunning()).toBe(false);
@@ -464,7 +483,7 @@ describe('UnixSocketIpcServer', () => {
 
     it('should be no-op when starting already running server', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
       await server.start(); // should be no-op (warns)
@@ -474,9 +493,9 @@ describe('UnixSocketIpcServer', () => {
     });
 
     it('should create socket directory if it does not exist', async () => {
-      const nestedPath = join(tempDir, 'nested', 'dir', 'test.ipc');
+      const nestedPath = join(tempDir, 'nested', 'dir', `test-${randomUUID().slice(0, 8)}.ipc`);
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath: nestedPath });
+      const server = createTrackedServer(handler, { socketPath: nestedPath });
 
       await server.start();
       expect(server.isRunning()).toBe(true);
@@ -489,7 +508,7 @@ describe('UnixSocketIpcServer', () => {
       writeFileSync(socketPath, 'stale content');
 
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
       expect(server.isRunning()).toBe(true);
@@ -500,7 +519,7 @@ describe('UnixSocketIpcServer', () => {
   describe('message handling', () => {
     it('should handle ping requests via socket', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
 
@@ -543,7 +562,7 @@ describe('UnixSocketIpcServer', () => {
 
     it('should handle invalid JSON gracefully', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
 
@@ -583,7 +602,7 @@ describe('UnixSocketIpcServer', () => {
 
     it('should reject connections during shutdown', async () => {
       const handler = createInteractiveMessageHandler(vi.fn());
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
 
@@ -614,7 +633,7 @@ describe('UnixSocketIpcServer', () => {
     it('should handle sendMessage via socket', async () => {
       const mockHandlers = createMockHandlersContainer();
       const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
-      const server = new UnixSocketIpcServer(handler, { socketPath });
+      const server = createTrackedServer(handler);
 
       await server.start();
 
