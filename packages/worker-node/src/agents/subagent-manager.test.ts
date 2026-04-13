@@ -4,7 +4,7 @@
  * @see subagent-manager.ts
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, vi as vitest } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock @disclaude/core
 vi.mock('@disclaude/core', async (importOriginal) => {
