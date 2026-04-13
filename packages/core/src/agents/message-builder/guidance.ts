@@ -218,3 +218,56 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Known runtime-env variable descriptions.
+ *
+ * Issue #1371: Provides human-readable descriptions for common
+ * runtime-env variables so the agent understands their purpose.
+ */
+const KNOWN_RUNTIME_VAR_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub App Installation Access Token (auto-refreshed, 1-hour lifetime)',
+  GH_TOKEN_EXPIRES_AT: 'GitHub token expiry timestamp (ISO 8601)',
+};
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime-env variables
+ * so it can proactively use them (e.g., GitHub CLI auto-uses GH_TOKEN).
+ *
+ * Only includes variable names and descriptions — never exposes values.
+ *
+ * @param runtimeEnvVars - Current runtime-env variables (keys only used, values ignored)
+ * @returns Formatted runtime-env awareness section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvVars?: Record<string, string>): string {
+  if (!runtimeEnvVars || Object.keys(runtimeEnvVars).length === 0) {
+    return '';
+  }
+
+  const varDescriptions = Object.keys(runtimeEnvVars)
+    .map(key => {
+      const desc = KNOWN_RUNTIME_VAR_DESCRIPTIONS[key];
+      return desc
+        ? `- **${key}**: ${desc}`
+        : `- **${key}**: Runtime environment variable`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following runtime environment variables are currently available in your session. These are shared across agents and tools for authentication and configuration:
+
+${varDescriptions}
+
+### Usage
+
+- **GitHub operations**: The \`GH_TOKEN\` is automatically used by the \`gh\` CLI tool. You can run GitHub operations (\`gh pr list\`, \`gh issue view\`, etc.) directly without additional authentication.
+- **Token validity**: Check \`GH_TOKEN_EXPIRES_AT\` to verify token freshness. If expired, use the \`github-jwt-auth\` skill to refresh.
+- **Reading/Writing**: You can read or modify runtime-env variables using the Write tool on \`.runtime-env\` in the workspace directory.`;
+}

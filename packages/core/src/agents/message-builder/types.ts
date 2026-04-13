@@ -67,6 +67,17 @@ export interface MessageBuilderContext {
  */
 export interface MessageBuilderOptions {
   /**
+   * Runtime environment variables to expose to the agent.
+   *
+   * Issue #1371: Keys and descriptions are shown in the prompt so the agent
+   * knows what shared variables are available. Values are NOT included
+   * for security reasons.
+   *
+   * Loaded from `{workspace}/.runtime-env` by the caller (Pilot).
+   */
+  runtimeEnvVars?: Record<string, string>;
+
+  /**
    * Build channel-specific header content.
    * Inserted before metadata (chatId, messageId, etc.).
    *

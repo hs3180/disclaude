@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, loadRuntimeEnv, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { PilotCallbacks, PilotConfig } from './types.js';
 
@@ -101,7 +101,12 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    // Issue #1371: Load runtime-env vars so the agent knows what's available.
+    const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
+    this.messageBuilder = new MessageBuilder({
+      ...config.messageBuilderOptions,
+      runtimeEnvVars: Object.keys(runtimeEnvVars).length > 0 ? runtimeEnvVars : undefined,
+    });
 
     this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
   }

@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,60 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime env section header', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_xxx' });
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('shared across agents and tools');
+  });
+
+  it('should list variable names without exposing values', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_super_secret_value',
+      GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z',
+    });
+    expect(result).toContain('**GH_TOKEN**');
+    expect(result).toContain('**GH_TOKEN_EXPIRES_AT**');
+    expect(result).not.toContain('ghs_super_secret_value');
+    expect(result).not.toContain('2026-03-20T12:00:00Z');
+  });
+
+  it('should provide descriptions for known variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'val' });
+    expect(result).toContain('GitHub App Installation Access Token');
+    expect(result).toContain('auto-refreshed');
+  });
+
+  it('should show generic description for unknown variables', () => {
+    const result = buildRuntimeEnvGuidance({ CUSTOM_VAR: 'val' });
+    expect(result).toContain('**CUSTOM_VAR**');
+    expect(result).toContain('Runtime environment variable');
+  });
+
+  it('should include usage guidance for GitHub operations', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'val' });
+    expect(result).toContain('gh');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('github-jwt-auth');
+  });
+
+  it('should handle mix of known and unknown variables', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'val',
+      CUSTOM_KEY: 'val2',
+    });
+    expect(result).toContain('**GH_TOKEN**');
+    expect(result).toContain('GitHub App Installation Access Token');
+    expect(result).toContain('**CUSTOM_KEY**');
+    expect(result).toContain('Runtime environment variable');
   });
 });
