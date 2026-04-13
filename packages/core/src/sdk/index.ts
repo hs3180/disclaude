@@ -131,3 +131,54 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// ACP (Agent Client Protocol) 导出
+// ============================================================================
+
+export {
+  AcpError,
+  createRequest,
+  createNotification,
+  isResponse,
+  isNotification,
+  parseNdjsonBuffer,
+  AcpStdioTransport,
+} from './acp/index.js';
+
+export type {
+  JsonRpcRequest,
+  JsonRpcResponse,
+  JsonRpcErrorDetail,
+  JsonRpcErrorResponse,
+  JsonRpcNotification,
+  JsonRpcMessage,
+  AcpTextBlock,
+  AcpImageBlock,
+  AcpContentBlock,
+  AcpAuthCapabilities,
+  AcpFsCapabilities,
+  AcpClientCapabilities,
+  AcpModelDescriptor,
+  AcpModelsInfo,
+  AcpInitializeParams,
+  AcpSessionNewParams,
+  AcpSessionNewResult,
+  AcpSessionPromptParams,
+  AcpPromptResult,
+  AcpPermissionRequestParams,
+  AcpPermissionOutcome,
+  AcpPermissionResult,
+  AcpSessionCancelParams,
+  AcpAgentMessageChunkUpdate,
+  AcpToolCallUpdate,
+  AcpPlanUpdate,
+  AcpSessionUpdate,
+  AcpSessionUpdateParams,
+  AcpMethod,
+  IAcpTransport,
+  AcpStdioTransportConfig,
+  AcpMessageHandler,
+  AcpErrorHandler,
+  AcpCloseHandler,
+} from './acp/index.js';
