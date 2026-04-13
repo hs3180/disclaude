@@ -17,3 +17,11 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Record Log (non-structured Markdown task records)
+export {
+  getTaskRecordsPath,
+  appendTaskRecord,
+  readTaskRecords,
+  searchTaskRecords,
+} from './task-record-log.js';
