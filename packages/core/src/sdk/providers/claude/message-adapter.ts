@@ -37,17 +37,16 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 定义 SDK 内容块类型（包含 tool_use）
-      type SdkContentBlock = { type: string; [key: string]: unknown };
-
       // 提取工具使用块
       const toolBlocks = apiMessage.content.filter(
-        (block: SdkContentBlock) => block.type === 'tool_use'
+        (block): block is typeof block & { name: string; input: unknown } =>
+          'type' in block && block.type === 'tool_use'
       );
 
       // 提取文本块
       const textBlocks = apiMessage.content.filter(
-        (block: SdkContentBlock) => block.type === 'text' && 'text' in block
+        (block): block is typeof block & { text: string } =>
+          'type' in block && block.type === 'text' && 'text' in block
       );
 
       // 构建内容
@@ -56,17 +55,13 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       // 处理工具使用
       if (toolBlocks.length > 0) {
         const [block] = toolBlocks; // 取第一个工具使用
-        if ('name' in block && 'input' in block) {
-          metadata.toolName = block.name as string;
-          metadata.toolInput = block.input;
-          contentParts.push(formatToolInput(block.name as string, block.input as Record<string, unknown>));
-        }
+        metadata.toolName = block.name;
+        metadata.toolInput = block.input;
+        contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>));
       }
 
       // 处理文本
-      const textParts = textBlocks
-        .filter((block: SdkContentBlock) => 'text' in block)
-        .map((block: SdkContentBlock) => String((block as unknown as { text: string }).text));
+      const textParts = textBlocks.map((block) => String(block.text));
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
