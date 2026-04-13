@@ -23,6 +23,14 @@ import {
 const logger = createLogger('IpcServer');
 
 /**
+ * Maximum length for Unix domain socket paths.
+ * macOS: 104 bytes (sizeof(sockaddr_un.sun_path) - 1)
+ * Linux: 108 bytes
+ * We use the stricter limit for cross-platform compatibility.
+ */
+const MAX_SOCKET_PATH_LENGTH = 104;
+
+/**
  * Handler function type for processing IPC requests.
  */
 export type IpcRequestHandler = (request: IpcRequest) => Promise<IpcResponse>;
@@ -341,6 +349,13 @@ export class UnixSocketIpcServer {
     if (this.server) {
       logger.warn('IPC server already running');
       return;
+    }
+
+    // Validate socket path length to avoid EINVAL on listen()
+    if (this.socketPath.length > MAX_SOCKET_PATH_LENGTH) {
+      throw new Error(
+        `IPC socket path too long (${this.socketPath.length} chars, max ${MAX_SOCKET_PATH_LENGTH}): ${this.socketPath}`,
+      );
     }
 
     // Ensure socket directory exists
