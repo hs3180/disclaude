@@ -363,20 +363,7 @@ describe('UnixSocketIpcClient', () => {
       await client.disconnect();
     });
 
-    it('should return failure when IPC not available', async () => {
-      const client = new UnixSocketIpcClient({
-        socketPath: join(tempDir, 'nonexistent.ipc'),
-        timeout: 100,
-        maxRetries: 1,
-      });
-
-      const result = await client.uploadFile('chat-1', '/path/to/file.pdf');
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
-      expect(result.errorType).toBe('ipc_unavailable');
-    });
-
-    it('should return error details when IPC request fails (Issue #2300)', async () => {
+    it('should return error details when IPC not available (Issue #2300)', async () => {
       const client = new UnixSocketIpcClient({
         socketPath: join(tempDir, 'nonexistent.ipc'),
         timeout: 100,
