@@ -98,7 +98,7 @@ describe('FileStorageService', () => {
       ).rejects.toThrow('File size exceeds maximum allowed size');
     });
 
-    it('should store file with agent source by default', async () => {
+    it('should store file with user source by default', async () => {
       mockFs.stat.mockResolvedValue({ size: 50 } as any);
 
       const fileRef = await service.storeFromLocal('/src/data.bin', 'data.bin');

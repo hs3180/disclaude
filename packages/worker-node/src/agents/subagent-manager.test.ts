@@ -202,6 +202,27 @@ describe('SubagentManager', () => {
       // (no spawn to trigger it, just verify it doesn't throw)
       expect(() => unsub()).not.toThrow();
     });
+
+    it('should not invoke callback after unsubscribe', async () => {
+      const cb = vi.fn();
+      const unsub = manager.onStatusChange(cb);
+
+      unsub();
+
+      // Spawn an agent to trigger status change — callback should NOT fire
+      const mockAgent = createMockAgent();
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
+
+      await manager.spawn({
+        type: 'task',
+        name: 'post-unsub-task',
+        prompt: 'Test',
+        chatId: 'chat-unsub',
+        callbacks: createMockCallbacks(),
+      });
+
+      expect(cb).not.toHaveBeenCalled();
+    });
   });
 
   describe('get', () => {
@@ -341,6 +362,7 @@ describe('SubagentManager', () => {
 
   describe('cleanup', () => {
     it('should remove old completed subagents', async () => {
+      vi.useFakeTimers();
       const mockAgent = createMockAgent();
       mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
@@ -352,13 +374,13 @@ describe('SubagentManager', () => {
         callbacks: createMockCallbacks(),
       });
 
-      // Set completedAt to far past
-      const h = manager.get(handle.id)!;
-      h.completedAt = new Date(Date.now() - 7200000); // 2 hours ago
+      // Advance time by 2 hours so the completed subagent exceeds maxAge
+      vi.advanceTimersByTime(7200000);
 
       manager.cleanup(3600000); // 1 hour maxAge
 
       expect(manager.get(handle.id)).toBeUndefined();
+      vi.useRealTimers();
     });
 
     it('should keep recent subagents', async () => {
