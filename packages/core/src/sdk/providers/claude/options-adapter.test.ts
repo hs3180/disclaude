@@ -105,6 +105,137 @@ describe('adaptOptions', () => {
       env: { PORT: '3000' },
     });
   });
+
+  it('should pass through SDK inline MCP server wrapper objects', () => {
+    const sdkWrapper = {
+      type: 'sdk',
+      name: 'pre-created-server',
+      instance: { some: 'instance' },
+    };
+
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'sdk-server': sdkWrapper as unknown as import('../../types.js').McpServerConfig,
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const server = (result.mcpServers as Record<string, unknown>)['sdk-server'];
+    expect(server).toBe(sdkWrapper);
+  });
+
+  it('should adapt inline MCP servers with tools via SDK functions', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'inline-server': {
+          type: 'inline',
+          name: 'inline-server',
+          version: '1.0.0',
+          tools: [
+            {
+              name: 'my-tool',
+              description: 'A test tool',
+              parameters: {} as never,
+              handler: () => Promise.resolve('result'),
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const server = (result.mcpServers as Record<string, unknown>)['inline-server'];
+    // Should be a result from createSdkMcpServer
+    expect(server).toBeDefined();
+    expect(typeof server).toBe('object');
+  });
+
+  it('should adapt inline MCP servers without tools via SDK functions', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'empty-inline': {
+          type: 'inline',
+          name: 'empty-inline',
+          version: '2.0.0',
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const server = (result.mcpServers as Record<string, unknown>)['empty-inline'];
+    expect(server).toBeDefined();
+  });
+
+  it('should adapt inline MCP servers with empty tools array', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'no-tools': {
+          type: 'inline',
+          name: 'no-tools',
+          version: '3.0.0',
+          tools: [],
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const server = (result.mcpServers as Record<string, unknown>)['no-tools'];
+    expect(server).toBeDefined();
+  });
+
+  it('should handle mixed MCP server types', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'stdio-srv': {
+          type: 'stdio',
+          name: 'stdio-srv',
+          command: 'node',
+        },
+        'inline-srv': {
+          type: 'inline',
+          name: 'inline-srv',
+          version: '1.0.0',
+          tools: [],
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const servers = result.mcpServers as Record<string, unknown>;
+    expect(servers['stdio-srv']).toEqual({
+      type: 'stdio',
+      command: 'node',
+      args: undefined,
+      env: undefined,
+    });
+    expect(servers['inline-srv']).toBeDefined();
+  });
+
+  it('should adapt stdio MCP server without optional fields', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'minimal-stdio': {
+          type: 'stdio',
+          name: 'minimal-stdio',
+          command: 'node',
+        },
+      },
+    });
+
+    const server = (result.mcpServers as Record<string, unknown>)['minimal-stdio'];
+    expect(server).toEqual({
+      type: 'stdio',
+      command: 'node',
+      args: undefined,
+      env: undefined,
+    });
+  });
 });
 
 describe('adaptInput', () => {
