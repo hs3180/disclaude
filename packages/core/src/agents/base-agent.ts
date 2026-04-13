@@ -2,23 +2,26 @@
  * BaseAgent - Abstract base class for all Agent types.
  *
  * Provides common functionality:
- * - SDK configuration building via abstraction layer
+ * - ACP Client configuration via dependency injection
+ * - SDK options building for backward compatibility
  * - GLM logging
  * - Error handling
  *
  * Uses Template Method pattern - subclasses implement specific logic.
  *
+ * Issue #2311: Rewritten to use ACP Client instead of SDK Provider.
+ * The ACP Client communicates via JSON-RPC 2.0 over stdio transport,
+ * managing sessions and prompts through the Agent Client Protocol.
+ *
  * @module agents/base-agent
  */
 
 import {
-  getProvider,
-  type IAgentSDKProvider,
-  type AgentQueryOptions,
-  type UserInput,
-  type StreamingUserMessage,
-  type QueryHandle,
+  AcpClient,
   type AgentMessage as SdkAgentMessage,
+  type StreamingUserMessage,
+  type AgentQueryOptions,
+  type QueryHandle,
 } from '../sdk/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
@@ -33,6 +36,9 @@ export type { BaseAgentConfig } from './types.js';
 
 /**
  * Extra SDK options configuration.
+ *
+ * Kept for backward compatibility with subclasses (Pilot, etc.).
+ * Internally translated to ACP session parameters.
  */
 export interface SdkOptionsExtra {
   /** Allowed tools list */
@@ -74,6 +80,10 @@ export interface QueryStreamResult {
 /**
  * Abstract base class for all Agent types.
  *
+ * Uses ACP Client for query execution (Issue #2311):
+ * - queryOnce: Creates ACP session, sends prompt, yields messages, cleans up
+ * - createQueryStream: Creates ACP session for conversation, sends prompts per message
+ *
  * Implements Template Method pattern:
  * - Common logic in base class
  * - Specific logic in subclasses via abstract/protected methods
@@ -104,7 +114,7 @@ export abstract class BaseAgent implements Disposable {
 
   protected readonly logger: Logger;
   protected initialized = false;
-  protected sdkProvider: IAgentSDKProvider;
+  protected acpClient: AcpClient;
 
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
@@ -113,15 +123,28 @@ export abstract class BaseAgent implements Disposable {
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
     // Get provider from config, fallback to runtime context
-    // This allows agents to be created with explicit provider setting
-    // while maintaining backward compatibility
     this.provider = config.provider ?? this.getDefaultProvider();
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());
 
-    // Get SDK provider instance
-    this.sdkProvider = getProvider();
+    // Get ACP client: config → runtime context → throw
+    if (config.acpClient) {
+      this.acpClient = config.acpClient;
+    } else if (hasRuntimeContext()) {
+      const runtimeClient = getRuntimeContext().getAcpClient?.();
+      if (runtimeClient) {
+        this.acpClient = runtimeClient;
+      } else {
+        throw new Error(
+          'ACP Client not available. Provide acpClient in config or set getAcpClient() in runtime context.'
+        );
+      }
+    } else {
+      throw new Error(
+        'ACP Client not available. Provide acpClient in config or set runtime context with getAcpClient().'
+      );
+    }
   }
 
   /**
@@ -147,6 +170,9 @@ export abstract class BaseAgent implements Disposable {
    * This method provides a unified way to build SDK options
    * with common configuration (cwd, permissionMode, env, model)
    * while allowing subclasses to add specific options.
+   *
+   * The returned options are internally translated to ACP session
+   * parameters in queryOnce() and createQueryStream().
    *
    * @param extra - Extra configuration to merge
    * @returns AgentQueryOptions object
@@ -242,7 +268,43 @@ export abstract class BaseAgent implements Disposable {
   }
 
   /**
-   * Convert SDK AgentMessage to legacy parsed format for compatibility.
+   * Ensure the ACP client is connected.
+   * Connects lazily on first use.
+   */
+  private async ensureClientConnected(): Promise<void> {
+    if (this.acpClient.state === 'connected') {
+      return;
+    }
+    await this.acpClient.connect();
+  }
+
+  /**
+   * Convert AgentQueryOptions to ACP session creation parameters.
+   */
+  private toAcpSessionOptions(
+    options: AgentQueryOptions,
+  ): { mcpServers?: unknown[]; permissionMode?: string } {
+    const result: { mcpServers?: unknown[]; permissionMode?: string } = {};
+
+    // Pass MCP servers as array of configs
+    if (options.mcpServers) {
+      result.mcpServers = Object.values(options.mcpServers);
+    }
+
+    // Pass permission mode
+    if (options.permissionMode) {
+      result.permissionMode = options.permissionMode;
+    }
+
+    return result;
+  }
+
+  /**
+   * Convert ACP AgentMessage to legacy parsed format for compatibility.
+   *
+   * ACP messages (from message-adapter.ts) are already AgentMessage format,
+   * but we convert to the legacy parsed structure for backward compatibility
+   * with subclasses.
    */
   private convertToLegacyFormat(message: SdkAgentMessage): IteratorYieldResult['parsed'] {
     return {
@@ -262,14 +324,13 @@ export abstract class BaseAgent implements Disposable {
   }
 
   /**
-   * Execute a one-shot query.
+   * Execute a one-shot query using ACP Client.
+   *
+   * Creates a new ACP session, sends a single prompt, yields messages,
+   * and cleans up the session.
    *
    * For task-based agents (Evaluator, Executor) that use
    * static prompts. Input is a string or message array.
-   *
-   * This method wraps the SDK provider query with:
-   * - Automatic debug logging
-   * - Parsed message output
    *
    * @param input - Static prompt string or message array
    * @param options - AgentQueryOptions
@@ -279,41 +340,44 @@ export abstract class BaseAgent implements Disposable {
     input: string | unknown[],
     options: AgentQueryOptions
   ): AsyncGenerator<IteratorYieldResult> {
-    // Convert input to SDK format
-    const sdkInput = typeof input === 'string' ? input : this.convertInputToUserInput(input);
+    // Ensure client is connected
+    await this.ensureClientConnected();
 
-    // Use SDK provider
-    const iterator = this.sdkProvider.queryOnce(sdkInput, options);
+    // Create ACP session
+    const session = await this.acpClient.createSession(
+      options.cwd ?? this.getWorkspaceDir(),
+      this.toAcpSessionOptions(options),
+    );
 
-    for await (const message of iterator) {
+    // Convert input to ACP prompt format
+    const text = typeof input === 'string' ? input : JSON.stringify(input);
+    const prompt = [{ type: 'text' as const, text }];
+
+    // Send prompt and yield messages
+    for await (const message of this.acpClient.sendPrompt(session.sessionId, prompt)) {
       const parsed = this.convertToLegacyFormat(message);
 
-      // Log SDK message with full details for debugging
+      // Log message with full details for debugging
       this.logger.debug({
         provider: this.provider,
         messageType: parsed.type,
         contentLength: parsed.content?.length || 0,
         toolName: parsed.metadata?.toolName,
         rawMessage: message,
-      }, 'SDK message received');
+      }, 'ACP message received');
 
       yield { parsed, raw: message };
     }
   }
 
   /**
-   * Execute a streaming query.
+   * Execute a streaming query using ACP Client.
+   *
+   * Creates a single ACP session for the conversation lifetime.
+   * Each message from the input generator is sent as a separate prompt
+   * on the same session, preserving conversation context.
    *
    * For conversational agents (Pilot) that use dynamic input generators.
-   * Input is an AsyncGenerator that yields user messages on demand.
-   *
-   * This method creates a query and returns both the QueryHandle
-   * (for lifecycle control) and an AsyncGenerator for iterating messages.
-   *
-   * Features:
-   * - Automatic debug logging
-   * - Parsed message output
-   * - QueryHandle for close/cancel operations
    *
    * @param input - AsyncGenerator yielding user messages
    * @param options - AgentQueryOptions
@@ -323,55 +387,92 @@ export abstract class BaseAgent implements Disposable {
     input: AsyncGenerator<StreamingUserMessage>,
     options: AgentQueryOptions
   ): QueryStreamResult {
-    // Convert SDK UserMessage to SDK UserInput
-    async function* convertInput(): AsyncGenerator<UserInput> {
-      for await (const msg of input) {
-        yield {
-          role: 'user',
-          content: typeof msg.message?.content === 'string'
-            ? msg.message.content
-            : JSON.stringify(msg.message?.content ?? ''),
-        };
-      }
-    }
-
-    const result = this.sdkProvider.queryStream(convertInput(), options);
+    // Session created lazily when iterator is consumed
+    let sessionPromise: Promise<string> | null = null;
+    let sessionId: string | undefined;
+    let cancelled = false;
+    let closed = false;
 
     const self = this;
+
+    function ensureSession(): Promise<string> {
+      if (sessionId) {
+        return Promise.resolve(sessionId);
+      }
+
+      if (!sessionPromise) {
+        sessionPromise = self.ensureClientConnected()
+          .then(() => self.acpClient.createSession(
+            options.cwd ?? self.getWorkspaceDir(),
+            self.toAcpSessionOptions(options),
+          ))
+          .then((session) => {
+            const { sessionId: sid } = session;
+            sessionId = sid;
+            return sid;
+          });
+      }
+
+      return sessionPromise;
+    }
+
     async function* wrappedIterator(): AsyncGenerator<IteratorYieldResult> {
-      for await (const message of result.iterator) {
-        const parsed = self.convertToLegacyFormat(message);
+      const sid = await ensureSession();
 
-        // Log SDK message with full details for debugging
-        self.logger.debug({
-          provider: self.provider,
-          messageType: parsed.type,
-          contentLength: parsed.content?.length || 0,
-          toolName: parsed.metadata?.toolName,
-          rawMessage: message,
-        }, 'SDK message received');
+      try {
+        for await (const msg of input) {
+          if (cancelled || closed) {
+            break;
+          }
 
-        yield { parsed, raw: message };
+          // Convert StreamingUserMessage to ACP prompt format
+          const text = typeof msg.message?.content === 'string'
+            ? msg.message.content
+            : JSON.stringify(msg.message?.content ?? '');
+
+          const prompt = [{ type: 'text' as const, text }];
+
+          // Send each message as a prompt on the same session
+          for await (const acpMessage of self.acpClient.sendPrompt(sid, prompt)) {
+            if (cancelled) {
+              break;
+            }
+
+            const parsed = self.convertToLegacyFormat(acpMessage);
+
+            // Log message with full details for debugging
+            self.logger.debug({
+              provider: self.provider,
+              messageType: parsed.type,
+              contentLength: parsed.content?.length || 0,
+              toolName: parsed.metadata?.toolName,
+              rawMessage: acpMessage,
+            }, 'ACP message received');
+
+            yield { parsed, raw: acpMessage };
+          }
+        }
+      } catch (err) {
+        // Re-throw to let caller handle
+        throw err;
       }
     }
 
     return {
-      handle: result.handle,
+      handle: {
+        close: () => {
+          closed = true;
+        },
+        cancel: () => {
+          cancelled = true;
+          if (sessionId) {
+            self.acpClient.cancelPrompt(sessionId).catch(() => {});
+          }
+        },
+        sessionId,
+      },
       iterator: wrappedIterator(),
     };
-  }
-
-  /**
-   * Convert legacy AsyncIterable<StreamingUserMessage> to SDK UserInput format.
-   */
-  private convertInputToUserInput(input: unknown[]): UserInput[] | string {
-    // For string input, just return it
-    if (typeof input === 'string') {
-      return input;
-    }
-
-    // For array input, return empty array as fallback
-    return [];
   }
 
   /**
