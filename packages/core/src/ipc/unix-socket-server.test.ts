@@ -514,6 +514,15 @@ describe('UnixSocketIpcServer', () => {
       expect(server.isRunning()).toBe(true);
       await server.stop();
     });
+
+    it('should reject socket paths exceeding 104 characters', async () => {
+      // Create a path longer than the Unix socket limit (104 chars)
+      const longPath = `/tmp/${  'a'.repeat(120)  }.ipc`;
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: longPath });
+
+      await expect(server.start()).rejects.toThrow('IPC socket path too long');
+    });
   });
 
   describe('message handling', () => {

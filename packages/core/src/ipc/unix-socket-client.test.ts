@@ -75,7 +75,8 @@ describe('UnixSocketIpcClient', () => {
   const activeServers: Array<() => Promise<void>> = [];
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'ipc-client-test-'));
+    // Use short prefix to avoid exceeding macOS Unix socket path limit (104 bytes)
+    tempDir = mkdtempSync(join(tmpdir(), 'ipc-'));
     socketPath = join(tempDir, 'test.ipc');
   });
 
