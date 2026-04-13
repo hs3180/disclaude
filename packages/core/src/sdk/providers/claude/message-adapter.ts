@@ -37,17 +37,16 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 定义 SDK 内容块类型（包含 tool_use）
-      type SdkContentBlock = { type: string; [key: string]: unknown };
-
       // 提取工具使用块
-      const toolBlocks = apiMessage.content.filter(
-        (block: SdkContentBlock) => block.type === 'tool_use'
+      const toolBlocks = (apiMessage.content as unknown[]).filter(
+        (block): block is Record<string, unknown> =>
+          typeof block === 'object' && block !== null && (block as Record<string, unknown>).type === 'tool_use'
       );
 
       // 提取文本块
-      const textBlocks = apiMessage.content.filter(
-        (block: SdkContentBlock) => block.type === 'text' && 'text' in block
+      const textBlocks = (apiMessage.content as unknown[]).filter(
+        (block): block is Record<string, unknown> & { text: string } =>
+          typeof block === 'object' && block !== null && (block as Record<string, unknown>).type === 'text' && 'text' in (block as Record<string, unknown>)
       );
 
       // 构建内容
@@ -65,8 +64,7 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
 
       // 处理文本
       const textParts = textBlocks
-        .filter((block: SdkContentBlock) => 'text' in block)
-        .map((block: SdkContentBlock) => String((block as unknown as { text: string }).text));
+        .map((block) => String(block.text));
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
