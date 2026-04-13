@@ -345,11 +345,66 @@ describe('WorkerPool', () => {
     it('should return empty array initially', () => {
       expect(pool.getPendingTasks()).toEqual([]);
     });
+
+    it('should return tasks that exceed worker capacity', () => {
+      // Use slow mock so tasks stay in the queue
+      const slowPromise = new Promise(() => {}); // never resolves
+      mockAgentFactory.createTaskAgent.mockReturnValue({
+        executeOnce: vi.fn().mockReturnValue(slowPromise),
+        dispose: vi.fn(),
+      } as any);
+
+      // Submit more tasks than maxWorkers (3)
+      for (let i = 0; i < 5; i++) {
+        pool.submit({
+          id: `task-pending-${i}`,
+          name: `Pending Task ${i}`,
+          prompt: 'Test',
+          chatId: `chat-${i}`,
+          callbacks,
+        });
+      }
+
+      const pending = pool.getPendingTasks();
+      // At least 2 should still be pending (5 tasks - 3 maxWorkers)
+      expect(pending.length).toBeGreaterThanOrEqual(2);
+    });
   });
 
   describe('getRunningTasks', () => {
     it('should return empty array initially', () => {
       expect(pool.getRunningTasks()).toEqual([]);
+    });
+
+    it('should return running tasks when assigned to workers', () => {
+      // Create a worker so the task can be assigned immediately
+      pool.createWorker({ id: 'w1' });
+
+      // Use a mock that doesn't resolve immediately to keep task running
+      let resolveExecution: () => void;
+      const executionPromise = new Promise<void>((resolve) => {
+        resolveExecution = resolve;
+      });
+
+      mockAgentFactory.createTaskAgent.mockReturnValue({
+        executeOnce: vi.fn().mockReturnValue(executionPromise),
+        dispose: vi.fn(),
+      } as any);
+
+      pool.submit({
+        id: 'task-running-1',
+        name: 'Running Task',
+        prompt: 'Test',
+        chatId: 'chat-1',
+        callbacks,
+      });
+
+      const running = pool.getRunningTasks();
+      expect(running).toHaveLength(1);
+      expect(running[0].name).toBe('Running Task');
+
+      // Cleanup: resolve the pending promise
+      resolveExecution!();
     });
   });
 
@@ -357,11 +412,66 @@ describe('WorkerPool', () => {
     it('should return 0 initially', () => {
       expect(pool.getQueueSize()).toBe(0);
     });
+
+    it('should increase when tasks exceed worker capacity', () => {
+      // Use slow mock to keep tasks active
+      const slowPromise = new Promise(() => {});
+      mockAgentFactory.createTaskAgent.mockReturnValue({
+        executeOnce: vi.fn().mockReturnValue(slowPromise),
+        dispose: vi.fn(),
+      } as any);
+
+      // Submit more tasks than maxWorkers (3)
+      for (let i = 0; i < 5; i++) {
+        pool.submit({
+          id: `task-q-${i}`,
+          name: `Queue Task ${i}`,
+          prompt: 'Test',
+          chatId: `chat-${i}`,
+          callbacks,
+        });
+      }
+
+      // At least 2 should remain in the pending queue (5 - 3 workers)
+      expect(pool.getQueueSize()).toBeGreaterThanOrEqual(2);
+    });
   });
 
   describe('cancelTask', () => {
     it('should return false for non-existent task', () => {
       expect(pool.cancelTask('nonexistent')).toBe(false);
+    });
+
+    it('should cancel a pending task that exceeds worker capacity', () => {
+      // Use slow mock so tasks remain in the queue
+      const slowPromise = new Promise(() => {});
+      mockAgentFactory.createTaskAgent.mockReturnValue({
+        executeOnce: vi.fn().mockReturnValue(slowPromise),
+        dispose: vi.fn(),
+      } as any);
+
+      // Fill up all workers (3) then submit one more that stays pending
+      for (let i = 0; i < 3; i++) {
+        pool.submit({
+          id: `task-fill-${i}`,
+          name: `Fill Task ${i}`,
+          prompt: 'Test',
+          chatId: `chat-fill-${i}`,
+          callbacks,
+        });
+      }
+
+      pool.submit({
+        id: 'task-cancel-1',
+        name: 'Cancellable Task',
+        prompt: 'Test',
+        chatId: 'chat-cancel',
+        callbacks,
+      });
+
+      // The 4th task should be pending and cancellable
+      const result = pool.cancelTask('task-cancel-1');
+      expect(result).toBe(true);
     });
   });
 

@@ -9,17 +9,21 @@ import { RuliuMessageSender } from './ruliu-message-sender.js';
 import type { RuliuConfig } from './types.js';
 
 // Mock @disclaude/core
-vi.mock('@disclaude/core', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-  handleError: vi.fn(),
-  ErrorCategory: { API: 'api' },
-  retry: vi.fn((_fn) => _fn()),
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    createLogger: () => ({
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+    handleError: vi.fn(),
+    ErrorCategory: { API: 'api' },
+    retry: vi.fn((_fn) => _fn()),
+  };
+});
 
 const testConfig: RuliuConfig = {
   apiHost: 'https://api.test.com',
@@ -32,6 +36,31 @@ const testConfig: RuliuConfig = {
 
 function createSender(): RuliuMessageSender {
   return new RuliuMessageSender({ config: testConfig });
+}
+
+/**
+ * Helper: create a mock fetch that returns a token response then a send response.
+ * Avoids repeating the same ~15-line mock setup in every send test.
+ */
+function mockTokenAndSend(sendResponse?: object, token?: string) {
+  const mockFetch = vi.fn()
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        errcode: 0,
+        errmsg: 'ok',
+        data: { access_token: token ?? 'test_token', expires_in: 7200 },
+      }),
+    })
+    .mockResolvedValueOnce(
+      sendResponse ?? {
+        ok: true,
+        json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
+      }
+    );
+
+  vi.stubGlobal('fetch', mockFetch);
+  return mockFetch;
 }
 
 describe('RuliuMessageSender', () => {
@@ -47,27 +76,7 @@ describe('RuliuMessageSender', () => {
   describe('sendText', () => {
     it('should get access token and send text message', async () => {
       const sender = createSender();
-
-      // Mock token response
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'test_token', expires_in: 7200 },
-          }),
-        })
-        // Mock message send response
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-          }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend();
 
       await sender.sendText('chat_123', 'Hello World');
 
@@ -101,22 +110,7 @@ describe('RuliuMessageSender', () => {
 
     it('should include threadId as parent_id when provided', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       await sender.sendText('chat_123', 'Reply', 'thread_456');
 
@@ -129,22 +123,7 @@ describe('RuliuMessageSender', () => {
   describe('sendCard', () => {
     it('should convert card to markdown', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       const card = {
         header: { title: { content: 'Card Title' } },
@@ -171,22 +150,7 @@ describe('RuliuMessageSender', () => {
 
     it('should fallback to JSON when no markdown extracted', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       // Empty card with no extractable content
       const card = { unknown: 'field' };
@@ -201,22 +165,7 @@ describe('RuliuMessageSender', () => {
 
     it('should handle card without description', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       const card = {
         elements: [{ tag: 'markdown', content: 'content' }],
@@ -233,22 +182,7 @@ describe('RuliuMessageSender', () => {
   describe('sendFile', () => {
     it('should send text fallback with file name', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       await sender.sendFile('chat_123', '/path/to/document.pdf');
 
@@ -260,22 +194,7 @@ describe('RuliuMessageSender', () => {
 
     it('should extract filename from path correctly', async () => {
       const sender = createSender();
-
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            errcode: 0,
-            errmsg: 'ok',
-            data: { access_token: 'token', expires_in: 7200 },
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ errcode: 0, errmsg: 'ok' }),
-        });
-
-      vi.stubGlobal('fetch', mockFetch);
+      const mockFetch = mockTokenAndSend(undefined, 'token');
 
       await sender.sendFile('chat_123', '/a/b/c/test.png');
 
@@ -370,6 +289,40 @@ describe('RuliuMessageSender', () => {
       vi.stubGlobal('fetch', mockFetch);
 
       await expect(sender.sendText('chat_1', 'msg')).rejects.toThrow('missing data field');
+    });
+  });
+
+  describe('retry', () => {
+    it('should pass retry options when sending message', async () => {
+      const sender = createSender();
+      mockTokenAndSend();
+
+      await sender.sendText('chat_1', 'test retry');
+
+      // Verify retry was called (not just passed through)
+      const { retry } = await import('@disclaude/core');
+      expect(retry).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({
+          maxRetries: 3,
+          initialDelayMs: 1000,
+        })
+      );
+    });
+
+    it('should call the retried function which invokes fetch for sending', async () => {
+      const sender = createSender();
+      const mockFetch = mockTokenAndSend();
+
+      await sender.sendText('chat_1', 'test retry body');
+
+      // The retry mock passes through the function, so fetch should be called
+      // Verify the second fetch call (message send) used the correct endpoint
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://api.test.com/api/robot/v1/message/send',
+        expect.objectContaining({ method: 'POST' })
+      );
     });
   });
 });
