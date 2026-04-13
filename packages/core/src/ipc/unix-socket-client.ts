@@ -439,17 +439,28 @@ export class UnixSocketIpcClient {
 
   /**
    * Upload a file via IPC.
+   * Issue #2300: Return detailed error information consistent with other IPC methods.
    */
   async uploadFile(
     chatId: string,
     filePath: string,
     threadId?: string
-  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
       return await this.request('uploadFile', { chatId, filePath, threadId });
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId, filePath }, 'uploadFile failed');
-      return { success: false };
+
+      // Determine error type for better error handling (consistent with sendMessage/sendCard)
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
     }
   }
 
