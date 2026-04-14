@@ -144,6 +144,7 @@ export {
   isNotification,
   parseNdjsonBuffer,
   AcpStdioTransport,
+  AcpClient,
 } from './acp/index.js';
 
 export type {
@@ -181,4 +182,8 @@ export type {
   AcpMessageHandler,
   AcpErrorHandler,
   AcpCloseHandler,
+  AcpClientState,
+  AcpClientConfig,
+  AcpServerCapabilities,
+  PermissionRequestCallback,
 } from './acp/index.js';
