@@ -115,6 +115,7 @@ export abstract class BaseAgent implements Disposable {
   protected readonly logger: Logger;
   protected initialized = false;
   protected acpClient: AcpClient;
+  protected activeSessionId?: string;
 
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
@@ -269,13 +270,28 @@ export abstract class BaseAgent implements Disposable {
 
   /**
    * Ensure the ACP client is connected.
-   * Connects lazily on first use.
+   * Connects lazily on first use. Retries when another caller is connecting concurrently.
    */
   private async ensureClientConnected(): Promise<void> {
     if (this.acpClient.state === 'connected') {
       return;
     }
-    await this.acpClient.connect();
+
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        await this.acpClient.connect();
+        return;
+      } catch (err) {
+        const isAlreadyInProgress = err instanceof Error &&
+          err.message.includes('Connection already in progress');
+        if (!isAlreadyInProgress || attempt === maxAttempts - 1) {
+          throw err;
+        }
+        // Wait for the in-progress connection to complete
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
   }
 
   /**
@@ -283,8 +299,8 @@ export abstract class BaseAgent implements Disposable {
    */
   private toAcpSessionOptions(
     options: AgentQueryOptions,
-  ): { mcpServers?: unknown[]; permissionMode?: string } {
-    const result: { mcpServers?: unknown[]; permissionMode?: string } = {};
+  ): { mcpServers?: unknown[]; permissionMode?: string; allowedTools?: string[]; disallowedTools?: string[] } {
+    const result: { mcpServers?: unknown[]; permissionMode?: string; allowedTools?: string[]; disallowedTools?: string[] } = {};
 
     // Pass MCP servers as array of configs
     if (options.mcpServers) {
@@ -294,6 +310,14 @@ export abstract class BaseAgent implements Disposable {
     // Pass permission mode
     if (options.permissionMode) {
       result.permissionMode = options.permissionMode;
+    }
+
+    // Pass allowed/disallowed tools
+    if (options.allowedTools) {
+      result.allowedTools = options.allowedTools;
+    }
+    if (options.disallowedTools) {
+      result.disallowedTools = options.disallowedTools;
     }
 
     return result;
@@ -409,6 +433,7 @@ export abstract class BaseAgent implements Disposable {
           .then((session) => {
             const { sessionId: sid } = session;
             sessionId = sid;
+            self.activeSessionId = sid;
             return sid;
           });
       }
@@ -419,42 +444,37 @@ export abstract class BaseAgent implements Disposable {
     async function* wrappedIterator(): AsyncGenerator<IteratorYieldResult> {
       const sid = await ensureSession();
 
-      try {
-        for await (const msg of input) {
-          if (cancelled || closed) {
+      for await (const msg of input) {
+        if (cancelled || closed) {
+          break;
+        }
+
+        // Convert StreamingUserMessage to ACP prompt format
+        const text = typeof msg.message?.content === 'string'
+          ? msg.message.content
+          : JSON.stringify(msg.message?.content ?? '');
+
+        const prompt = [{ type: 'text' as const, text }];
+
+        // Send each message as a prompt on the same session
+        for await (const acpMessage of self.acpClient.sendPrompt(sid, prompt)) {
+          if (cancelled) {
             break;
           }
 
-          // Convert StreamingUserMessage to ACP prompt format
-          const text = typeof msg.message?.content === 'string'
-            ? msg.message.content
-            : JSON.stringify(msg.message?.content ?? '');
+          const parsed = self.convertToLegacyFormat(acpMessage);
 
-          const prompt = [{ type: 'text' as const, text }];
+          // Log message with full details for debugging
+          self.logger.debug({
+            provider: self.provider,
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            rawMessage: acpMessage,
+          }, 'ACP message received');
 
-          // Send each message as a prompt on the same session
-          for await (const acpMessage of self.acpClient.sendPrompt(sid, prompt)) {
-            if (cancelled) {
-              break;
-            }
-
-            const parsed = self.convertToLegacyFormat(acpMessage);
-
-            // Log message with full details for debugging
-            self.logger.debug({
-              provider: self.provider,
-              messageType: parsed.type,
-              contentLength: parsed.content?.length || 0,
-              toolName: parsed.metadata?.toolName,
-              rawMessage: acpMessage,
-            }, 'ACP message received');
-
-            yield { parsed, raw: acpMessage };
-          }
+          yield { parsed, raw: acpMessage };
         }
-      } catch (err) {
-        // Re-throw to let caller handle
-        throw err;
       }
     }
 
@@ -469,7 +489,7 @@ export abstract class BaseAgent implements Disposable {
             self.acpClient.cancelPrompt(sessionId).catch(() => {});
           }
         },
-        sessionId,
+        get sessionId() { return sessionId; },
       },
       iterator: wrappedIterator(),
     };
@@ -533,6 +553,13 @@ export abstract class BaseAgent implements Disposable {
     if (!this.initialized) {
       return; // Already disposed, idempotent
     }
+
+    // Cancel any active prompt on the ACP session
+    if (this.activeSessionId) {
+      this.acpClient.cancelPrompt(this.activeSessionId).catch(() => {});
+      this.activeSessionId = undefined;
+    }
+
     this.logger.debug(`${this.getAgentName()} disposed`);
     this.initialized = false;
   }

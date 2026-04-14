@@ -133,9 +133,6 @@ export class AcpClient {
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
 
-  /** 当前活跃的 prompt 对应的 request id，用于匹配 result 响应 */
-  private readonly promptRequestIds = new Map<number | string, string>();
-
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
     this.timeout = config.timeout ?? 30000;
@@ -209,6 +206,8 @@ export class AcpClient {
     options?: {
       mcpServers?: unknown[];
       permissionMode?: string;
+      allowedTools?: string[];
+      disallowedTools?: string[];
     },
   ): Promise<AcpSessionNewResult> {
     this.assertConnected();
@@ -218,14 +217,19 @@ export class AcpClient {
       mcpServers: options?.mcpServers ?? [],
     };
 
+    // Build _meta.claudeCode.options from provided options
+    const claudeCodeOptions: Record<string, unknown> = {};
     if (options?.permissionMode) {
-      params._meta = {
-        claudeCode: {
-          options: {
-            permissionMode: options.permissionMode,
-          },
-        },
-      };
+      claudeCodeOptions.permissionMode = options.permissionMode;
+    }
+    if (options?.allowedTools) {
+      claudeCodeOptions.allowedTools = options.allowedTools;
+    }
+    if (options?.disallowedTools) {
+      claudeCodeOptions.disallowedTools = options.disallowedTools;
+    }
+    if (Object.keys(claudeCodeOptions).length > 0) {
+      params._meta = { claudeCode: { options: claudeCodeOptions } };
     }
 
     const result = await this.sendRequest<AcpSessionNewResult>('session/new', params);
@@ -437,6 +441,10 @@ export class AcpClient {
    */
   private handleResponse(msg: JsonRpcResponse | JsonRpcErrorResponse): void {
     const {id} = msg;
+    if (id === null) {
+      logger.debug('Received response with null id');
+      return;
+    }
     const pending = this.pendingRequests.get(id);
     if (!pending) {
       logger.debug({ id }, 'Received response for unknown request');
