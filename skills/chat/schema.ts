@@ -35,7 +35,7 @@ export interface ChatFile {
    *
    * - `'always'`: Bot responds to all messages (default for 1-on-1 temp chats)
    * - `'mention'`: Bot only responds to @mentions (default for group temp chats)
-   * - `undefined`: Resolved based on member count at creation time
+   * - `undefined`: Resolved by primary-node at activation time
    */
   triggerMode?: 'mention' | 'always';
   response: ChatResponse | null;
