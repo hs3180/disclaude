@@ -45,16 +45,9 @@ export interface TempChatRecord {
   /** Response data, populated when a user interacts */
   response?: TempChatResponse;
   /**
-   * Declarative passive mode configuration for this chat.
-   *
-   * Issue #2069: When `false`, passive mode is disabled for this chat,
-   * meaning the bot responds to all messages without requiring @mention.
-   * When `true` or undefined, default behavior applies (passive mode enabled).
-   *
-   * This is set at chat creation time (declarative), not via runtime API.
-   *
-   * @deprecated Use `triggerMode` instead (Issue #2291). Retained for backward
-   * compatibility with persisted records.
+   * Declarative passive mode configuration for this chat (legacy).
+   * Retained for backward compatibility with persisted records only.
+   * New code should use `triggerMode` instead.
    */
   passiveMode?: boolean;
   /**
@@ -63,9 +56,6 @@ export interface TempChatRecord {
    * - `'mention'`: Bot only responds to @mentions (default)
    * - `'always'`: Bot responds to all messages
    * - `undefined`: Use default behavior (`'mention'`)
-   *
-   * When both `triggerMode` and `passiveMode` are present, `triggerMode` takes precedence.
-   * Migration: `passiveMode: false` → `triggerMode: 'always'`, `passiveMode: true/undefined` → `triggerMode: 'mention'`
    */
   triggerMode?: TriggerMode;
 }
@@ -81,18 +71,7 @@ export interface RegisterTempChatOptions {
   /** Arbitrary context data */
   context?: Record<string, unknown>;
   /**
-   * Declarative passive mode configuration.
-   *
-   * Issue #2069: When `false`, passive mode is disabled for this chat
-   * (bot responds to all messages). When `true` or undefined, default
-   * behavior applies (passive mode enabled, bot only responds to @mentions).
-   *
-   * @deprecated Use `triggerMode` instead (Issue #2291).
-   */
-  passiveMode?: boolean;
-  /**
    * Trigger mode configuration (Issue #2291).
-   * Takes precedence over `passiveMode` when both are provided.
    */
   triggerMode?: TriggerMode;
 }
@@ -212,9 +191,8 @@ export class ChatStore {
       expiresAt,
       creatorChatId: opts.creatorChatId,
       context: opts.context,
-      // Issue #2291: Prefer triggerMode over passiveMode
+      // Issue #2291: triggerMode enum
       triggerMode: opts.triggerMode,
-      passiveMode: opts.passiveMode,
     };
 
     // Update memory cache

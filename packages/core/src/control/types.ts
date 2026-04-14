@@ -49,29 +49,12 @@ export interface ControlHandlerContext {
     clearDebugGroup(): DebugGroup | null;
   };
 
-  /** 触发模式管理（可选） (Issue #2291: upgraded to enum-based interface) */
+  /** 触发模式管理（可选） (Issue #2291: enum-based interface) */
   triggerMode?: {
     /** Get the current trigger mode for a chat */
     getMode(chatId: string): TriggerMode;
     /** Set the trigger mode for a chat */
     setMode(chatId: string, mode: TriggerMode): void;
-    /**
-     * @deprecated Use getMode() instead. Kept for backward compatibility.
-     * Returns true when mode is 'mention' (mention-only filter active).
-     */
-    isEnabled(chatId: string): boolean;
-    /**
-     * @deprecated Use setMode() instead. Kept for backward compatibility.
-     * enabled=true → 'mention', enabled=false → 'always'
-     */
-    setEnabled(chatId: string, enabled: boolean): void;
-  };
-  /** @deprecated Use triggerMode instead. Kept for backward compatibility during transition. */
-  passiveMode?: {
-    getMode(chatId: string): TriggerMode;
-    setMode(chatId: string, mode: TriggerMode): void;
-    isEnabled(chatId: string): boolean;
-    setEnabled(chatId: string, enabled: boolean): void;
   };
 
   /** 日志记录器 */

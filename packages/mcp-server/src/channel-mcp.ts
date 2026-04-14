@@ -398,7 +398,7 @@ For display-only cards, use send_card instead.
     },
   },
   // Issue #1703: Temp chat lifecycle management
-  // Issue #2291: Added triggerMode enum (passiveMode kept as deprecated alias)
+  // Issue #2291: triggerMode enum parameter
   {
     name: 'register_temp_chat',
     description: `Register a temporary chat for automatic lifecycle management.
@@ -412,7 +412,6 @@ Use this after creating a group chat that should be temporary.
 - **creatorChatId**: The originating chat ID (optional, for notifications)
 - **context**: Arbitrary context data (optional, for consumer identification)
 - **triggerMode**: Set to \`"always"\` to make the bot respond to all messages without @mention. Set to \`"mention"\` for mention-only mode (default). (optional, Issue #2291)
-- **passiveMode**: *(Deprecated)* Set to \`false\` to make the bot respond to all messages. Use \`triggerMode\` instead. (optional)
 
 ## Example
 \`\`\`json
@@ -424,18 +423,16 @@ Use this after creating a group chat that should be temporary.
       creatorChatId: z.string().optional().describe('The originating chat ID'),
       context: z.record(z.string(), z.unknown()).optional().describe('Arbitrary context data'),
       triggerMode: z.enum(['mention', 'always']).optional().describe('Trigger mode: "mention" = only @mentions (default), "always" = respond to all messages (Issue #2291)'),
-      passiveMode: z.boolean().optional().describe('[Deprecated] Set to false to disable passive mode. Use triggerMode instead.'),
     }),
-    handler: async ({ chatId, expiresAt, creatorChatId, context, triggerMode, passiveMode }: {
+    handler: async ({ chatId, expiresAt, creatorChatId, context, triggerMode }: {
       chatId: string;
       expiresAt?: string;
       creatorChatId?: string;
       context?: Record<string, unknown>;
       triggerMode?: 'mention' | 'always';
-      passiveMode?: boolean;
     }) => {
       // register_temp_chat handles all errors internally and returns { success, message }
-      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode, passiveMode });
+      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
     },
   },

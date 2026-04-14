@@ -15,25 +15,20 @@ const TRIGGER_MESSAGES: ModeMessages = {
   unavailable: '⚠️ 触发模式功能当前不可用。请检查频道配置是否正确。',
   mentionEnabled: '🔕 仅 @触发模式已开启（bot 仅响应 @提及）',
   alwaysEnabled: '🔔 全响应模式已开启（bot 响应所有消息）',
-  invalidArgs: '⚠️ 无效参数。用法: `/trigger [mention|always]`（`on|off` 仍可使用）',
+  invalidArgs: '⚠️ 无效参数。用法: `/trigger [mention|always]`',
 };
 
 /**
  * Parse trigger mode argument (Issue #2291).
- * Supports new enum values (`mention`, `always`) and legacy aliases (`on`, `off`).
  *
  * Mapping:
  * - 'mention' → 'mention' (mention-only)
  * - 'always' → 'always' (respond to all)
- * - 'on' → 'mention' (legacy: "trigger mode on" = filter active = mention only)
- * - 'off' → 'always' (legacy: "trigger mode off" = filter inactive = respond to all)
  */
 function parseTriggerArg(arg: string): TriggerMode | null {
   switch (arg) {
     case 'mention': return 'mention';
     case 'always': return 'always';
-    case 'on': return 'mention';   // Legacy alias
-    case 'off': return 'always';   // Legacy alias
     default: return null;
   }
 }
@@ -41,8 +36,7 @@ function parseTriggerArg(arg: string): TriggerMode | null {
 /**
  * Internal mode toggle handler (Issue #2193, #2291).
  *
- * Issue #2291: Now uses enum-based `getMode`/`setMode` interface,
- * falls back to boolean `isEnabled`/`setEnabled` for backward compat.
+ * Issue #2291: Uses enum-based `getMode`/`setMode` interface.
  */
 function handleModeToggle(
   command: ControlCommand,
@@ -50,8 +44,8 @@ function handleModeToggle(
   commandName: string,
   messages: ModeMessages,
 ): ControlResponse {
-  // Issue #2193: Support both triggerMode (new) and passiveMode (deprecated)
-  const modeManager = context.triggerMode ?? context.passiveMode;
+  // Issue #2291: Use triggerMode (enum-based interface)
+  const modeManager = context.triggerMode;
 
   if (!modeManager) {
     context.logger?.warn(

@@ -24,7 +24,6 @@ const logger = createLogger('RegisterTempChat');
  * @param params.creatorChatId - Optional originating chat ID
  * @param params.context - Optional arbitrary context data
  * @param params.triggerMode - Optional trigger mode enum ('mention' | 'always', Issue #2291)
- * @param params.passiveMode - Optional declarative passive mode (deprecated, use triggerMode)
  */
 export async function register_temp_chat(params: {
   chatId: string;
@@ -32,11 +31,10 @@ export async function register_temp_chat(params: {
   creatorChatId?: string;
   context?: Record<string, unknown>;
   triggerMode?: 'mention' | 'always';
-  passiveMode?: boolean;
 }): Promise<RegisterTempChatResult> {
-  const { chatId, expiresAt, creatorChatId, context, triggerMode, passiveMode } = params;
+  const { chatId, expiresAt, creatorChatId, context, triggerMode } = params;
 
-  logger.info({ chatId, expiresAt, creatorChatId, triggerMode, passiveMode }, 'register_temp_chat called');
+  logger.info({ chatId, expiresAt, creatorChatId, triggerMode }, 'register_temp_chat called');
 
   try {
     // Check IPC availability
@@ -51,7 +49,7 @@ export async function register_temp_chat(params: {
     }
 
     const ipcClient = getIpcClient();
-    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context, { triggerMode, passiveMode });
+    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context, { triggerMode });
 
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
@@ -63,9 +61,8 @@ export async function register_temp_chat(params: {
       };
     }
 
-    logger.info({ chatId, expiresAt: result.expiresAt, triggerMode, passiveMode }, 'Temp chat registered');
-    const effectiveMode = triggerMode ?? (passiveMode === false ? 'always' : passiveMode === true ? 'mention' : undefined);
-    const modeDesc = effectiveMode ? `, trigger mode: ${effectiveMode}` : '';
+    logger.info({ chatId, expiresAt: result.expiresAt, triggerMode }, 'Temp chat registered');
+    const modeDesc = triggerMode ? `, trigger mode: ${triggerMode}` : '';
     return {
       success: true,
       chatId: result.chatId,

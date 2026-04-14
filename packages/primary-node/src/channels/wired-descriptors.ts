@@ -156,13 +156,8 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         feishuChannel.isTriggerEnabled(chatId) ? 'always' : 'mention',
       setMode: (chatId: string, mode: 'mention' | 'always') =>
         feishuChannel.setTriggerEnabled(chatId, mode === 'always'),
-      // Deprecated boolean API (backward compat)
-      isEnabled: (chatId: string) => !feishuChannel.isTriggerEnabled(chatId),
-      setEnabled: (chatId: string, enabled: boolean) =>
-        feishuChannel.setTriggerEnabled(chatId, !enabled),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
-    context.controlHandlerContext.passiveMode = triggerModeAdapter;
 
     // 2b. Issue #2291: Initialize trigger mode from persisted temp chat records.
     // Supports both new `triggerMode` enum and legacy `passiveMode` boolean.
@@ -224,21 +219,17 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
-      // Issue #2291: Added triggerMode enum (passiveMode kept for backward compat)
-      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always'; passiveMode?: boolean }) => {
+      // Issue #2291: triggerMode enum parameter
+      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {
         const store = context.primaryNode.getChatStore();
         await store.registerTempChat(chatId, {
           expiresAt: opts?.expiresAt,
           creatorChatId: opts?.creatorChatId,
           context: opts?.context,
           triggerMode: opts?.triggerMode,
-          passiveMode: opts?.passiveMode,
         });
         // Issue #2291: Apply trigger mode to TriggerModeManager immediately
-        // Prefer triggerMode enum over legacy passiveMode boolean
-        const shouldEnable = opts?.triggerMode === 'always'
-          || (opts?.triggerMode === undefined && opts?.passiveMode === false);
-        if (shouldEnable) {
+        if (opts?.triggerMode === 'always') {
           feishuChannel.setTriggerEnabled(chatId, true);
           context.logger.info({ chatId, triggerMode: opts?.triggerMode }, 'Trigger mode enabled via declarative config');
         }

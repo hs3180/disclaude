@@ -24,8 +24,6 @@ function createModeManagerMock(initialMode: TriggerMode = 'mention') {
   return {
     getMode: vi.fn((_chatId: string) => currentMode),
     setMode: vi.fn((_chatId: string, mode: TriggerMode) => { currentMode = mode; }),
-    isEnabled: vi.fn((_chatId: string) => currentMode === 'mention'),
-    setEnabled: vi.fn((_chatId: string, enabled: boolean) => { currentMode = enabled ? 'mention' : 'always'; }),
   };
 }
 
@@ -47,10 +45,10 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
 
 describe('handleTrigger (Issue #2291)', () => {
   describe('triggerMode not available', () => {
-    it('should return failure when both triggerMode and passiveMode are undefined', () => {
+    it('should return failure when triggerMode is undefined', () => {
       const command = createCommand();
       const mockWarn = vi.fn();
-      const context = createContext({ triggerMode: undefined, passiveMode: undefined, logger: { warn: mockWarn } as unknown as ControlHandlerContext['logger'] });
+      const context = createContext({ triggerMode: undefined, logger: { warn: mockWarn } as unknown as ControlHandlerContext['logger'] });
 
       const result = handleTrigger(command, context) as ControlResponse;
 
@@ -60,60 +58,6 @@ describe('handleTrigger (Issue #2291)', () => {
         { chatId: 'test-chat-id' },
         '/trigger command received but triggerMode is not configured'
       );
-    });
-
-    it('should fall back to passiveMode when triggerMode is undefined (backward compat)', () => {
-      const command = createCommand('on');
-      const mockManager = createModeManagerMock();
-      const context = createContext({
-        triggerMode: undefined,
-        passiveMode: mockManager,
-      });
-
-      const result = handleTrigger(command, context) as ControlResponse;
-
-      expect(result.success).toBe(true);
-      expect(mockManager.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
-    });
-  });
-
-  describe('legacy arguments (on/off)', () => {
-    it('should set mention mode with "on" (on → mention alias)', () => {
-      const command = createCommand('on');
-      const context = createContext();
-      const { triggerMode } = context;
-      if (!triggerMode) {throw new Error('triggerMode is required');}
-
-      const result = handleTrigger(command, context) as ControlResponse;
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('@触发');
-      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
-    });
-
-    it('should set always mode with "off" (off → always alias)', () => {
-      const command = createCommand('off');
-      const context = createContext();
-      const { triggerMode } = context;
-      if (!triggerMode) {throw new Error('triggerMode is required');}
-
-      const result = handleTrigger(command, context) as ControlResponse;
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('全响应');
-      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
-    });
-
-    it('should support array args (Feishu format)', () => {
-      const command = createCommand(['on']);
-      const context = createContext();
-      const { triggerMode } = context;
-      if (!triggerMode) {throw new Error('triggerMode is required');}
-
-      const result = handleTrigger(command, context) as ControlResponse;
-
-      expect(result.success).toBe(true);
-      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
     });
   });
 

@@ -70,7 +70,7 @@ describe('register_temp_chat', () => {
         context,
       });
       expect(mockIpcClient.registerTempChat).toHaveBeenCalledWith(
-        'oc_test', '2026-04-05T12:00:00Z', 'oc_creator', context, { triggerMode: undefined, passiveMode: undefined }
+        'oc_test', '2026-04-05T12:00:00Z', 'oc_creator', context, { triggerMode: undefined }
       );
     });
 
@@ -83,20 +83,7 @@ describe('register_temp_chat', () => {
         triggerMode: 'always',
       });
       expect(mockIpcClient.registerTempChat).toHaveBeenCalledWith(
-        'oc_test', undefined, undefined, undefined, { triggerMode: 'always', passiveMode: undefined }
-      );
-    });
-
-    it('should pass passiveMode parameter to IPC for backward compat (Issue #2069)', async () => {
-      mockIpcClient.registerTempChat.mockResolvedValue({
-        success: true, chatId: 'oc_test', expiresAt: '2026-04-05T12:00:00Z',
-      });
-      await register_temp_chat({
-        chatId: 'oc_test',
-        passiveMode: false,
-      });
-      expect(mockIpcClient.registerTempChat).toHaveBeenCalledWith(
-        'oc_test', undefined, undefined, undefined, { triggerMode: undefined, passiveMode: false }
+        'oc_test', undefined, undefined, undefined, { triggerMode: 'always' }
       );
     });
 
@@ -115,18 +102,6 @@ describe('register_temp_chat', () => {
       const result = await register_temp_chat({
         chatId: 'oc_test',
         triggerMode: 'always',
-      });
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('trigger mode: always');
-    });
-
-    it('should include trigger mode in success message when passiveMode is false (Issue #2291 backward compat)', async () => {
-      mockIpcClient.registerTempChat.mockResolvedValue({
-        success: true, chatId: 'oc_test', expiresAt: '2026-04-05T12:00:00Z',
-      });
-      const result = await register_temp_chat({
-        chatId: 'oc_test',
-        passiveMode: false,
       });
       expect(result.success).toBe(true);
       expect(result.message).toContain('trigger mode: always');

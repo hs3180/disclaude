@@ -512,14 +512,14 @@ export class UnixSocketIpcClient {
    * @param expiresAt - Optional ISO timestamp for expiry (defaults to 24h)
    * @param creatorChatId - Optional originating chat ID
    * @param context - Optional arbitrary context data
-   * @param mode - Optional trigger mode configuration (triggerMode and/or passiveMode)
+   * @param mode - Optional trigger mode configuration
    */
   async registerTempChat(
     chatId: string,
     expiresAt?: string,
     creatorChatId?: string,
     context?: Record<string, unknown>,
-    mode?: { triggerMode?: 'mention' | 'always'; passiveMode?: boolean }
+    mode?: { triggerMode?: 'mention' | 'always' }
   ): Promise<{ success: boolean; chatId?: string; expiresAt?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
       return await this.request('registerTempChat', { chatId, expiresAt, creatorChatId, context, ...mode });
