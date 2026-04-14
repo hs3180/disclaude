@@ -6,20 +6,116 @@
 
 import { describe, it, expect } from 'vitest';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+
+// Helper to create a valid SDKAssistantMessage mock with all required properties
+function mockAssistantMessage(overrides: {
+  session_id?: string;
+  content: Array<Record<string, unknown>>;
+  parent_tool_use_id?: string | null;
+}): SDKMessage {
+  return {
+    type: 'assistant',
+    session_id: overrides.session_id ?? 'test-session-id',
+    parent_tool_use_id: overrides.parent_tool_use_id ?? null,
+    uuid: `test-uuid-${  Math.random().toString(36).slice(2, 8)}`,
+    message: {
+      role: 'assistant',
+      content: overrides.content as any,
+    },
+  } as SDKMessage;
+}
+
+// Helper to create a valid SDKToolProgressMessage mock
+function mockToolProgressMessage(overrides: {
+  tool_name?: string;
+  elapsed_time_seconds?: number;
+}): SDKMessage {
+  return {
+    type: 'tool_progress',
+    tool_use_id: 'tool-use-test-id',
+    tool_name: overrides.tool_name ?? 'TestTool',
+    parent_tool_use_id: null,
+    elapsed_time_seconds: overrides.elapsed_time_seconds ?? 1.0,
+    uuid: 'test-uuid-tool-progress',
+    session_id: 'test-session-id',
+  } as SDKMessage;
+}
+
+// Helper to create a valid SDKToolUseSummaryMessage mock
+function mockToolUseSummaryMessage(overrides: {
+  summary?: string;
+}): SDKMessage {
+  return {
+    type: 'tool_use_summary',
+    summary: overrides.summary ?? 'Default summary',
+    preceding_tool_use_ids: [],
+    uuid: 'test-uuid-summary',
+    session_id: 'test-session-id',
+  } as SDKMessage;
+}
+
+// Helper to create a valid SDKResultSuccess mock
+function mockResultSuccessMessage(overrides: {
+  usage?: Record<string, unknown>;
+}): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'success',
+    duration_ms: 1000,
+    duration_api_ms: 800,
+    is_error: false,
+    num_turns: 1,
+    result: 'done',
+    stop_reason: 'end_turn',
+    total_cost_usd: 0.01,
+    usage: overrides.usage ?? {
+      total_cost: 0.01,
+      total_tokens: 1000,
+      input_tokens: 500,
+      output_tokens: 500,
+    } as any,
+    modelUsage: {},
+    permission_denials: [],
+    uuid: 'test-uuid-result',
+    session_id: 'test-session-id',
+  } as SDKMessage;
+}
+
+// Helper to create a valid SDKResultError mock
+function mockResultErrorMessage(errors: string[]): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    duration_ms: 500,
+    duration_api_ms: 300,
+    is_error: true,
+    num_turns: 1,
+    stop_reason: null,
+    total_cost_usd: 0.005,
+    usage: {
+      total_cost: 0.005,
+      total_tokens: 500,
+      input_tokens: 250,
+      output_tokens: 250,
+    } as any,
+    modelUsage: {},
+    permission_denials: [],
+    errors,
+    uuid: 'test-uuid-result-error',
+    session_id: 'test-session-id',
+  } as SDKMessage;
+}
 
 describe('adaptSDKMessage', () => {
   describe('assistant messages', () => {
     it('should handle text-only content', () => {
-      const message = {
-        type: 'assistant' as const,
+      const message = mockAssistantMessage({
         session_id: 'session-123',
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'text', text: 'Hello, world!' },
-          ],
-        },
-      };
+        content: [
+          { type: 'text', text: 'Hello, world!' },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('text');
@@ -29,17 +125,13 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle tool_use content', () => {
-      const message = {
-        type: 'assistant' as const,
+      const message = mockAssistantMessage({
         session_id: 'session-456',
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } },
-            { type: 'text', text: 'Listing files' },
-          ],
-        },
-      };
+        content: [
+          { type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } },
+          { type: 'text', text: 'Listing files' },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('tool_use');
@@ -50,15 +142,11 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle Edit tool with file_path', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Edit', input: { file_path: '/src/app.ts' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Edit', input: { file_path: '/src/app.ts' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Editing: /src/app.ts');
@@ -66,75 +154,55 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle Read tool', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Read', input: { file_path: '/src/app.ts' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Read', input: { file_path: '/src/app.ts' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Reading: /src/app.ts');
     });
 
     it('should handle Write tool', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Write', input: { file_path: '/src/new.ts' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Write', input: { file_path: '/src/new.ts' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Writing: /src/new.ts');
     });
 
     it('should handle Grep tool with pattern', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Grep', input: { pattern: 'TODO' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Grep', input: { pattern: 'TODO' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Searching for "TODO"');
     });
 
     it('should handle Glob tool with pattern', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Glob', input: { pattern: '**/*.ts' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Glob', input: { pattern: '**/*.ts' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Finding files: **/*.ts');
     });
 
     it('should handle unknown tool with input', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'CustomTool', input: { key: 'value' } },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'CustomTool', input: { key: 'value' } },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('CustomTool');
@@ -142,28 +210,20 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle tool_use without input', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'tool_use', name: 'Bash', input: undefined },
-          ],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [
+          { type: 'tool_use', name: 'Bash', input: undefined },
+        ],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.content).toContain('Bash');
     });
 
     it('should handle empty content array', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: [],
-        },
-      };
+      const message = mockAssistantMessage({
+        content: [],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('text');
@@ -171,13 +231,9 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle null/invalid message content', () => {
-      const message = {
-        type: 'assistant' as const,
-        message: {
-          role: 'assistant',
-          content: 'not an array',
-        },
-      };
+      const message = mockAssistantMessage({
+        content: 'not an array' as any,
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('text');
@@ -185,14 +241,10 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should extract session_id when present', () => {
-      const message = {
-        type: 'assistant' as const,
+      const message = mockAssistantMessage({
         session_id: 'sess-abc',
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'hi' }],
-        },
-      };
+        content: [{ type: 'text', text: 'hi' }],
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.metadata?.sessionId).toBe('sess-abc');
@@ -201,11 +253,10 @@ describe('adaptSDKMessage', () => {
 
   describe('tool_progress messages', () => {
     it('should format tool progress with elapsed time', () => {
-      const message = {
-        type: 'tool_progress' as const,
+      const message = mockToolProgressMessage({
         tool_name: 'Bash',
         elapsed_time_seconds: 5.3,
-      };
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('tool_progress');
@@ -216,11 +267,9 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle tool_progress without required fields', () => {
-      const message = {
-        type: 'tool_progress' as const,
-      };
-
-      const result = adaptSDKMessage(message);
+      // Simulate a partial tool_progress message missing tool_name/elapsed_time_seconds
+      const partialMessage = { type: 'tool_progress' as const };
+      const result = adaptSDKMessage(partialMessage as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -228,10 +277,9 @@ describe('adaptSDKMessage', () => {
 
   describe('tool_use_summary messages', () => {
     it('should format tool summary', () => {
-      const message = {
-        type: 'tool_use_summary' as const,
+      const message = mockToolUseSummaryMessage({
         summary: 'Files modified successfully',
-      };
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('tool_result');
@@ -239,11 +287,8 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle tool_use_summary without summary', () => {
-      const message = {
-        type: 'tool_use_summary' as const,
-      };
-
-      const result = adaptSDKMessage(message);
+      const partialMessage = { type: 'tool_use_summary' as const };
+      const result = adaptSDKMessage(partialMessage as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -251,16 +296,14 @@ describe('adaptSDKMessage', () => {
 
   describe('result messages', () => {
     it('should format success result with cost', () => {
-      const message = {
-        type: 'result' as const,
-        subtype: 'success',
+      const message = mockResultSuccessMessage({
         usage: {
           total_cost: 0.0523,
           total_tokens: 15000,
           input_tokens: 10000,
           output_tokens: 5000,
         },
-      };
+      });
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('result');
@@ -273,22 +316,17 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should format success result without usage', () => {
-      const message = {
-        type: 'result' as const,
-        subtype: 'success',
-      };
+      const message = mockResultSuccessMessage({});
 
-      const result = adaptSDKMessage(message);
+      // Override usage to test without it
+      const msg = { ...message, usage: undefined } as any;
+      const result = adaptSDKMessage(msg);
       expect(result.type).toBe('result');
       expect(result.content).toBe('✅ Complete');
     });
 
     it('should format error result', () => {
-      const message = {
-        type: 'result' as const,
-        subtype: 'error_during_execution',
-        errors: ['API rate limit exceeded', 'Timeout'],
-      };
+      const message = mockResultErrorMessage(['API rate limit exceeded', 'Timeout']);
 
       const result = adaptSDKMessage(message);
       expect(result.type).toBe('error');
@@ -297,12 +335,8 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should handle result with unknown subtype', () => {
-      const message = {
-        type: 'result' as const,
-        subtype: 'unknown',
-      };
-
-      const result = adaptSDKMessage(message);
+      const message = { type: 'result' as const, subtype: 'unknown' };
+      const result = adaptSDKMessage(message as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -316,7 +350,7 @@ describe('adaptSDKMessage', () => {
         status: 'compacting',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(message as SDKMessage);
       expect(result.type).toBe('status');
       expect(result.content).toContain('Compacting');
       expect(result.role).toBe('system');
@@ -328,7 +362,7 @@ describe('adaptSDKMessage', () => {
         subtype: 'other',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(message as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -336,9 +370,11 @@ describe('adaptSDKMessage', () => {
 
   describe('user and stream_event messages', () => {
     it('should return empty text for user messages', () => {
-      const message = {
-        type: 'user' as const,
+      const message: SDKMessage = {
+        type: 'user',
         message: { role: 'user', content: 'hello' },
+        parent_tool_use_id: null,
+        session_id: 'test-session-id',
       };
 
       const result = adaptSDKMessage(message);
@@ -352,7 +388,7 @@ describe('adaptSDKMessage', () => {
         type: 'stream_event' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(message as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -362,7 +398,7 @@ describe('adaptSDKMessage', () => {
         type: 'unknown_type' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(message as SDKMessage);
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
