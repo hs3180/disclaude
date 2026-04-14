@@ -201,7 +201,7 @@ export abstract class BaseAgent implements Disposable {
     const loggingConfig = this.getLoggingConfig();
     const globalEnv: Record<string, string> = {};
     Object.entries({ ...this.getGlobalEnv(), ...loadRuntimeEnv(this.getWorkspaceDir()) }).forEach(
-      ([k, v]) => { if (v !== undefined) globalEnv[k] = v; }
+      ([k, v]) => { if (v !== undefined) { globalEnv[k] = v; } }
     );
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';

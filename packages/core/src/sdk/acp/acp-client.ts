@@ -222,12 +222,12 @@ export class AcpClient {
 
     // Build _meta.claudeCode.options if any option is present
     const claudeOptions: NonNullable<NonNullable<AcpSessionNewParams['_meta']>['claudeCode']>['options'] = {};
-    if (options?.permissionMode) claudeOptions.permissionMode = options.permissionMode;
-    if (options?.model) claudeOptions.model = options.model;
-    if (options?.allowedTools) claudeOptions.allowedTools = options.allowedTools;
-    if (options?.disallowedTools) claudeOptions.disallowedTools = options.disallowedTools;
-    if (options?.env) claudeOptions.env = options.env;
-    if (options?.settingSources) claudeOptions.settingSources = options.settingSources;
+    if (options?.permissionMode) { claudeOptions.permissionMode = options.permissionMode; }
+    if (options?.model) { claudeOptions.model = options.model; }
+    if (options?.allowedTools) { claudeOptions.allowedTools = options.allowedTools; }
+    if (options?.disallowedTools) { claudeOptions.disallowedTools = options.disallowedTools; }
+    if (options?.env) { claudeOptions.env = options.env; }
+    if (options?.settingSources) { claudeOptions.settingSources = options.settingSources; }
 
     if (Object.keys(claudeOptions).length > 0) {
       params._meta = {
