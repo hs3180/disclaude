@@ -30,6 +30,14 @@ export interface ChatFile {
   expiredAt: string | null;
   createGroup: CreateGroup;
   context: Record<string, unknown>;
+  /**
+   * Trigger mode configuration for this chat (Issue #2018, #2291).
+   *
+   * - `'always'`: Bot responds to all messages (default for 1-on-1 temp chats)
+   * - `'mention'`: Bot only responds to @mentions (default for group temp chats)
+   * - `undefined`: Resolved by primary-node at activation time
+   */
+  triggerMode?: 'mention' | 'always';
   response: ChatResponse | null;
   activationAttempts: number;
   lastActivationError: string | null;
@@ -205,6 +213,15 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   }
   if (typeof obj.activationAttempts !== 'number' || obj.activationAttempts < 0) {
     throw new ValidationError(`Chat file '${filePath}' has invalid 'activationAttempts'`);
+  }
+
+  // Validate triggerMode enum value if present
+  if (obj.triggerMode != null) {
+    if (obj.triggerMode !== 'mention' && obj.triggerMode !== 'always') {
+      throw new ValidationError(
+        `Chat file '${filePath}' has invalid 'triggerMode': '${obj.triggerMode}' (must be 'mention' or 'always')`,
+      );
+    }
   }
 
   return data as ChatFile;

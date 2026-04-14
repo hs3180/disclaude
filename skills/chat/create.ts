@@ -8,6 +8,7 @@
  *   CHAT_GROUP_NAME (required) Group display name
  *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
  *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
+ *   CHAT_TRIGGER_MODE (optional) 'mention' or 'always' (no default — auto-set at activation)
  *
  * Exit codes:
  *   0 — success
@@ -44,7 +45,18 @@ async function main() {
     exit(err instanceof ValidationError ? err.message : String(err));
   }
 
-  // ---- Step 2: Validate required fields ----
+  // ---- Step 2: Validate optional triggerMode field ----
+  const triggerModeRaw = process.env.CHAT_TRIGGER_MODE;
+  let triggerMode: 'mention' | 'always' | undefined;
+  if (triggerModeRaw !== undefined) {
+    if (triggerModeRaw === 'mention' || triggerModeRaw === 'always') {
+      triggerMode = triggerModeRaw;
+    } else {
+      exit(`CHAT_TRIGGER_MODE must be 'mention' or 'always', got '${triggerModeRaw}'`);
+    }
+  }
+
+  // ---- Step 3: Validate required fields ----
   const expiresAt = process.env.CHAT_EXPIRES_AT;
   try {
     validateExpiresAt(expiresAt ?? '');
@@ -85,7 +97,7 @@ async function main() {
 
   const truncatedName = truncateGroupName(groupName!);
 
-  // ---- Step 3: Setup directory and resolve path ----
+  // ---- Step 4: Setup directory and resolve path ----
   const chatDir = resolve(CHAT_DIR);
   await mkdir(chatDir, { recursive: true });
 
@@ -96,7 +108,7 @@ async function main() {
     exit(`Path traversal detected for chat ID '${chatId}'`);
   }
 
-  // ---- Step 4: Check uniqueness under lock ----
+  // ---- Step 5: Check uniqueness under lock ----
   const lockPath = `${chatFile}.lock`;
   await withExclusiveLock(lockPath, async () => {
     // Double-check file doesn't exist
@@ -111,7 +123,7 @@ async function main() {
       }
     }
 
-    // ---- Step 5: Write chat file ----
+    // ---- Step 6: Write chat file ----
     const chatData: ChatFile = {
       id: chatId!,
       status: 'pending',
@@ -125,6 +137,9 @@ async function main() {
         members,
       },
       context,
+      // Issue #2018: Only set triggerMode when explicitly provided via env.
+      // Auto-setting based on member count is handled at a higher level.
+      ...(triggerMode !== undefined ? { triggerMode } : {}),
       response: null,
       activationAttempts: 0,
       lastActivationError: null,
