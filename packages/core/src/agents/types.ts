@@ -249,6 +249,12 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * ACP Client instance for Agent Client Protocol communication.
+   * If not provided, will attempt to get from runtime context.
+   * Required for ACP-based query execution (Issue #2311).
+   */
+  acpClient?: import('../sdk/acp/acp-client.js').AcpClient;
 }
 
 /**
@@ -358,6 +364,10 @@ export interface AgentRuntimeContext {
   // Skill-related methods (optional)
   /** Find a skill by name */
   findSkill?(skillName: string): Promise<string | undefined>;
+
+  // ACP Client (optional - for ACP-based agent execution, Issue #2311)
+  /** Get the shared ACP Client instance */
+  getAcpClient?(): import('../sdk/acp/acp-client.js').AcpClient;
 }
 
 // Global runtime context (set by main package)
