@@ -309,3 +309,22 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #1916, #2227 — unified per-chatId context switching)
+export {
+  ProjectManager,
+  noOpFs,
+} from './project/index.js';
+
+export type {
+  FilesystemOps,
+  CwdProvider,
+  InstanceInfo,
+  PersistedInstance,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+  ProjectsPersistData,
+} from './project/index.js';

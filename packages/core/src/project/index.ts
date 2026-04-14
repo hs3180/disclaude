@@ -19,3 +19,5 @@ export type {
 
 export { ProjectManager, noOpFs } from './project-manager.js';
 export type { FilesystemOps } from './project-manager.js';
+
+export { createCwdProviderFromConfig } from './integration.js';

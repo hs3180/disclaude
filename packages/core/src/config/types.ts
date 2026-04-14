@@ -324,6 +324,21 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /**
+   * Project templates configuration for per-chatId context switching.
+   * Key = template name, Value = optional display metadata.
+   *
+   * @see ProjectTemplatesConfig in project/types.ts for the canonical definition
+   * @see Issue #2227
+   *
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   * ```
+   */
+  projectTemplates?: Record<string, { displayName?: string; description?: string }>;
 }
 
 /**
