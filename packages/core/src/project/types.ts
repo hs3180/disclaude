@@ -126,7 +126,7 @@ export interface InstanceInfo {
 /**
  * Callback for dynamically querying the current project's working directory.
  *
- * Injected into Pilot to resolve cwd at `startAgentLoop()` time.
+ * Injected into ChatAgent to resolve cwd at `startAgentLoop()` time.
  * Returns `undefined` for "default" project → SDK falls back to `getWorkspaceDir()`.
  *
  * @param chatId - The chat session identifier

@@ -2,7 +2,7 @@
  * Wired Channel Descriptors - Channel-specific wiring for REST and Feishu.
  *
  * Issue #1594 Phase 2: Each descriptor encapsulates the full wiring lifecycle
- * for its channel type, including PilotCallbacks creation, message handling,
+ * for its channel type, including ChatAgentCallbacks creation, message handling,
  * and post-registration setup (passive mode, IPC handlers).
  *
  * Issue #1555 Phase 2: Shared handler utilities extracted to utils/channel-handlers.ts
@@ -46,7 +46,7 @@ import {
  * REST Channel wired descriptor.
  *
  * Provides full wiring for the REST channel:
- * - PilotCallbacks with done signal (sync mode)
+ * - ChatAgentCallbacks with done signal (sync mode)
  * - Message handler with basic text processing
  * - No post-registration setup needed
  */
@@ -81,7 +81,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
  * Feishu Channel wired descriptor.
  *
  * Provides full wiring for the Feishu channel:
- * - PilotCallbacks without done signal (async mode)
+ * - ChatAgentCallbacks without done signal (async mode)
  * - Message handler with attachment conversion
  * - Post-registration setup: action prompt resolver, passive mode, IPC handlers
  */
@@ -176,7 +176,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     });
 
     // 3. Register IPC handlers for MCP Server connections
-    // Base handlers reuse the same channel.sendMessage pattern as PilotCallbacks
+    // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
     const baseHandlers = createChannelApiHandlers(feishuChannel, {
       logger: context.logger,
@@ -274,7 +274,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * at runtime (e.g., after QR code authentication completes).
  *
  * Provides full wiring for the WeChat channel (MVP):
- * - PilotCallbacks without done signal (async mode)
+ * - ChatAgentCallbacks without done signal (async mode)
  * - Message handler with basic text processing
  * - No post-registration setup (MVP: no passive mode, no IPC handlers)
  *

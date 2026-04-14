@@ -367,7 +367,7 @@ describe('WiredChannelDescriptor integration', () => {
     context = createMockContext();
   });
 
-  it('should create callbacks factory that returns PilotCallbacks', async () => {
+  it('should create callbacks factory that returns ChatAgentCallbacks', async () => {
     const mockChannel = createMockChannel('test', 'Test Channel');
     const createCallbacksSpy = vi.fn().mockReturnValue(() => ({
       sendMessage: vi.fn().mockResolvedValue(undefined),

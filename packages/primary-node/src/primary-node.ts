@@ -54,7 +54,7 @@ import {
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
-import { AgentFactory, toPilotCallbacks } from '@disclaude/worker-node';
+import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -462,12 +462,12 @@ export class PrimaryNode extends EventEmitter {
     };
 
     // Issue #1382: Use unified createScheduleExecutor
-    // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
+    // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toPilotCallbacks(callbacks), model ? { model } : {});
+        return AgentFactory.createScheduleAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
       },
       callbacks: schedulerCallbacks,
     });
