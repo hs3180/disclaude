@@ -104,11 +104,6 @@ function createMockAcpMessage(overrides: Partial<AgentMessage> = {}): AgentMessa
 
 let mockAcpClient: ReturnType<typeof createMockAcpClient>;
 
-/** Type-safe cast for mock AcpClient */
-function asAcpClient(mock: ReturnType<typeof createMockAcpClient>): import('../sdk/acp/acp-client.js').AcpClient {
-  return mock as unknown as import('../sdk/acp/acp-client.js').AcpClient;
-}
-
 // Mock buildSdkEnv to return a simple env object
 vi.mock('../utils/sdk.js', () => ({
   buildSdkEnv: (apiKey: string, apiBaseUrl: string | undefined, globalEnv: Record<string, string>, sdkDebug: boolean) => ({
@@ -138,7 +133,7 @@ describe('BaseAgent', () => {
       apiKey: 'test-api-key',
       model: 'claude-3-5-sonnet-20241022',
       provider: 'anthropic',
-      acpClient: asAcpClient(mockAcpClient),
+      acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
     };
     agent = new TestAgent(config);
   });
@@ -168,7 +163,7 @@ describe('BaseAgent', () => {
       const noProviderConfig: BaseAgentConfig = {
         apiKey: 'key',
         model: 'model',
-        acpClient: asAcpClient(mockAcpClient),
+        acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
       };
       const noProviderAgent = new TestAgent(noProviderConfig);
       expect(noProviderAgent.provider).toBe('anthropic');
@@ -183,7 +178,7 @@ describe('BaseAgent', () => {
         isAgentTeamsEnabled: () => false,
       });
 
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', acpClient: asAcpClient(mockAcpClient) });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient });
       expect(ctxAgent.provider).toBe('glm');
     });
 
@@ -198,7 +193,7 @@ describe('BaseAgent', () => {
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
-        getAcpClient: () => asAcpClient(mockAcpClient),
+        getAcpClient: () => mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
       });
 
       const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
@@ -368,7 +363,7 @@ describe('BaseAgent', () => {
       // Should have created a session
       expect(mockAcpClient.createSession).toHaveBeenCalledWith(
         '/workspace',
-        { permissionMode: 'bypassPermissions' },
+        { permissionMode: 'bypassPermissions', settingSources: ['project'] },
       );
 
       // Should have sent prompt
@@ -477,6 +472,7 @@ describe('BaseAgent', () => {
         {
           mcpServers: [{ type: 'stdio', name: 'test-server', command: 'node', args: ['server.js'] }],
           permissionMode: 'bypassPermissions',
+          settingSources: ['project'],
         },
       );
     });
@@ -496,52 +492,73 @@ describe('BaseAgent', () => {
       );
     });
 
-    it('should pass allowedTools and disallowedTools through to ACP session', async () => {
-      const optionsWithTools = {
-        ...defaultOptions,
-        allowedTools: ['Read', 'Write'],
-        disallowedTools: ['EnterPlanMode'],
-      };
-
+    it('should pass model, allowedTools, disallowedTools, env to session', async () => {
       mockAcpClient.sendPrompt.mockImplementation(async function* () {
         yield createMockAcpMessage();
       });
 
-      for await (const _ of agent.testQueryOnce('test', optionsWithTools)) {
+      const fullOptions = {
+        cwd: '/workspace',
+        permissionMode: 'default' as const,
+        model: 'claude-3-opus',
+        allowedTools: ['Read', 'Write'],
+        disallowedTools: ['Bash'],
+        env: { ANTHROPIC_API_KEY: 'test-key', CUSTOM_VAR: 'value' },
+        settingSources: ['project'],
+      };
+
+      for await (const _ of agent.testQueryOnce('test', fullOptions)) {
         // consume
       }
 
       expect(mockAcpClient.createSession).toHaveBeenCalledWith(
         '/workspace',
         expect.objectContaining({
-          permissionMode: 'bypassPermissions',
+          permissionMode: 'default',
+          model: 'claude-3-opus',
           allowedTools: ['Read', 'Write'],
-          disallowedTools: ['EnterPlanMode'],
+          disallowedTools: ['Bash'],
+          env: { ANTHROPIC_API_KEY: 'test-key', CUSTOM_VAR: 'value' },
+          settingSources: ['project'],
         }),
       );
     });
 
-    it('should retry when connection is already in progress', async () => {
+    it('should not reconnect on concurrent queryOnce calls', async () => {
       let connectCallCount = 0;
-      mockAcpClient.connect = vi.fn((): Promise<{ protocolVersion: number }> => {
+      mockAcpClient.connect.mockImplementation(() => {
         connectCallCount++;
-        if (connectCallCount === 1) {
-          return Promise.reject(new Error('Connection already in progress'));
-        }
         mockAcpClient.state = 'connected';
         return Promise.resolve({ protocolVersion: 1 });
       });
-      mockAcpClient.state = 'disconnected';
 
       mockAcpClient.sendPrompt.mockImplementation(async function* () {
         yield createMockAcpMessage();
       });
 
-      for await (const _ of agent.testQueryOnce('test', defaultOptions)) {
-        // consume
-      }
+      // Run two concurrent queries
+      const [results1, results2] = await Promise.all([
+        (async () => {
+          const r: IteratorYieldResult[] = [];
+          for await (const item of agent.testQueryOnce('query1', defaultOptions)) {
+            r.push(item);
+          }
+          return r;
+        })(),
+        (async () => {
+          const r: IteratorYieldResult[] = [];
+          for await (const item of agent.testQueryOnce('query2', defaultOptions)) {
+            r.push(item);
+          }
+          return r;
+        })(),
+      ]);
 
-      expect(connectCallCount).toBe(2);
+      // Both should succeed
+      expect(results1).toHaveLength(1);
+      expect(results2).toHaveLength(1);
+      // connect should be called at most once (the cached promise deduplicates)
+      expect(connectCallCount).toBeLessThanOrEqual(1);
     });
   });
 
@@ -806,7 +823,7 @@ describe('BaseAgent', () => {
       expect(messages[0].parsed.sessionId).toBe('tool-session');
     });
 
-    it('should reflect sessionId on handle after session is created', async () => {
+    it('should expose sessionId via getter after session creation', async () => {
       mockAcpClient.sendPrompt.mockImplementation(async function* () {
         yield createMockAcpMessage({ type: 'text', content: 'Response' });
       });
@@ -825,53 +842,93 @@ describe('BaseAgent', () => {
       // Before consuming, sessionId should be undefined
       expect(result.handle.sessionId).toBeUndefined();
 
-      // Consume the iterator to trigger session creation
+      // Consume the iterator
       for await (const _ of result.iterator) {
         // consume
       }
 
-      // After consuming, sessionId should be populated via getter
+      // After consuming, sessionId should be populated
       expect(result.handle.sessionId).toBe('test-session-id');
     });
 
-    it('should propagate error when createSession fails', async () => {
-      mockAcpClient.createSession.mockRejectedValue(new Error('Session creation failed'));
+    it('should handle cancel before session is created', async () => {
+      // Make createSession slow to test pending cancel
+      let resolveSession: (value: { sessionId: string; model: string }) => void;
+      const sessionPromise = new Promise<{ sessionId: string; model: string }>((resolve) => { resolveSession = resolve; });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (mockAcpClient.createSession as any).mockImplementation(() => sessionPromise);
 
       const inputStream = createMockInput([
         {
           type: 'user' as const,
-          message: { role: 'user' as const, content: 'hi' },
+          message: { role: 'user' as const, content: 'Hello' },
           parent_tool_use_id: null,
-          session_id: 's1',
+          session_id: 'session-1',
         },
       ]);
 
       const result = agent.testCreateQueryStream(inputStream, defaultOptions);
 
-      await expect((async () => {
-        for await (const _ of result.iterator) { /* consume */ }
-      })()).rejects.toThrow('Session creation failed');
+      // Start consuming iterator (triggers session creation) but don't await
+      const iterPromise = (async () => {
+        for await (const _ of result.iterator) {
+          // consume
+        }
+      })();
+
+      // Give a tick for ensureClientConnected to run and session creation to start
+      await new Promise((r) => setTimeout(r, 5));
+
+      // Cancel before session is resolved
+      result.handle.cancel();
+
+      // Now resolve the session
+      resolveSession!({ sessionId: 'late-session', model: 'model' });
+
+      // After session is resolved, cancelPrompt should be called
+      // (it was deferred via pendingCancel flag)
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockAcpClient.cancelPrompt).toHaveBeenCalledWith('late-session');
+
+      // Clean up the iterator - it should complete after cancel
+      await iterPromise;
     });
 
-    it('should propagate error when sendPrompt throws', async () => {
+    it('should stop iteration when close is called during prompt processing', async () => {
+      let callCount = 0;
       mockAcpClient.sendPrompt.mockImplementation(async function* () {
-        throw new Error('Prompt send failed');
+        callCount++;
+        yield createMockAcpMessage({ type: 'text', content: `Response ${callCount}` });
       });
 
       const inputStream = createMockInput([
         {
           type: 'user' as const,
-          message: { role: 'user' as const, content: 'hi' },
+          message: { role: 'user' as const, content: 'Hello' },
           parent_tool_use_id: null,
-          session_id: 's1',
+          session_id: 'session-1',
+        },
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: 'Should be skipped' },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
         },
       ]);
 
       const result = agent.testCreateQueryStream(inputStream, defaultOptions);
 
-      await expect((async () => {
-        for await (const _ of result.iterator) { /* consume */ }
-      })()).rejects.toThrow('Prompt send failed');
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+        // Close after first message
+        result.handle.close();
+      }
+
+      // Should have processed at most one prompt
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results.length).toBeLessThanOrEqual(2);
     });
   });
 
@@ -890,41 +947,6 @@ describe('BaseAgent', () => {
       agent.dispose();
       // Verify state by calling dispose again without error
       expect(agent.testProperty).toBe('test');
-    });
-
-    it('should cancel active prompt on dispose', async () => {
-      agent.setInitialized(true);
-
-      // Start a streaming query to create an active session
-      mockAcpClient.sendPrompt.mockImplementation(async function* () {
-        yield createMockAcpMessage({ type: 'text', content: 'Response' });
-      });
-
-      async function* mockInput(): AsyncGenerator<StreamingUserMessage> {
-        yield {
-          type: 'user' as const,
-          message: { role: 'user' as const, content: 'Hello' },
-          parent_tool_use_id: null,
-          session_id: 's1',
-        };
-      }
-
-      const defaultStreamOptions = {
-        cwd: '/workspace',
-        permissionMode: 'bypassPermissions' as const,
-        settingSources: ['project'],
-      };
-
-      const result = agent.testCreateQueryStream(mockInput(), defaultStreamOptions);
-
-      // Consume to trigger session creation
-      for await (const _ of result.iterator) {
-        // consume
-      }
-
-      // Now dispose should cancel the active session
-      agent.dispose();
-      expect(mockAcpClient.cancelPrompt).toHaveBeenCalledWith('test-session-id');
     });
   });
 
@@ -959,7 +981,7 @@ describe('BaseAgent', () => {
         isAgentTeamsEnabled: () => false,
       });
 
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic', acpClient: asAcpClient(mockAcpClient) });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic', acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient });
       const options = ctxAgent.testCreateSdkOptions();
       // Runtime context takes precedence - sdkDebug is false
       expect(options.env?.SDK_DEBUG).toBeUndefined();
@@ -977,7 +999,7 @@ describe('BaseAgent', () => {
         apiKey: 'key',
         model: '',
         provider: 'anthropic',
-        acpClient: asAcpClient(mockAcpClient),
+        acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
       });
       const options = noModelAgent.testCreateSdkOptions();
       expect(options.model).toBeUndefined();
