@@ -10,15 +10,7 @@ interface ModeMessages {
   invalidArgs: string;
 }
 
-/** User-facing messages for /passive command style */
-const PASSIVE_MESSAGES: ModeMessages = {
-  unavailable: '⚠️ 被动模式功能当前不可用。请检查频道配置是否正确。',
-  mentionEnabled: '🔕 被动模式已开启',
-  alwaysEnabled: '🔔 被动模式已关闭',
-  invalidArgs: '⚠️ 无效参数。用法: `/passive [on|off]` 或 `/trigger [mention|always]`',
-};
-
-/** User-facing messages for /trigger command style */
+/** User-facing messages for /trigger command */
 const TRIGGER_MESSAGES: ModeMessages = {
   unavailable: '⚠️ 触发模式功能当前不可用。请检查频道配置是否正确。',
   mentionEnabled: '🔕 仅 @触发模式已开启（bot 仅响应 @提及）',
@@ -48,9 +40,6 @@ function parseTriggerArg(arg: string): TriggerMode | null {
 
 /**
  * Internal mode toggle handler (Issue #2193, #2291).
- *
- * Shared logic for both `/passive` and `/trigger` commands — only the
- * user-facing messages differ.
  *
  * Issue #2291: Now uses enum-based `getMode`/`setMode` interface,
  * falls back to boolean `isEnabled`/`setEnabled` for backward compat.
@@ -107,14 +96,6 @@ function handleModeToggle(
     message: newMode === 'mention' ? messages.mentionEnabled : messages.alwaysEnabled,
   };
 }
-
-/**
- * /passive 命令处理 (Issue #2193: alias for /trigger)
- */
-export const handlePassive: CommandHandler = (
-  command: ControlCommand,
-  context: ControlHandlerContext
-): ControlResponse => handleModeToggle(command, context, 'passive', PASSIVE_MESSAGES);
 
 /**
  * /trigger 命令处理 (Issue #2193: renamed from /passive)
