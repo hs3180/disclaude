@@ -70,7 +70,7 @@ export interface ChannelApiHandlers {
     }
   ) => Promise<{ messageId?: string }>;
   /** Register a temp chat for lifecycle tracking (Issue #1703) */
-  registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; passiveMode?: boolean }) => Promise<{ success: boolean; expiresAt?: string }>;
+  registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
@@ -246,10 +246,10 @@ export function createInteractiveMessageHandler(
               error: 'registerTempChat not supported by this channel',
             };
           }
-          const { chatId, expiresAt, creatorChatId, context, passiveMode } =
+          const { chatId, expiresAt, creatorChatId, context, triggerMode } =
             request.payload as IpcRequestPayloads['registerTempChat'];
           try {
-            const result = await handlers.registerTempChat(chatId, { expiresAt, creatorChatId, context, passiveMode });
+            const result = await handlers.registerTempChat(chatId, { expiresAt, creatorChatId, context, triggerMode });
             return { id: request.id, success: true, payload: { success: result.success, chatId, expiresAt: result.expiresAt } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

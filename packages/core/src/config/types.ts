@@ -195,6 +195,17 @@ export interface TransportConfig {
 }
 
 /**
+ * Trigger mode for group chat message handling.
+ * Issue #2291: Upgraded from boolean to enum for extensibility.
+ *
+ * - `'mention'`: Bot only responds to @mentions (default behavior)
+ * - `'always'`: Bot responds to all messages
+ *
+ * Future extensions may include `'regex'`, `'schedule'`, etc.
+ */
+export type TriggerMode = 'mention' | 'always';
+
+/**
  * Filter reason types for message filtering.
  * @see Issue #597
  */
