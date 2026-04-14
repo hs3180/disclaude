@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ======================================================================= -->
+  <!-- Disclaude Primary Node — macOS LaunchAgent                              -->
+  <!--                                                                         -->
+  <!-- WHY: macOS TCC tracks the entire process chain for privacy-sensitive    -->
+  <!-- permissions (microphone, camera, etc.). PM2 fork mode creates a chain   -->
+  <!-- like PM2 → node → claude → zsh → python, where the PM2 node process    -->
+  <!-- lacks microphone TCC permission, causing all child processes to be      -->
+  <!-- silently denied. launchd is the native macOS process manager with a     -->
+  <!-- clean chain: launchd → node → disclaude, so TCC permissions work.      -->
+  <!--                                                                         -->
+  <!-- SETUP:                                                                  -->
+  <!--   1. Copy this file to ~/Library/LaunchAgents/com.disclaude.primary.plist -->
+  <!--   2. Replace ALL placeholder values (search for CHANGEME)              -->
+  <!--   3. Run: launchctl load ~/Library/LaunchAgents/com.disclaude.primary.plist -->
+  <!--                                                                         -->
+  <!-- OR use the helper script:                                               -->
+  <!--   ./scripts/launchd-install.sh                                          -->
+  <!--                                                                         -->
+  <!-- Related: #1957                                                          -->
+  <!-- ======================================================================= -->
+
+  <key>Label</key>
+  <string>com.disclaude.primary</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- CHANGEME: Path to your Node.js binary (find with: which node) -->
+    <string>/usr/local/bin/node</string>
+    <!-- CHANGEME: Absolute path to your disclaude installation -->
+    <string>/Users/YOUR_USERNAME/disclaude/packages/primary-node/dist/cli.js</string>
+    <string>start</string>
+    <!-- CHANGEME: Absolute path to your config file -->
+    <string>--config</string>
+    <string>/Users/YOUR_USERNAME/disclaude/disclaude.config.yaml</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <!-- CHANGEME: Absolute path to your disclaude installation -->
+  <string>/Users/YOUR_USERNAME/disclaude</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Restart on crash (throttled to avoid rapid restart loops) -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Environment variables -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <!-- CHANGEME: Include paths for node, python3, ffmpeg, etc. -->
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- CHANGEME: Set your timezone -->
+    <key>TZ</key>
+    <string>Asia/Shanghai</string>
+  </dict>
+
+  <!-- Logging: stdout and stderr to separate files -->
+  <key>StandardOutPath</key>
+  <!-- CHANGEME: Log file path -->
+  <string>/Users/YOUR_USERNAME/disclaude/logs/launchd-stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <!-- CHANGEME: Error log file path -->
+  <string>/Users/YOUR_USERNAME/disclaude/logs/launchd-stderr.log</string>
+
+  <!-- Soft resource limits -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <!-- Process type: adapted to macOS power management -->
+  <!-- "Interactive" keeps the process running even when display sleeps -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

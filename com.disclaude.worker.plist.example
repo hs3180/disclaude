@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ======================================================================= -->
+  <!-- Disclaude Worker Node — macOS LaunchAgent (Optional)                    -->
+  <!--                                                                         -->
+  <!-- Only needed if you want to run a separate worker node on macOS.         -->
+  <!-- For most single-machine setups, the primary node is sufficient.         -->
+  <!--                                                                         -->
+  <!-- Related: #1957                                                          -->
+  <!-- ======================================================================= -->
+
+  <key>Label</key>
+  <string>com.disclaude.worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- CHANGEME: Path to your Node.js binary -->
+    <string>/usr/local/bin/node</string>
+    <!-- CHANGEME: Absolute path to your disclaude installation -->
+    <string>/Users/YOUR_USERNAME/disclaude/packages/worker-node/dist/cli.js</string>
+    <string>start</string>
+    <string>--mode</string>
+    <string>worker</string>
+    <!-- CHANGEME: Absolute path to your config file -->
+    <string>--config</string>
+    <string>/Users/YOUR_USERNAME/disclaude/disclaude.config.yaml</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOUR_USERNAME/disclaude</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TZ</key>
+    <string>Asia/Shanghai</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOUR_USERNAME/disclaude/logs/launchd-worker-stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/YOUR_USERNAME/disclaude/logs/launchd-worker-stderr.log</string>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

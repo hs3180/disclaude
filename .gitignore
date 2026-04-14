@@ -57,6 +57,11 @@ workspace/*
 !workspace/.gitkeep
 ecosystem.config.cjs
 
+# macOS launchd plist (user-specific paths)
+# Keep the .example templates, ignore generated ones
+com.disclaude.*.plist
+!com.disclaude.*.plist.example
+
 # Integration test environment (contains secrets)
 tests/integration/test-env.yaml
 tests/integration/workspace/

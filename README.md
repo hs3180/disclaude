@@ -329,6 +329,69 @@ Edit `ecosystem.config.cjs`:
 | `max_memory_restart` | `500M` | Restart if memory exceeded |
 | `instances` | `1` | Number of processes |
 
+## Running on macOS (launchd)
+
+**Why not PM2 on macOS?** macOS TCC (Transparency, Consent, and Control) tracks the entire process chain for privacy permissions (microphone, camera). PM2 fork mode creates `PM2 → node → claude → zsh → python`, where the PM2 node process lacks TCC permission, causing child processes to be **silently denied** microphone access. launchd is the native macOS process manager with a clean chain: `launchd → node → disclaude`.
+
+> **Note**: This issue only affects macOS when you need privacy-sensitive permissions (microphone, screen recording). If you don't use voice/audio features, PM2 works fine on macOS too.
+
+### Quick Start
+
+```bash
+# Install as LaunchAgent (auto-detects paths)
+npm run launchd:install
+
+# Or with custom options
+./scripts/launchd-install.sh --node /opt/homebrew/bin/node --config /path/to/config.yaml
+```
+
+### Commands
+
+```bash
+npm run launchd:install     # Build & install LaunchAgent
+npm run launchd:uninstall   # Uninstall LaunchAgent
+npm run launchd:restart     # Build & restart service
+npm run launchd:status      # Check service status
+npm run launchd:logs        # View stdout logs
+npm run launchd:logs:err    # View stderr logs
+```
+
+### Manual Setup
+
+If you prefer to set up manually:
+
+1. Copy the template:
+   ```bash
+   cp com.disclaude.primary.plist.example ~/Library/LaunchAgents/com.disclaude.primary.plist
+   ```
+2. Edit the plist — replace all `CHANGEME` placeholders with your actual paths
+3. Load the agent:
+   ```bash
+   launchctl load ~/Library/LaunchAgents/com.disclaude.primary.plist
+   ```
+
+### TCC Microphone Permission
+
+On first run after installing with launchd, macOS should prompt for microphone access. If it doesn't:
+
+1. Open **System Settings → Privacy & Security → Microphone**
+2. Look for **node** or **Terminal** and enable it
+3. Restart the service: `npm run launchd:restart`
+
+### Migrating from PM2
+
+```bash
+# 1. Stop and remove PM2 service
+npm run pm2:stop
+npm run pm2:delete
+
+# 2. Install launchd service
+npm run launchd:install
+
+# 3. Verify it's running
+npm run launchd:status
+```
+
 ## Usage
 
 ### CLI Commands

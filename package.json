@@ -50,6 +50,12 @@
     "pm2:status": "pm2 status",
     "pm2:delete": "pm2 delete disclaude-primary",
     "pm2:monit": "pm2 monit",
+    "launchd:install": "npm run build && ./scripts/launchd-install.sh -y",
+    "launchd:uninstall": "./scripts/launchd-uninstall.sh -y",
+    "launchd:restart": "npm run build && launchctl kickstart -k gui/$(id -u)/com.disclaude.primary",
+    "launchd:status": "launchctl print gui/$(id -u)/com.disclaude.primary",
+    "launchd:logs": "tail -f ./logs/launchd-stdout.log",
+    "launchd:logs:err": "tail -f ./logs/launchd-stderr.log",
     "prepare": "husky"
   },
   "devDependencies": {
