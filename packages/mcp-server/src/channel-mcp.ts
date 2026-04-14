@@ -18,7 +18,7 @@ import {
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
-import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
@@ -218,6 +218,12 @@ For interactive cards with button click handlers, use send_interactive instead.
 - **card**: MUST be an object with config/header/elements, NOT an array or string
 - **chatId**: MUST be a non-empty string
 
+## Markdown Limitations (IMPORTANT)
+The \`markdown\` element supports a **restricted subset** of GFM:
+- ✅ Supported: bold, italic, links, lists, code blocks, headings
+- ❌ NOT supported: **tables** (\`| col | col |\`), footnotes, task lists, strikethrough
+- For tabular data, use \`column_set\` elements instead of markdown tables
+
 ## Example
 \`\`\`json
 {
@@ -262,6 +268,14 @@ For interactive cards with button click handlers, use send_interactive instead.
 
       try {
         const result = await send_card({ card, chatId, parentMessageId });
+
+        // Issue #2340: Detect GFM table syntax in markdown elements and append warnings
+        const tableWarnings = detectMarkdownTableWarnings(card);
+        if (result.success && tableWarnings.length > 0) {
+          const warningMsg = tableWarnings.join('\n');
+          return toolSuccess(`${result.message}\n\n⚠️ Warning: ${warningMsg}`);
+        }
+
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
