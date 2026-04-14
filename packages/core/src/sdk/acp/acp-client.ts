@@ -258,6 +258,11 @@ export class AcpClient {
   ): AsyncGenerator<AgentMessage> {
     this.assertConnected();
 
+    // Reject concurrent prompts for the same session
+    if (this.activePrompts.has(sessionId)) {
+      throw new AcpError(`A prompt is already active for session ${sessionId}`, -1);
+    }
+
     const params: AcpSessionPromptParams = {
       sessionId,
       prompt,
@@ -504,11 +509,10 @@ export class AcpClient {
       return;
     }
 
-    // 推送到所有活跃的 prompt streams（通常只有一个）
-    for (const [_sid, active] of this.activePrompts) {
+    // 推送到对应 session 的 prompt stream
+    const active = this.activePrompts.get(params.sessionId);
+    if (active) {
       active.push(agentMessage);
-      // 只推送一次，break
-      break;
     }
   }
 
