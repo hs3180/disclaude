@@ -25,6 +25,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.62",
     "@disclaude/core": "*",
     "zod": "^4.3.6"
   },
