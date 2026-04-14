@@ -8,6 +8,7 @@
  * | ACP sessionUpdate              | AgentMessage.type |
  * |--------------------------------|-------------------|
  * | agent_message_chunk            | text              |
+ * | agent_thought_chunk            | thinking          |
  * | tool_call                      | tool_use          |
  * | tool_call_update (in_progress) | tool_progress     |
  * | tool_call_update (completed)   | tool_result       |
@@ -20,6 +21,7 @@ import type { AgentMessage, AgentMessageMetadata } from '../types.js';
 import type {
   AcpSessionUpdate,
   AcpAgentMessageChunkUpdate,
+  AcpAgentThoughtChunkUpdate,
   AcpToolCallUpdate,
   AcpPlanUpdate,
   AcpContentBlock,
@@ -35,6 +37,13 @@ function isAgentMessageChunk(
   update: AcpSessionUpdate,
 ): update is AcpAgentMessageChunkUpdate {
   return update.sessionUpdate === 'agent_message_chunk';
+}
+
+/** 判断是否为 agent_thought_chunk 更新（extended thinking） */
+function isAgentThoughtChunk(
+  update: AcpSessionUpdate,
+): update is AcpAgentThoughtChunkUpdate {
+  return update.sessionUpdate === 'agent_thought_chunk';
 }
 
 /** 判断是否为 tool_call / tool_call_update 更新 */
@@ -101,6 +110,10 @@ export function adaptSessionUpdate(update: AcpSessionUpdate): AgentMessage | und
     return adaptAgentMessageChunk(update);
   }
 
+  if (isAgentThoughtChunk(update)) {
+    return adaptAgentThoughtChunk(update);
+  }
+
   if (isToolCallUpdate(update)) {
     return adaptToolCallUpdate(update);
   }
@@ -148,6 +161,16 @@ export function adaptPromptResult(result: AcpPromptResult): AgentMessage {
 function adaptAgentMessageChunk(update: AcpAgentMessageChunkUpdate): AgentMessage {
   return {
     type: 'text',
+    content: extractText(update.content),
+    role: 'assistant',
+    raw: update,
+  };
+}
+
+/** 适配 agent_thought_chunk（extended thinking） */
+function adaptAgentThoughtChunk(update: AcpAgentThoughtChunkUpdate): AgentMessage {
+  return {
+    type: 'thinking',
     content: extractText(update.content),
     role: 'assistant',
     raw: update,

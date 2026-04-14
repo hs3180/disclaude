@@ -51,6 +51,40 @@ describe('adaptSessionUpdate', () => {
   });
 
   // --------------------------------------------------------------------------
+  // agent_thought_chunk (extended thinking)
+  // --------------------------------------------------------------------------
+  describe('agent_thought_chunk', () => {
+    it('maps to AgentMessage type=thinking', () => {
+      const update: AcpSessionUpdate = {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'Let me think about this...' },
+      };
+
+      const result = adaptSessionUpdate(update);
+
+      expect(result).toEqual({
+        type: 'thinking',
+        content: 'Let me think about this...',
+        role: 'assistant',
+        raw: update,
+      });
+    });
+
+    it('handles empty thought content', () => {
+      const update: AcpSessionUpdate = {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: '' },
+      };
+
+      const result = adaptSessionUpdate(update);
+
+      expect(result).toBeDefined();
+      expect(result!.type).toBe('thinking');
+      expect(result!.content).toBe('');
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // tool_call (new tool invocation)
   // --------------------------------------------------------------------------
   describe('tool_call', () => {

@@ -103,12 +103,12 @@ function errorResponse(id: number | string, code: number, message: string): Json
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-/** 创建 session/update 通知 */
-function sessionUpdateNotification(update: unknown): JsonRpcNotification {
+/** 创建 session/update 通知（包含 sessionId 用于路由） */
+function sessionUpdateNotification(sessionId: string, update: unknown): JsonRpcNotification {
   return {
     jsonrpc: '2.0',
     method: 'session/update',
-    params: { update },
+    params: { sessionId, update },
   };
 }
 
@@ -124,6 +124,27 @@ function createTestClient(transport?: MockTransport, config?: Partial<AcpClientC
     ...config,
   });
   return { client, transport: t };
+}
+
+/**
+ * 让出执行权，等待微任务队列处理完毕。
+ *
+ * 比 setTimeout(resolve, 10) 更可靠，因为：
+ * - 不依赖实际时钟（消除 CI 环境下的 flaky 测试）
+ * - MockTransport 的 send() 是同步的，消息在调用时已入队
+ * - 只需让出一次让 Promise 链有机会执行即可
+ */
+function yieldOnce(): Promise<void> {
+  return new Promise<void>((resolve) => queueMicrotask(resolve));
+}
+
+/** 连接客户端的辅助函数（复用连接逻辑） */
+async function connectClient(client: AcpClient, transport: MockTransport): Promise<void> {
+  const connectPromise = client.connect();
+  await yieldOnce();
+  const initReq = transport.sentMessages[0] as JsonRpcRequest;
+  transport.simulateMessage(successResponse(initReq.id, {}));
+  await connectPromise;
 }
 
 // ============================================================================
@@ -151,8 +172,8 @@ describe('AcpClient', () => {
       // 在 connect() 中，initialize 请求发送后需要响应
       const connectPromise = client.connect();
 
-      // 等待 initialize 请求被发送
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // 让出执行权，等待 sendRequest 完成
+      await yieldOnce();
 
       // 验证发送了 initialize 请求
       expect(transport.sentMessages.length).toBe(1);
@@ -179,7 +200,7 @@ describe('AcpClient', () => {
       const { client, transport } = createTestClient();
 
       const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
       const initReq = transport.sentMessages[0] as JsonRpcRequest;
       transport.simulateMessage(successResponse(initReq.id, {}));
       await connectPromise;
@@ -199,7 +220,7 @@ describe('AcpClient', () => {
       const { client, transport } = createTestClient();
 
       const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
       const initReq = transport.sentMessages[0] as JsonRpcRequest;
       transport.simulateMessage(errorResponse(initReq.id, -32600, 'Invalid params'));
 
@@ -214,17 +235,11 @@ describe('AcpClient', () => {
   describe('createSession', () => {
     it('sends session/new and returns session info', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect first
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Create session
       const sessionPromise = client.createSession('/workspace');
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
       expect(sessionReq.method).toBe('session/new');
@@ -242,19 +257,13 @@ describe('AcpClient', () => {
 
     it('sends permission mode in _meta when provided', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Create session with permission mode
       const sessionPromise = client.createSession('/workspace', {
         permissionMode: 'bypassPermissions',
       });
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
       expect(sessionReq.params).toEqual({
@@ -285,14 +294,6 @@ describe('AcpClient', () => {
   // sendPrompt()
   // --------------------------------------------------------------------------
   describe('sendPrompt', () => {
-    async function connectClient(client: AcpClient, transport: MockTransport): Promise<void> {
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
-    }
-
     it('sends session/prompt and yields AgentMessages', async () => {
       const { client, transport } = createTestClient();
       await connectClient(client, transport);
@@ -300,7 +301,7 @@ describe('AcpClient', () => {
       // Start sendPrompt — calling next() triggers the generator body
       const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
       const firstMsgPromise = promptIter.next();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       // Find the prompt request (generator body has now executed)
       const promptReq = transport.sentMessages.find(
@@ -312,13 +313,13 @@ describe('AcpClient', () => {
         prompt: [{ type: 'text', text: 'Hello' }],
       });
 
-      // Simulate session/update notifications
-      transport.simulateMessage(sessionUpdateNotification({
+      // Simulate session/update notifications with sessionId for routing
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: 'Hi there!' },
       }));
 
-      transport.simulateMessage(sessionUpdateNotification({
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
         sessionUpdate: 'tool_call',
         toolCallId: 'tc-1',
         toolName: 'Bash',
@@ -359,7 +360,7 @@ describe('AcpClient', () => {
 
       const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
       const firstMsgPromise = promptIter.next();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       const promptReq = transport.sentMessages.find(
         (m) => (m as JsonRpcRequest).method === 'session/prompt',
@@ -370,6 +371,92 @@ describe('AcpClient', () => {
 
       await expect(firstMsgPromise).rejects.toThrow('Internal error');
     });
+
+    it('rejects concurrent prompts for the same session (P2)', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      // Start first prompt — call next() to trigger generator body
+      const promptIter1 = client.sendPrompt('sess-1', [{ type: 'text', text: 'First' }]);
+      void promptIter1.next(); // Start the generator (don't await — it blocks until messages arrive)
+      await yieldOnce();
+
+      // Second prompt for the same session should throw
+      const promptIter2 = client.sendPrompt('sess-1', [{ type: 'text', text: 'Second' }]);
+      await expect(promptIter2.next()).rejects.toThrow('A prompt is already active for session sess-1');
+    });
+
+    it('allows concurrent prompts for different sessions', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      // Start first prompt on sess-1
+      const iter1 = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello 1' }]);
+      const p1 = iter1.next();
+      await yieldOnce();
+
+      // Start second prompt on sess-2 — should succeed
+      const iter2 = client.sendPrompt('sess-2', [{ type: 'text', text: 'Hello 2' }]);
+      const p2 = iter2.next();
+      await yieldOnce();
+
+      // Find both prompt requests
+      const promptReqs = transport.sentMessages.filter(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt',
+      );
+      expect(promptReqs.length).toBe(2);
+
+      // Send update to sess-1
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Response 1' },
+      }));
+
+      // Send update to sess-2
+      transport.simulateMessage(sessionUpdateNotification('sess-2', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Response 2' },
+      }));
+
+      // Complete both prompts
+      const req1 = promptReqs[0] as JsonRpcRequest;
+      const req2 = promptReqs[1] as JsonRpcRequest;
+      transport.simulateMessage(successResponse(req1.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }));
+      transport.simulateMessage(successResponse(req2.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }));
+
+      // Collect messages from both iterators
+      const msgs1 = [(await p1).value];
+      for await (const msg of iter1) { msgs1.push(msg); }
+
+      const msgs2 = [(await p2).value];
+      for await (const msg of iter2) { msgs2.push(msg); }
+
+      // Verify each iterator only got its own session's messages
+      expect(msgs1.some(m => m.content === 'Response 1')).toBe(true);
+      expect(msgs1.some(m => m.content === 'Response 2')).toBe(false);
+      expect(msgs2.some(m => m.content === 'Response 2')).toBe(true);
+      expect(msgs2.some(m => m.content === 'Response 1')).toBe(false);
+    });
+
+    it('ignores session/update for inactive session', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      // Send update for a session with no active prompt — should not throw
+      transport.simulateMessage(sessionUpdateNotification('sess-nonexistent', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Orphan message' },
+      }));
+
+      // Client should still be connected (no crash)
+      expect(client.state).toBe('connected');
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -378,17 +465,11 @@ describe('AcpClient', () => {
   describe('cancelPrompt', () => {
     it('sends session/cancel request', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Cancel
       const cancelPromise = client.cancelPrompt('sess-1');
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       const cancelReq = transport.sentMessages[1] as JsonRpcRequest;
       expect(cancelReq.method).toBe('session/cancel');
@@ -410,13 +491,7 @@ describe('AcpClient', () => {
   describe('disconnect', () => {
     it('transitions to disconnected and cleans up', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       expect(client.state).toBe('connected');
 
@@ -434,17 +509,11 @@ describe('AcpClient', () => {
 
     it('rejects pending requests on disconnect', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Start a createSession that won't be responded to
       const sessionPromise = client.createSession('/workspace');
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       // Disconnect while request is pending
       await client.disconnect();
@@ -459,17 +528,11 @@ describe('AcpClient', () => {
   describe('transport error handling', () => {
     it('rejects pending requests on transport error', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Start a pending request
       const sessionPromise = client.createSession('/workspace');
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       // Simulate transport error
       transport.simulateError(new Error('Connection reset'));
@@ -479,13 +542,7 @@ describe('AcpClient', () => {
 
     it('transitions to disconnected on transport close', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       expect(client.state).toBe('connected');
 
@@ -497,18 +554,12 @@ describe('AcpClient', () => {
 
     it('terminates active prompt streams on transport close', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Start a prompt — call next() to trigger the generator body
       const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
       const firstMsgPromise = promptIter.next();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await yieldOnce();
 
       // Simulate transport close
       transport.simulateClose();
@@ -524,13 +575,7 @@ describe('AcpClient', () => {
   describe('permission request handling', () => {
     it('auto-approves when no callback is set', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Simulate permission request notification
       transport.simulateMessage({
@@ -539,8 +584,8 @@ describe('AcpClient', () => {
         params: { capability: 'bash', path: '/tmp/test.sh' },
       });
 
-      // Wait for async handling
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // 让出执行权，等待异步处理完成
+      await yieldOnce();
 
       // Should have sent auto-approve response
       const permResp = transport.sentMessages.find(
@@ -559,13 +604,7 @@ describe('AcpClient', () => {
       const { client, transport } = createTestClient(undefined, {
         onPermissionRequest: callback,
       });
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Simulate permission request
       transport.simulateMessage({
@@ -574,8 +613,9 @@ describe('AcpClient', () => {
         params: { capability: 'edit', path: '/workspace/file.ts' },
       });
 
-      // Wait for async handling
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // 让出执行权，等待异步回调完成
+      await yieldOnce();
+      await yieldOnce();
 
       expect(callback).toHaveBeenCalledWith({
         capability: 'edit',
@@ -596,13 +636,7 @@ describe('AcpClient', () => {
       const { client, transport } = createTestClient(undefined, {
         onPermissionRequest: callback,
       });
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Simulate permission request
       transport.simulateMessage({
@@ -611,7 +645,9 @@ describe('AcpClient', () => {
         params: { capability: 'bash' },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // 让出执行权，等待异步回调完成
+      await yieldOnce();
+      await yieldOnce();
 
       const permResp = transport.sentMessages.find(
         (m) => !('id' in m) && (m as JsonRpcNotification).method === 'session/request_permission_response',
@@ -628,7 +664,9 @@ describe('AcpClient', () => {
   // --------------------------------------------------------------------------
   describe('timeout', () => {
     it('rejects request on timeout', async () => {
-      const { client } = createTestClient(undefined, { timeout: 100 });
+      // 注意：此测试需要真实计时器，因为它验证的是实际的 setTimeout 超时行为。
+      // 使用短超时（50ms）保持测试快速，同时验证超时逻辑正确。
+      const { client } = createTestClient(undefined, { timeout: 50 });
 
       const connectPromise = client.connect();
       // Don't respond — let it timeout
@@ -644,13 +682,7 @@ describe('AcpClient', () => {
   describe('unknown notifications', () => {
     it('ignores unknown notification methods', async () => {
       const { client, transport } = createTestClient();
-
-      // Connect
-      const connectPromise = client.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const initReq = transport.sentMessages[0] as JsonRpcRequest;
-      transport.simulateMessage(successResponse(initReq.id, {}));
-      await connectPromise;
+      await connectClient(client, transport);
 
       // Send unknown notification — should not throw
       transport.simulateMessage({

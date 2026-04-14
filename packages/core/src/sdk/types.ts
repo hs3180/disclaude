@@ -89,6 +89,7 @@ export interface AgentMessageMetadata {
 /** Agent 消息类型 */
 export type AgentMessageType =
   | 'text'           // 文本内容
+  | 'thinking'       // 思考过程（extended thinking）
   | 'tool_use'       // 工具调用开始
   | 'tool_progress'  // 工具执行中
   | 'tool_result'    // 工具执行完成
