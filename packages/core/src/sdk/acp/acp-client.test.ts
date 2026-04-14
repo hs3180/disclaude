@@ -669,8 +669,6 @@ describe('AcpClient', () => {
   describe('timeout', () => {
     it('rejects request on timeout', async () => {
       // 使用 fake timers 避免真实计时器在 CI 中的 unhandled rejection 竞态。
-      // 关键：必须在 advanceTimers 之前附加 catch handler，否则 reject 调用时
-      // Node.js 会检测到 "unhandled rejection"。
       vi.useFakeTimers();
       try {
         const { client } = createTestClient(undefined, { timeout: 5000 });
@@ -679,7 +677,9 @@ describe('AcpClient', () => {
         // 在 timer 触发前附加 handler，防止 unhandled rejection 检测
         connectPromise.catch(() => {});
 
-        // 推进时间超过超时阈值，触发 timeout
+        // 先处理 microtasks 让 connect() 完整执行到 sendRequest（附加 await handler），
+        // 然后再推进时间触发 timeout。两步分开避免 timer 在 handler 附加前触发。
+        await vi.advanceTimersByTimeAsync(0);
         await vi.advanceTimersByTimeAsync(5001);
 
         // 验证：connectPromise 已被 reject
