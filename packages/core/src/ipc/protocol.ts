@@ -98,6 +98,8 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {

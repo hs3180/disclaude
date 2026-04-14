@@ -19,6 +19,7 @@ const logger = createLogger('SendFile');
  * Upload file via IPC to PrimaryNode's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1619: Added threadId parameter for thread reply support.
+ * Issue #2300: Propagate IPC error details for better diagnostics.
  */
 async function uploadFileViaIpc(
   chatId: string,
@@ -28,7 +29,8 @@ async function uploadFileViaIpc(
   const ipcClient = getIpcClient();
   const result = await ipcClient.uploadFile(chatId, filePath, threadId);
   if (!result.success) {
-    throw new Error('Failed to upload file via IPC');
+    const errorDetail = result.error ? `: ${result.error}` : '';
+    throw new Error(`Failed to upload file via IPC${errorDetail}`);
   }
   return {
     fileKey: result.fileKey ?? '',
