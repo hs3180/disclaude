@@ -194,6 +194,18 @@ describe('schema', () => {
       expect(result.triggerMode).toBeUndefined();
     });
 
+    it('should reject invalid triggerMode value', () => {
+      expect(() =>
+        validateChatFileData({ ...validChat, triggerMode: 'invalid' }, '/path/to/test.json'),
+      ).toThrow(ValidationError);
+    });
+
+    it('should reject non-string triggerMode', () => {
+      expect(() =>
+        validateChatFileData({ ...validChat, triggerMode: 42 }, '/path/to/test.json'),
+      ).toThrow(ValidationError);
+    });
+
     it('should reject non-object input', () => {
       expect(() => validateChatFileData(null, '/path')).toThrow(ValidationError);
       expect(() => validateChatFileData('string', '/path')).toThrow(ValidationError);

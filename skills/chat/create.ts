@@ -8,7 +8,7 @@
  *   CHAT_GROUP_NAME (required) Group display name
  *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
  *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
- *   CHAT_TRIGGER_MODE (optional) 'mention' or 'always' (default: 'always')
+ *   CHAT_TRIGGER_MODE (optional) 'mention' or 'always' (default: 'always' for 1-on-1, 'mention' for group)
  *
  * Exit codes:
  *   0 — success
@@ -137,8 +137,9 @@ async function main() {
         members,
       },
       context,
-      // Issue #2018: Default triggerMode to 'always' for temporary chats
-      triggerMode: triggerMode ?? 'always',
+      // Issue #2018: Default triggerMode based on member count.
+      // 1-on-1 (bot + 1 user) → 'always'; group (bot + N users) → 'mention'
+      triggerMode: triggerMode ?? (members.length === 1 ? 'always' : 'mention'),
       response: null,
       activationAttempts: 0,
       lastActivationError: null,

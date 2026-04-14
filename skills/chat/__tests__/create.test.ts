@@ -84,11 +84,11 @@ describe('chat scripts integration', () => {
       expect(data.response).toBeNull();
       expect(data.activationAttempts).toBe(0);
       expect(data.expiredAt).toBeNull();
-      // Issue #2018: Default triggerMode should be 'always'
+      // Issue #2018: 1-on-1 chat (1 member) defaults to 'always'
       expect(data.triggerMode).toBe('always');
     });
 
-    it('should default triggerMode to "always"', async () => {
+    it('should default triggerMode to "always" for 1-on-1 chat (1 member)', async () => {
       const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
@@ -102,9 +102,38 @@ describe('chat scripts integration', () => {
       expect(data.triggerMode).toBe('always');
     });
 
-    it('should allow explicit triggerMode: "mention"', async () => {
+    it('should default triggerMode to "mention" for group chat (2+ members)', async () => {
       const result = await runScript('skills/chat/create.ts', {
-        CHAT_ID: 'test-create-1',
+        CHAT_ID: 'test-create-group',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123","ou_test456"]',
+      });
+
+      expect(result.code).toBe(0);
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-group.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.triggerMode).toBe('mention');
+    });
+
+    it('should allow explicit triggerMode: "always" for group chat', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-explicit',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Group',
+        CHAT_MEMBERS: '["ou_test123","ou_test456"]',
+        CHAT_TRIGGER_MODE: 'always',
+      });
+
+      expect(result.code).toBe(0);
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-explicit.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.triggerMode).toBe('always');
+    });
+
+    it('should allow explicit triggerMode: "mention" for 1-on-1 chat', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-mention',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
         CHAT_MEMBERS: '["ou_test123"]',
@@ -112,7 +141,7 @@ describe('chat scripts integration', () => {
       });
 
       expect(result.code).toBe(0);
-      const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-mention.json'), 'utf-8');
       const data = JSON.parse(content);
       expect(data.triggerMode).toBe('mention');
     });
