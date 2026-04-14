@@ -206,8 +206,11 @@ export class AcpClient {
     options?: {
       mcpServers?: unknown[];
       permissionMode?: string;
+      model?: string;
       allowedTools?: string[];
       disallowedTools?: string[];
+      env?: Record<string, string>;
+      settingSources?: string[];
     },
   ): Promise<AcpSessionNewResult> {
     this.assertConnected();
@@ -217,19 +220,21 @@ export class AcpClient {
       mcpServers: options?.mcpServers ?? [],
     };
 
-    // Build _meta.claudeCode.options from provided options
-    const claudeCodeOptions: Record<string, unknown> = {};
-    if (options?.permissionMode) {
-      claudeCodeOptions.permissionMode = options.permissionMode;
-    }
-    if (options?.allowedTools) {
-      claudeCodeOptions.allowedTools = options.allowedTools;
-    }
-    if (options?.disallowedTools) {
-      claudeCodeOptions.disallowedTools = options.disallowedTools;
-    }
-    if (Object.keys(claudeCodeOptions).length > 0) {
-      params._meta = { claudeCode: { options: claudeCodeOptions } };
+    // Build _meta.claudeCode.options if any option is present
+    const claudeOptions: NonNullable<NonNullable<AcpSessionNewParams['_meta']>['claudeCode']>['options'] = {};
+    if (options?.permissionMode) claudeOptions.permissionMode = options.permissionMode;
+    if (options?.model) claudeOptions.model = options.model;
+    if (options?.allowedTools) claudeOptions.allowedTools = options.allowedTools;
+    if (options?.disallowedTools) claudeOptions.disallowedTools = options.disallowedTools;
+    if (options?.env) claudeOptions.env = options.env;
+    if (options?.settingSources) claudeOptions.settingSources = options.settingSources;
+
+    if (Object.keys(claudeOptions).length > 0) {
+      params._meta = {
+        claudeCode: {
+          options: claudeOptions,
+        },
+      };
     }
 
     const result = await this.sendRequest<AcpSessionNewResult>('session/new', params);
@@ -252,14 +257,6 @@ export class AcpClient {
     prompt: { type: 'text'; text: string }[],
   ): AsyncGenerator<AgentMessage> {
     this.assertConnected();
-
-    // 拒绝同一 session 的并发 prompt（每次只能有一个活跃 prompt）
-    if (this.activePrompts.has(sessionId)) {
-      throw new AcpError(
-        `A prompt is already active for session ${sessionId}. Cancel it before sending a new one.`,
-        -1,
-      );
-    }
 
     const params: AcpSessionPromptParams = {
       sessionId,
@@ -496,12 +493,9 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
-   *
-   * 通过 params.sessionId 路由到正确的活跃 prompt stream，
-   * 支持多会话并发场景下的消息隔离。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {sessionId, update} = params;
+    const {update} = params;
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -510,15 +504,11 @@ export class AcpClient {
       return;
     }
 
-    // 路由到对应的 prompt stream
-    const active = this.activePrompts.get(sessionId);
-    if (active) {
+    // 推送到所有活跃的 prompt streams（通常只有一个）
+    for (const [_sid, active] of this.activePrompts) {
       active.push(agentMessage);
-    } else {
-      logger.debug(
-        { sessionId, updateType: update.sessionUpdate },
-        'Received session/update for inactive prompt stream',
-      );
+      // 只推送一次，break
+      break;
     }
   }
 
