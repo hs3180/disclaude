@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_side_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_side_chat } from './tools/create-side-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -434,6 +436,52 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context Offloading - Create side group for long-form content
+  {
+    name: 'create_side_chat',
+    description: `Create a new Feishu group chat for delivering long-form content (side group).
+
+This is useful when you need to send code, configs, reports, or other long content
+that would clutter the main conversation. The new group acts as a dedicated space.
+
+After creating the group, use send_text or send_card to send content to the returned chatId.
+
+## Parameters
+- **name**: Group name (required, max 64 chars, supports CJK characters)
+- **members**: Array of member open IDs to invite (required, at least 1, format: ou_xxxxx)
+- **parentChatId**: Optional originating chat ID for reference
+
+## Example
+\`\`\`json
+{
+  "name": "LiteLLM 配置方案",
+  "members": ["ou_abc123", "ou_def456"],
+  "parentChatId": "oc_current_chat"
+}
+\`\`\`
+
+## Typical Workflow
+1. Call create_side_chat to create the group → get chatId
+2. Call send_text/send_card with the new chatId to deliver content
+3. Reply in the original chat with a brief summary`,
+    parameters: z.object({
+      name: z.string().describe('Group name (max 64 chars)'),
+      members: z.array(z.string()).describe('Array of member open IDs to invite (ou_xxxxx format)'),
+      parentChatId: z.string().optional().describe('Originating chat ID for reference'),
+    }),
+    handler: async ({ name, members, parentChatId }: {
+      name: string;
+      members: string[];
+      parentChatId?: string;
+    }) => {
+      try {
+        const result = await create_side_chat({ name, members, parentChatId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Side chat creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

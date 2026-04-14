@@ -14,6 +14,7 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   register_temp_chat: vi.fn(),
+  create_side_chat: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
@@ -28,13 +29,14 @@ vi.mock('./utils/card-validator.js', () => ({
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';
-import { send_text, send_card, send_interactive, send_file, register_temp_chat } from './tools/index.js';
+import { send_text, send_card, send_interactive, send_file, register_temp_chat, create_side_chat } from './tools/index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
 const mocked_register_temp_chat = vi.mocked(register_temp_chat);
+const mocked_create_side_chat = vi.mocked(create_side_chat);
 
 // Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -301,5 +303,43 @@ describe('register_temp_chat handler', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ Temporary chat registered');
+  });
+});
+
+// ============================================================================
+// create_side_chat handler (Issue #2351)
+// ============================================================================
+describe('create_side_chat handler', () => {
+  const handler = getHandler('create_side_chat');
+
+  it('should return success without isError on successful group creation', async () => {
+    mocked_create_side_chat.mockResolvedValue({
+      success: true,
+      chatId: 'oc_newgroup123456789',
+      message: '✅ 群聊「Test」已创建 (chatId: oc_newgroup123456789)',
+    });
+    const result = await handler({ name: 'Test Group', members: ['ou_abc123'] });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('oc_newgroup123456789');
+  });
+
+  it('should return isError: true when creation fails', async () => {
+    mocked_create_side_chat.mockResolvedValue({
+      success: false,
+      message: '❌ 创建群聊失败',
+    });
+    const result = await handler({ name: 'Test Group', members: ['ou_abc123'] });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('❌ 创建群聊失败');
+  });
+
+  it('should return isError: true when creation throws', async () => {
+    mocked_create_side_chat.mockRejectedValue(new Error('lark-cli not found'));
+    const result = await handler({ name: 'Test Group', members: ['ou_abc123'] });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('lark-cli not found');
   });
 });
