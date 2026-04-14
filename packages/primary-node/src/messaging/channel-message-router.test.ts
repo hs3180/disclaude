@@ -68,6 +68,16 @@ describe('ChannelMessageRouter', () => {
       expect(router.detectChannel('unknown-chat-id')).toBe(ChannelType.UNKNOWN);
     });
 
+    it('should detect REST for integration test chat (test-)', () => {
+      const router = createRouter();
+      expect(router.detectChannel('test-mcp-send-text-12345')).toBe(ChannelType.REST);
+    });
+
+    it('should detect REST for multimodal test chat (multimodal-test-)', () => {
+      const router = createRouter();
+      expect(router.detectChannel('multimodal-test-7816')).toBe(ChannelType.REST);
+    });
+
     it('should return UNKNOWN for empty string', () => {
       const router = createRouter();
       expect(router.detectChannel('')).toBe(ChannelType.UNKNOWN);
@@ -147,6 +157,32 @@ describe('ChannelMessageRouter', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('REST channel sender not configured');
+    });
+
+    it('should route to REST for integration test chatId (test-)', async () => {
+      const router = createRouter();
+      const result = await router.route('test-mcp-send-text-12345', {
+        chatId: 'test-mcp-send-text-12345',
+        type: 'text',
+        text: 'Hello',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.channelType).toBe(ChannelType.REST);
+      expect(sendToRest).toHaveBeenCalled();
+    });
+
+    it('should route to REST for multimodal test chatId (multimodal-test-)', async () => {
+      const router = createRouter();
+      const result = await router.route('multimodal-test-7816', {
+        chatId: 'multimodal-test-7816',
+        type: 'text',
+        text: 'Hello',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.channelType).toBe(ChannelType.REST);
+      expect(sendToRest).toHaveBeenCalled();
     });
 
     it('should handle routing errors', async () => {

@@ -31,6 +31,9 @@ const CHANNEL_PATTERNS = {
   CLI: /^cli-/,
   // REST chat IDs: UUID format
   REST: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  // Integration test chat IDs: test-xxx, multimodal-test-xxx
+  // Issue #2300: Recognized as REST channel since integration tests use REST API
+  TEST: /^(test-|multimodal-test-)/,
 } as const;
 
 /**
@@ -124,6 +127,11 @@ export class ChannelMessageRouter {
     }
 
     if (CHANNEL_PATTERNS.REST.test(chatId)) {
+      return ChannelType.REST;
+    }
+
+    // Issue #2300: Integration test chatIds route as REST channel
+    if (CHANNEL_PATTERNS.TEST.test(chatId)) {
       return ChannelType.REST;
     }
 

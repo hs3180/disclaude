@@ -83,6 +83,24 @@ describe('isValidChatId', () => {
     });
   });
 
+  describe('Multimodal integration test IDs (multimodal-test-)', () => {
+    it('should accept a valid multimodal-test- ID', () => {
+      expect(isValidChatId('multimodal-test-7816abc')).toBe(true);
+    });
+
+    it('should accept multimodal-test- with long suffix', () => {
+      expect(isValidChatId('multimodal-test-7816-def456-ghi789')).toBe(true);
+    });
+
+    it('should reject a multimodal-test- ID that is too short', () => {
+      expect(isValidChatId('multimodal-test-ab')).toBe(false);
+    });
+
+    it('should reject a bare multimodal-test- prefix', () => {
+      expect(isValidChatId('multimodal-test-')).toBe(false);
+    });
+  });
+
   describe('invalid formats', () => {
     it('should reject an empty string', () => {
       expect(isValidChatId('')).toBe(false);
@@ -134,6 +152,7 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
     expect(error).toContain('test-');
+    expect(error).toContain('multimodal-test-');
   });
 
   it('should truncate long chatIds in error messages', () => {
