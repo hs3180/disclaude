@@ -20,6 +20,7 @@ import {
   type IpcResponse,
   type IpcResponsePayloads,
 } from './protocol.js';
+import type { IIpcTransport } from './transport.js';
 
 const logger = createLogger('IpcClient');
 
@@ -60,11 +61,17 @@ export class UnixSocketIpcClient {
   private availabilityCache: IpcAvailabilityStatus | null = null;
   private availabilityCacheTime = 0;
   private readonly availabilityCacheTtl = 5000; // 5 seconds TTL for availability cache
+  /** Issue #2352: In-memory transport for testing */
+  private testTransport?: IIpcTransport;
 
-  constructor(config?: Partial<IpcConfig>) {
+  constructor(config?: Partial<IpcConfig> & {
+    /** Issue #2352: In-memory transport for testing (skips real socket connection) */
+    testTransport?: IIpcTransport;
+  }) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.timeout = config?.timeout ?? DEFAULT_IPC_CONFIG.timeout;
     this.maxRetries = config?.maxRetries ?? DEFAULT_IPC_CONFIG.maxRetries;
+    this.testTransport = config?.testTransport;
   }
 
   /**
@@ -72,6 +79,12 @@ export class UnixSocketIpcClient {
    */
   async connect(): Promise<void> {
     if (this.connected) {
+      return;
+    }
+
+    // Issue #2352: In-memory test mode — skip real socket connection
+    if (this.testTransport) {
+      this.setupTestTransport(this.testTransport);
       return;
     }
 
@@ -192,6 +205,17 @@ export class UnixSocketIpcClient {
    */
   // eslint-disable-next-line require-await
   async disconnect(): Promise<void> {
+    // Issue #2352: In-memory test mode cleanup
+    if (this.testTransport) {
+      this.testTransport.destroy();
+      this.testTransport = undefined;
+      this.connected = false;
+      this.connecting = false;
+      this.buffer = '';
+      this.pendingRequests.clear();
+      return;
+    }
+
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
@@ -208,6 +232,50 @@ export class UnixSocketIpcClient {
    */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  // ===========================================================================
+  // Issue #2352: In-memory test transport support
+  // ===========================================================================
+
+  /**
+   * Set up in-memory transport for testing (Issue #2352).
+   *
+   * Replaces the socket-based connection with a bidirectional
+   * in-memory transport. No real filesystem access needed.
+   */
+  private setupTestTransport(transport: IIpcTransport): void {
+    this.connected = true;
+    this.connecting = false;
+    this.availabilityCache = { available: true };
+    this.availabilityCacheTime = Date.now();
+
+    transport.onData((data: string) => {
+      this.handleData(data);
+    });
+
+    transport.onClose(() => {
+      this.connected = false;
+      this.testTransport = undefined;
+      this.availabilityCache = null;
+      // Reject all pending requests
+      for (const [, pending] of this.pendingRequests) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('IPC connection closed'));
+      }
+      this.pendingRequests.clear();
+    });
+  }
+
+  /**
+   * Write data via the test transport (Issue #2352).
+   * Called by request() when in test mode.
+   */
+  private writeTestTransport(data: string): void {
+    if (!this.testTransport) {
+      throw new Error('IPC_NOT_AVAILABLE: Test transport not available');
+    }
+    this.testTransport.write(data);
   }
 
   /**
@@ -352,8 +420,14 @@ export class UnixSocketIpcClient {
       });
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.socket!.write(`${JSON.stringify(request)}\n`);
+        const line = `${JSON.stringify(request)}\n`;
+        // Issue #2352: Use test transport if available, otherwise real socket
+        if (this.testTransport) {
+          this.writeTestTransport(line);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          this.socket!.write(line);
+        }
       } catch (error) {
         this.pendingRequests.delete(id);
         clearTimeout(timeoutId);

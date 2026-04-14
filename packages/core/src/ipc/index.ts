@@ -36,3 +36,9 @@ export {
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
 } from './unix-socket-client.js';
+
+// Transport abstraction (Issue #2352)
+export {
+  type IIpcTransport,
+  createInMemoryTransportPair,
+} from './transport.js';

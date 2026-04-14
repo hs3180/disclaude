@@ -19,6 +19,7 @@ import {
   type IpcRequestPayloads,
   type IpcResponse,
 } from './protocol.js';
+import type { IIpcTransport } from './transport.js';
 
 const logger = createLogger('IpcServer');
 
@@ -335,10 +336,31 @@ export class UnixSocketIpcServer {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   /** Issue #1355: Bound cleanup handlers for removal on stop() */
   private boundCleanupHandler: (() => void) | null = null;
+  /** Issue #2352: In-memory transport for testing (skips real socket creation) */
+  private testServerTransport?: IIpcTransport;
+  /** Issue #2352: In-memory client transport to expose for test client injection */
+  private testClientTransport?: IIpcTransport;
+  /** Issue #2352: Marker for test mode (uses Server object as sentinel) */
+  private static readonly TEST_MODE_SENTINEL = {} as unknown as Server;
 
-  constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig>) {
+  constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig> & {
+    /** Issue #2352: In-memory transport pair for testing */
+    testConnection?: { server: IIpcTransport; client: IIpcTransport };
+  }) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.handler = handler;
+    if (config?.testConnection) {
+      this.testServerTransport = config.testConnection.server;
+      this.testClientTransport = config.testConnection.client;
+    }
+  }
+
+  /**
+   * Issue #2352: Get the client-side transport for in-memory testing.
+   * Only available when constructed with testConnection.
+   */
+  getTestClientTransport(): IIpcTransport | undefined {
+    return this.testClientTransport;
   }
 
   /**
@@ -348,6 +370,12 @@ export class UnixSocketIpcServer {
   async start(): Promise<void> {
     if (this.server) {
       logger.warn('IPC server already running');
+      return;
+    }
+
+    // Issue #2352: In-memory test mode — skip real socket creation
+    if (this.testServerTransport) {
+      this.setupTestTransport(this.testServerTransport);
       return;
     }
 
@@ -412,6 +440,16 @@ export class UnixSocketIpcServer {
 
     this.isShuttingDown = true;
 
+    // Issue #2352: In-memory test mode cleanup
+    if (this.testServerTransport) {
+      this.testServerTransport.destroy();
+      this.testServerTransport = undefined;
+      this.testClientTransport = undefined;
+      this.server = null;
+      this.isShuttingDown = false;
+      return;
+    }
+
     // Issue #1355: Stop health check
     this.stopHealthCheck();
     // Issue #1355: Remove process exit cleanup
@@ -455,6 +493,10 @@ export class UnixSocketIpcServer {
    * Check if the server is running.
    */
   isRunning(): boolean {
+    // Issue #2352: In test mode, server is the sentinel object
+    if (this.server === UnixSocketIpcServer.TEST_MODE_SENTINEL) {
+      return true;
+    }
     return this.server?.listening ?? false;
   }
 
@@ -463,6 +505,64 @@ export class UnixSocketIpcServer {
    */
   getSocketPath(): string {
     return this.socketPath;
+  }
+
+  // ===========================================================================
+  // Issue #2352: In-memory test transport support
+  // ===========================================================================
+
+  /**
+   * Set up in-memory transport for testing (Issue #2352).
+   *
+   * Replaces the socket-based connection handling with a single
+   * bidirectional in-memory transport. No real filesystem access needed.
+   */
+  private setupTestTransport(transport: IIpcTransport): void {
+    let buffer = '';
+
+    transport.onData((data: string) => {
+      buffer += data;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (line.trim()) {
+          void this.handleTestTransportMessage(transport, line);
+        }
+      }
+    });
+
+    transport.onClose(() => {
+      this.server = null;
+    });
+
+    // Mark as running using the sentinel
+    this.server = UnixSocketIpcServer.TEST_MODE_SENTINEL;
+  }
+
+  /**
+   * Handle an incoming message via the test transport (Issue #2352).
+   */
+  private async handleTestTransportMessage(transport: IIpcTransport, data: string): Promise<void> {
+    let request: IpcRequest;
+    try {
+      request = JSON.parse(data);
+    } catch {
+      return;
+    }
+
+    try {
+      const response = await this.handler(request);
+      transport.write(`${JSON.stringify(response)}\n`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const response: IpcResponse = {
+        id: request.id,
+        success: false,
+        error: errorMessage,
+      };
+      transport.write(`${JSON.stringify(response)}\n`);
+    }
   }
 
   // ===========================================================================
