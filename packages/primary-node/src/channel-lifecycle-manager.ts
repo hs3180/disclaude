@@ -68,13 +68,8 @@ export interface ChannelSetupContext {
   /** Control handler context (for adding trigger mode etc.) */
   controlHandlerContext: {
     triggerMode?: {
-      isEnabled: (chatId: string) => boolean;
-      setEnabled: (chatId: string, enabled: boolean) => void;
-    };
-    /** @deprecated Use triggerMode. Kept for backward compat during transition (Issue #2193). */
-    passiveMode?: {
-      isEnabled: (chatId: string) => boolean;
-      setEnabled: (chatId: string, enabled: boolean) => void;
+      getMode(chatId: string): 'mention' | 'always';
+      setMode(chatId: string, mode: 'mention' | 'always'): void;
     };
   };
   /** Logger instance */

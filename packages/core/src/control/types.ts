@@ -6,6 +6,7 @@
 
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
+import type { TriggerMode } from '../config/types.js';
 
 /**
  * 执行节点信息
@@ -48,15 +49,12 @@ export interface ControlHandlerContext {
     clearDebugGroup(): DebugGroup | null;
   };
 
-  /** 触发模式管理（可选） (Issue #2193: renamed from passiveMode) */
+  /** 触发模式管理（可选） (Issue #2291: enum-based interface) */
   triggerMode?: {
-    isEnabled(chatId: string): boolean;
-    setEnabled(chatId: string, enabled: boolean): void;
-  };
-  /** @deprecated Use triggerMode instead. Kept for backward compatibility during transition. */
-  passiveMode?: {
-    isEnabled(chatId: string): boolean;
-    setEnabled(chatId: string, enabled: boolean): void;
+    /** Get the current trigger mode for a chat */
+    getMode(chatId: string): TriggerMode;
+    /** Set the trigger mode for a chat */
+    setMode(chatId: string, mode: TriggerMode): void;
   };
 
   /** 日志记录器 */

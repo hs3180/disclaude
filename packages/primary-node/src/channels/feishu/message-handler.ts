@@ -827,9 +827,9 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat trigger mode (Issue #2193: renamed from passiveMode)
+    // Group chat trigger mode (Issue #2291: triggerMode enum)
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
-    const isTriggerCommand = textWithoutMentions.startsWith('/passive') || textWithoutMentions.startsWith('/trigger');
+    const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
     if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
       // Check if this is a small group on first encounter
       if (!this.triggerModeManager.isSmallGroup(chat_id)) {
@@ -860,7 +860,7 @@ export class MessageHandler {
 
         // Issue #1562: Relay both success messages and error messages from control handler.
         // Previously, success:false responses with error messages were silently dropped,
-        // causing commands like /passive to appear unrecognized.
+        // causing commands like /trigger to appear unrecognized.
         if (response.success || response.message) {
           if (response.message) {
             await this.callbacks.sendMessage({

@@ -70,20 +70,20 @@ describe('register_temp_chat', () => {
         context,
       });
       expect(mockIpcClient.registerTempChat).toHaveBeenCalledWith(
-        'oc_test', '2026-04-05T12:00:00Z', 'oc_creator', context, undefined
+        'oc_test', '2026-04-05T12:00:00Z', 'oc_creator', context, { triggerMode: undefined }
       );
     });
 
-    it('should pass passiveMode parameter to IPC (Issue #2069)', async () => {
+    it('should pass triggerMode parameter to IPC (Issue #2291)', async () => {
       mockIpcClient.registerTempChat.mockResolvedValue({
         success: true, chatId: 'oc_test', expiresAt: '2026-04-05T12:00:00Z',
       });
       await register_temp_chat({
         chatId: 'oc_test',
-        passiveMode: false,
+        triggerMode: 'always',
       });
       expect(mockIpcClient.registerTempChat).toHaveBeenCalledWith(
-        'oc_test', undefined, undefined, undefined, false
+        'oc_test', undefined, undefined, undefined, { triggerMode: 'always' }
       );
     });
 
@@ -95,26 +95,26 @@ describe('register_temp_chat', () => {
       expect(result.message).toContain('24h default');
     });
 
-    it('should include passive mode in success message (Issue #2069)', async () => {
+    it('should include trigger mode in success message when triggerMode is set (Issue #2291)', async () => {
       mockIpcClient.registerTempChat.mockResolvedValue({
         success: true, chatId: 'oc_test', expiresAt: '2026-04-05T12:00:00Z',
       });
       const result = await register_temp_chat({
         chatId: 'oc_test',
-        passiveMode: false,
+        triggerMode: 'always',
       });
       expect(result.success).toBe(true);
-      expect(result.message).toContain('passive mode: disabled');
+      expect(result.message).toContain('trigger mode: always');
     });
 
-    it('should not include passive mode in message when undefined (Issue #2069)', async () => {
+    it('should not include trigger mode in message when undefined (Issue #2291)', async () => {
       mockIpcClient.registerTempChat.mockResolvedValue({
         success: true, chatId: 'oc_test', expiresAt: '2026-04-05T12:00:00Z',
       });
       const result = await register_temp_chat({
         chatId: 'oc_test',
       });
-      expect(result.message).not.toContain('passive mode');
+      expect(result.message).not.toContain('trigger mode');
     });
   });
 

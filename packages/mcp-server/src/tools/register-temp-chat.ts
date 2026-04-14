@@ -23,18 +23,18 @@ const logger = createLogger('RegisterTempChat');
  * @param params.expiresAt - Optional ISO timestamp for expiry (defaults to 24h)
  * @param params.creatorChatId - Optional originating chat ID
  * @param params.context - Optional arbitrary context data
- * @param params.passiveMode - Optional declarative passive mode (false = disabled, true/undefined = default)
+ * @param params.triggerMode - Optional trigger mode enum ('mention' | 'always', Issue #2291)
  */
 export async function register_temp_chat(params: {
   chatId: string;
   expiresAt?: string;
   creatorChatId?: string;
   context?: Record<string, unknown>;
-  passiveMode?: boolean;
+  triggerMode?: 'mention' | 'always';
 }): Promise<RegisterTempChatResult> {
-  const { chatId, expiresAt, creatorChatId, context, passiveMode } = params;
+  const { chatId, expiresAt, creatorChatId, context, triggerMode } = params;
 
-  logger.info({ chatId, expiresAt, creatorChatId, passiveMode }, 'register_temp_chat called');
+  logger.info({ chatId, expiresAt, creatorChatId, triggerMode }, 'register_temp_chat called');
 
   try {
     // Check IPC availability
@@ -49,7 +49,7 @@ export async function register_temp_chat(params: {
     }
 
     const ipcClient = getIpcClient();
-    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context, passiveMode);
+    const result = await ipcClient.registerTempChat(chatId, expiresAt, creatorChatId, context, { triggerMode });
 
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
@@ -61,8 +61,8 @@ export async function register_temp_chat(params: {
       };
     }
 
-    logger.info({ chatId, expiresAt: result.expiresAt, passiveMode }, 'Temp chat registered');
-    const modeDesc = passiveMode === false ? ', passive mode: disabled' : '';
+    logger.info({ chatId, expiresAt: result.expiresAt, triggerMode }, 'Temp chat registered');
+    const modeDesc = triggerMode ? `, trigger mode: ${triggerMode}` : '';
     return {
       success: true,
       chatId: result.chatId,

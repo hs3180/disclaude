@@ -12,6 +12,7 @@
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import type { TriggerMode } from '../config/types.js';
 
 const logger = createLogger('ChatStore');
 
@@ -44,15 +45,19 @@ export interface TempChatRecord {
   /** Response data, populated when a user interacts */
   response?: TempChatResponse;
   /**
-   * Declarative passive mode configuration for this chat.
-   *
-   * Issue #2069: When `false`, passive mode is disabled for this chat,
-   * meaning the bot responds to all messages without requiring @mention.
-   * When `true` or undefined, default behavior applies (passive mode enabled).
-   *
-   * This is set at chat creation time (declarative), not via runtime API.
+   * Declarative passive mode configuration for this chat (legacy).
+   * Retained for backward compatibility with persisted records only.
+   * New code should use `triggerMode` instead.
    */
   passiveMode?: boolean;
+  /**
+   * Trigger mode configuration for this chat (Issue #2291).
+   *
+   * - `'mention'`: Bot only responds to @mentions (default)
+   * - `'always'`: Bot responds to all messages
+   * - `undefined`: Use default behavior (`'mention'`)
+   */
+  triggerMode?: TriggerMode;
 }
 
 /**
@@ -66,13 +71,9 @@ export interface RegisterTempChatOptions {
   /** Arbitrary context data */
   context?: Record<string, unknown>;
   /**
-   * Declarative passive mode configuration.
-   *
-   * Issue #2069: When `false`, passive mode is disabled for this chat
-   * (bot responds to all messages). When `true` or undefined, default
-   * behavior applies (passive mode enabled, bot only responds to @mentions).
+   * Trigger mode configuration (Issue #2291).
    */
-  passiveMode?: boolean;
+  triggerMode?: TriggerMode;
 }
 
 /**
@@ -190,7 +191,8 @@ export class ChatStore {
       expiresAt,
       creatorChatId: opts.creatorChatId,
       context: opts.context,
-      passiveMode: opts.passiveMode,
+      // Issue #2291: triggerMode enum
+      triggerMode: opts.triggerMode,
     };
 
     // Update memory cache

@@ -107,12 +107,21 @@ describe('Config.getGlobalEnv()', () => {
 });
 
 describe('createDefaultRuntimeContext()', () => {
+  let mockAgentConfig: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     clearRuntimeContext();
+    // Mock getAgentConfig to avoid requiring model/apiKey in CI
+    mockAgentConfig = vi.spyOn(Config, 'getAgentConfig').mockReturnValue({
+      apiKey: 'test-key',
+      model: 'test-model',
+      provider: 'glm',
+    });
   });
 
   afterEach(() => {
     clearRuntimeContext();
+    mockAgentConfig.mockRestore();
   });
 
   it('should create and set runtime context', () => {
@@ -158,25 +167,15 @@ describe('createDefaultRuntimeContext()', () => {
   });
 
   it('should wire getAgentConfig to Config.getAgentConfig()', () => {
-    // Mock getAgentConfig to avoid requiring API key in CI
-    const mockAgentConfig = vi.spyOn(Config, 'getAgentConfig').mockReturnValue({
-      apiKey: 'test-key',
-      model: 'test-model',
-      provider: 'glm',
-    });
+    // Mock is already set up in beforeEach
+    createDefaultRuntimeContext();
 
-    try {
-      createDefaultRuntimeContext();
-
-      const ctx = getRuntimeContext();
-      const agentConfig = ctx.getAgentConfig();
-      expect(agentConfig).toBeDefined();
-      expect(agentConfig.apiKey).toBe('test-key');
-      expect(agentConfig.model).toBe('test-model');
-      expect(agentConfig.provider).toBe('glm');
-    } finally {
-      mockAgentConfig.mockRestore();
-    }
+    const ctx = getRuntimeContext();
+    const agentConfig = ctx.getAgentConfig();
+    expect(agentConfig).toBeDefined();
+    expect(agentConfig.apiKey).toBe('test-key');
+    expect(agentConfig.model).toBe('test-model');
+    expect(agentConfig.provider).toBe('glm');
   });
 
   it('should support platform-specific overrides', () => {

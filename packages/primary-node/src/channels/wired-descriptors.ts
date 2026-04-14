@@ -146,27 +146,26 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
-    // 2. Set up trigger mode adapter (Issue #2193: renamed from passiveMode)
-    // Adapter bridges semantics: isEnabled(true) = "trigger mode ON = mention-only",
-    // while TriggerModeManager.isTriggerEnabled(true) = "respond to all messages".
-    // Inversion is necessary because triggerEnabled maps to "respond to all",
-    // but the command handler expects isEnabled(true) = mention-only.
+    // 2. Set up trigger mode adapter (Issue #2291: enum-based interface)
+    // Adapter bridges semantics between the command handler's enum values
+    // and TriggerModeManager's internal boolean state:
+    //   'mention' → isTriggerEnabled=false (mention-only)
+    //   'always'  → isTriggerEnabled=true  (respond to all)
     const triggerModeAdapter = {
-      isEnabled: (chatId: string) => !feishuChannel.isTriggerEnabled(chatId),
-      setEnabled: (chatId: string, enabled: boolean) =>
-        feishuChannel.setTriggerEnabled(chatId, !enabled),
+      getMode: (chatId: string): 'mention' | 'always' =>
+        feishuChannel.isTriggerEnabled(chatId) ? 'always' : 'mention',
+      setMode: (chatId: string, mode: 'mention' | 'always') =>
+        feishuChannel.setTriggerEnabled(chatId, mode === 'always'),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
-    context.controlHandlerContext.passiveMode = triggerModeAdapter;
 
-    // 2b. Issue #2069: Initialize trigger mode from persisted temp chat records.
-    // This ensures declarative trigger mode settings survive restarts.
-    // Only loads records where passiveMode is explicitly set to false (= trigger mode enabled).
+    // 2b. Issue #2291: Initialize trigger mode from persisted temp chat records.
+    // Supports both new `triggerMode` enum and legacy `passiveMode` boolean.
     const chatStore = context.primaryNode.getChatStore();
     chatStore.listTempChats().then(records => {
       const triggerModeManager = feishuChannel.getTriggerModeManager();
       const loaded = triggerModeManager.initFromRecords(
-        records.map(r => ({ chatId: r.chatId, passiveMode: r.passiveMode }))
+        records.map(r => ({ chatId: r.chatId, triggerMode: r.triggerMode, passiveMode: r.passiveMode }))
       );
       if (loaded > 0) {
         context.logger.info({ count: loaded }, 'Initialized trigger mode from chat store records');
@@ -220,19 +219,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
-      // Issue #2069: Added passiveMode for declarative passive mode configuration
-      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; passiveMode?: boolean }) => {
+      // Issue #2291: triggerMode enum parameter
+      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {
         const store = context.primaryNode.getChatStore();
         await store.registerTempChat(chatId, {
           expiresAt: opts?.expiresAt,
           creatorChatId: opts?.creatorChatId,
           context: opts?.context,
-          passiveMode: opts?.passiveMode,
+          triggerMode: opts?.triggerMode,
         });
-        // Issue #2069: Apply trigger mode to TriggerModeManager immediately
-        if (opts?.passiveMode === false) {
+        // Issue #2291: Apply trigger mode to TriggerModeManager immediately
+        if (opts?.triggerMode === 'always') {
           feishuChannel.setTriggerEnabled(chatId, true);
-          context.logger.info({ chatId }, 'Trigger mode enabled via declarative config');
+          context.logger.info({ chatId, triggerMode: opts?.triggerMode }, 'Trigger mode enabled via declarative config');
         }
         const record = await store.getTempChat(chatId);
         return { success: true, expiresAt: record?.expiresAt };

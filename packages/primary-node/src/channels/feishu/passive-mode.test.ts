@@ -52,7 +52,7 @@ describe('TriggerModeManager', () => {
     });
   });
 
-  describe('initFromRecords (Issue #2069)', () => {
+  describe('initFromRecords (Issue #2069, #2291)', () => {
     it('should load records with passiveMode: false as trigger mode enabled', () => {
       const manager = new TriggerModeManager();
       const records = [
@@ -64,6 +64,45 @@ describe('TriggerModeManager', () => {
       expect(loaded).toBe(2);
       expect(manager.isTriggerEnabled('oc_auto1')).toBe(true);
       expect(manager.isTriggerEnabled('oc_auto2')).toBe(true);
+    });
+
+    it('should load records with triggerMode: "always" (Issue #2291)', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_enum1', triggerMode: 'always' as const },
+        { chatId: 'oc_enum2', triggerMode: 'always' as const },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(2);
+      expect(manager.isTriggerEnabled('oc_enum1')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_enum2')).toBe(true);
+    });
+
+    it('should not load records with triggerMode: "mention"', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_mention', triggerMode: 'mention' as const },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(0);
+      expect(manager.isTriggerEnabled('oc_mention')).toBe(false);
+    });
+
+    it('should prefer triggerMode over passiveMode (Issue #2291)', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        // triggerMode: always takes precedence, even though passiveMode: true
+        { chatId: 'oc_conflict1', triggerMode: 'always' as const, passiveMode: true },
+        // triggerMode: mention takes precedence, even though passiveMode: false
+        { chatId: 'oc_conflict2', triggerMode: 'mention' as const, passiveMode: false },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(1);
+      expect(manager.isTriggerEnabled('oc_conflict1')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_conflict2')).toBe(false);
     });
 
     it('should not load records with passiveMode: true', () => {
@@ -94,15 +133,17 @@ describe('TriggerModeManager', () => {
         { chatId: 'oc_off', passiveMode: false },
         { chatId: 'oc_on', passiveMode: true },
         { chatId: 'oc_default' },
-        { chatId: 'oc_off2', passiveMode: false },
+        { chatId: 'oc_enum_always', triggerMode: 'always' as const },
+        { chatId: 'oc_enum_mention', triggerMode: 'mention' as const },
       ];
 
       const loaded = manager.initFromRecords(records);
       expect(loaded).toBe(2);
       expect(manager.isTriggerEnabled('oc_off')).toBe(true);
-      expect(manager.isTriggerEnabled('oc_off2')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_enum_always')).toBe(true);
       expect(manager.isTriggerEnabled('oc_on')).toBe(false);
       expect(manager.isTriggerEnabled('oc_default')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_enum_mention')).toBe(false);
     });
 
     it('should handle empty records array', () => {
@@ -115,8 +156,8 @@ describe('TriggerModeManager', () => {
       const manager = new TriggerModeManager();
       // Manually disable trigger mode for a chat
       manager.setTriggerEnabled('oc_manual', false);
-      // Then init from records with passiveMode: false (= trigger mode enabled)
-      manager.initFromRecords([{ chatId: 'oc_manual', passiveMode: false }]);
+      // Then init from records with triggerMode: 'always'
+      manager.initFromRecords([{ chatId: 'oc_manual', triggerMode: 'always' as const }]);
       // Should be enabled now
       expect(manager.isTriggerEnabled('oc_manual')).toBe(true);
     });
