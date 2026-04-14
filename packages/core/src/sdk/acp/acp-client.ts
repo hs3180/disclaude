@@ -206,6 +206,11 @@ export class AcpClient {
     options?: {
       mcpServers?: unknown[];
       permissionMode?: string;
+      model?: string;
+      allowedTools?: string[];
+      disallowedTools?: string[];
+      env?: Record<string, string>;
+      settingSources?: string[];
     },
   ): Promise<AcpSessionNewResult> {
     this.assertConnected();
@@ -215,12 +220,19 @@ export class AcpClient {
       mcpServers: options?.mcpServers ?? [],
     };
 
-    if (options?.permissionMode) {
+    // Build _meta.claudeCode.options if any option is present
+    const claudeOptions: NonNullable<NonNullable<AcpSessionNewParams['_meta']>['claudeCode']>['options'] = {};
+    if (options?.permissionMode) { claudeOptions.permissionMode = options.permissionMode; }
+    if (options?.model) { claudeOptions.model = options.model; }
+    if (options?.allowedTools) { claudeOptions.allowedTools = options.allowedTools; }
+    if (options?.disallowedTools) { claudeOptions.disallowedTools = options.disallowedTools; }
+    if (options?.env) { claudeOptions.env = options.env; }
+    if (options?.settingSources) { claudeOptions.settingSources = options.settingSources; }
+
+    if (Object.keys(claudeOptions).length > 0) {
       params._meta = {
         claudeCode: {
-          options: {
-            permissionMode: options.permissionMode,
-          },
+          options: claudeOptions,
         },
       };
     }
@@ -246,12 +258,9 @@ export class AcpClient {
   ): AsyncGenerator<AgentMessage> {
     this.assertConnected();
 
-    // 拒绝同一 session 的并发 prompt（每次只能有一个活跃 prompt）
+    // Reject concurrent prompts for the same session
     if (this.activePrompts.has(sessionId)) {
-      throw new AcpError(
-        `A prompt is already active for session ${sessionId}. Cancel it before sending a new one.`,
-        -1,
-      );
+      throw new AcpError(`A prompt is already active for session ${sessionId}`, -1);
     }
 
     const params: AcpSessionPromptParams = {
@@ -442,8 +451,8 @@ export class AcpClient {
    */
   private handleResponse(msg: JsonRpcResponse | JsonRpcErrorResponse): void {
     const {id} = msg;
-    if (id === null) {
-      logger.debug('Received response with null id');
+    if (id === null || id === undefined) {
+      logger.debug('Received response with null id, ignoring');
       return;
     }
     const pending = this.pendingRequests.get(id);
@@ -489,12 +498,9 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
-   *
-   * 通过 params.sessionId 路由到正确的活跃 prompt stream，
-   * 支持多会话并发场景下的消息隔离。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {sessionId, update} = params;
+    const {update} = params;
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -503,15 +509,10 @@ export class AcpClient {
       return;
     }
 
-    // 路由到对应的 prompt stream
-    const active = this.activePrompts.get(sessionId);
+    // 推送到对应 session 的 prompt stream
+    const active = this.activePrompts.get(params.sessionId);
     if (active) {
       active.push(agentMessage);
-    } else {
-      logger.debug(
-        { sessionId, updateType: update.sessionUpdate },
-        'Received session/update for inactive prompt stream',
-      );
     }
   }
 

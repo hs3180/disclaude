@@ -25,6 +25,7 @@ import type {
   SessionTimeoutConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -526,12 +527,31 @@ export class Config {
 export function createDefaultRuntimeContext(
   overrides?: Partial<AgentRuntimeContext>,
 ): AgentRuntimeContext {
+  // Create shared ACP Client instance (lazy-connect on first use)
+  // Issue #2311: ACP Client replaces SDK Provider for agent execution
+  const acpClient = new AcpClient({
+    transport: new AcpStdioTransport({
+      command: 'claude',
+      args: ['--agent-acp'],
+      env: {
+        ...process.env as Record<string, string>,
+        // Pass through API key if available
+        ...(Config.getAgentConfig().apiKey ? {
+          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        } : {}),
+      },
+    }),
+    // Auto-approve all permission requests in bot mode
+    // (permissionMode: bypassPermissions handles this at SDK level)
+  });
+
   const ctx: AgentRuntimeContext = {
     getWorkspaceDir: () => Config.getWorkspaceDir(),
     getAgentConfig: () => Config.getAgentConfig(),
     getLoggingConfig: () => Config.getLoggingConfig(),
     getGlobalEnv: () => Config.getGlobalEnv(),
     isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
+    getAcpClient: () => acpClient,
     ...overrides,
   };
   setRuntimeContext(ctx);
