@@ -13,7 +13,7 @@
  *   1 — fatal error (missing dependencies)
  */
 
-import { readdir, readFile, writeFile, stat, realpath, rename, mkdir } from 'node:fs/promises';
+import { readdir, readFile, writeFile, stat, realpath, rename } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -33,53 +33,6 @@ import {
 import { acquireLock } from './lock.js';
 
 const execFileAsync = promisify(execFile);
-
-/**
- * ChatStore directory path for temp chat records.
- * Must match packages/primary-node/src/primary-node.ts: tempChatStoreDir.
- */
-const TEMP_CHAT_STORE_DIR = 'workspace/schedules/.temp-chats';
-
-/**
- * Write a ChatStore record for trigger mode initialization.
- *
- * Issue #2018, #2291: After activating a temp chat, write a ChatStore record
- * so that the TriggerModeManager can load the trigger mode setting on startup.
- * Records with triggerMode: 'always' cause the bot to respond to all messages.
- */
-async function writeChatStoreRecord(feishuChatId: string, expiresAt: string, triggerMode: 'mention' | 'always' | undefined): Promise<void> {
-  // Only write when trigger mode is 'always' (non-default)
-  if (triggerMode !== 'always') return;
-
-  try {
-    const storeDir = resolve(TEMP_CHAT_STORE_DIR);
-    await mkdir(storeDir, { recursive: true });
-
-    // Sanitize chat ID for filename (matches ChatStore.getFilePath logic)
-    const safeId = feishuChatId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filePath = resolve(storeDir, `${safeId}.json`);
-
-    // Path traversal protection
-    if (!filePath.startsWith(storeDir + '/')) {
-      console.error(`ERROR: Path traversal detected for chat ID '${feishuChatId}'`);
-      return;
-    }
-
-    const record = {
-      chatId: feishuChatId,
-      createdAt: nowISO(),
-      expiresAt,
-      triggerMode: 'always' as const,
-    };
-
-    const tmpFile = `${filePath}.${Date.now()}.tmp`;
-    await writeFile(tmpFile, JSON.stringify(record, null, 2), 'utf-8');
-    await rename(tmpFile, filePath);
-    console.log(`OK: ChatStore record written for trigger mode 'always' (chatId=${feishuChatId})`);
-  } catch (err) {
-    console.error(`WARN: Failed to write ChatStore record for ${feishuChatId}: ${err}`);
-  }
-}
 
 function exit(msg: string): never {
   console.error(`ERROR: ${msg}`);
@@ -318,10 +271,6 @@ async function main() {
         };
         await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
         console.log(`OK: Chat ${chatId} activated (chatId=${newChatId})`);
-
-        // Issue #2018: Write ChatStore record for trigger mode initialization.
-        // This ensures TriggerModeManager loads the setting on next startup.
-        await writeChatStoreRecord(newChatId, currentChat.expiresAt, currentChat.triggerMode);
       } else {
         // Failure — record error and check retry limit
         const errorMsg = (larkError ?? larkResult ?? 'unknown error').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
