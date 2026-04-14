@@ -7,7 +7,7 @@
  * Schema follows design spec §3.1 strictly:
  * - state: reviewing | approved | closed (no rejected)
  * - expiresAt: createdAt + 48h
- * - disbandRequested: Phase 2 only, always null in Phase 1
+ * - disbandRequested: null (Phase 1) or ISO timestamp (Phase 2 lifecycle)
  */
 
 // ---- Types ----
@@ -20,7 +20,8 @@ export interface PrStateFile {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
-  disbandRequested: null;
+  /** null until lifecycle sends disband request; then ISO timestamp of that request */
+  disbandRequested: string | null;
 }
 
 /** PR tracking state enum (no rejected) */
@@ -39,6 +40,13 @@ export interface CandidatePr {
   title: string;
 }
 
+/** check-expired action result entry (lifecycle Phase 2) */
+export interface ExpiredPr {
+  prNumber: number;
+  chatId: string;
+  needsDisbandRequest: boolean;
+}
+
 // ---- Constants ----
 
 /** Directory for state files */
@@ -52,6 +60,9 @@ export const DEFAULT_MAX_CONCURRENT = 3;
 
 /** Hours until state file expires */
 export const EXPIRY_HOURS = 48;
+
+/** Hours to wait before resending disband request */
+export const DISBAND_COOLDOWN_HOURS = 24;
 
 /** UTC datetime pattern (allows optional milliseconds) */
 export const UTC_DATETIME_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
@@ -121,9 +132,11 @@ export function validateStateFileData(data: unknown, filePath: string): PrStateF
     throw new ValidationError(`State file '${filePath}' has missing or invalid 'expiresAt'`);
   }
 
-  // disbandRequested: must be null in Phase 1
+  // disbandRequested: null or valid UTC datetime string (set by lifecycle Phase 2)
   if (obj.disbandRequested !== null) {
-    throw new ValidationError(`State file '${filePath}' has invalid 'disbandRequested' (must be null in Phase 1)`);
+    if (typeof obj.disbandRequested !== 'string' || !UTC_DATETIME_REGEX.test(obj.disbandRequested)) {
+      throw new ValidationError(`State file '${filePath}' has invalid 'disbandRequested' (must be null or valid UTC datetime)`);
+    }
   }
 
   return data as PrStateFile;
