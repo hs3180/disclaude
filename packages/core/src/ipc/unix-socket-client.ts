@@ -20,6 +20,7 @@ import {
   type IpcResponse,
   type IpcResponsePayloads,
 } from './protocol.js';
+import type { IIpcClientTransport } from './transport.js';
 
 const logger = createLogger('IpcClient');
 
@@ -46,6 +47,8 @@ export type IpcUnavailableReason = Extract<IpcAvailabilityStatus, { available: f
 
 /**
  * Unix Socket IPC Client.
+ *
+ * Issue #2352: Added optional client transport for dependency injection.
  */
 export class UnixSocketIpcClient {
   private socketPath: string;
@@ -60,11 +63,14 @@ export class UnixSocketIpcClient {
   private availabilityCache: IpcAvailabilityStatus | null = null;
   private availabilityCacheTime = 0;
   private readonly availabilityCacheTtl = 5000; // 5 seconds TTL for availability cache
+  /** Issue #2352: Optional client transport for testing without real sockets */
+  private clientTransport: IIpcClientTransport | null = null;
 
-  constructor(config?: Partial<IpcConfig>) {
+  constructor(config?: Partial<IpcConfig> & { clientTransport?: IIpcClientTransport }) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.timeout = config?.timeout ?? DEFAULT_IPC_CONFIG.timeout;
     this.maxRetries = config?.maxRetries ?? DEFAULT_IPC_CONFIG.maxRetries;
+    this.clientTransport = config?.clientTransport ?? null;
   }
 
   /**
@@ -72,6 +78,12 @@ export class UnixSocketIpcClient {
    */
   async connect(): Promise<void> {
     if (this.connected) {
+      return;
+    }
+
+    // Issue #2352: Use injected transport if available
+    if (this.clientTransport) {
+      await this.doConnectTransport();
       return;
     }
 
@@ -135,6 +147,38 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Connect using injected transport (Issue #2352).
+   */
+  private async doConnectTransport(): Promise<void> {
+    if (!this.clientTransport) {return;}
+    if (!this.clientTransport.endpointExists()) {
+      throw new Error('IPC socket not available: in-memory endpoint');
+    }
+
+    await this.clientTransport.connect();
+    this.connected = true;
+    this.availabilityCache = { available: true };
+    this.availabilityCacheTime = Date.now();
+
+    this.clientTransport.onData((data) => {
+      this.handleData(data);
+    });
+
+    this.clientTransport.onClose(() => {
+      this.connected = false;
+      this.buffer = '';
+      this.availabilityCache = null;
+
+      // Reject all pending requests
+      for (const [id, pending] of this.pendingRequests) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('IPC connection closed'));
+        this.pendingRequests.delete(id);
+      }
+    });
+  }
+
+  /**
    * Internal connection logic (single attempt).
    */
   private doConnect(attempt: number): Promise<void> {
@@ -190,8 +234,16 @@ export class UnixSocketIpcClient {
   /**
    * Disconnect from the IPC server.
    */
-  // eslint-disable-next-line require-await
   async disconnect(): Promise<void> {
+    // Issue #2352: Use injected transport if available
+    if (this.clientTransport) {
+      await this.clientTransport.disconnect();
+      this.connected = false;
+      this.buffer = '';
+      this.pendingRequests.clear();
+      return;
+    }
+
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
@@ -230,6 +282,34 @@ export class UnixSocketIpcClient {
       this.availabilityCache = { available: true };
       this.availabilityCacheTime = now;
       return this.availabilityCache;
+    }
+
+    // Issue #2352: Use injected transport if available
+    if (this.clientTransport) {
+      if (!this.clientTransport.endpointExists()) {
+        this.availabilityCache = {
+          available: false,
+          reason: 'socket_not_found',
+        };
+        this.availabilityCacheTime = now;
+        return this.availabilityCache;
+      }
+
+      try {
+        await this.connect();
+        this.availabilityCache = { available: true };
+        this.availabilityCacheTime = now;
+        return this.availabilityCache;
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.availabilityCache = {
+          available: false,
+          reason: 'connection_failed',
+          error: err,
+        };
+        this.availabilityCacheTime = now;
+        return this.availabilityCache;
+      }
     }
 
     // Check if socket file exists
@@ -292,6 +372,11 @@ export class UnixSocketIpcClient {
       return this.availabilityCache.available;
     }
 
+    // Issue #2352: Use injected transport if available
+    if (this.clientTransport) {
+      return this.clientTransport.endpointExists();
+    }
+
     // Check if socket file exists (quick check without connection)
     return existsSync(this.socketPath);
   }
@@ -352,8 +437,14 @@ export class UnixSocketIpcClient {
       });
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.socket!.write(`${JSON.stringify(request)}\n`);
+        // Issue #2352: Use injected transport if available
+        const data = `${JSON.stringify(request)}\n`;
+        if (this.clientTransport) {
+          this.clientTransport.send(data);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          this.socket!.write(data);
+        }
       } catch (error) {
         this.pendingRequests.delete(id);
         clearTimeout(timeoutId);

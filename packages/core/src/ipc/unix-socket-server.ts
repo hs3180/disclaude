@@ -19,6 +19,7 @@ import {
   type IpcRequestPayloads,
   type IpcResponse,
 } from './protocol.js';
+import type { IIpcConnection, IIpcServerTransport } from './transport.js';
 
 const logger = createLogger('IpcServer');
 
@@ -321,31 +322,73 @@ export function createInteractiveMessageHandler(
 }
 
 /**
+ * Adapter wrapping a net.Socket as an IIpcConnection.
+ * Used internally by UnixSocketIpcServer when operating in socket mode.
+ */
+class SocketConnectionAdapter implements IIpcConnection {
+  constructor(private socket: Socket) {}
+
+  write(data: string): void {
+    this.socket.write(data);
+  }
+
+  onData(handler: (data: string) => void): void {
+    this.socket.on('data', (data: Buffer) => handler(data.toString()));
+  }
+
+  onClose(handler: () => void): void {
+    this.socket.on('close', handler);
+  }
+
+  destroy(): void {
+    this.socket.destroy();
+  }
+}
+
+/**
  * Unix Socket IPC Server.
  *
  * Issue #1355: Added socket health check and process exit cleanup.
+ * Issue #2352: Added optional transport injection for testing without real sockets.
  */
 export class UnixSocketIpcServer {
   private server: Server | null = null;
   private socketPath: string;
   private handler: IpcRequestHandler;
-  private activeConnections: Set<Socket> = new Set();
+  private activeConnections: Set<Socket | IIpcConnection> = new Set();
   private isShuttingDown = false;
   /** Issue #1355: Health check interval for socket file monitoring */
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   /** Issue #1355: Bound cleanup handlers for removal on stop() */
   private boundCleanupHandler: (() => void) | null = null;
+  /** Issue #2352: Optional server transport for dependency injection */
+  private serverTransport: IIpcServerTransport | null = null;
 
-  constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig>) {
+  constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig> & { serverTransport?: IIpcServerTransport }) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.handler = handler;
+    this.serverTransport = config?.serverTransport ?? null;
   }
 
   /**
    * Start the IPC server.
    */
-  // eslint-disable-next-line require-await
   async start(): Promise<void> {
+    // Issue #2352: Use injected transport if available
+    if (this.serverTransport) {
+      if (this.server) {
+        logger.warn('IPC server already running');
+        return;
+      }
+      this.serverTransport.onConnection((conn) => {
+        this.handleIpcConnection(conn);
+      });
+      await this.serverTransport.start();
+      // Create a sentinel so isRunning() returns true
+      this.server = {} as Server;
+      return;
+    }
+
     if (this.server) {
       logger.warn('IPC server already running');
       return;
@@ -380,7 +423,7 @@ export class UnixSocketIpcServer {
 
     return new Promise((resolve, reject) => {
       this.server = createServer((socket) => {
-        this.handleConnection(socket);
+        this.handleConnection(new SocketConnectionAdapter(socket));
       });
 
       this.server.on('error', (error) => {
@@ -404,8 +447,21 @@ export class UnixSocketIpcServer {
   /**
    * Stop the IPC server.
    */
-  // eslint-disable-next-line require-await
   async stop(): Promise<void> {
+    // Issue #2352: Use injected transport if available
+    if (this.serverTransport) {
+      if (!this.server) {return;}
+      this.isShuttingDown = true;
+      for (const conn of this.activeConnections) {
+        try { conn.destroy(); } catch { /* ignore */ }
+      }
+      this.activeConnections.clear();
+      await this.serverTransport.stop();
+      this.server = null;
+      this.isShuttingDown = false;
+      return;
+    }
+
     if (!this.server) {
       return;
     }
@@ -418,9 +474,9 @@ export class UnixSocketIpcServer {
     this.unregisterProcessExitCleanup();
 
     // Close all active connections
-    for (const socket of this.activeConnections) {
+    for (const conn of this.activeConnections) {
       try {
-        socket.destroy();
+        conn.destroy();
       } catch {
         // Ignore errors during cleanup
       }
@@ -455,6 +511,9 @@ export class UnixSocketIpcServer {
    * Check if the server is running.
    */
   isRunning(): boolean {
+    if (this.serverTransport) {
+      return this.serverTransport.listening;
+    }
     return this.server?.listening ?? false;
   }
 
@@ -559,21 +618,19 @@ export class UnixSocketIpcServer {
   }
 
   /**
-   * Handle a new connection.
+   * Handle a new connection from injected transport (Issue #2352).
    */
-  private handleConnection(socket: Socket): void {
+  private handleIpcConnection(conn: IIpcConnection): void {
     if (this.isShuttingDown) {
-      socket.destroy();
+      conn.destroy();
       return;
     }
 
-    this.activeConnections.add(socket);
-    logger.debug({ remoteAddress: socket.remoteAddress }, 'New IPC connection');
-
+    this.activeConnections.add(conn);
     let buffer = '';
 
-    socket.on('data', (data) => {
-      buffer += data.toString();
+    conn.onData((data) => {
+      buffer += data;
 
       // Process complete messages (newline-delimited JSON)
       const lines = buffer.split('\n');
@@ -581,26 +638,52 @@ export class UnixSocketIpcServer {
 
       for (const line of lines) {
         if (line.trim()) {
-          void this.handleMessage(socket, line);
+          void this.handleMessageOnConnection(conn, line);
         }
       }
     });
 
-    socket.on('close', () => {
-      this.activeConnections.delete(socket);
-      logger.debug('IPC connection closed');
-    });
-
-    socket.on('error', (error) => {
-      logger.debug({ err: error }, 'IPC connection error');
-      this.activeConnections.delete(socket);
+    conn.onClose(() => {
+      this.activeConnections.delete(conn);
     });
   }
 
   /**
-   * Handle an incoming message.
+   * Handle a new socket connection (production mode).
    */
-  private async handleMessage(socket: Socket, data: string): Promise<void> {
+  private handleConnection(conn: IIpcConnection): void {
+    if (this.isShuttingDown) {
+      conn.destroy();
+      return;
+    }
+
+    this.activeConnections.add(conn);
+
+    let buffer = '';
+
+    conn.onData((data) => {
+      buffer += data;
+
+      // Process complete messages (newline-delimited JSON)
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (line.trim()) {
+          void this.handleMessageOnConnection(conn, line);
+        }
+      }
+    });
+
+    conn.onClose(() => {
+      this.activeConnections.delete(conn);
+    });
+  }
+
+  /**
+   * Handle an incoming message on a connection (Issue #2352).
+   */
+  private async handleMessageOnConnection(conn: IIpcConnection, data: string): Promise<void> {
     let request: IpcRequest;
     try {
       request = JSON.parse(data);
@@ -611,7 +694,7 @@ export class UnixSocketIpcServer {
 
     try {
       const response = await this.handler(request);
-      socket.write(`${JSON.stringify(response)}\n`);
+      conn.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const response: IpcResponse = {
@@ -619,7 +702,8 @@ export class UnixSocketIpcServer {
         success: false,
         error: errorMessage,
       };
-      socket.write(`${JSON.stringify(response)}\n`);
+      conn.write(`${JSON.stringify(response)}\n`);
     }
   }
+
 }
