@@ -3,13 +3,16 @@
  * skills/pr-scanner/scanner.ts — PR Scanner v2: deterministic state management CLI.
  *
  * Provides CLI actions for tracking PR review state via `.temp-chats/pr-{number}.json` files.
- * Designed for invocation by Schedule Prompt — no GitHub API calls in this module.
+ * Designed for invocation by Schedule Prompt.
+ *
+ * When --repo is specified, create-state and mark actions also manage GitHub Labels
+ * via `gh` CLI. Label failures are logged to stderr but do not block the main flow.
  *
  * Usage:
  *   npx tsx scanner.ts --action check-capacity
  *   npx tsx scanner.ts --action list-candidates
- *   npx tsx scanner.ts --action create-state --pr 123 --chatId oc_xxx
- *   npx tsx scanner.ts --action mark --pr 123 --state approved
+ *   npx tsx scanner.ts --action create-state --pr 123 --chatId oc_xxx [--repo owner/repo]
+ *   npx tsx scanner.ts --action mark --pr 123 --state approved [--repo owner/repo]
  *   npx tsx scanner.ts --action status
  *
  * Environment variables:
@@ -21,8 +24,10 @@
  *   1 — fatal error (invalid args, I/O failure)
  */
 
-import { readdir, readFile, writeFile, mkdir, stat, realpath, rename, unlink } from 'node:fs/promises';
+import { readdir, readFile, writeFile, mkdir, stat, realpath, rename } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   parseStateFile,
   parsePrNumberFromFileName,
@@ -38,6 +43,40 @@ import {
   DEFAULT_MAX_CONCURRENT,
   ValidationError,
 } from './schema.js';
+
+const execFileAsync = promisify(execFile);
+
+// ---- GitHub Label Management ----
+
+const REVIEWING_LABEL = 'pr-scanner:reviewing';
+
+/**
+ * Add a GitHub label to a PR via gh CLI.
+ * Failures are logged to stderr but do not throw.
+ */
+async function addLabel(repo: string, prNumber: number, label: string): Promise<void> {
+  try {
+    await execFileAsync('gh', ['pr', 'edit', String(prNumber), '--repo', repo, '--add-label', label], {
+      timeout: 15_000,
+    });
+  } catch (err) {
+    console.error(`WARN: Failed to add label '${label}' to PR #${prNumber}: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * Remove a GitHub label from a PR via gh CLI.
+ * Failures are logged to stderr but do not throw.
+ */
+async function removeLabel(repo: string, prNumber: number, label: string): Promise<void> {
+  try {
+    await execFileAsync('gh', ['pr', 'edit', String(prNumber), '--repo', repo, '--remove-label', label], {
+      timeout: 15_000,
+    });
+  } catch (err) {
+    console.error(`WARN: Failed to remove label '${label}' from PR #${prNumber}: ${err instanceof Error ? err.message : err}`);
+  }
+}
 
 // ---- Helpers ----
 
@@ -162,7 +201,7 @@ async function actionListCandidates(stateDir: string): Promise<void> {
 }
 
 /** create-state: create a new state file for a PR */
-async function actionCreateState(stateDir: string, prNumber: number, chatId: string): Promise<void> {
+async function actionCreateState(stateDir: string, prNumber: number, chatId: string, repo?: string): Promise<void> {
   const filePath = stateFilePath(stateDir, prNumber);
 
   // Check if state file already exists
@@ -176,11 +215,17 @@ async function actionCreateState(stateDir: string, prNumber: number, chatId: str
 
   const stateFile = createStateFile(prNumber, chatId, 'reviewing');
   await atomicWrite(filePath, JSON.stringify(stateFile, null, 2) + '\n');
+
+  // Add reviewing label if repo is specified
+  if (repo) {
+    await addLabel(repo, prNumber, REVIEWING_LABEL);
+  }
+
   console.log(JSON.stringify(stateFile));
 }
 
 /** mark: update the state of an existing PR */
-async function actionMark(stateDir: string, prNumber: number, newState: PrState): Promise<void> {
+async function actionMark(stateDir: string, prNumber: number, newState: PrState, repo?: string): Promise<void> {
   if (!isValidState(newState)) {
     console.error(`ERROR: Invalid state '${newState}'. Must be one of: reviewing, approved, closed`);
     process.exit(1);
@@ -204,6 +249,8 @@ async function actionMark(stateDir: string, prNumber: number, newState: PrState)
     process.exit(1);
   }
 
+  const previousState = stateFile.state;
+
   const updated: PrStateFile = {
     ...stateFile,
     state: newState,
@@ -214,6 +261,12 @@ async function actionMark(stateDir: string, prNumber: number, newState: PrState)
   validateStateFileData(updated, filePath);
 
   await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
+
+  // Manage GitHub labels when leaving reviewing state
+  if (repo && previousState === 'reviewing' && newState !== 'reviewing') {
+    await removeLabel(repo, prNumber, REVIEWING_LABEL);
+  }
+
   console.log(JSON.stringify(updated));
 }
 
@@ -320,7 +373,7 @@ async function main(): Promise<void> {
         console.error(`ERROR: Invalid --pr value '${prStr}', must be a positive integer`);
         process.exit(1);
       }
-      await actionCreateState(stateDir, prNumber, chatId);
+      await actionCreateState(stateDir, prNumber, chatId, args.repo);
       break;
     }
 
@@ -336,7 +389,7 @@ async function main(): Promise<void> {
         console.error(`ERROR: Invalid --pr value '${prStr}', must be a positive integer`);
         process.exit(1);
       }
-      await actionMark(stateDir, prNumber, newState as PrState);
+      await actionMark(stateDir, prNumber, newState as PrState, args.repo);
       break;
     }
 

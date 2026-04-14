@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdir, rm, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdir, rm, readFile, writeFile, stat, chmod, unlink } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -73,6 +73,26 @@ function createStateJson(overrides: Partial<PrStateFile> = {}): string {
 }
 
 const TEST_PRS = [9001, 9002, 9003, 9004, 9005];
+
+/** Directory for fake gh script (used in label tests) */
+const FAKE_GH_DIR = resolve(PROJECT_ROOT, '.temp-fake-gh');
+
+/** Create a fake gh script that always exits with error */
+async function createFakeGh(): Promise<string> {
+  await mkdir(FAKE_GH_DIR, { recursive: true });
+  const fakeGhPath = resolve(FAKE_GH_DIR, 'gh');
+  await writeFile(fakeGhPath, '#!/bin/sh\necho "gh not available" >&2\nexit 1\n', 'utf-8');
+  await chmod(fakeGhPath, 0o755);
+  return FAKE_GH_DIR;
+}
+
+async function cleanupFakeGh() {
+  try {
+    await rm(FAKE_GH_DIR, { recursive: true, force: true });
+  } catch {
+    // Ignore
+  }
+}
 
 async function cleanupTestFiles() {
   for (const pr of TEST_PRS) {
@@ -526,6 +546,117 @@ describe('scanner CLI', () => {
 
       // Cleanup
       await rm(emptyDir, { recursive: true, force: true });
+    });
+  });
+
+  // ---- --repo flag (GitHub Label integration) ----
+
+  describe('--repo flag (label integration)', () => {
+    let fakeGhDir: string;
+
+    beforeEach(async () => {
+      fakeGhDir = await createFakeGh();
+    });
+
+    afterEach(async () => {
+      await cleanupFakeGh();
+    });
+
+    /** Build env with fake gh prepended to PATH */
+    function envWithFakeGh(): Record<string, string> {
+      return { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}` };
+    }
+
+    it('create-state with --repo should succeed and log WARN when gh fails', async () => {
+      const result = await runScanner(
+        ['--action', 'create-state', '--pr', '9001', '--chatId', 'oc_test123', '--repo', 'test/repo'],
+        envWithFakeGh(),
+      );
+      // State file creation should succeed
+      expect(result.code).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(9001);
+      expect(data.state).toBe('reviewing');
+      // Label failure should be logged as WARN
+      expect(result.stderr).toContain('WARN');
+    });
+
+    it('create-state without --repo should not attempt label operations', async () => {
+      const result = await runScanner(
+        ['--action', 'create-state', '--pr', '9001', '--chatId', 'oc_test123'],
+        envWithFakeGh(),
+      );
+      expect(result.code).toBe(0);
+      // No WARN since no --repo means no label ops
+      expect(result.stderr).not.toContain('WARN');
+    });
+
+    it('mark with --repo should log WARN when gh fails (reviewing → approved)', async () => {
+      await writeFile(stateFilePath(TEST_STATE_DIR, 9001), createStateJson({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'approved', '--repo', 'test/repo'],
+        envWithFakeGh(),
+      );
+      // State update should succeed
+      expect(result.code).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('approved');
+      // Label removal failure should be logged
+      expect(result.stderr).toContain('WARN');
+    });
+
+    it('mark with --repo should log WARN when gh fails (reviewing → closed)', async () => {
+      await writeFile(stateFilePath(TEST_STATE_DIR, 9001), createStateJson({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'closed', '--repo', 'test/repo'],
+        envWithFakeGh(),
+      );
+      expect(result.code).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('closed');
+      expect(result.stderr).toContain('WARN');
+    });
+
+    it('mark without --repo should not attempt label removal', async () => {
+      await writeFile(stateFilePath(TEST_STATE_DIR, 9001), createStateJson({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'approved'],
+        envWithFakeGh(),
+      );
+      expect(result.code).toBe(0);
+      expect(result.stderr).not.toContain('WARN');
+    });
+
+    it('mark approved→reviewing with --repo should NOT remove label (not leaving reviewing)', async () => {
+      await writeFile(stateFilePath(TEST_STATE_DIR, 9001), createStateJson({ prNumber: 9001, state: 'approved' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'reviewing', '--repo', 'test/repo'],
+        envWithFakeGh(),
+      );
+      expect(result.code).toBe(0);
+      // Previous state is 'approved', not 'reviewing', so no label removal attempted
+      expect(result.stderr).not.toContain('WARN');
+    });
+
+    it('label failure should not corrupt state file', async () => {
+      await writeFile(stateFilePath(TEST_STATE_DIR, 9001), createStateJson({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'approved', '--repo', 'test/repo'],
+        envWithFakeGh(),
+      );
+      expect(result.code).toBe(0);
+
+      // Verify state file was correctly updated despite label failure
+      const fileContent = await readFile(stateFilePath(TEST_STATE_DIR, 9001), 'utf-8');
+      const fileData = JSON.parse(fileContent);
+      expect(fileData.state).toBe('approved');
+      expect(fileData.prNumber).toBe(9001);
+      expect(fileData.chatId).toBe('oc_test_chat');
     });
   });
 });
