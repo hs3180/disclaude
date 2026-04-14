@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -162,6 +164,20 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  insert_docx_image: {
+    description: `Insert an image into a Feishu document at a specified position.
+Creates an image block, uploads the image, and binds it to the block.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', description: 'The Feishu document ID (from URL: /docx/{documentId})' },
+        filePath: { type: 'string', description: 'Path to the image file (relative to workspace or absolute)' },
+        index: { type: 'number', description: '0-based position to insert at (omit to append to end)' },
+      },
+      required: ['documentId', 'filePath'],
+    },
+    handler: insert_docx_image,
   },
 };
 
@@ -434,6 +450,53 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Inline image insertion into Feishu documents
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specified position.
+
+Creates an image block, uploads the image file, and binds it to the block.
+This is useful for inserting images into Feishu documents programmatically.
+
+## Parameters
+- **documentId**: The Feishu document ID (from URL: \`/docx/{documentId}\`)
+- **filePath**: Path to the image file (relative to workspace or absolute)
+- **index**: 0-based position to insert at (optional, omit to append to end)
+
+## Type Constraints (IMPORTANT)
+- **documentId**: MUST be a non-empty string
+- **filePath**: MUST be a non-empty string pointing to an existing image file
+- **index**: MUST be a non-negative integer (optional)
+
+## Example
+\`\`\`json
+{"documentId": "doxcnxxxxxxxxxx", "filePath": "/path/to/image.png", "index": 3}
+\`\`\``,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID (from URL: /docx/{documentId})'),
+      filePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().int().nonnegative().optional().describe('0-based position to insert at (omit to append to end)'),
+    }),
+    handler: async ({ documentId, filePath, index }: {
+      documentId: string;
+      filePath: string;
+      index?: number;
+    }) => {
+      if (!documentId) {
+        return toolError('Invalid documentId: must be a non-empty string');
+      }
+      if (!filePath) {
+        return toolError('Invalid filePath: must be a non-empty string');
+      }
+
+      try {
+        const result = await insert_docx_image({ documentId, filePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
