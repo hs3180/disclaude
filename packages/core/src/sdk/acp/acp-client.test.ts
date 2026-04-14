@@ -668,17 +668,34 @@ describe('AcpClient', () => {
   // --------------------------------------------------------------------------
   describe('timeout', () => {
     it('rejects request on timeout', async () => {
-      // 此测试需要真实计时器来验证 setTimeout 超时行为。
-      // 使用短超时（50ms）保持测试快速。
-      const { client } = createTestClient(undefined, { timeout: 50 });
+      // 使用 fake timers 避免真实计时器在 CI 中的 unhandled rejection 竞态。
+      // 关键：必须在 advanceTimers 之前附加 catch handler，否则 reject 调用时
+      // Node.js 会检测到 "unhandled rejection"。
+      vi.useFakeTimers();
+      try {
+        const { client } = createTestClient(undefined, { timeout: 5000 });
+        const connectPromise = client.connect();
 
-      const connectPromise = client.connect();
-      // 立即附加 catch handler 防止 CI 环境中的 unhandled rejection 误报
-      connectPromise.catch(() => {});
-      // Don't respond — let it timeout
+        // 在 timer 触发前附加 handler，防止 unhandled rejection 检测
+        connectPromise.catch(() => {});
 
-      await expect(connectPromise).rejects.toThrow('Request timeout');
-      expect(client.state).toBe('disconnected');
+        // 推进时间超过超时阈值，触发 timeout
+        await vi.advanceTimersByTimeAsync(5001);
+
+        // 验证：connectPromise 已被 reject
+        let caught = false;
+        try {
+          await connectPromise;
+        } catch (err) {
+          caught = true;
+          expect(err).toBeInstanceOf(AcpError);
+          expect((err as AcpError).message).toContain('Request timeout');
+        }
+        expect(caught).toBe(true);
+        expect(client.state).toBe('disconnected');
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
