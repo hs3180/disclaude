@@ -124,6 +124,11 @@ export interface AcpSessionNewParams {
     claudeCode?: {
       options?: {
         permissionMode?: string;
+        model?: string;
+        allowedTools?: string[];
+        disallowedTools?: string[];
+        env?: Record<string, string>;
+        settingSources?: string[];
       };
     };
   };

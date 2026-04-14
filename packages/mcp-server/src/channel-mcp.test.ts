@@ -22,21 +22,9 @@ vi.mock('./utils/card-validator.js', () => ({
   getCardValidationError: vi.fn().mockReturnValue('invalid card structure'),
 }));
 
-vi.mock('@disclaude/core', () => ({
-  getProvider: () => ({
-    createInlineTool: (def: { handler: unknown }) => ({ definition: def }),
-    createMcpServer: (config: unknown) => ({ config }),
-  }),
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  getIpcClient: vi.fn(),
-  getIpcSocketPath: vi.fn(),
-  Config: { get: vi.fn() },
-}));
+// No need to mock @anthropic-ai/claude-agent-sdk:
+// channelSdkTools is lazily initialized, so module import doesn't call SDK functions.
+// Tests only use channelToolDefinitions (pure data), not channelSdkTools.
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';

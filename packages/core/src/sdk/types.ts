@@ -1,11 +1,9 @@
 /**
  * Agent SDK 抽象层 - 统一类型定义
  *
- * 这些类型与任何特定的 Agent SDK（Claude、OpenAI 等）无关，
- * 提供统一的接口供上层业务代码使用。
+ * Issue #2312: 移除了旧的 Provider 抽象相关类型（ProviderInfo, InlineToolDefinition,
+ * InlineMcpServerConfig, StreamQueryResult）。仅保留 ACP Client 所需的核心类型。
  */
-
-import type { ZodSchema } from 'zod';
 
 // ============================================================================
 // 内容块类型
@@ -135,19 +133,6 @@ export interface ToolResultBlock {
 // MCP 服务器配置
 // ============================================================================
 
-/** 内联工具定义 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export interface InlineToolDefinition<TParams = any, TResult = any> {
-  /** 工具名称 */
-  name: string;
-  /** 工具描述 */
-  description: string;
-  /** 参数 Schema（Zod） */
-  parameters: ZodSchema<TParams>;
-  /** 处理函数 */
-  handler: (params: TParams) => Promise<TResult>;
-}
-
 /** stdio 模式 MCP 服务器配置 */
 export interface StdioMcpServerConfig {
   type: 'stdio';
@@ -157,16 +142,8 @@ export interface StdioMcpServerConfig {
   env?: Record<string, string>;
 }
 
-/** 内联模式 MCP 服务器配置 */
-export interface InlineMcpServerConfig {
-  type: 'inline';
-  name: string;
-  version: string;
-  tools?: InlineToolDefinition[];
-}
-
-/** MCP 服务器配置联合类型 */
-export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
+/** MCP 服务器配置类型 */
+export type McpServerConfig = StdioMcpServerConfig;
 
 // ============================================================================
 // 查询选项
@@ -209,14 +186,6 @@ export interface QueryHandle {
   readonly sessionId?: string;
 }
 
-/** 流式查询结果 */
-export interface StreamQueryResult {
-  /** 查询句柄 */
-  handle: QueryHandle;
-  /** 消息迭代器 */
-  iterator: AsyncGenerator<AgentMessage>;
-}
-
 // ============================================================================
 // 使用统计
 // ============================================================================
@@ -235,20 +204,4 @@ export interface QueryUsageStats {
   cacheReadTokens?: number;
   /** 缓存写入 token 数 */
   cacheWriteTokens?: number;
-}
-
-// ============================================================================
-// Provider 信息
-// ============================================================================
-
-/** Provider 信息 */
-export interface ProviderInfo {
-  /** Provider 名称 */
-  name: string;
-  /** Provider 版本 */
-  version: string;
-  /** 是否可用 */
-  available: boolean;
-  /** 不可用原因 */
-  unavailableReason?: string;
 }

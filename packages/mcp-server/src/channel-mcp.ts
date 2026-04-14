@@ -5,11 +5,13 @@
  * via IPC. The IPC server is managed by the Primary/Worker Node, not by this
  * module. Tools use getIpcClient() to connect to the parent's IPC server.
  *
+ * Issue #2312: Migrated from getProvider() to direct Claude SDK imports.
+ *
  * @module mcp-server/channel-mcp
  */
 
-import { z } from 'zod';
-import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { z, type ZodSchema } from 'zod';
+import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import {
   send_text,
   send_card,
@@ -55,6 +57,18 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
  */
 function toolError(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
   return { content: [{ type: 'text', text }], isError: true };
+}
+
+/**
+ * Inline tool definition (local type for MCP tool creation).
+ * Issue #2312: Moved from core/sdk/types.ts to avoid dependency on old Provider abstraction.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface InlineToolDefinition<TParams = any, TResult = any> {
+  name: string;
+  description: string;
+  parameters: ZodSchema<TParams>;
+  handler: (params: TParams) => Promise<TResult>;
 }
 
 export const channelTools = {
@@ -151,7 +165,7 @@ For display-only cards, use send_card instead.`,
   },
 };
 
-export const channelToolDefinitions: SdkInlineToolDefinition[] = [
+export const channelToolDefinitions: InlineToolDefinition[] = [
   // ============================================================================
   // Issue #1155: Focused tools following Single Responsibility Principle
   // - send_text: Plain text messages
@@ -424,14 +438,41 @@ Use this after creating a group chat that should be temporary.
   },
 ];
 
-export const channelSdkTools = channelToolDefinitions.map(def => getProvider().createInlineTool(def));
+/**
+ * Lazily-created SDK tool instances.
+ * Issue #2312: Made lazy to avoid module-level side effects from Claude Agent SDK imports,
+ * which enables testing without mocking @anthropic-ai/* packages (Issue #918).
+ */
+let _channelSdkTools: ReturnType<typeof tool>[] | undefined;
+export const channelSdkTools = new Proxy([] as ReturnType<typeof tool>[], {
+  get(_, prop) {
+    if (!_channelSdkTools) {
+      _channelSdkTools = channelToolDefinitions.map(def =>
+        tool(
+          def.name,
+          def.description,
+          def.parameters as unknown as Parameters<typeof tool>[2],
+          def.handler,
+        ),
+      );
+    }
+    return (_channelSdkTools as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 export function createChannelMcpServer() {
-  return getProvider().createMcpServer({
-    type: 'inline',
+  const tools = channelToolDefinitions.map(def =>
+    tool(
+      def.name,
+      def.description,
+      def.parameters as unknown as Parameters<typeof tool>[2],
+      def.handler,
+    ),
+  );
+  return createSdkMcpServer({
     name: 'channel-mcp',
     version: '1.0.0',
-    tools: channelToolDefinitions,
+    tools,
   });
 }
 

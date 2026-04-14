@@ -26,21 +26,10 @@ export * from './ipc/index.js';
 // Config (exports McpServerConfig for config)
 export * from './config/index.js';
 
-// Agent SDK abstraction layer (Issue #1040)
-// Export SDK functions and classes
+// Agent SDK - ACP Client (Issue #2312: removed old Provider abstraction)
 export {
-  // Provider
-  ClaudeSDKProvider,
-  // Factory functions
-  getProvider,
-  registerProvider,
-  registerProviderClass,
-  setDefaultProvider,
-  getDefaultProviderType,
-  getAvailableProviders,
-  clearProviderCache,
-  isProviderAvailable,
-  type ProviderType,
+  AcpClient,
+  AcpStdioTransport,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types
@@ -60,23 +49,15 @@ export type {
   // Tool types
   ToolUseBlock as SdkToolUseBlock,
   ToolResultBlock as SdkToolResultBlock,
-  InlineToolDefinition as SdkInlineToolDefinition,
   // MCP types
   StdioMcpServerConfig,
-  InlineMcpServerConfig,
   McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
   PermissionMode,
   QueryHandle,
-  StreamQueryResult,
   // Stats types
   QueryUsageStats,
-  ProviderInfo,
-  // Interfaces
-  IAgentSDKProvider,
-  ProviderFactory,
-  ProviderConstructor,
 } from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
