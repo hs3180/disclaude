@@ -228,15 +228,17 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
       const handler = createInteractiveMessageHandler(() => {});
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
-
       const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      const status = await client.checkAvailability();
+      try {
+        await server.start();
 
-      expect(status.available).toBe(true);
+        const status = await client.checkAvailability();
 
-      await client.disconnect();
-      await server.stop();
+        expect(status.available).toBe(true);
+      } finally {
+        await client.disconnect().catch(() => {});
+        await server.stop().catch(() => {});
+      }
     });
 
     it('should cache availability result', async () => {
@@ -262,15 +264,16 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
       const handler = createInteractiveMessageHandler(() => {});
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
-
       const client = new UnixSocketIpcClient({ socketPath, timeout: 500 });
-      await client.connect();
+      try {
+        await server.start();
+        await client.connect();
 
-      expect(client.isAvailable()).toBe(true);
-
-      await client.disconnect();
-      await server.stop();
+        expect(client.isAvailable()).toBe(true);
+      } finally {
+        await client.disconnect().catch(() => {});
+        await server.stop().catch(() => {});
+      }
     });
   });
 
@@ -295,21 +298,23 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
 
-      // Start server after a short delay
-      setTimeout(() => server.start(), 50);
-
       const client = new UnixSocketIpcClient({
         socketPath,
         timeout: 200,
         maxRetries: 5,
       });
 
-      // Should eventually connect
-      await client.connect();
-      expect(client.isConnected()).toBe(true);
+      try {
+        // Start server after a short delay
+        setTimeout(() => server.start(), 50);
 
-      await client.disconnect();
-      await server.stop();
+        // Should eventually connect
+        await client.connect();
+        expect(client.isConnected()).toBe(true);
+      } finally {
+        await client.disconnect().catch(() => {});
+        await server.stop().catch(() => {});
+      }
     });
   });
 
@@ -324,23 +329,25 @@ describe('UnixSocketIpcClient - Graceful Fallback (Issue #1079)', () => {
       const handler = createInteractiveMessageHandler(() => {});
 
       const server = new UnixSocketIpcServer(handler, { socketPath });
-      await server.start();
-
       // Create client with very short timeout
       const client = new UnixSocketIpcClient({ socketPath, timeout: 1, maxRetries: 1 });
 
-      // This might timeout or succeed depending on timing
-      // Just verify the error format when it fails
       try {
-        await client.request('ping', {});
-      } catch (error) {
-        expect(error instanceof Error).toBe(true);
-        // Error should have a descriptive message
-        expect((error as Error).message).toMatch(/IPC_/);
-      }
+        await server.start();
 
-      await client.disconnect();
-      await server.stop();
+        // This might timeout or succeed depending on timing
+        // Just verify the error format when it fails
+        try {
+          await client.request('ping', {});
+        } catch (error) {
+          expect(error instanceof Error).toBe(true);
+          // Error should have a descriptive message
+          expect((error as Error).message).toMatch(/IPC_/);
+        }
+      } finally {
+        await client.disconnect().catch(() => {});
+        await server.stop().catch(() => {});
+      }
     });
   });
 
