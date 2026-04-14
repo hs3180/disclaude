@@ -8,7 +8,7 @@
  *   CHAT_GROUP_NAME (required) Group display name
  *   CHAT_MEMBERS    (required) JSON array of member open IDs (e.g. '["ou_xxx","ou_yyy"]')
  *   CHAT_CONTEXT    (optional) JSON object for consumer use (default: '{}')
- *   CHAT_PASSIVE_MODE (optional) 'true' or 'false' (default: 'false')
+ *   CHAT_TRIGGER_MODE (optional) 'mention' or 'always' (default: 'always')
  *
  * Exit codes:
  *   0 — success
@@ -45,16 +45,14 @@ async function main() {
     exit(err instanceof ValidationError ? err.message : String(err));
   }
 
-  // ---- Step 2: Validate optional passiveMode field ----
-  const passiveModeRaw = process.env.CHAT_PASSIVE_MODE;
-  let passiveMode: boolean | undefined;
-  if (passiveModeRaw !== undefined) {
-    if (passiveModeRaw === 'false') {
-      passiveMode = false;
-    } else if (passiveModeRaw === 'true') {
-      passiveMode = true;
+  // ---- Step 2: Validate optional triggerMode field ----
+  const triggerModeRaw = process.env.CHAT_TRIGGER_MODE;
+  let triggerMode: 'mention' | 'always' | undefined;
+  if (triggerModeRaw !== undefined) {
+    if (triggerModeRaw === 'mention' || triggerModeRaw === 'always') {
+      triggerMode = triggerModeRaw;
     } else {
-      exit(`CHAT_PASSIVE_MODE must be 'true' or 'false', got '${passiveModeRaw}'`);
+      exit(`CHAT_TRIGGER_MODE must be 'mention' or 'always', got '${triggerModeRaw}'`);
     }
   }
 
@@ -139,8 +137,8 @@ async function main() {
         members,
       },
       context,
-      // Issue #2018: Default passive mode to false (disabled) for temporary chats
-      passiveMode: passiveMode ?? false,
+      // Issue #2018: Default triggerMode to 'always' for temporary chats
+      triggerMode: triggerMode ?? 'always',
       response: null,
       activationAttempts: 0,
       lastActivationError: null,

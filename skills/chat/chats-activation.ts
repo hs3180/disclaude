@@ -41,16 +41,15 @@ const execFileAsync = promisify(execFile);
 const TEMP_CHAT_STORE_DIR = 'workspace/schedules/.temp-chats';
 
 /**
- * Write a ChatStore record for passive mode initialization.
+ * Write a ChatStore record for trigger mode initialization.
  *
- * Issue #2018: After activating a temp chat, write a ChatStore record so that
- * the PassiveModeManager can load the passive mode setting on startup.
- * Records with passiveMode: false cause the bot to respond to all messages
- * without requiring @mention.
+ * Issue #2018, #2291: After activating a temp chat, write a ChatStore record
+ * so that the TriggerModeManager can load the trigger mode setting on startup.
+ * Records with triggerMode: 'always' cause the bot to respond to all messages.
  */
-async function writeChatStoreRecord(feishuChatId: string, expiresAt: string, passiveMode: boolean | undefined): Promise<void> {
-  // Only write when passive mode is disabled (false)
-  if (passiveMode !== false) return;
+async function writeChatStoreRecord(feishuChatId: string, expiresAt: string, triggerMode: 'mention' | 'always' | undefined): Promise<void> {
+  // Only write when trigger mode is 'always' (non-default)
+  if (triggerMode !== 'always') return;
 
   try {
     const storeDir = resolve(TEMP_CHAT_STORE_DIR);
@@ -70,13 +69,13 @@ async function writeChatStoreRecord(feishuChatId: string, expiresAt: string, pas
       chatId: feishuChatId,
       createdAt: nowISO(),
       expiresAt,
-      passiveMode: false,
+      triggerMode: 'always' as const,
     };
 
     const tmpFile = `${filePath}.${Date.now()}.tmp`;
     await writeFile(tmpFile, JSON.stringify(record, null, 2), 'utf-8');
     await rename(tmpFile, filePath);
-    console.log(`OK: ChatStore record written for passive mode (chatId=${feishuChatId})`);
+    console.log(`OK: ChatStore record written for trigger mode 'always' (chatId=${feishuChatId})`);
   } catch (err) {
     console.error(`WARN: Failed to write ChatStore record for ${feishuChatId}: ${err}`);
   }
@@ -320,9 +319,9 @@ async function main() {
         await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
         console.log(`OK: Chat ${chatId} activated (chatId=${newChatId})`);
 
-        // Issue #2018: Write ChatStore record for passive mode initialization.
-        // This ensures PassiveModeManager loads the setting on next startup.
-        await writeChatStoreRecord(newChatId, currentChat.expiresAt, (currentChat as Record<string, unknown>).passiveMode as boolean | undefined);
+        // Issue #2018: Write ChatStore record for trigger mode initialization.
+        // This ensures TriggerModeManager loads the setting on next startup.
+        await writeChatStoreRecord(newChatId, currentChat.expiresAt, currentChat.triggerMode);
       } else {
         // Failure — record error and check retry limit
         const errorMsg = (larkError ?? larkResult ?? 'unknown error').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

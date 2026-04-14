@@ -84,12 +84,12 @@ describe('chat scripts integration', () => {
       expect(data.response).toBeNull();
       expect(data.activationAttempts).toBe(0);
       expect(data.expiredAt).toBeNull();
-      // Issue #2018: Default passiveMode should be false (disabled)
-      expect(data.passiveMode).toBe(false);
+      // Issue #2018: Default triggerMode should be 'always'
+      expect(data.triggerMode).toBe('always');
     });
 
-    it('should default passiveMode to false (disabled)', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+    it('should default triggerMode to "always"', async () => {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
@@ -99,35 +99,35 @@ describe('chat scripts integration', () => {
       expect(result.code).toBe(0);
       const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
       const data = JSON.parse(content);
-      expect(data.passiveMode).toBe(false);
+      expect(data.triggerMode).toBe('always');
     });
 
-    it('should allow explicit passiveMode: true', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+    it('should allow explicit triggerMode: "mention"', async () => {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
         CHAT_MEMBERS: '["ou_test123"]',
-        CHAT_PASSIVE_MODE: 'true',
+        CHAT_TRIGGER_MODE: 'mention',
       });
 
       expect(result.code).toBe(0);
       const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
       const data = JSON.parse(content);
-      expect(data.passiveMode).toBe(true);
+      expect(data.triggerMode).toBe('mention');
     });
 
-    it('should reject invalid CHAT_PASSIVE_MODE value', async () => {
-      const result = await runScript('scripts/chat/create.ts', {
+    it('should reject invalid CHAT_TRIGGER_MODE value', async () => {
+      const result = await runScript('skills/chat/create.ts', {
         CHAT_ID: 'test-create-1',
         CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
         CHAT_GROUP_NAME: 'Test',
         CHAT_MEMBERS: '["ou_test123"]',
-        CHAT_PASSIVE_MODE: 'invalid',
+        CHAT_TRIGGER_MODE: 'invalid',
       });
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain('CHAT_PASSIVE_MODE');
+      expect(result.stderr).toContain('CHAT_TRIGGER_MODE');
     });
 
     it('should reject duplicate chat ID', async () => {

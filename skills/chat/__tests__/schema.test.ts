@@ -173,25 +173,25 @@ describe('schema', () => {
       expect(result.status).toBe('pending');
     });
 
-    it('should accept chat file with passiveMode: false', () => {
+    it('should accept chat file with triggerMode: "always"', () => {
       const result = validateChatFileData(
-        { ...validChat, passiveMode: false },
+        { ...validChat, triggerMode: 'always' },
         '/path/to/test.json',
       );
-      expect(result.passiveMode).toBe(false);
+      expect(result.triggerMode).toBe('always');
     });
 
-    it('should accept chat file with passiveMode: true', () => {
+    it('should accept chat file with triggerMode: "mention"', () => {
       const result = validateChatFileData(
-        { ...validChat, passiveMode: true },
+        { ...validChat, triggerMode: 'mention' },
         '/path/to/test.json',
       );
-      expect(result.passiveMode).toBe(true);
+      expect(result.triggerMode).toBe('mention');
     });
 
-    it('should accept chat file without passiveMode field', () => {
+    it('should accept chat file without triggerMode field', () => {
       const result = validateChatFileData(validChat, '/path/to/test.json');
-      expect(result.passiveMode).toBeUndefined();
+      expect(result.triggerMode).toBeUndefined();
     });
 
     it('should reject non-object input', () => {

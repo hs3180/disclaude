@@ -31,14 +31,13 @@ export interface ChatFile {
   createGroup: CreateGroup;
   context: Record<string, unknown>;
   /**
-   * Declarative passive mode configuration.
+   * Trigger mode configuration for this chat (Issue #2018, #2291).
    *
-   * Issue #2018: When `false` (default for temporary chats), passive mode is
-   * disabled for this chat — the bot responds to all messages without @mention.
-   * When `true`, default behavior applies (passive mode enabled, bot only responds
-   * to @mentions). When undefined, treated as `false` for backwards compatibility.
+   * - `'always'` (default for temporary chats): Bot responds to all messages
+   * - `'mention'`: Bot only responds to @mentions
+   * - `undefined`: Treated as `'always'` for temp chats
    */
-  passiveMode?: boolean;
+  triggerMode?: 'mention' | 'always';
   response: ChatResponse | null;
   activationAttempts: number;
   lastActivationError: string | null;
