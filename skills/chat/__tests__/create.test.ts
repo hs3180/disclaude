@@ -36,7 +36,7 @@ async function runScript(script: string, env: Record<string, string>): Promise<{
   }
 }
 
-const TEST_IDS = ['test-create-1', 'test-query-1', 'test-list-1', 'test-response-1'];
+const TEST_IDS = ['test-create-1', 'test-create-explicit', 'test-create-mention', 'test-query-1', 'test-list-1', 'test-response-1'];
 
 async function cleanupTestFiles() {
   for (const id of TEST_IDS) {
@@ -84,6 +84,65 @@ describe('chat scripts integration', () => {
       expect(data.response).toBeNull();
       expect(data.activationAttempts).toBe(0);
       expect(data.expiredAt).toBeNull();
+      // Issue #2018: triggerMode not auto-set (handled at higher level)
+      expect(data.triggerMode).toBeUndefined();
+    });
+
+    it('should not set triggerMode when CHAT_TRIGGER_MODE is not provided', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+      });
+
+      expect(result.code).toBe(0);
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-1.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.triggerMode).toBeUndefined();
+    });
+
+    it('should set triggerMode when CHAT_TRIGGER_MODE is explicitly provided', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-explicit',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_TRIGGER_MODE: 'always',
+      });
+
+      expect(result.code).toBe(0);
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-explicit.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.triggerMode).toBe('always');
+    });
+
+    it('should allow explicit triggerMode: "mention"', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-mention',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_TRIGGER_MODE: 'mention',
+      });
+
+      expect(result.code).toBe(0);
+      const content = await readFile(resolve(CHAT_DIR, 'test-create-mention.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.triggerMode).toBe('mention');
+    });
+
+    it('should reject invalid CHAT_TRIGGER_MODE value', async () => {
+      const result = await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-create-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_TRIGGER_MODE: 'invalid',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('CHAT_TRIGGER_MODE');
     });
 
     it('should reject duplicate chat ID', async () => {

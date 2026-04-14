@@ -173,6 +173,39 @@ describe('schema', () => {
       expect(result.status).toBe('pending');
     });
 
+    it('should accept chat file with triggerMode: "always"', () => {
+      const result = validateChatFileData(
+        { ...validChat, triggerMode: 'always' },
+        '/path/to/test.json',
+      );
+      expect(result.triggerMode).toBe('always');
+    });
+
+    it('should accept chat file with triggerMode: "mention"', () => {
+      const result = validateChatFileData(
+        { ...validChat, triggerMode: 'mention' },
+        '/path/to/test.json',
+      );
+      expect(result.triggerMode).toBe('mention');
+    });
+
+    it('should accept chat file without triggerMode field', () => {
+      const result = validateChatFileData(validChat, '/path/to/test.json');
+      expect(result.triggerMode).toBeUndefined();
+    });
+
+    it('should reject invalid triggerMode value', () => {
+      expect(() =>
+        validateChatFileData({ ...validChat, triggerMode: 'invalid' }, '/path/to/test.json'),
+      ).toThrow(ValidationError);
+    });
+
+    it('should reject non-string triggerMode', () => {
+      expect(() =>
+        validateChatFileData({ ...validChat, triggerMode: 42 }, '/path/to/test.json'),
+      ).toThrow(ValidationError);
+    });
+
     it('should reject non-object input', () => {
       expect(() => validateChatFileData(null, '/path')).toThrow(ValidationError);
       expect(() => validateChatFileData('string', '/path')).toThrow(ValidationError);
