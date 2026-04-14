@@ -206,6 +206,8 @@ export class AcpClient {
     options?: {
       mcpServers?: unknown[];
       permissionMode?: string;
+      allowedTools?: string[];
+      disallowedTools?: string[];
     },
   ): Promise<AcpSessionNewResult> {
     this.assertConnected();
@@ -215,14 +217,19 @@ export class AcpClient {
       mcpServers: options?.mcpServers ?? [],
     };
 
+    // Build _meta.claudeCode.options from provided options
+    const claudeCodeOptions: Record<string, unknown> = {};
     if (options?.permissionMode) {
-      params._meta = {
-        claudeCode: {
-          options: {
-            permissionMode: options.permissionMode,
-          },
-        },
-      };
+      claudeCodeOptions.permissionMode = options.permissionMode;
+    }
+    if (options?.allowedTools) {
+      claudeCodeOptions.allowedTools = options.allowedTools;
+    }
+    if (options?.disallowedTools) {
+      claudeCodeOptions.disallowedTools = options.disallowedTools;
+    }
+    if (Object.keys(claudeCodeOptions).length > 0) {
+      params._meta = { claudeCode: { options: claudeCodeOptions } };
     }
 
     const result = await this.sendRequest<AcpSessionNewResult>('session/new', params);
