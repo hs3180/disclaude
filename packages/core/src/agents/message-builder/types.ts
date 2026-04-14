@@ -105,4 +105,14 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Build user taste (auto-learned preferences) section.
+   * Inserted between postHistory and tools/guidance sections.
+   *
+   * Provides auto-detected user preferences to the agent.
+   *
+   * @see Issue #2335
+   */
+  buildTasteSection?: (ctx: MessageBuilderContext) => string;
 }

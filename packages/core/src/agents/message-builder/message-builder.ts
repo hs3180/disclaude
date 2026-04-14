@@ -17,6 +17,7 @@
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
+ *   │   ├── buildTasteSection() - Auto-learned user preferences (#2335)
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
  *   ├── Guidance sections (next-step, output format, location awareness)
@@ -130,6 +131,9 @@ export class MessageBuilder {
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
 
+    // User taste section (auto-learned preferences, Issue #2335)
+    const tasteSection = this.options.buildTasteSection?.(ctx);
+
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
@@ -155,6 +159,10 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+
+    if (tasteSection) {
+      sections.push(tasteSection);
     }
 
     if (toolsSection) {
