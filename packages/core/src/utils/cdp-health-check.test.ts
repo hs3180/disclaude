@@ -4,7 +4,7 @@
  * Validates CDP endpoint parsing, health checking, and error formatting.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   parseCdpEndpoint,
   checkCdpEndpointHealth,
@@ -48,16 +48,7 @@ describe('CDP Health Check', () => {
   });
 
   describe('checkCdpEndpointHealth', () => {
-    const originalFetch = globalThis.fetch;
-    const originalSetTimeout = globalThis.setTimeout;
-
-    beforeEach(() => {
-      vi.stubGlobal('setTimeout', vi.fn((cb: () => void) => cb()));
-    });
-
     afterEach(() => {
-      globalThis.fetch = originalFetch;
-      globalThis.setTimeout = originalSetTimeout;
       vi.restoreAllMocks();
     });
 
@@ -107,14 +98,29 @@ describe('CDP Health Check', () => {
       expect(result.error).toContain('DNS');
     });
 
-    it('should return unhealthy on timeout', async () => {
-      const abortError = new Error('The operation was aborted');
-      abortError.name = 'AbortError';
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+    it('should return unhealthy on timeout via real abort chain', async () => {
+      // Use fake timers to control the real setTimeout → AbortController.abort() chain.
+      // The fetch mock listens for the abort signal, simulating a hanging request
+      // that gets interrupted when the timeout fires after 5s.
+      vi.useFakeTimers();
 
-      const result = await checkCdpEndpointHealth('http://localhost:9222');
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, options) => {
+        return new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }));
+
+      const resultPromise = checkCdpEndpointHealth('http://localhost:9222');
+      await vi.advanceTimersByTimeAsync(5100);
+      const result = await resultPromise;
       expect(result.healthy).toBe(false);
       expect(result.error).toContain('timeout');
+
+      vi.useRealTimers();
     });
 
     it('should return unhealthy on generic error', async () => {
