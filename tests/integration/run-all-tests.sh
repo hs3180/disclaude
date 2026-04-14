@@ -17,6 +17,7 @@
 #   --timeout SECONDS   Request timeout (default: 60)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
+#   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
 #   --tag TAG           Filter tests by tag (fast, ai)
@@ -30,6 +31,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-60}"
 MAX_RETRIES="${MAX_RETRIES:-2}"
+INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
+RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
+RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
@@ -40,6 +44,7 @@ FILTER_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --retries) MAX_RETRIES="$2"; shift 2 ;;
+        --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -74,6 +79,8 @@ show_test_plan_body() {
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
     echo "  - Max Retries: ${MAX_RETRIES}"
+    echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
+    echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
     echo "  - Project Root: $PROJECT_ROOT"
     echo ""
     echo "Prerequisites:"
@@ -118,8 +125,9 @@ run_test_script() {
             return 0
         else
             if [ $attempt -lt $max_attempts ]; then
-                log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in 5s..."
-                sleep 5
+                local delay=$((RETRY_INITIAL_DELAY * RETRY_BACKOFF ** (attempt - 1)))
+                log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in ${delay}s (exponential backoff)..."
+                sleep "$delay"
             fi
         fi
 
@@ -129,6 +137,24 @@ run_test_script() {
     log_error "$name failed after ${max_attempts} attempt(s)"
     TOTAL_RETRIES=$((TOTAL_RETRIES + MAX_RETRIES))
     return 1
+}
+
+# Run a test suite with inter-suite delay
+# Delay is skipped before the first suite and after retries
+_SUITE_COUNT=0
+
+run_suite() {
+    local script="$1"
+    local name="$2"
+
+    # Add delay before suite (skip for the very first one)
+    if [ $_SUITE_COUNT -gt 0 ] && [ "$INTER_SUITE_DELAY" -gt 0 ] 2>/dev/null; then
+        log_info "Waiting ${INTER_SUITE_DELAY}s before next suite (rate limit avoidance)..."
+        sleep "$INTER_SUITE_DELAY"
+    fi
+    _SUITE_COUNT=$((_SUITE_COUNT + 1))
+
+    run_test_script "$script" "$name"
 }
 
 # =============================================================================
@@ -154,6 +180,7 @@ main() {
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${TIMEOUT}s"
     echo "  - Max Retries: ${MAX_RETRIES}"
+    echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s"
     echo ""
 
     log_info "Starting test server..."
@@ -163,27 +190,27 @@ main() {
     local RETRIED_SUCCESSES=0
     local TOTAL_RETRIES=0
 
-    if ! run_test_script "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
+    if ! run_suite "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_test_script "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_test_script "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_test_script "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_test_script "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
+    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_test_script "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
+    if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
         failed=$((failed + 1))
     fi
 
