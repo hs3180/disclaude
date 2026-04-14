@@ -139,6 +139,18 @@ describe('send_file', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed to upload file via IPC');
     });
+
+    it('should include IPC error details in error message (Issue #2300)', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: false,
+        error: 'IPC_REQUEST_FAILED: Request failed with status code 400',
+        errorType: 'ipc_request_failed' as const,
+      });
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to upload file via IPC');
+      expect(result.error).toContain('IPC_REQUEST_FAILED');
+    });
   });
 
   describe('platform error handling', () => {
