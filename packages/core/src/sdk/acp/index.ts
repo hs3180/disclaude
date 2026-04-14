@@ -1,7 +1,7 @@
 /**
  * ACP (Agent Client Protocol) 模块
  *
- * 提供 ACP 协议类型定义和 Transport 层实现。
+ * 提供 ACP 协议类型定义、Transport 层实现、消息适配器和 Client。
  */
 
 // 类型导出
@@ -55,3 +55,15 @@ export type {
   AcpErrorHandler,
   AcpCloseHandler,
 } from './transport.js';
+
+// Message Adapter 导出
+export { adaptSessionUpdate, adaptPromptResult } from './message-adapter.js';
+
+// Client 导出
+export { AcpClient } from './acp-client.js';
+export type {
+  AcpClientState,
+  AcpClientConfig,
+  AcpServerCapabilities,
+  PermissionRequestCallback,
+} from './acp-client.js';
