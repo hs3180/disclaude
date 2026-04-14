@@ -1,9 +1,10 @@
 /**
- * ProjectManager core logic — pure in-memory operations.
+ * ProjectManager core logic — in-memory operations with optional persistence.
  *
  * Manages project template loading, instance creation, and chatId binding
- * entirely in memory. No filesystem operations are performed in this layer
- * (Sub-Issue D adds filesystem operations on top).
+ * in memory. When `persistDir` is provided in options, mutations are
+ * atomically persisted to `{persistDir}/projects.json` using write-then-rename.
+ * Sub-Issue D adds filesystem operations (directory creation, CLAUDE.md copy).
  *
  * Key design decisions:
  * - `ProjectResult<T>` unified return type — validation failures return
@@ -12,20 +13,26 @@
  *   the binding is silently removed
  * - Path traversal protection on all name inputs
  * - "default" is a reserved name (implicit built-in project)
+ * - Atomic persistence via writeFileSync + renameSync (no partial writes)
+ * - Schema validation on load (corrupt files produce clear errors)
  *
  * @see docs/proposals/unified-project-context.md §4 API Design
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2225 (Sub-Issue C — Persistence)
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
   ProjectTemplate,
   ProjectTemplatesConfig,
+  ProjectsPersistData,
 } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -66,12 +73,15 @@ const MAX_NAME_LENGTH = 64;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Manages project templates, instances, and chatId bindings in memory.
+ * Manages project templates, instances, and chatId bindings in memory,
+ * with optional atomic persistence to disk.
  *
  * Lifecycle:
- * 1. Construct with workspaceDir, packageDir, templatesConfig
- * 2. Templates loaded automatically via init()
- * 3. Create instances from templates, bind chatIds, query active project
+ * 1. Construct with workspaceDir, packageDir, templatesConfig, (optional) persistDir
+ * 2. If persistDir is set, load persisted state from disk
+ * 3. Templates loaded automatically via init()
+ * 4. Create instances from templates, bind chatIds, query active project
+ * 5. Mutations (create/use/reset/delete) auto-persist when persistDir is set
  *
  * Thread safety: Not thread-safe. Single-threaded use only.
  */
@@ -82,16 +92,32 @@ export class ProjectManager {
 
   private readonly workspaceDir: string;
   private readonly packageDir: string;
+  private readonly persistDir: string | undefined;
 
   /**
    * Create a new ProjectManager.
+   *
+   * When `persistDir` is provided in options, the manager will:
+   * - Load existing persisted data from `{persistDir}/projects.json` on construction
+   * - Auto-persist after every successful mutation (create/use/reset/delete)
+   * - Create `{persistDir}/` directory if it does not exist
    *
    * @param options - Constructor options including workspace/package dirs and template config
    */
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
     this.packageDir = options.packageDir;
+    this.persistDir = options.persistDir;
     this.init(options.templatesConfig);
+
+    // Load persisted state after templates are initialized
+    if (this.persistDir) {
+      const loadResult = this.loadPersistedData();
+      if (loadResult.ok) {
+        this.restoreFromPersistData(loadResult.data);
+      }
+      // If load fails (file missing, corrupt), start fresh — not an error
+    }
   }
 
   // ── Initialization ──
@@ -203,6 +229,15 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
 
+    // Auto-persist after successful mutation
+    const persistError = this.tryPersist();
+    if (persistError) {
+      // Rollback: remove instance and binding
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return { ok: false, error: `持久化失败: ${persistError}` };
+    }
+
     return {
       ok: true,
       data: {
@@ -244,6 +279,14 @@ export class ProjectManager {
     // Bind chatId to instance
     this.chatProjectMap.set(chatId, name);
 
+    // Auto-persist after successful mutation
+    const persistError = this.tryPersist();
+    if (persistError) {
+      // Rollback: remove binding
+      this.chatProjectMap.delete(chatId);
+      return { ok: false, error: `持久化失败: ${persistError}` };
+    }
+
     return {
       ok: true,
       data: {
@@ -272,6 +315,12 @@ export class ProjectManager {
 
     // Remove binding (no-op if not bound)
     this.chatProjectMap.delete(chatId);
+
+    // Auto-persist after successful mutation
+    const persistError = this.tryPersist();
+    if (persistError) {
+      return { ok: false, error: `持久化失败: ${persistError}` };
+    }
 
     return {
       ok: true,
@@ -341,6 +390,183 @@ export class ProjectManager {
     };
   }
 
+  /**
+   * Delete a project instance from memory (internal, for D phase rollback).
+   *
+   * Does NOT unbind chatIds — they will self-heal on next getActive().
+   * Does NOT persist — caller is responsible for persistence if needed.
+   *
+   * @param name - Instance name to delete
+   * @returns true if the instance existed and was deleted
+   */
+  deleteInstance(name: string): boolean {
+    return this.instances.delete(name);
+  }
+
+  /**
+   * Delete a project instance completely (memory + persisted state + bindings).
+   *
+   * Unlike `deleteInstance()` (internal rollback helper), this method:
+   * 1. Removes all chatId bindings to the instance
+   * 2. Removes the instance from memory
+   * 3. Persists the updated state to disk
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    // Validate name
+    const nameError = this.validateName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
+    }
+
+    // Check if instance exists
+    if (!this.instances.has(name)) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Remove all chatId bindings to this instance
+    for (const [chatId, boundName] of this.chatProjectMap) {
+      if (boundName === name) {
+        this.chatProjectMap.delete(chatId);
+      }
+    }
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Auto-persist after successful deletion
+    const persistError = this.tryPersist();
+    if (persistError) {
+      return { ok: false, error: `持久化失败: ${persistError}` };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  // ── Persistence ──
+
+  /**
+   * Get the path to the persistence file.
+   *
+   * @returns The path to projects.json, or undefined if persistDir is not set
+   */
+  getPersistPath(): string | undefined {
+    if (!this.persistDir) {
+      return undefined;
+    }
+    return path.join(this.persistDir, 'projects.json');
+  }
+
+  /**
+   * Build the current state as a PersistData object.
+   *
+   * @returns ProjectsPersistData representing current in-memory state
+   */
+  toPersistData(): ProjectsPersistData {
+    const instances: Record<string, PersistedInstance> = {};
+    for (const [name, instance] of this.instances) {
+      instances[name] = {
+        name: instance.name,
+        templateName: instance.templateName,
+        workingDir: instance.workingDir,
+        createdAt: instance.createdAt,
+      };
+    }
+
+    const chatProjectMap: Record<string, string> = {};
+    for (const [chatId, name] of this.chatProjectMap) {
+      chatProjectMap[chatId] = name;
+    }
+
+    return { instances, chatProjectMap };
+  }
+
+  /**
+   * Persist current state to disk using atomic write-then-rename.
+   *
+   * Steps:
+   * 1. Ensure `.disclaude/` directory exists
+   * 2. Write to `projects.json.tmp`
+   * 3. Atomically rename `projects.json.tmp` → `projects.json`
+   *
+   * @returns Error message string on failure, or null on success
+   */
+  persist(): string | null {
+    if (!this.persistDir) {
+      return null; // No persist dir configured, skip silently
+    }
+
+    const persistPath = path.join(this.persistDir, 'projects.json');
+    const tmpPath = `${persistPath}.tmp`;
+
+    try {
+      // Ensure directory exists
+      fs.mkdirSync(this.persistDir, { recursive: true });
+
+      // Write to tmp file first
+      const data = this.toPersistData();
+      const json = JSON.stringify(data, null, 2);
+      fs.writeFileSync(tmpPath, json, 'utf-8');
+
+      // Atomic rename
+      fs.renameSync(tmpPath, persistPath);
+
+      return null;
+    } catch (err) {
+      // Clean up tmp file on failure
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // Ignore cleanup failure
+      }
+
+      const message = err instanceof Error ? err.message : String(err);
+      return message;
+    }
+  }
+
+  /**
+   * Load persisted data from disk with schema validation.
+   *
+   * Validates:
+   * - File is valid JSON
+   * - Has `instances` and `chatProjectMap` fields
+   * - Each instance has required fields (name, templateName, workingDir, createdAt)
+   * - workingDir is a non-empty string
+   * - createdAt is a valid ISO 8601 string
+   *
+   * @returns ProjectResult with ProjectsPersistData on success, error on failure
+   */
+  loadPersistedData(): ProjectResult<ProjectsPersistData> {
+    const persistPath = this.getPersistPath();
+    if (!persistPath) {
+      return { ok: false, error: '未配置持久化目录' };
+    }
+
+    // Check if file exists
+    if (!fs.existsSync(persistPath)) {
+      return { ok: false, error: '持久化文件不存在' };
+    }
+
+    try {
+      const raw = fs.readFileSync(persistPath, 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+
+      // Schema validation
+      const validationError = this.validatePersistData(parsed);
+      if (validationError) {
+        return { ok: false, error: `数据格式错误: ${validationError}` };
+      }
+
+      return { ok: true, data: parsed as ProjectsPersistData };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `读取持久化文件失败: ${message}` };
+    }
+  }
+
   // ── Accessors (for D phase integration) ──
 
   /** Get the workspace directory */
@@ -353,17 +579,9 @@ export class ProjectManager {
     return this.packageDir;
   }
 
-  /**
-   * Delete a project instance from memory.
-   *
-   * Does NOT unbind chatIds — they will self-heal on next getActive().
-   * This is intentionally limited for D phase rollback support.
-   *
-   * @param name - Instance name to delete
-   * @returns true if the instance existed and was deleted
-   */
-  deleteInstance(name: string): boolean {
-    return this.instances.delete(name);
+  /** Get the persistence directory (undefined if not configured) */
+  getPersistDir(): string | undefined {
+    return this.persistDir;
   }
 
   // ── Private Helpers ──
@@ -415,6 +633,108 @@ export class ProjectManager {
     if (!chatId || chatId.length === 0) {
       return 'chatId 不能为空';
     }
+    return null;
+  }
+
+  /**
+   * Attempt to persist state to disk. Returns null on success, error string on failure.
+   * Skips silently when persistDir is not configured.
+   */
+  private tryPersist(): string | null {
+    if (!this.persistDir) {
+      return null;
+    }
+    return this.persist();
+  }
+
+  /**
+   * Restore in-memory state from persisted data.
+   *
+   * Only restores instances whose template still exists in current config.
+   * Orphaned instances (template removed) are silently skipped.
+   *
+   * @param data - Validated persistence data
+   */
+  private restoreFromPersistData(data: ProjectsPersistData): void {
+    // Restore instances
+    for (const [name, persisted] of Object.entries(data.instances)) {
+      const instance: InternalInstance = {
+        name: persisted.name,
+        templateName: persisted.templateName,
+        workingDir: persisted.workingDir,
+        createdAt: persisted.createdAt,
+      };
+      this.instances.set(name, instance);
+    }
+
+    // Restore chatId bindings (only for instances that were restored)
+    for (const [chatId, instanceName] of Object.entries(data.chatProjectMap)) {
+      if (this.instances.has(instanceName)) {
+        this.chatProjectMap.set(chatId, instanceName);
+      }
+    }
+  }
+
+  /**
+   * Validate the structure of persisted data.
+   *
+   * @param data - Parsed JSON data to validate
+   * @returns Error message string, or null if valid
+   */
+  private validatePersistData(data: unknown): string | null {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      return '根对象必须是普通对象';
+    }
+
+    const obj = data as Record<string, unknown>;
+
+    // Check instances field
+    if (typeof obj.instances !== 'object' || obj.instances === null || Array.isArray(obj.instances)) {
+      return 'instances 必须是普通对象';
+    }
+
+    // Check chatProjectMap field
+    if (typeof obj.chatProjectMap !== 'object' || obj.chatProjectMap === null || Array.isArray(obj.chatProjectMap)) {
+      return 'chatProjectMap 必须是普通对象';
+    }
+
+    // Validate each instance entry
+    const instances = obj.instances as Record<string, unknown>;
+    for (const [key, value] of Object.entries(instances)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return `实例 "${key}" 必须是普通对象`;
+      }
+
+      const inst = value as Record<string, unknown>;
+
+      if (typeof inst.name !== 'string' || inst.name.length === 0) {
+        return `实例 "${key}" 缺少有效的 name 字段`;
+      }
+      if (typeof inst.templateName !== 'string' || inst.templateName.length === 0) {
+        return `实例 "${key}" 缺少有效的 templateName 字段`;
+      }
+      if (typeof inst.workingDir !== 'string' || inst.workingDir.length === 0) {
+        return `实例 "${key}" 缺少有效的 workingDir 字段`;
+      }
+      if (typeof inst.createdAt !== 'string' || inst.createdAt.length === 0) {
+        return `实例 "${key}" 缺少有效的 createdAt 字段`;
+      }
+
+      // Validate createdAt is a valid ISO 8601 date
+      const date = new Date(inst.createdAt);
+      if (isNaN(date.getTime())) {
+        return `实例 "${key}" 的 createdAt 不是有效的日期`;
+      }
+    }
+
+    // Validate each chatProjectMap entry
+    const chatMap = obj.chatProjectMap as Record<string, unknown>;
+    for (const [chatId, value] of Object.entries(chatMap)) {
+      if (typeof value !== 'string' || value.length === 0) {
+        return `绑定 "${chatId}" 的值必须是非空字符串`;
+      }
+    }
+
     return null;
   }
 }

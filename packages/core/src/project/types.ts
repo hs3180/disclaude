@@ -181,6 +181,7 @@ export interface ProjectsPersistData {
  * Options for constructing a ProjectManager instance.
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2225 (Sub-Issue C — Persistence)
  */
 export interface ProjectManagerOptions {
   /** Workspace root directory (parent of `projects/` instances dir) */
@@ -191,4 +192,17 @@ export interface ProjectManagerOptions {
 
   /** Template configuration from disclaude.config.yaml */
   templatesConfig: ProjectTemplatesConfig;
+
+  /**
+   * Directory for persisting projects.json.
+   *
+   * When provided, the manager will:
+   * - Load existing persisted data on construction
+   * - Auto-persist after every successful mutation (create/use/reset/delete)
+   * - Create the directory if it does not exist
+   *
+   * When undefined, the manager operates purely in memory (no disk I/O).
+   * Typically set to `{workspace}/.disclaude`.
+   */
+  persistDir?: string;
 }

@@ -38,13 +38,14 @@ function createManager(
   overrides?: Partial<ProjectManagerOptions>,
   templatesOverride?: ProjectTemplatesConfig | null,
 ): ProjectManager {
+  const templatesConfig: ProjectTemplatesConfig =
+    templatesOverride !== undefined
+      ? (templatesOverride ?? {})
+      : (overrides?.templatesConfig ?? defaultOptions.templatesConfig);
   const options: ProjectManagerOptions = {
     workspaceDir: overrides?.workspaceDir ?? defaultOptions.workspaceDir,
     packageDir: overrides?.packageDir ?? defaultOptions.packageDir,
-    templatesConfig:
-      templatesOverride !== undefined
-        ? (templatesOverride ?? undefined)
-        : (overrides?.templatesConfig ?? defaultOptions.templatesConfig),
+    templatesConfig,
   };
   return new ProjectManager(options);
 }
