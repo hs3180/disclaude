@@ -211,9 +211,14 @@ describe('AcpClient', () => {
     it('throws if connecting in progress', async () => {
       const { client } = createTestClient();
 
-      void client.connect(); // Start connecting but don't resolve
+      const firstConnectPromise = client.connect(); // Start connecting but don't resolve
+      await yieldOnce();
 
       await expect(client.connect()).rejects.toThrow('Connection already in progress');
+
+      // 清理：防止 firstConnectPromise 的 5000ms timeout 在后续测试中触发 unhandled rejection
+      firstConnectPromise.catch(() => {});
+      await client.disconnect();
     });
 
     it('reverts to disconnected on initialize error', async () => {
