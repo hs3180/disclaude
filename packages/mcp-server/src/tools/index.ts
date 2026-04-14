@@ -32,6 +32,9 @@ export { send_card } from './send-card.js';
 // Send File
 export { send_file } from './send-file.js';
 
+// Upload Image (Issue #1919: image_key for card embedding)
+export { upload_image } from './upload-image.js';
+
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
 

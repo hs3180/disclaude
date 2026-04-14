@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -148,6 +150,19 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and get image_key for embedding in cards.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file to upload' },
+        chatId: { type: 'string', description: 'Target chat ID (used for context)' },
+        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+      },
+      required: ['filePath', 'chatId'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -380,6 +395,61 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image to Feishu and get the image_key for embedding in cards.
+
+Use this when you need to include an image inside a card message (e.g., charts, diagrams).
+The returned image_key can be used in \`send_card\` card elements with \`img\` tag.
+
+**IMPORTANT**: This does NOT send a message. It only uploads the image and returns the key.
+Use \`send_file\` to send an image as a standalone message.
+
+## Parameters
+- **filePath**: Path to the image file to upload (string)
+- **chatId**: Target chat ID (for context)
+- **parentMessageId**: Optional, for thread reply
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10 MB)
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png", "chatId": "oc_xxx"}
+\`\`\`
+
+Response will include image_key. Then use it in a card:
+\`\`\`json
+{
+  "card": {
+    "elements": [
+      { "tag": "img", "img_key": "img_v3_xxxx" }
+    ]
+  },
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+      chatId: z.string().describe('Target chat ID (used for context)'),
+      parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+    }),
+    handler: async ({ filePath, chatId, parentMessageId }: { filePath: string; chatId: string; parentMessageId?: string }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await upload_image({ filePath, chatId, parentMessageId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

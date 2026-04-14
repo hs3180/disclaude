@@ -465,6 +465,32 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Upload an image via IPC and return the image_key for card embedding.
+   * Issue #1919: Enable agents to upload images and use them in card elements.
+   */
+  async uploadImage(
+    chatId: string,
+    filePath: string,
+    threadId?: string
+  ): Promise<{ success: boolean; imageKey?: string; fileName?: string; fileSize?: number; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('uploadImage', { chatId, filePath, threadId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId, filePath }, 'uploadImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Send an interactive card with raw parameters via IPC.
    * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
    *

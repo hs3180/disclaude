@@ -186,6 +186,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const feishuHandlers: FeishuApiHandlers = {
       ...baseHandlers,
 
+      // Issue #1919: Upload image and return image_key for card embedding
+      uploadImage: async (_chatId: string, filePath: string, _threadId?: string) => {
+        return await feishuChannel.uploadImageForCard(filePath);
+      },
+
       // Issue #1571: Build interactive card from raw parameters using extracted builder
       sendInteractive: async (chatId: string, params: {
         question: string;
