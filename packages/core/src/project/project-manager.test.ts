@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ProjectManager } from './project-manager.js';
+import { ProjectManager, noOpFs } from './project-manager.js';
 import type {
   ProjectManagerOptions,
   ProjectTemplatesConfig,
@@ -25,7 +25,7 @@ function createTestManager(
     packageDir: '/app/packages/core',
     templatesConfig: templatesConfig ?? {},
   };
-  const pm = new ProjectManager(options);
+  const pm = new ProjectManager(options, noOpFs);
   pm.init(templatesConfig);
   return pm;
 }
@@ -58,7 +58,7 @@ describe('ProjectManager — Constructor & Initialization', () => {
       packageDir: '/app/packages/core',
       templatesConfig: {},
     };
-    const pm = new ProjectManager(options);
+    const pm = new ProjectManager(options, noOpFs);
     // Not initialized — templates should be empty
     expect(pm.listTemplates()).toHaveLength(0);
   });

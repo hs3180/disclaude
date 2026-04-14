@@ -17,4 +17,5 @@ export type {
   ProjectsPersistData,
 } from './types.js';
 
-export { ProjectManager } from './project-manager.js';
+export { ProjectManager, noOpFs } from './project-manager.js';
+export type { FilesystemOps } from './project-manager.js';

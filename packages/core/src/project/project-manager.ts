@@ -1,15 +1,19 @@
 /**
  * ProjectManager — core logic for unified per-chatId Agent context switching.
  *
- * Pure in-memory operations. No filesystem or persistence dependencies.
- * Persistence is handled by Sub-Issue C (#2225), filesystem by Sub-Issue D (#2226).
+ * In-memory operations with filesystem support for working directory creation
+ * and CLAUDE.md template copying.
+ * Persistence is handled by Sub-Issue C (#2225).
  *
  * @see docs/proposals/unified-project-context.md §4 API Design
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2226 (Sub-Issue D — Filesystem operations)
  * @see Issue #1916 (parent)
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
+import { createLogger } from '../utils/logger.js';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -19,6 +23,8 @@ import type {
   ProjectTemplate,
   ProjectTemplatesConfig,
 } from './types.js';
+
+const logger = createLogger('ProjectManager');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constants
@@ -35,6 +41,42 @@ const MAX_NAME_LENGTH = 64;
 
 /** Characters forbidden in instance names (path traversal + injection risks) */
 const FORBIDDEN_NAME_CHARS = /[\x00\\/]/;
+
+/** Name of the template instruction file */
+const CLAUDE_MD_FILENAME = 'CLAUDE.md';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Filesystem Adapter (injectable for testing)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Filesystem operations interface used by ProjectManager.
+ *
+ * In production, this is backed by `node:fs`.
+ * In tests, a mock implementation can be injected to test pure in-memory behavior.
+ *
+ * @see Issue #2226 (Sub-Issue D — Filesystem operations)
+ */
+export interface FilesystemOps {
+  existsSync(path: string): boolean;
+  mkdirSync(path: string, options?: { recursive?: boolean }): void;
+  copyFileSync(src: string, dest: string): void;
+  rmSync(path: string, options: { recursive?: boolean; force?: boolean }): void;
+}
+
+/**
+ * No-op filesystem adapter for pure in-memory testing.
+ *
+ * All operations succeed without touching the real filesystem.
+ * `existsSync` returns `true` so that template copy checks pass.
+ * Used by Sub-Issue B tests to maintain pure in-memory behavior.
+ */
+export const noOpFs: FilesystemOps = {
+  existsSync: () => true,
+  mkdirSync: () => {},
+  copyFileSync: () => {},
+  rmSync: () => {},
+};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Instance Shape
@@ -66,11 +108,13 @@ export class ProjectManager {
   private instances: Map<string, InternalInstance>;
   private chatProjectMap: Map<string, string>; // chatId → instanceName
   private readonly workspaceDir: string;
-  // Note: options.packageDir is stored for Sub-Issue D (#2226) filesystem operations
-  // but not needed in pure-memory Phase B
+  private readonly packageDir: string;
+  private readonly fsOps: FilesystemOps;
 
-  constructor(options: ProjectManagerOptions) {
+  constructor(options: ProjectManagerOptions, fsOps?: FilesystemOps) {
     this.workspaceDir = options.workspaceDir;
+    this.packageDir = options.packageDir;
+    this.fsOps = fsOps ?? fs;
     this.templates = new Map();
     this.instances = new Map();
     this.chatProjectMap = new Map();
@@ -134,6 +178,12 @@ export class ProjectManager {
   /**
    * Create a new project instance from a template and bind it to the chatId.
    *
+   * After in-memory creation, calls `instantiateFromTemplate()` to create
+   * the working directory and copy CLAUDE.md from the template.
+   *
+   * If filesystem operations fail, the in-memory instance is rolled back
+   * and an error is returned.
+   *
    * Validation:
    * - `name` must not be "default" (reserved)
    * - `name` must not contain "..", "/", "\", null bytes
@@ -183,6 +233,15 @@ export class ProjectManager {
 
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
+
+    // Filesystem: create working directory and copy CLAUDE.md
+    const fsResult = this.instantiateFromTemplate(name);
+    if (!fsResult.ok) {
+      // Rollback in-memory state on filesystem failure
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return { ok: false, error: fsResult.error };
+    }
 
     return {
       ok: true,
@@ -313,6 +372,123 @@ export class ProjectManager {
       }
       return active.workingDir;
     };
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Filesystem Operations (Sub-Issue D #2226)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Create the working directory and copy CLAUDE.md from the template.
+   *
+   * This method is called by `create()` after the in-memory instance is set up.
+   * It performs the following filesystem operations:
+   * 1. Validates the resolved path is within workspaceDir (path traversal protection)
+   * 2. Creates the working directory `{workspaceDir}/projects/{name}/`
+   * 3. Copies CLAUDE.md from `{packageDir}/templates/{templateName}/CLAUDE.md`
+   *    (skipped if packageDir is not configured or template CLAUDE.md doesn't exist)
+   * 4. On CLAUDE.md copy failure, rolls back by removing the created directory
+   *
+   * @param name - Instance name (already validated by `create()`)
+   * @returns Success or error
+   */
+  instantiateFromTemplate(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    const { workingDir } = instance;
+
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const resolvedWorkingDir = path.resolve(workingDir);
+    const resolvedWorkspaceDir = path.resolve(this.workspaceDir);
+    if (!resolvedWorkingDir.startsWith(resolvedWorkspaceDir + path.sep) &&
+        resolvedWorkingDir !== resolvedWorkspaceDir) {
+      return {
+        ok: false,
+        error: `路径遍历攻击被阻止: "${name}" 解析到 "${resolvedWorkingDir}"，不在工作空间 "${resolvedWorkspaceDir}" 内`,
+      };
+    }
+
+    // Create working directory
+    try {
+      if (!this.fsOps.existsSync(workingDir)) {
+        this.fsOps.mkdirSync(workingDir, { recursive: true });
+        logger.debug({ dir: workingDir }, 'Created project working directory');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: `无法创建工作目录 "${workingDir}": ${message}` };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(name);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory on copy failure
+      try {
+        if (this.fsOps.existsSync(workingDir)) {
+          this.fsOps.rmSync(workingDir, { recursive: true, force: true });
+          logger.debug({ dir: workingDir }, 'Rolled back working directory after CLAUDE.md copy failure');
+        }
+      } catch (rollbackError) {
+        const msg = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        logger.error({ dir: workingDir, error: msg }, 'Failed to rollback working directory');
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from the template directory to the instance working directory.
+   *
+   * - If `packageDir` is not configured (empty string), skip copy (instance has no CLAUDE.md)
+   * - If the template CLAUDE.md doesn't exist, return an error
+   * - On copy success, the instance working directory contains CLAUDE.md
+   *
+   * @param name - Instance name (must exist in instances map)
+   * @returns Success or error
+   */
+  copyClaudeMd(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // If packageDir is not configured, skip CLAUDE.md copy (instance still valid)
+    if (!this.packageDir) {
+      logger.debug({ name }, 'No packageDir configured, skipping CLAUDE.md copy');
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = path.join(
+      this.packageDir,
+      'templates',
+      instance.templateName,
+      CLAUDE_MD_FILENAME,
+    );
+    const destPath = path.join(instance.workingDir, CLAUDE_MD_FILENAME);
+
+    // Check if template CLAUDE.md exists
+    if (!this.fsOps.existsSync(sourcePath)) {
+      return {
+        ok: false,
+        error: `模板文件不存在: "${sourcePath}"`,
+      };
+    }
+
+    // Copy CLAUDE.md
+    try {
+      this.fsOps.copyFileSync(sourcePath, destPath);
+      logger.debug({ from: sourcePath, to: destPath }, 'Copied CLAUDE.md to instance');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: `无法复制 CLAUDE.md: ${message}` };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
