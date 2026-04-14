@@ -855,7 +855,6 @@ describe('BaseAgent', () => {
       // Make createSession slow to test pending cancel
       let resolveSession: (value: { sessionId: string; model: string }) => void;
       const sessionPromise = new Promise<{ sessionId: string; model: string }>((resolve) => { resolveSession = resolve; });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (mockAcpClient.createSession as any).mockImplementation(() => sessionPromise);
 
       const inputStream = createMockInput([

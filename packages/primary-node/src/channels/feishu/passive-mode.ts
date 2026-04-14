@@ -11,7 +11,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, type TriggerMode } from '@disclaude/core';
 
 const logger = createLogger('TriggerMode');
 
@@ -19,16 +19,26 @@ const logger = createLogger('TriggerMode');
  * A record with trigger mode configuration, used for initialization.
  * The `passiveMode` field is retained for backward compatibility with
  * persisted data (Issue #2193).
+ * Issue #2291: Added `triggerMode` enum field.
  */
 export interface TriggerModeRecord {
   /** The chat ID */
   chatId: string;
   /**
-   * Trigger mode setting.
+   * Trigger mode enum setting (Issue #2291).
+   * - `'mention'`: Bot only responds to @mentions (default)
+   * - `'always'`: Bot responds to all messages
+   *
+   * When present, takes precedence over `passiveMode`.
+   */
+  triggerMode?: TriggerMode;
+  /**
+   * Trigger mode setting (legacy boolean).
    * When `true`, trigger mode is enabled (bot responds to all messages).
    * When `false` or undefined, default behavior applies (bot only responds to @mentions).
    *
-   * Retained as `passiveMode` for backward compatibility with persisted records.
+   * @deprecated Use `triggerMode` instead (Issue #2291).
+   * Retained for backward compatibility with persisted records.
    * The value is inverted internally: `passiveMode: false` → trigger mode enabled.
    */
   passiveMode?: boolean;
@@ -133,18 +143,22 @@ export class TriggerModeManager {
    * TempChatRecord or similar sources. This ensures that trigger mode
    * settings survive restarts and are applied at startup.
    *
-   * Records with `passiveMode: false` are loaded as trigger mode enabled
-   * (passive mode disabled = trigger mode enabled, Issue #2193).
-   * Records with `passiveMode: true` or undefined use the default behavior
-   * (trigger mode disabled), so they don't need explicit loading.
+   * Issue #2291: Now supports both `triggerMode` enum and legacy `passiveMode` boolean.
+   * - Records with `triggerMode: 'always'` are loaded as trigger mode enabled.
+   * - Legacy records with `passiveMode: false` are also loaded (backward compat).
+   * - `triggerMode` takes precedence over `passiveMode` when both are present.
    *
-   * @param records - Array of records with chatId and optional passiveMode
+   * @param records - Array of records with chatId and optional triggerMode/passiveMode
    * @returns Number of chats that had trigger mode enabled
    */
   initFromRecords(records: TriggerModeRecord[]): number {
     let loaded = 0;
     for (const record of records) {
-      if (record.passiveMode === false) {
+      // Issue #2291: Prefer triggerMode enum over legacy passiveMode boolean
+      const shouldEnable = record.triggerMode === 'always'
+        || (record.triggerMode === undefined && record.passiveMode === false);
+
+      if (shouldEnable) {
         this.triggerEnabled.set(record.chatId, true);
         loaded++;
       }

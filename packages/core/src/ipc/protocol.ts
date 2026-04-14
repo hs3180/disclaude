@@ -65,13 +65,14 @@ export interface IpcRequestPayloads {
     actionPrompts?: Record<string, string>;
   };
   // Temporary chat lifecycle management (Issue #1703)
+  // Issue #2291: triggerMode enum replaces passiveMode boolean
   registerTempChat: {
     chatId: string;
     expiresAt?: string;
     creatorChatId?: string;
     context?: Record<string, unknown>;
-    /** Issue #2069: Declarative passive mode. false = disabled (respond to all), true/undefined = default */
-    passiveMode?: boolean;
+    /** Issue #2291: Trigger mode enum ('mention' | 'always') */
+    triggerMode?: 'mention' | 'always';
   };
   listTempChats: Record<string, never>;
   markChatResponded: {
