@@ -12,6 +12,10 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  PollOption,
+  CreatePollResult,
+  RecordPollVoteResult,
+  GetPollResultsResult,
 } from './types.js';
 
 // Shared utilities
@@ -46,3 +50,10 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Poll/Survey (Issue #2191)
+export {
+  create_poll,
+  record_poll_vote,
+  get_poll_results,
+} from './poll.js';

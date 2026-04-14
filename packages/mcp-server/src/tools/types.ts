@@ -81,3 +81,45 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * A single poll option.
+ * Issue #2191: Poll/Survey feature.
+ */
+export interface PollOption {
+  /** Display text for the option */
+  text: string;
+  /** Unique value identifying the option */
+  value: string;
+}
+
+/**
+ * Result type for create_poll tool.
+ * Issue #2191: Poll/Survey feature.
+ */
+export interface CreatePollResult {
+  success: boolean;
+  message: string;
+  pollId?: string;
+  error?: string;
+}
+
+/**
+ * Result type for record_poll_vote tool.
+ * Issue #2191: Poll/Survey feature.
+ */
+export interface RecordPollVoteResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+
+/**
+ * Result type for get_poll_results tool.
+ * Issue #2191: Poll/Survey feature.
+ */
+export interface GetPollResultsResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+

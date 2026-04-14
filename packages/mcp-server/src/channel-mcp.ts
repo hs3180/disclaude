@@ -18,6 +18,9 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_poll,
+  record_poll_vote,
+  get_poll_results,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -25,7 +28,7 @@ import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
 // Re-export
-export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
+export type { MessageSentCallback, InteractiveOption, ActionPromptMap, PollOption, CreatePollResult, RecordPollVoteResult, GetPollResultsResult } from './tools/types.js';
 export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
@@ -434,6 +437,106 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2191: Poll/Survey tools (Phase 1)
+  {
+    name: 'create_poll',
+    description: `Create a poll with selectable options and send it as an interactive card to a chat.
+
+When users click options, the agent will receive a prompt to record the vote automatically.
+
+## Parameters
+- **question**: The poll question (string, required)
+- **options**: Array of options with text and value (array, required, max 10)
+- **chatId**: Target chat ID (string, required)
+- **title**: Optional card title (defaults to "📊 投票")
+- **deadline**: Optional deadline in ISO timestamp format
+
+## Example
+\`\`\`json
+{
+  "question": "Which restaurant for lunch?",
+  "options": [
+    { "text": "🍜 Chinese", "value": "chinese" },
+    { "text": "🍕 Pizza", "value": "pizza" },
+    { "text": "🍱 Japanese", "value": "japanese" }
+  ],
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      question: z.string().describe('The poll question'),
+      options: z.array(z.object({
+        text: z.string().describe('Display text for the option'),
+        value: z.string().describe('Unique value identifying the option'),
+      })).min(1).max(10).describe('Poll options (1-10)'),
+      chatId: z.string().describe('Target chat ID'),
+      title: z.string().optional().describe('Optional card title'),
+      deadline: z.string().optional().describe('Optional deadline (ISO timestamp)'),
+    }),
+    handler: async ({ question, options, chatId, title, deadline }: {
+      question: string;
+      options: Array<{ text: string; value: string }>;
+      chatId: string;
+      title?: string;
+      deadline?: string;
+    }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await create_poll({ question, options, chatId, title, deadline });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Poll creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'record_poll_vote',
+    description: `Record a vote for a poll option.
+
+This tool is typically called automatically by the agent when a user clicks a poll option button.
+You should NOT call this manually unless processing a poll vote action prompt.
+
+## Parameters
+- **pollId**: The poll ID (string, required)
+- **optionValue**: The option value to vote for (string, required)`,
+    parameters: z.object({
+      pollId: z.string().describe('The poll ID'),
+      optionValue: z.string().describe('The option value to vote for'),
+    }),
+    handler: async ({ pollId, optionValue }: { pollId: string; optionValue: string }) => {
+      try {
+        const result = await record_poll_vote({ pollId, optionValue });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Vote recording failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'get_poll_results',
+    description: `Get the results of a poll.
+
+Returns a formatted summary with vote counts and percentages for each option.
+
+## Parameters
+- **pollId**: The poll ID (string, required)`,
+    parameters: z.object({
+      pollId: z.string().describe('The poll ID'),
+    }),
+    handler: async ({ pollId }: { pollId: string }) => {
+      try {
+        const result = await get_poll_results({ pollId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Get poll results failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
