@@ -35,6 +35,9 @@ export { send_file } from './send-file.js';
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
 
+// Group chat management (Issue #2284)
+export { rename_chat } from './rename-group.js';
+
 // Interactive Message
 export {
   send_interactive_message,

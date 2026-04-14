@@ -615,3 +615,68 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     });
   });
 });
+
+// ─── renameGroup Tests (Issue #2284) ────────────────────────────────────────
+
+describe('FeishuChannel renameGroup — Issue #2284', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should rename group successfully', async () => {
+    const { client } = createMockClient();
+    const updateMock = vi.fn().mockResolvedValue({});
+    (client as any).im.chat = { update: updateMock };
+    const channel = createTestChannel(client);
+
+    const result = await channel.renameGroup('oc_test123', 'New Task Name');
+
+    expect(result.success).toBe(true);
+    expect(updateMock).toHaveBeenCalledWith({
+      path: { chat_id: 'oc_test123' },
+      data: { name: 'New Task Name' },
+    });
+  });
+
+  it('should return error when client is not initialized', async () => {
+    const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret' });
+    // client is undefined by default before start()
+
+    const result = await channel.renameGroup('oc_test', 'Test');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not initialized');
+  });
+
+  it('should return error for non-group chat ID', async () => {
+    const { client } = createMockClient();
+    const channel = createTestChannel(client);
+
+    const result = await channel.renameGroup('ou_user123', 'Test');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Invalid group chat ID');
+  });
+
+  it('should return error for empty group name', async () => {
+    const { client } = createMockClient();
+    const channel = createTestChannel(client);
+
+    const result = await channel.renameGroup('oc_test', '');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('cannot be empty');
+  });
+
+  it('should handle Feishu API error gracefully', async () => {
+    const { client } = createMockClient();
+    const updateMock = vi.fn().mockRejectedValue(new Error('Permission denied'));
+    (client as any).im.chat = { update: updateMock };
+    const channel = createTestChannel(client);
+
+    const result = await channel.renameGroup('oc_test', 'New Name');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Permission denied');
+  });
+});

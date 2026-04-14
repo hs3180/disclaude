@@ -758,6 +758,44 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Rename a group chat via Feishu API.
+   *
+   * Issue #2284: Used to auto-rename group chats when the bot is added
+   * and assigned a task. Called via IPC from the rename_chat MCP tool.
+   *
+   * @param chatId - The group chat ID (must start with 'oc_')
+   * @param groupName - The new name for the group
+   * @returns success status and optional error message
+   */
+  async renameGroup(chatId: string, groupName: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.client) {
+      return { success: false, error: 'Feishu client not initialized' };
+    }
+
+    if (!chatId.startsWith('oc_')) {
+      return { success: false, error: `Invalid group chat ID: ${chatId} (must start with 'oc_')` };
+    }
+
+    if (!groupName || groupName.trim().length === 0) {
+      return { success: false, error: 'Group name cannot be empty' };
+    }
+
+    try {
+      await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name: groupName },
+      });
+
+      logger.info({ chatId, groupName }, 'Group renamed successfully');
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, chatId, groupName }, 'Failed to rename group');
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
    * Queue a message for later delivery when the WebSocket is reconnecting.
    *
    * Messages older than `MAX_MESSAGE_AGE_MS` are discarded during flush.

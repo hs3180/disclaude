@@ -252,6 +252,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2284: Rename group chat
+      renameGroup: async (chatId: string, groupName: string) => {
+        return await feishuChannel.renameGroup(chatId, groupName);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

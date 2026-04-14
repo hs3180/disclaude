@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  rename_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { rename_chat } from './tools/rename-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -162,6 +164,18 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  rename_chat: {
+    description: 'Rename a Feishu group chat.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target group chat ID' },
+        groupName: { type: 'string', description: 'New name for the group' },
+      },
+      required: ['chatId', 'groupName'],
+    },
+    handler: rename_chat,
   },
 };
 
@@ -434,6 +448,45 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2284: Rename group chat
+  {
+    name: 'rename_chat',
+    description: `Rename a Feishu group chat.
+
+Use this when you are added to a new group and assigned a task — rename the group to reflect the task topic so users can easily identify it later.
+
+## When to Use
+- When you are pulled into a new group chat and assigned a task
+- After you have understood what the task is about
+- The new name should be a concise summary of the task (e.g., "PR Review: Add auth module", "Bug Fix: Login timeout")
+
+## Parameters
+- **chatId**: The group chat ID to rename (must start with 'oc_')
+- **groupName**: New name for the group (max 64 characters, will be truncated if longer)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "groupName": "需求分析：用户登录优化"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID (must start with oc_)'),
+      groupName: z.string().describe('New name for the group (max 64 characters)'),
+    }),
+    handler: async ({ chatId, groupName }: { chatId: string; groupName: string }) => {
+      // Validate chatId format
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await rename_chat({ chatId, groupName });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Group rename failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

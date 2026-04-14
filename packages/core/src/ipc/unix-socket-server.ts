@@ -71,6 +71,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Rename a group chat (Issue #2284) */
+  renameGroup?: (chatId: string, groupName: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -298,6 +300,34 @@ export function createInteractiveMessageHandler(
             request.payload as IpcRequestPayloads['markChatResponded'];
           try {
             const result = await handlers.markChatResponded(chatId, response);
+            return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Group chat management (Issue #2284)
+        case 'renameGroup': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.renameGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'renameGroup not supported by this channel',
+            };
+          }
+          const { chatId, groupName } =
+            request.payload as IpcRequestPayloads['renameGroup'];
+          try {
+            const result = await handlers.renameGroup(chatId, groupName);
             return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
