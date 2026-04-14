@@ -378,12 +378,16 @@ describe('AcpClient', () => {
 
       // Start first prompt — call next() to trigger generator body
       const promptIter1 = client.sendPrompt('sess-1', [{ type: 'text', text: 'First' }]);
-      void promptIter1.next(); // Start the generator (don't await — it blocks until messages arrive)
+      const firstNextPromise = promptIter1.next();
       await yieldOnce();
 
       // Second prompt for the same session should throw
       const promptIter2 = client.sendPrompt('sess-1', [{ type: 'text', text: 'Second' }]);
       await expect(promptIter2.next()).rejects.toThrow('A prompt is already active for session sess-1');
+
+      // 清理：附加 catch handler 防止 disconnect 导致的 unhandled rejection
+      firstNextPromise.catch(() => {});
+      await client.disconnect();
     });
 
     it('allows concurrent prompts for different sessions', async () => {
@@ -664,11 +668,13 @@ describe('AcpClient', () => {
   // --------------------------------------------------------------------------
   describe('timeout', () => {
     it('rejects request on timeout', async () => {
-      // 注意：此测试需要真实计时器，因为它验证的是实际的 setTimeout 超时行为。
-      // 使用短超时（50ms）保持测试快速，同时验证超时逻辑正确。
+      // 此测试需要真实计时器来验证 setTimeout 超时行为。
+      // 使用短超时（50ms）保持测试快速。
       const { client } = createTestClient(undefined, { timeout: 50 });
 
       const connectPromise = client.connect();
+      // 立即附加 catch handler 防止 CI 环境中的 unhandled rejection 误报
+      connectPromise.catch(() => {});
       // Don't respond — let it timeout
 
       await expect(connectPromise).rejects.toThrow('Request timeout');
