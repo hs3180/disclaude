@@ -188,7 +188,12 @@ export class AcpStdioTransport implements IAcpTransport {
     childProc.stderr.on('data', (data: Buffer) => {
       const text = data.toString().trim();
       if (text) {
-        logger.debug({ stderr: text.slice(0, 300) }, 'Agent stderr');
+        // Issue #2349: Detect unknown option errors and log them prominently
+        if (text.includes('unknown option') || text.includes('error:')) {
+          logger.error({ stderr: text.slice(0, 500) }, 'Agent stderr (command error)');
+        } else {
+          logger.debug({ stderr: text.slice(0, 300) }, 'Agent stderr');
+        }
       }
     });
 
