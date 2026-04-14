@@ -133,9 +133,6 @@ export class AcpClient {
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
 
-  /** 当前活跃的 prompt 对应的 request id，用于匹配 result 响应 */
-  private readonly promptRequestIds = new Map<number | string, string>();
-
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
     this.timeout = config.timeout ?? 30000;
@@ -248,6 +245,14 @@ export class AcpClient {
     prompt: { type: 'text'; text: string }[],
   ): AsyncGenerator<AgentMessage> {
     this.assertConnected();
+
+    // 拒绝同一 session 的并发 prompt（每次只能有一个活跃 prompt）
+    if (this.activePrompts.has(sessionId)) {
+      throw new AcpError(
+        `A prompt is already active for session ${sessionId}. Cancel it before sending a new one.`,
+        -1,
+      );
+    }
 
     const params: AcpSessionPromptParams = {
       sessionId,
@@ -437,6 +442,10 @@ export class AcpClient {
    */
   private handleResponse(msg: JsonRpcResponse | JsonRpcErrorResponse): void {
     const {id} = msg;
+    if (id === null) {
+      logger.debug('Received response with null id');
+      return;
+    }
     const pending = this.pendingRequests.get(id);
     if (!pending) {
       logger.debug({ id }, 'Received response for unknown request');
@@ -480,9 +489,12 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * 通过 params.sessionId 路由到正确的活跃 prompt stream，
+   * 支持多会话并发场景下的消息隔离。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {update} = params;
+    const {sessionId, update} = params;
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -491,11 +503,15 @@ export class AcpClient {
       return;
     }
 
-    // 推送到所有活跃的 prompt streams（通常只有一个）
-    for (const [_sid, active] of this.activePrompts) {
+    // 路由到对应的 prompt stream
+    const active = this.activePrompts.get(sessionId);
+    if (active) {
       active.push(agentMessage);
-      // 只推送一次，break
-      break;
+    } else {
+      logger.debug(
+        { sessionId, updateType: update.sessionUpdate },
+        'Received session/update for inactive prompt stream',
+      );
     }
   }
 

@@ -182,6 +182,12 @@ export interface AcpAgentMessageChunkUpdate {
   content: AcpContentBlock;
 }
 
+/** Agent 思考块更新（extended thinking） */
+export interface AcpAgentThoughtChunkUpdate {
+  sessionUpdate: 'agent_thought_chunk';
+  content: AcpContentBlock;
+}
+
 /** 工具调用更新 */
 export interface AcpToolCallUpdate {
   sessionUpdate: 'tool_call' | 'tool_call_update';
@@ -202,11 +208,13 @@ export interface AcpPlanUpdate {
 /** 所有 session update 类型联合 */
 export type AcpSessionUpdate =
   | AcpAgentMessageChunkUpdate
+  | AcpAgentThoughtChunkUpdate
   | AcpToolCallUpdate
   | AcpPlanUpdate;
 
 /** session/update 通知参数 */
 export interface AcpSessionUpdateParams {
+  sessionId: string;
   update: AcpSessionUpdate;
 }
 
