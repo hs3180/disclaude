@@ -9,9 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {
+  type TemplateSearchPath,
   discoverTemplates,
+  discoverTemplatesFromPaths,
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
+  discoverTemplatesFromPathsAsConfig,
+  getDefaultTemplateSearchPaths,
 } from './template-discovery.js';
 
 describe('discoverTemplates', () => {
@@ -332,6 +336,222 @@ describe('discoverTemplatesAsConfig', () => {
     const config = discoverTemplatesAsConfig(tempDir);
     expect(config).toEqual({
       research: { displayName: '研究模式' },
+    });
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Multi-path Discovery Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('getDefaultTemplateSearchPaths', () => {
+  it('should return 3 search paths sorted by priority (highest first)', () => {
+    const paths = getDefaultTemplateSearchPaths({
+      cwd: '/project',
+      workspaceDir: '/workspace',
+      packageDir: '/app/templates',
+    });
+
+    expect(paths).toHaveLength(3);
+    expect(paths[0].domain).toBe('project');
+    expect(paths[0].priority).toBe(3);
+    expect(paths[1].domain).toBe('workspace');
+    expect(paths[1].priority).toBe(2);
+    expect(paths[2].domain).toBe('package');
+    expect(paths[2].priority).toBe(1);
+  });
+
+  it('should use cwd directly for project domain', () => {
+    const paths = getDefaultTemplateSearchPaths({
+      cwd: '/my/project',
+      workspaceDir: '/workspace',
+      packageDir: '/app/templates',
+    });
+
+    expect(paths[0].path).toBe('/my/project');
+  });
+
+  it('should use workspaceDir/.claude for workspace domain', () => {
+    const paths = getDefaultTemplateSearchPaths({
+      cwd: '/project',
+      workspaceDir: '/workspace',
+      packageDir: '/app/templates',
+    });
+
+    expect(paths[1].path).toBe('/workspace/.claude');
+  });
+
+  it('should use packageDir directly for package domain', () => {
+    const paths = getDefaultTemplateSearchPaths({
+      cwd: '/project',
+      workspaceDir: '/workspace',
+      packageDir: '/app/templates',
+    });
+
+    expect(paths[2].path).toBe('/app/templates');
+  });
+});
+
+describe('discoverTemplatesFromPaths', () => {
+  let tempRoot: string;
+  let projectDir: string;
+  let workspaceDir: string;
+  let packageDir: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-test-'));
+    projectDir = path.join(tempRoot, 'project');
+    workspaceDir = path.join(tempRoot, 'workspace');
+    packageDir = path.join(tempRoot, 'package');
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(packageDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  function makeSearchPaths(): TemplateSearchPath[] {
+    return [
+      { path: projectDir, domain: 'project', priority: 3 },
+      { path: workspaceDir, domain: 'workspace', priority: 2 },
+      { path: packageDir, domain: 'package', priority: 1 },
+    ];
+  }
+
+  function createTemplate(baseDir: string, name: string, content?: string) {
+    const templateDir = path.join(baseDir, 'templates', name);
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(path.join(templateDir, 'CLAUDE.md'), content ?? `# ${name}`);
+  }
+
+  it('should return empty result when no paths have templates', () => {
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toEqual([]);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should discover templates from a single path', () => {
+    createTemplate(packageDir, 'research');
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toHaveLength(1);
+    expect(result.templates[0].name).toBe('research');
+  });
+
+  it('should discover templates from multiple paths', () => {
+    createTemplate(projectDir, 'my-template');
+    createTemplate(packageDir, 'builtin-template');
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toHaveLength(2);
+    const names = result.templates.map((t) => t.name).sort();
+    expect(names).toEqual(['builtin-template', 'my-template']);
+  });
+
+  it('should let higher priority path win for duplicate template names', () => {
+    // Same template name in both project and package
+    createTemplate(projectDir, 'research', '# Project Research');
+    createTemplate(packageDir, 'research', '# Package Research');
+
+    // Add template.yaml in project to identify it
+    const projectTemplateDir = path.join(projectDir, 'templates', 'research');
+    fs.writeFileSync(
+      path.join(projectTemplateDir, 'template.yaml'),
+      'displayName: "Project Override"',
+    );
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toHaveLength(1);
+    expect(result.templates[0].name).toBe('research');
+    expect(result.templates[0].displayName).toBe('Project Override');
+  });
+
+  it('should let workspace override package', () => {
+    createTemplate(workspaceDir, 'research');
+    createTemplate(packageDir, 'research');
+
+    const workspaceTemplateDir = path.join(workspaceDir, 'templates', 'research');
+    fs.writeFileSync(
+      path.join(workspaceTemplateDir, 'template.yaml'),
+      'displayName: "Workspace Version"',
+    );
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toHaveLength(1);
+    expect(result.templates[0].displayName).toBe('Workspace Version');
+  });
+
+  it('should accumulate errors from all paths', () => {
+    // Create an invalid template in package dir
+    const badDir = path.join(packageDir, 'templates', 'default');
+    fs.mkdirSync(badDir, { recursive: true });
+    fs.writeFileSync(path.join(badDir, 'CLAUDE.md'), '# Bad');
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.errors.length).toBeGreaterThanOrEqual(1);
+    expect(result.errors.some((e) => e.dirName === 'default')).toBe(true);
+  });
+
+  it('should handle non-existent search paths gracefully', () => {
+    const nonExistentPaths: TemplateSearchPath[] = [
+      { path: '/non/existent/path', domain: 'project', priority: 3 },
+    ];
+
+    const result = discoverTemplatesFromPaths(nonExistentPaths);
+    expect(result.templates).toEqual([]);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should combine unique templates from all three paths', () => {
+    createTemplate(projectDir, 'custom-a');
+    createTemplate(workspaceDir, 'shared-b');
+    createTemplate(packageDir, 'builtin-c');
+
+    const result = discoverTemplatesFromPaths(makeSearchPaths());
+    expect(result.templates).toHaveLength(3);
+    const names = result.templates.map((t) => t.name).sort();
+    expect(names).toEqual(['builtin-c', 'custom-a', 'shared-b']);
+  });
+});
+
+describe('discoverTemplatesFromPathsAsConfig', () => {
+  let tempRoot: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('should return empty config when no templates found', () => {
+    const emptyPath: TemplateSearchPath[] = [
+      { path: tempRoot, domain: 'project', priority: 1 },
+    ];
+    const config = discoverTemplatesFromPathsAsConfig(emptyPath);
+    expect(config).toEqual({});
+  });
+
+  it('should return config from discovered templates across paths', () => {
+    const dirA = path.join(tempRoot, 'a');
+    const dirB = path.join(tempRoot, 'b');
+    fs.mkdirSync(path.join(dirA, 'templates', 'tmpl-a'), { recursive: true });
+    fs.writeFileSync(path.join(dirA, 'templates', 'tmpl-a', 'CLAUDE.md'), '# A');
+    fs.mkdirSync(path.join(dirB, 'templates', 'tmpl-b'), { recursive: true });
+    fs.writeFileSync(path.join(dirB, 'templates', 'tmpl-b', 'CLAUDE.md'), '# B');
+
+    const paths: TemplateSearchPath[] = [
+      { path: dirA, domain: 'project', priority: 2 },
+      { path: dirB, domain: 'package', priority: 1 },
+    ];
+
+    const config = discoverTemplatesFromPathsAsConfig(paths);
+    expect(config).toEqual({
+      'tmpl-a': {},
+      'tmpl-b': {},
     });
   });
 });

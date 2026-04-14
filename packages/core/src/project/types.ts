@@ -35,8 +35,13 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from the filesystem (see `template-discovery.ts`).
+ * No manual configuration in disclaude.config.yaml is needed — templates in the
+ * `templates/` directory are automatically available after installation.
+ *
  * The "default" project is always implicitly available (no template needed).
+ *
+ * @see Issue #2286 — Project templates should auto-discover from package directory
  */
 export interface ProjectTemplate {
   /** Template name (unique identifier, e.g. "research", "book-reader") */
@@ -50,9 +55,13 @@ export interface ProjectTemplate {
 }
 
 /**
- * Configuration format for projectTemplates in disclaude.config.yaml.
+ * Configuration format for projectTemplates.
  *
- * Key = template name, Value = optional display metadata.
+ * This type is primarily used internally as the output of template auto-discovery.
+ * Manual configuration in disclaude.config.yaml is no longer required — templates
+ * are automatically discovered from the filesystem.
+ *
+ * Can still be used as an override if manual template configuration is needed:
  *
  * ```yaml
  * projectTemplates:
@@ -60,6 +69,8 @@ export interface ProjectTemplate {
  *     displayName: "研究模式"
  *     description: "专注研究的独立空间"
  * ```
+ *
+ * @see Issue #2286 — auto-discovery from package directory
  */
 export type ProjectTemplatesConfig = Record<
   string,
@@ -189,6 +200,15 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Template configuration override.
+   *
+   * When provided, these templates are used instead of auto-discovery.
+   * When omitted, templates are auto-discovered from the filesystem
+   * using the multi-path search (project > workspace > package domains).
+   *
+   * @see discoverTemplatesFromPaths in template-discovery.ts
+   * @see Issue #2286
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

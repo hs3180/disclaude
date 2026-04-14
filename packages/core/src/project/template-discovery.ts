@@ -1,16 +1,23 @@
 /**
  * Template auto-discovery module.
  *
- * Scans the package templates directory to discover available project templates
+ * Scans multiple search paths to discover available project templates
  * from the filesystem, eliminating the need for manual configuration in
  * disclaude.config.yaml.
  *
  * Template discovery rules:
- * - Scan `{packageDir}/templates/` for subdirectories
+ * - Scan each search path's `templates/` subdirectory for template directories
  * - Each subdirectory containing a `CLAUDE.md` file is a valid template
  * - Template name = directory name
  * - Metadata (displayName, description) read from `template.yaml` or
  *   CLAUDE.md YAML frontmatter
+ * - When the same template name exists in multiple paths, the highest
+ *   priority path wins (like Skills auto-discovery)
+ *
+ * Search path priority (highest first):
+ * 1. Project domain: `{cwd}/templates/` (user's custom templates)
+ * 2. Workspace domain: `{workspace}/.claude/templates/` (workspace templates)
+ * 3. Package domain: `{packageDir}/templates/` (built-in templates)
  *
  * @see Issue #2286 — Project templates should auto-discover from package directory
  * @see Issue #1916 (parent)
@@ -58,6 +65,36 @@ export interface DiscoveryError {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Search Path Types
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Search path configuration for template discovery.
+ *
+ * Mirrors the Skills finder pattern — multiple domains with priority-based resolution.
+ */
+export interface TemplateSearchPath {
+  /** Absolute directory path to scan for template subdirectories */
+  path: string;
+  /** Domain identifier for logging and debugging */
+  domain: 'project' | 'workspace' | 'package';
+  /** Priority (higher = wins when same template name exists in multiple paths) */
+  priority: number;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Discovery Options
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Options for template discovery.
+ */
+export interface DiscoveryOptions {
+  /** Custom templates directory name (default: 'templates') */
+  templatesDirName?: string;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Metadata Types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -70,7 +107,7 @@ interface TemplateMetadata {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Public API
+// Public API — Single-path Discovery
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
@@ -157,6 +194,102 @@ export function discoverTemplates(
   return { templates, errors };
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Public API — Multi-path Discovery
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Build default template search paths following the Skills auto-discovery pattern.
+ *
+ * Search order (higher priority first):
+ * 1. **Project domain**: `{cwd}/templates/` — user's custom project templates
+ * 2. **Workspace domain**: `{workspace}/.claude/templates/` — shared workspace templates
+ * 3. **Package domain**: `{packageDir}/templates/` — built-in templates shipped with the package
+ *
+ * @param cwd - Current working directory (defaults to `process.cwd()`)
+ * @param workspaceDir - Workspace root directory
+ * @param packageDir - Package installation directory (built-in templates)
+ * @returns Array of search paths sorted by priority (highest first)
+ *
+ * @example
+ * ```typescript
+ * const paths = getDefaultTemplateSearchPaths({
+ *   cwd: process.cwd(),
+ *   workspaceDir: Config.getWorkspaceDir(),
+ *   packageDir: Config.getTemplatesDir(),
+ * });
+ * // Returns:
+ * // [
+ * //   { path: '/project/templates', domain: 'project', priority: 3 },
+ * //   { path: '/workspace/.claude/templates', domain: 'workspace', priority: 2 },
+ * //   { path: '/app/templates', domain: 'package', priority: 1 },
+ * // ]
+ * ```
+ */
+export function getDefaultTemplateSearchPaths(options: {
+  cwd: string;
+  workspaceDir: string;
+  packageDir: string;
+}): TemplateSearchPath[] {
+  const paths: TemplateSearchPath[] = [
+    // Project domain — highest priority (user's custom templates)
+    { path: options.cwd, domain: 'project', priority: 3 },
+
+    // Workspace domain — medium priority (shared across projects)
+    { path: path.join(options.workspaceDir, '.claude'), domain: 'workspace', priority: 2 },
+
+    // Package domain — lowest priority (built-in templates)
+    { path: options.packageDir, domain: 'package', priority: 1 },
+  ];
+
+  return paths.sort((a, b) => b.priority - a.priority);
+}
+
+/**
+ * Discover templates from multiple search paths with priority-based deduplication.
+ *
+ * Scans each search path for template directories. When the same template name
+ * exists in multiple paths, the one from the highest-priority path wins.
+ *
+ * This mirrors the Skills auto-discovery pattern: project overrides workspace,
+ * workspace overrides package.
+ *
+ * @param searchPaths - Array of search paths (should be sorted by priority, highest first)
+ * @returns Discovery result with deduplicated templates and accumulated errors
+ *
+ * @example
+ * ```typescript
+ * const paths = getDefaultTemplateSearchPaths({ cwd, workspaceDir, packageDir });
+ * const result = discoverTemplatesFromPaths(paths);
+ * // result.templates: unique templates, highest priority wins
+ * ```
+ */
+export function discoverTemplatesFromPaths(searchPaths: TemplateSearchPath[]): DiscoveryResult {
+  const found = new Map<string, ProjectTemplate>();
+  const errors: DiscoveryError[] = [];
+
+  for (const searchPath of searchPaths) {
+    const result = discoverTemplates(searchPath.path);
+    errors.push(...result.errors);
+
+    for (const template of result.templates) {
+      // Only add if not already found (higher priority wins)
+      if (!found.has(template.name)) {
+        found.set(template.name, template);
+      }
+    }
+  }
+
+  return {
+    templates: Array.from(found.values()),
+    errors,
+  };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Public API — Config Conversion
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 /**
  * Convert a discovery result to ProjectTemplatesConfig format.
  *
@@ -191,16 +324,17 @@ export function discoverTemplatesAsConfig(packageDir: string): ProjectTemplatesC
   return discoveryResultToConfig(discoverTemplates(packageDir));
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Discovery Options
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 /**
- * Options for template discovery.
+ * Discover templates from multiple paths and return as ProjectTemplatesConfig.
+ *
+ * Convenience function combining `discoverTemplatesFromPaths()` and `discoveryResultToConfig()`.
+ * Errors are silently ignored.
+ *
+ * @param searchPaths - Array of search paths
+ * @returns ProjectTemplatesConfig from discovered templates
  */
-export interface DiscoveryOptions {
-  /** Custom templates directory name (default: 'templates') */
-  templatesDirName?: string;
+export function discoverTemplatesFromPathsAsConfig(searchPaths: TemplateSearchPath[]): ProjectTemplatesConfig {
+  return discoveryResultToConfig(discoverTemplatesFromPaths(searchPaths));
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -19,12 +19,16 @@ export type {
 
 export {
   discoverTemplates,
+  discoverTemplatesFromPaths,
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
+  discoverTemplatesFromPathsAsConfig,
+  getDefaultTemplateSearchPaths,
 } from './template-discovery.js';
 
 export type {
   DiscoveryResult,
   DiscoveryError,
   DiscoveryOptions,
+  TemplateSearchPath,
 } from './template-discovery.js';
