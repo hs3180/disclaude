@@ -590,6 +590,56 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Issue #1919: Used by MCP upload_image tool to get image_key for card embedding.
+   * Unlike doSendMessage, this does NOT send any message — it only uploads the image.
+   *
+   * @param filePath - Local file path to the image
+   * @returns Object with imageKey and fileName
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = filePath.split('/').pop() || 'image';
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const SUPPORTED_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
+
+    if (!SUPPORTED_IMAGE_EXTENSIONS.includes(ext)) {
+      throw new Error(
+        `Unsupported image format: .${ext}. Supported: ${SUPPORTED_IMAGE_EXTENSIONS.join(', ')}`
+      );
+    }
+
+    // Check file exists and size
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${filePath}`);
+    }
+    if (stats.size > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${stats.size} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize: stats.size }, 'Image uploaded successfully');
+    return { imageKey, fileName };
+  }
+
+  /**
    * Build Feishu post content with @mention tags.
    *
    * Constructs a rich text (post) message structure with @mention elements

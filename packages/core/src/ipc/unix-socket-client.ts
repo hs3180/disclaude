@@ -499,6 +499,33 @@ export class UnixSocketIpcClient {
     }
   }
 
+  /**
+   * Upload an image and get image_key for card embedding via IPC.
+   * Issue #1919: MCP tool upload_image support.
+   *
+   * @param filePath - Local file path to the image
+   * @returns Upload result with image_key for use in card img elements
+   */
+  async uploadImage(
+    filePath: string
+  ): Promise<{ success: boolean; imageKey?: string; fileName?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('uploadImage', { filePath });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, filePath }, 'uploadImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   // ============================================================================
   // Temporary chat lifecycle management (Issue #1703)
   // ============================================================================

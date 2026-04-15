@@ -14,12 +14,14 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   register_temp_chat: vi.fn(),
+  upload_image: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
 vi.mock('./utils/card-validator.js', () => ({
   isValidFeishuCard: vi.fn().mockReturnValue(true),
   getCardValidationError: vi.fn().mockReturnValue('invalid card structure'),
+  detectMarkdownTableWarnings: vi.fn().mockReturnValue([]),
 }));
 
 // No need to mock @anthropic-ai/claude-agent-sdk:
@@ -28,13 +30,14 @@ vi.mock('./utils/card-validator.js', () => ({
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';
-import { send_text, send_card, send_interactive, send_file, register_temp_chat } from './tools/index.js';
+import { send_text, send_card, send_interactive, send_file, register_temp_chat, upload_image } from './tools/index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
 const mocked_register_temp_chat = vi.mocked(register_temp_chat);
+const mocked_upload_image = vi.mocked(upload_image);
 
 // Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -301,5 +304,57 @@ describe('register_temp_chat handler', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ Temporary chat registered');
+  });
+});
+
+// ============================================================================
+// upload_image handler — Issue #1919
+// ============================================================================
+describe('upload_image handler', () => {
+  const handler = getHandler('upload_image');
+
+  it('should return success with image_key on successful upload', async () => {
+    mocked_upload_image.mockResolvedValue({
+      success: true,
+      message: '✅ Image uploaded: chart.png\n\nimage_key: `img_v3_xxxx`',
+      imageKey: 'img_v3_xxxx',
+      fileName: 'chart.png',
+    });
+    const result = await handler({ filePath: '/path/to/chart.png' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('img_v3_xxxx');
+  });
+
+  it('should return isError: true when credentials not configured', async () => {
+    mocked_upload_image.mockResolvedValue({
+      success: false,
+      message: '⚠️ Image cannot be uploaded: Platform is not configured.',
+      error: 'Platform credentials not configured',
+    });
+    const result = await handler({ filePath: '/path/to/chart.png' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Platform is not configured');
+  });
+
+  it('should return isError: true when IPC not available', async () => {
+    mocked_upload_image.mockResolvedValue({
+      success: false,
+      message: '❌ Image upload requires IPC connection.',
+      error: 'IPC not available',
+    });
+    const result = await handler({ filePath: '/path/to/chart.png' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('IPC connection');
+  });
+
+  it('should return isError: true when upload fails', async () => {
+    mocked_upload_image.mockRejectedValue(new Error('Failed to upload image via IPC'));
+    const result = await handler({ filePath: '/path/to/chart.png' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Failed to upload image via IPC');
   });
 });
