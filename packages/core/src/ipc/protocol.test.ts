@@ -169,6 +169,24 @@ describe('IPC Protocol', () => {
       expect(interactiveResponse.payload?.success).toBe(true);
       expect(interactiveResponse.payload?.messageId).toBe('om_interactive');
     });
+
+    it('should type-check renameChat request and response (Issue #2284)', () => {
+      const renameRequest: IpcRequest<'renameChat'> = {
+        type: 'renameChat',
+        id: 'req-rename-1',
+        payload: { chatId: 'oc_abc123', name: '需求分析 - 用户系统重构' },
+      };
+      expect(renameRequest.type).toBe('renameChat');
+      expect(renameRequest.payload.chatId).toBe('oc_abc123');
+      expect(renameRequest.payload.name).toBe('需求分析 - 用户系统重构');
+
+      const renameResponse: IpcResponse<'renameChat'> = {
+        id: 'req-rename-1',
+        success: true,
+        payload: { success: true },
+      };
+      expect(renameResponse.payload?.success).toBe(true);
+    });
   });
 
   describe('IpcConfig', () => {

@@ -680,6 +680,35 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Rename a group chat.
+   * Issue #2284: Auto-rename group when bot is added and given a task.
+   *
+   * Calls the Feishu API `im.chat.update` to change the group name.
+   *
+   * @param chatId - The group chat ID to rename
+   * @param name - The new name for the group
+   * @returns true if the rename was successful
+   */
+  async renameChat(chatId: string, name: string): Promise<boolean> {
+    if (!this.client) {
+      logger.warn('Cannot rename chat: client not initialized');
+      return false;
+    }
+
+    try {
+      await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name },
+      });
+      logger.info({ chatId, name }, 'Group chat renamed successfully');
+      return true;
+    } catch (error) {
+      logger.error({ err: error, chatId, name }, 'Failed to rename group chat');
+      return false;
+    }
+  }
+
+  /**
    * Set the WelcomeService for this channel.
    */
   setWelcomeService(service: WelcomeService): void {

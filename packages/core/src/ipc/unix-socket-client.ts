@@ -588,6 +588,38 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Chat management (Issue #2284)
+  // ============================================================================
+
+  /**
+   * Rename a chat group via IPC.
+   * Issue #2284: Auto-rename group when bot is added and given a task.
+   *
+   * @param chatId - The chat ID to rename
+   * @param name - The new name for the chat
+   */
+  async renameChat(
+    chatId: string,
+    name: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('renameChat', { chatId, name });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'renameChat failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
