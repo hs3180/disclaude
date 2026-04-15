@@ -470,6 +470,8 @@ describe('MessageLogger.migrateLegacyFiles', () => {
     expect(content).toBe('Valid date');
 
     // 'notes.md' should remain in the old directory since it's not a valid date
+    const remainingFiles = await fs.readdir(legacyChatDir);
+    expect(remainingFiles).toContain('notes.md');
   });
 
   it('should handle init when no legacy files exist', async () => {

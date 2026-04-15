@@ -49,10 +49,16 @@ describe('MentionDetector', () => {
   });
 
   describe('setClient', () => {
-    it('should set the client', () => {
-      const client = createMockClient({});
+    it('should set the client and enable fetchBotInfo', async () => {
+      const client = createMockClient({
+        bot: { open_id: 'ou_bot_setclient', app_id: 'cli_app_setclient' },
+      });
       detector.setClient(client);
-      // No error thrown
+      await detector.fetchBotInfo();
+      expect(detector.getBotInfo()).toEqual({
+        open_id: 'ou_bot_setclient',
+        app_id: 'cli_app_setclient',
+      });
     });
   });
 

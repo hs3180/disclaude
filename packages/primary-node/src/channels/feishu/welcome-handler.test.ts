@@ -56,11 +56,16 @@ describe('WelcomeHandler', () => {
   });
 
   describe('setWelcomeService', () => {
-    it('should set the welcome service', () => {
+    it('should set the welcome service and enable event handling', async () => {
       const h = new WelcomeHandler('app', () => true);
       const svc = createMockWelcomeService();
       h.setWelcomeService(svc);
-      // After setting, calling handleP2PChatEntered should invoke the service
+
+      await h.handleP2PChatEntered({
+        event: { user: { open_id: 'ou_test_svc' }, timestamp: '123' },
+      });
+
+      expect(svc.handleP2PChatEntered).toHaveBeenCalledWith('ou_test_svc');
     });
   });
 
@@ -336,6 +341,8 @@ describe('WelcomeHandler', () => {
           timestamp: '1234567890',
           members: [
             { member_id_type: 'open_id', member_id: 'ou_user1' },
+            undefined as unknown as { member_id_type: string; member_id: string },
+            { member_id_type: 'open_id', member_id: 'ou_user2' },
           ],
           operator: { operator_id_type: 'open_id', operator_id: 'ou_admin' },
         },
@@ -345,7 +352,7 @@ describe('WelcomeHandler', () => {
 
       expect(mockService.handleUserJoinedGroup).toHaveBeenCalledWith(
         'oc_group',
-        ['ou_user1'],
+        ['ou_user1', 'ou_user2'],
       );
     });
   });
