@@ -58,8 +58,8 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
        └────────────────┬───────┴────────┐
                         ▼                ▼
                  ┌──────────────────────────┐
-                 │      Pilot Agent         │
-                 │    (agents/pilot.ts)     │
+                 │      ChatAgent           │
+                 │  (agents/chat-agent/)    │
                  └────────────┬─────────────┘
                               ▼
                  ┌──────────────────────────┐
@@ -110,10 +110,10 @@ Agent implementations using the Template Method pattern:
 - **`base-agent.ts`** - Abstract base class with common functionality:
   - SDK configuration building via `createSdkOptions()`
   - `queryOnce()` - For static prompts (Evaluator, Executor)
-  - `createQueryStream()` - For streaming input (Pilot)
+  - `createQueryStream()` - For streaming input (ChatAgent)
   - Error handling and logging
 
-- **`pilot.ts`** - Platform-agnostic direct chat abstraction:
+- **`chat-agent/index.ts`** - Platform-agnostic direct chat abstraction:
   - **Streaming Input Mode**: Uses SDK's AsyncGenerator-based input
   - **Per-chatId Agent Instances**: Each conversation has its own persistent Agent
   - **Message Queue**: Messages queued and processed sequentially per chatId
@@ -139,7 +139,7 @@ Feishu/Lark WebSocket implementation:
 - processedMessageIds: Set<string>  // Message deduplication
 - commands: /reset, /status, /help
 - Message handler: handleMessageReceive()
-- Uses Pilot for agent interactions
+- Uses ChatAgent for agent interactions
 ```
 
 **Critical behaviors**:
@@ -182,7 +182,7 @@ Bot Self-Check? (skip if sender_type === 'app')
     ↓
 Is Command? → handleCommand() → Send response
     ↓
-pilot.processMessage() - queues message
+chatAgent.processMessage() - queues message
     ↓
 Agent loop processes queue → generates response
     ↓
@@ -202,7 +202,7 @@ For each SDK message:
 | **Bot** | `bypassPermissions` | Auto-approves all actions |
 | **CLI** | `default` | Asks user for permissions |
 
-**Note**: Pilot defaults to `bypassPermissions` for all modes unless explicitly configured.
+**Note**: ChatAgent defaults to `bypassPermissions` for all modes unless explicitly configured.
 
 ### WebSocket Bot Gotchas
 
@@ -331,7 +331,7 @@ npm run pm2:restart
 | **Permissions** | 🔒 `default` (ask user) | ✅ `bypassPermissions` (auto-approve) |
 | **Best for** | 🔧 Development & testing | 🤖 Production & users |
 
-**Note**: Pilot defaults to `bypassPermissions` for both modes unless explicitly configured otherwise.
+**Note**: ChatAgent defaults to `bypassPermissions` for both modes unless explicitly configured otherwise.
 
 ## Working Directory
 
@@ -369,10 +369,10 @@ Current implementation uses in-memory sessions:
 ### 5. Tool Configuration
 
 Tools are configured via `disallowedTools` in the agent classes:
-- **Pilot** (`packages/worker-node/src/agents/pilot/index.ts`): Uses `disallowedTools: ['EnterPlanMode']`
+- **ChatAgent** (`packages/worker-node/src/agents/chat-agent/index.ts`): Uses `disallowedTools: ['EnterPlanMode']`
 - **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
 
-To enable/disable tools, modify the `disallowedTools` array in `Pilot.processMessage()` or `Pilot.executeOnce()`.
+To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.processMessage()` or `ChatAgent.executeOnce()`.
 
 ## Logging Guidelines
 
@@ -454,7 +454,7 @@ pm2 logs disclaude-feishu  # Follows logs in real-time (Ctrl+C to exit)
 
 ### Tool Not Working
 
-1. Check if tool is in `disallowedTools` array in `src/agents/pilot.ts`
+1. Check if tool is in `disallowedTools` array in `src/agents/chat-agent/index.ts`
 2. Verify MCP server is configured in `disclaude.config.yaml` or built-in
 3. Check SDK version compatibility
 

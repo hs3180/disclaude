@@ -361,7 +361,7 @@ curl -X POST http://localhost:3000/api/chat \
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `comm` | Communication Node | Handles Feishu WebSocket, forwards tasks to Execution Node |
-| `exec` | Execution Node | Handles Pilot Agent, processes tasks from Communication Node |
+| `exec` | Execution Node | Handles ChatAgent, processes tasks from Communication Node |
 
 ### Local Development
 
@@ -462,7 +462,7 @@ disclaude/
 ┌──────────────────────────┐       ┌──────────────────────────┐
 │   Communication Node     │       │    Execution Node        │
 │  ┌────────────────────┐  │  HTTP │  ┌────────────────────┐  │
-│  │  Feishu WebSocket  │  │◄─────►│  │   Pilot Agent      │  │
+│  │  Feishu WebSocket  │  │◄─────►│  │   ChatAgent         │  │
 │  │  + HTTP Server     │  │       │  │   + HTTP Client    │  │
 │  └────────────────────┘  │       │  └────────────────────┘  │
 └──────────────────────────┘       └──────────────────────────┘
