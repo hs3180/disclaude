@@ -1,13 +1,16 @@
 /**
- * ProjectManager — core in-memory logic for per-chatId Agent context switching.
+ * ProjectManager — core logic for per-chatId Agent context switching.
  *
- * Manages template-based project instantiation and chatId binding.
- * This module is pure in-memory — no filesystem or persistence operations.
+ * Manages template-based project instantiation, chatId binding, and persistence.
+ * In-memory state is persisted to `{workspaceDir}/.disclaude/projects.json`
+ * using atomic write-then-rename for crash safety.
  *
  * @see docs/proposals/unified-project-context.md §4.1
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2225 (Sub-Issue C — Persistence)
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import type {
   CwdProvider,
@@ -17,6 +20,7 @@ import type {
   ProjectResult,
   ProjectTemplate,
   ProjectTemplatesConfig,
+  ProjectsPersistData,
 } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -77,18 +81,32 @@ function validateChatId(chatId: string): string | undefined {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Persistence Constants
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/** Directory name for persistence data (relative to workspaceDir) */
+const PERSIST_DIR = '.disclaude';
+
+/** Filename for the persistence file */
+const PERSIST_FILENAME = 'projects.json';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ProjectManager
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Manages project templates, instances, and chatId bindings in memory.
+ * Manages project templates, instances, and chatId bindings with persistence.
  *
  * Lifecycle:
  * 1. `new ProjectManager(options)` — construct with directory paths
  * 2. `init(templatesConfig)` — load templates from config
- * 3. Use `create`, `use`, `reset`, `getActive`, etc.
+ * 3. Optionally call `loadPersistedData()` to restore previous state
+ * 4. Use `create`, `use`, `reset`, `getActive`, etc.
  *
- * All operations are pure in-memory. Persistence is handled externally (Sub-Issue C).
+ * Mutating operations (`create`, `use`, `reset`, `delete`) automatically
+ * persist state to `{workspaceDir}/.disclaude/projects.json` using atomic
+ * write-then-rename. On persist failure, the in-memory mutation is rolled back.
+ *
  * File system operations (directory creation, CLAUDE.md copy) are handled externally (Sub-Issue D).
  *
  * @example
@@ -99,10 +117,12 @@ function validateChatId(chatId: string): string | undefined {
  *   templatesConfig: { research: { displayName: '研究模式' } },
  * });
  * pm.init();
+ * pm.loadPersistedData(); // Restore from disk (safe if file doesn't exist)
  *
  * const result = pm.create('oc_chat123', 'research', 'my-research');
  * if (result.ok) {
  *   console.log('Created:', result.data.workingDir);
+ *   // State is automatically persisted to disk
  * }
  * ```
  */
@@ -186,8 +206,8 @@ export class ProjectManager {
   /**
    * Create a new project instance from a template and bind it to a chatId.
    *
-   * In this in-memory implementation, the instance is only registered in memory.
-   * Directory creation and CLAUDE.md copying are handled by Sub-Issue D.
+   * Persists state to disk after successful creation. On persist failure,
+   * the in-memory mutation is rolled back.
    *
    * @param chatId - The chat session creating the instance
    * @param templateName - The template to instantiate
@@ -223,6 +243,9 @@ export class ProjectManager {
       };
     }
 
+    // Snapshot for rollback
+    const snapshot = this.captureSnapshot();
+
     // Create instance
     const workingDir = path.join(this.workspaceDir, 'projects', name);
     const instance: ProjectContextConfig = {
@@ -235,6 +258,13 @@ export class ProjectManager {
     this.createdAtMap.set(name, new Date().toISOString());
     this.chatProjectMap.set(chatId, name);
 
+    // Persist with rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      this.restoreSnapshot(snapshot);
+      return { ok: false, error: persistResult.error };
+    }
+
     return { ok: true, data: instance };
   }
 
@@ -242,6 +272,7 @@ export class ProjectManager {
    * Bind a chatId to an existing project instance.
    *
    * Multiple chatIds can bind to the same instance (workspace sharing).
+   * Persists state after successful binding.
    *
    * @param chatId - The chat session to bind
    * @param name - The existing instance name
@@ -271,8 +302,18 @@ export class ProjectManager {
       };
     }
 
+    // Snapshot for rollback
+    const snapshot = this.captureSnapshot();
+
     // Bind
     this.chatProjectMap.set(chatId, name);
+
+    // Persist with rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      this.restoreSnapshot(snapshot);
+      return { ok: false, error: persistResult.error };
+    }
 
     return { ok: true, data: instance };
   }
@@ -281,6 +322,7 @@ export class ProjectManager {
    * Reset a chatId to the default project.
    *
    * If already on default, this is a silent no-op (returns success).
+   * Persists state after successful reset.
    *
    * @param chatId - The chat session to reset
    * @returns ProjectResult with the default ProjectContextConfig
@@ -291,8 +333,18 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    // Snapshot for rollback
+    const snapshot = this.captureSnapshot();
+
     // Remove binding (no-op if not bound)
     this.chatProjectMap.delete(chatId);
+
+    // Persist with rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      this.restoreSnapshot(snapshot);
+      return { ok: false, error: persistResult.error };
+    }
 
     return { ok: true, data: this.getDefaultProject() };
   }
@@ -365,8 +417,239 @@ export class ProjectManager {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Deletion
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Delete a project instance.
+   *
+   * Removes the instance from memory and disk (persistence file).
+   * Cleans up all associated chatId bindings.
+   * The instance's working directory is NOT removed (handled by Sub-Issue D).
+   *
+   * @param name - The instance name to delete
+   * @returns ProjectResult with void on success
+   */
+  delete(name: string): ProjectResult<void> {
+    const nameError = validateName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
+    }
+
+    // Check instance exists
+    if (!this.instances.has(name)) {
+      return {
+        ok: false,
+        error: `实例 "${name}" 不存在`,
+      };
+    }
+
+    // Snapshot for rollback
+    const snapshot = this.captureSnapshot();
+
+    // Remove instance
+    this.instances.delete(name);
+    this.createdAtMap.delete(name);
+
+    // Clean up all chatId bindings pointing to this instance
+    for (const [chatId, boundName] of this.chatProjectMap) {
+      if (boundName === name) {
+        this.chatProjectMap.delete(chatId);
+      }
+    }
+
+    // Persist with rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      this.restoreSnapshot(snapshot);
+      return { ok: false, error: persistResult.error };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Persistence
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Get the path to the persistence file.
+   *
+   * @returns Absolute path to `{workspaceDir}/.disclaude/projects.json`
+   */
+  getPersistPath(): string {
+    return path.join(this.workspaceDir, PERSIST_DIR, PERSIST_FILENAME);
+  }
+
+  /**
+   * Persist current in-memory state to disk.
+   *
+   * Uses atomic write-then-rename pattern:
+   * 1. Write to a `.tmp` file
+   * 2. Rename `.tmp` to the target file
+   *
+   * This prevents corruption from interrupted writes.
+   * The `.disclaude/` directory is created automatically if it doesn't exist.
+   *
+   * @returns ProjectResult with void on success, or error on failure
+   */
+  persist(): ProjectResult<void> {
+    const persistPath = this.getPersistPath();
+    const persistDir = path.dirname(persistPath);
+    const tmpPath = `${persistPath}.tmp`;
+
+    try {
+      // Ensure .disclaude/ directory exists
+      if (!fs.existsSync(persistDir)) {
+        fs.mkdirSync(persistDir, { recursive: true });
+      }
+
+      // Serialize state to ProjectsPersistData format
+      const data: ProjectsPersistData = {
+        instances: {},
+        chatProjectMap: Object.fromEntries(this.chatProjectMap),
+      };
+
+      for (const [name, instance] of this.instances) {
+        data.instances[name] = {
+          name: instance.name,
+          templateName: instance.templateName ?? '',
+          workingDir: instance.workingDir,
+          createdAt: this.createdAtMap.get(name) ?? new Date().toISOString(),
+        };
+      }
+
+      // Write to temp file first
+      const json = JSON.stringify(data, null, 2);
+      fs.writeFileSync(tmpPath, json, 'utf8');
+
+      // Atomic rename
+      fs.renameSync(tmpPath, persistPath);
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      // Clean up temp file if rename failed
+      try {
+        if (fs.existsSync(tmpPath)) {
+          fs.unlinkSync(tmpPath);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      const message =
+        err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        error: `持久化失败: ${message}`,
+      };
+    }
+  }
+
+  /**
+   * Load persisted state from disk into memory.
+   *
+   * Reads `{workspaceDir}/.disclaude/projects.json`, validates the schema,
+   * and restores in-memory state. Safe to call when the file doesn't exist
+   * (returns success with no-op).
+   *
+   * **Validation rules:**
+   * - `instances` must be an object
+   * - `chatProjectMap` must be an object
+   * - Each instance must have `workingDir` (string) and `createdAt` (string)
+   *
+   * @returns ProjectResult with void on success, or error if the file is corrupt
+   */
+  loadPersistedData(): ProjectResult<void> {
+    const persistPath = this.getPersistPath();
+
+    // No file = nothing to load (not an error)
+    if (!fs.existsSync(persistPath)) {
+      return { ok: true, data: undefined };
+    }
+
+    try {
+      const raw = fs.readFileSync(persistPath, 'utf8');
+      const data = JSON.parse(raw) as unknown;
+
+      // Schema validation
+      const validationError = validatePersistData(data);
+      if (validationError) {
+        return { ok: false, error: validationError };
+      }
+
+      const persistData = data as ProjectsPersistData;
+
+      // Convert to Map entries for loadState
+      const instanceEntries: Array<[string, ProjectContextConfig]> = [];
+      const createdAtEntries: Array<[string, string]> = [];
+
+      for (const [name, persisted] of Object.entries(persistData.instances)) {
+        instanceEntries.push([
+          name,
+          {
+            name: persisted.name,
+            templateName: persisted.templateName,
+            workingDir: persisted.workingDir,
+          },
+        ]);
+        createdAtEntries.push([name, persisted.createdAt]);
+      }
+
+      const chatProjectMapEntries = Object.entries(persistData.chatProjectMap);
+
+      // Load into memory
+      this.loadState({
+        instances: instanceEntries,
+        chatProjectMap: chatProjectMapEntries,
+        createdAtMap: createdAtEntries,
+      });
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        error: `读取持久化数据失败: ${message}`,
+      };
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // Internal Helpers
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /**
+   * Capture a snapshot of current state for rollback.
+   *
+   * Returns deep copies of the internal Maps so mutations
+   * don't affect the snapshot.
+   */
+  private captureSnapshot(): {
+    instances: Map<string, ProjectContextConfig>;
+    chatProjectMap: Map<string, string>;
+    createdAtMap: Map<string, string>;
+  } {
+    return {
+      instances: new Map(this.instances),
+      chatProjectMap: new Map(this.chatProjectMap),
+      createdAtMap: new Map(this.createdAtMap),
+    };
+  }
+
+  /**
+   * Restore state from a previously captured snapshot.
+   */
+  private restoreSnapshot(snapshot: {
+    instances: Map<string, ProjectContextConfig>;
+    chatProjectMap: Map<string, string>;
+    createdAtMap: Map<string, string>;
+  }): void {
+    this.instances = snapshot.instances;
+    this.chatProjectMap = snapshot.chatProjectMap;
+    this.createdAtMap = snapshot.createdAtMap;
+  }
 
   /**
    * Get the default project config.
@@ -420,4 +703,59 @@ export class ProjectManager {
     this.chatProjectMap = new Map(state.chatProjectMap);
     this.createdAtMap = new Map(state.createdAtMap);
   }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Schema Validation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Validate the schema of a persisted data object.
+ *
+ * @returns Error message if invalid, or `undefined` if valid
+ */
+function validatePersistData(data: unknown): string | undefined {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return 'projects.json 格式错误: 期望一个对象';
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  // Check instances
+  if (typeof obj.instances !== 'object' || obj.instances === null || Array.isArray(obj.instances)) {
+    return 'projects.json 格式错误: instances 应为对象';
+  }
+
+  // Check chatProjectMap
+  if (typeof obj.chatProjectMap !== 'object' || obj.chatProjectMap === null || Array.isArray(obj.chatProjectMap)) {
+    return 'projects.json 格式错误: chatProjectMap 应为对象';
+  }
+
+  // Validate each instance entry
+  const instances = obj.instances as Record<string, unknown>;
+  for (const [name, instance] of Object.entries(instances)) {
+    if (typeof instance !== 'object' || instance === null || Array.isArray(instance)) {
+      return `projects.json 格式错误: instances["${name}"] 应为对象`;
+    }
+
+    const inst = instance as Record<string, unknown>;
+
+    if (typeof inst.workingDir !== 'string' || inst.workingDir.length === 0) {
+      return `projects.json 格式错误: instances["${name}"].workingDir 应为非空字符串`;
+    }
+
+    if (typeof inst.createdAt !== 'string' || inst.createdAt.length === 0) {
+      return `projects.json 格式错误: instances["${name}"].createdAt 应为非空字符串`;
+    }
+  }
+
+  // Validate each chatProjectMap entry
+  const chatMap = obj.chatProjectMap as Record<string, unknown>;
+  for (const [chatId, instanceName] of Object.entries(chatMap)) {
+    if (typeof instanceName !== 'string') {
+      return `projects.json 格式错误: chatProjectMap["${chatId}"] 应为字符串`;
+    }
+  }
+
+  return undefined;
 }
