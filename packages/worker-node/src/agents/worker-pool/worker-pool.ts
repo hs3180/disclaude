@@ -31,7 +31,7 @@ import type {
   ExecuteOptions,
   BatchResult,
 } from './types.js';
-import type { PilotCallbacks } from '../pilot/index.js';
+import type { PilotCallbacks } from '../chat-agent/index.js';
 
 const logger = createLogger('WorkerPool');
 

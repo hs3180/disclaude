@@ -35,8 +35,8 @@
  * @module agents/factory
  */
 
-import { Config, type ChatAgent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
-import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
+import { Config, type ChatAgent as ChatAgentType, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { ChatAgent, type PilotConfig, type PilotCallbacks } from './chat-agent/index.js';
 
 // ============================================================================
 // Issue #1412: Helper function for converting SchedulerCallbacks to PilotCallbacks
@@ -158,7 +158,7 @@ export class AgentFactory {
    * });
    * ```
    */
-  static createChatAgent(name: string, ...args: unknown[]): ChatAgent {
+  static createChatAgent(name: string, ...args: unknown[]): ChatAgentType {
     if (name === 'pilot') {
       // Issue #644: Support both new (chatId, callbacks, options) and legacy (callbacks, options) patterns
       let chatId: string;
@@ -188,7 +188,7 @@ export class AgentFactory {
         messageBuilderOptions: options.messageBuilderOptions,
       };
 
-      return new Pilot(config);
+      return new ChatAgent(config);
     }
     throw new Error(`Unknown ChatAgent: ${name}`);
   }
@@ -223,7 +223,7 @@ export class AgentFactory {
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
+  ): ChatAgentType {
     const baseConfig = this.getBaseConfig(options);
     const config: PilotConfig = {
       ...baseConfig,
@@ -232,7 +232,7 @@ export class AgentFactory {
       messageBuilderOptions: options.messageBuilderOptions,
     };
 
-    return new Pilot(config);
+    return new ChatAgent(config);
   }
 
   /**
@@ -261,7 +261,7 @@ export class AgentFactory {
     chatId: string,
     callbacks: PilotCallbacks,
     options: AgentCreateOptions = {}
-  ): ChatAgent {
+  ): ChatAgentType {
     const baseConfig = this.getBaseConfig(options);
     const config: PilotConfig = {
       ...baseConfig,
@@ -270,6 +270,6 @@ export class AgentFactory {
       messageBuilderOptions: options.messageBuilderOptions,
     };
 
-    return new Pilot(config);
+    return new ChatAgent(config);
   }
 }

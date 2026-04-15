@@ -6,7 +6,7 @@
  * - Task agents
  *
  * Issue #1501: Simplified - 'skill' type removed (skills now handled via
- * Pilot.executeOnce() or .md-defined subagents in .claude/agents/).
+ * Pilot.executeOnce() or .md-defined subagents in .claude/agents/).  Note: Pilot was renamed to ChatAgent (Issue #2345).
  *
  * Features:
  * - Unified spawn API with consistent options
@@ -43,7 +43,7 @@
 import { randomUUID } from 'crypto';
 import { createLogger, type ChatAgent } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
-import type { PilotCallbacks } from './pilot/index.js';
+import type { PilotCallbacks } from './chat-agent/index.js';
 
 const logger = createLogger('SubagentManager');
 

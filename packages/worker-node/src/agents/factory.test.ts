@@ -18,8 +18,8 @@ const { mockGetAgentConfig } = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('./pilot/index.js', () => ({
-  Pilot: mockPilot,
+vi.mock('./chat-agent/index.js', () => ({
+  ChatAgent: mockPilot,
 }));
 
 vi.mock('@disclaude/core', () => ({

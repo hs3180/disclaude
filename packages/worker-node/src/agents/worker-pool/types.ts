@@ -13,7 +13,7 @@
  * @module agents/worker-pool/types
  */
 
-import type { PilotCallbacks } from '../pilot/index.js';
+import type { PilotCallbacks } from '../chat-agent/index.js';
 import {
   type BaseTaskOptions,
   type TaskStatus,

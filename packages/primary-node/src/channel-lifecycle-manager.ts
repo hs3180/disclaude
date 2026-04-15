@@ -25,8 +25,9 @@ import type {
   MessageHandler,
   ControlHandler,
   FeishuApiHandlers,
+  ChatAgent as ChatAgentType,
 } from '@disclaude/core';
-import type { PilotCallbacks, ChatAgent } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
 import { ChannelManager } from './channel-manager.js';
 
@@ -61,7 +62,7 @@ export interface IPrimaryNodeForSetup {
 export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
-    getOrCreateChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgentType;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
@@ -86,10 +87,10 @@ export interface WiredContext extends ChannelSetupContext {
   /** The channel instance */
   channel: IChannel;
   /**
-   * Callback factory for creating PilotCallbacks.
+   * Callback factory for creating ChatAgentCallbacks.
    * Called per-message to match current agent pool usage pattern.
    */
-  callbacks: (chatId: string) => PilotCallbacks;
+  callbacks: (chatId: string) => ChatAgentCallbacks;
 }
 
 /**
@@ -97,23 +98,23 @@ export interface WiredContext extends ChannelSetupContext {
  *
  * In addition to the core descriptor fields (type, name, factory, capabilities),
  * this includes hooks for:
- * - Creating PilotCallbacks (wraps channel.sendMessage into agent interface)
+ * - Creating ChatAgentCallbacks (wraps channel.sendMessage into agent interface)
  * - Creating message handlers (processes incoming messages through agentPool)
  * - Post-registration setup (passive mode, IPC handlers, etc.)
  */
 export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelConfig>
   extends ChannelDescriptor<TConfig> {
   /**
-   * Create a PilotCallbacks factory for this channel.
+   * Create a ChatAgentCallbacks factory for this channel.
    *
-   * The returned function takes a chatId and returns PilotCallbacks.
+   * The returned function takes a chatId and returns ChatAgentCallbacks.
    * This pattern allows callbacks to capture channel-specific behavior
    * while being created per-message for agent pool compatibility.
    */
   createCallbacks: (
     channel: IChannel,
     context: ChannelSetupContext
-  ) => (chatId: string) => PilotCallbacks;
+  ) => (chatId: string) => ChatAgentCallbacks;
 
   /**
    * Create a message handler for incoming messages.

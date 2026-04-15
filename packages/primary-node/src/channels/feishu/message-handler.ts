@@ -1083,7 +1083,7 @@ export class MessageHandler {
     // Emit card action as a message to the agent
     // Issue #2007: This is the fallback path when routeCardAction returns false
     // (no remote Worker Node registered). The message goes through the same
-    // pipeline as text messages via createDefaultMessageHandler → Pilot.processMessage.
+    // pipeline as text messages via createDefaultMessageHandler → ChatAgent.processMessage.
     try {
       logger.debug(
         { messageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },

@@ -462,7 +462,7 @@ export class PrimaryNode extends EventEmitter {
     };
 
     // Issue #1382: Use unified createScheduleExecutor
-    // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to PilotCallbacks
+    // Issue #1412: Use toPilotCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
     // Issue #1446: ChatAgent naturally satisfies ScheduleAgent (no type assertion needed)
     // Issue #1338: Pass model override for per-task model selection
     const executor = createScheduleExecutor({

@@ -29,13 +29,15 @@ export { WorkerNode, type WorkerNodeOptions } from './worker-node.js';
 export type {
   WorkerNodeDependencies,
   AgentPoolInterface,
+  ChatAgentCallbacks,
   PilotCallbacks,
-  ChatAgent,
   ChatAgentFactory,
   SchedulerInterface,
   ScheduleFileWatcherInterface,
   ScheduleManagerInterface,
 } from './types.js';
+
+// Note: ChatAgent type is available from the class export below or from @disclaude/core
 
 // WebSocket message types (re-exported from @disclaude/core)
 export type {
@@ -83,11 +85,12 @@ export {
 
 export type { AgentMessage } from '@disclaude/core';
 
-// Agents module (Issue #1041 - AgentFactory and Pilot)
+// Agents module (Issue #1041 - AgentFactory and ChatAgent)
 export { AgentFactory, type AgentCreateOptions, toPilotCallbacks } from './agents/factory.js';
-export { Pilot, type PilotConfig } from './agents/pilot/index.js';
-// Note: PilotCallbacks is already exported from ./types.js above
+export { ChatAgent, Pilot, type PilotConfig, type ChatAgentConfig } from './agents/chat-agent/index.js';
+// Note: PilotCallbacks/ChatAgentCallbacks is already exported from ./types.js above
 // PilotConfig now includes optional messageBuilderOptions (Issue #1499)
+// Issue #2345: Pilot is a backward-compatible alias for ChatAgent
 
 // Conversation module (Issue #1041 - now re-exported from core)
 export {
@@ -124,10 +127,12 @@ export type {
   AgentUserInput as UserInput,
   AgentProvider,
   BaseAgentConfig,
-  ChatAgentConfig,
   AgentConfig,
   AgentFactoryInterface,
 } from '@disclaude/core';
+
+// ChatAgentConfig is exported from ./agents/chat-agent/index.js (full version with chatId, callbacks, etc.)
+// Note: @disclaude/core also exports a simpler ChatAgentConfig — use the one from this package for agent creation.
 
 export {
   isChatAgent,

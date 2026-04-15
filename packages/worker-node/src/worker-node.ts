@@ -37,7 +37,7 @@ import type {
   WorkerNodeDependencies,
   ChatAgent,
   AgentPoolInterface,
-  PilotCallbacks,
+  ChatAgentCallbacks,
   PromptMessage,
   CommandMessage,
   FeedbackMessage,
@@ -62,14 +62,14 @@ interface FeedbackContext {
  */
 class WorkerAgentPool implements AgentPoolInterface {
   private readonly agents = new Map<string, ChatAgent>();
-  private readonly createChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+  private readonly createChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
   private readonly log = logger;
 
-  constructor(createChatAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent) {
+  constructor(createChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent) {
     this.createChatAgent = createChatAgent;
   }
 
-  getOrCreateChatAgent(chatId: string, callbacks?: PilotCallbacks): ChatAgent {
+  getOrCreateChatAgent(chatId: string, callbacks?: ChatAgentCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
       if (!callbacks) {
@@ -224,12 +224,12 @@ export class WorkerNode {
     console.log('Initializing execution capability...');
 
     // Issue #644: Create AgentPool with factory function
-    this.agentPool = new WorkerAgentPool((_chatId: string, callbacks: PilotCallbacks) => {
+    this.agentPool = new WorkerAgentPool((_chatId: string, callbacks: ChatAgentCallbacks) => {
       return this.deps.createChatAgent(_chatId, callbacks);
     });
 
     // Create a shared callbacks object that will be used for all agents
-    const createCallbacks = (_chatId: string): PilotCallbacks => ({
+    const createCallbacks = (_chatId: string): ChatAgentCallbacks => ({
       sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
         const ctx = this.activeFeedbackChannels.get(chatId_);
         if (ctx) {
@@ -475,7 +475,7 @@ export class WorkerNode {
           try {
             // Issue #644: Get ChatAgent for this chatId from AgentPool
             // Create callbacks for this specific chatId
-            const callbacks: PilotCallbacks = {
+            const callbacks: ChatAgentCallbacks = {
               sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
                 const ctx = this.activeFeedbackChannels.get(chatId_);
                 if (ctx) {
@@ -571,7 +571,7 @@ export class WorkerNode {
 
             // Get the agent and process the card action as a message
             // Create callbacks for this specific chatId
-            const callbacks: PilotCallbacks = {
+            const callbacks: ChatAgentCallbacks = {
               sendMessage: (chatId_: string, text: string, threadMessageId?: string): Promise<void> => {
                 const ctx = this.activeFeedbackChannels.get(chatId_);
                 if (ctx) {

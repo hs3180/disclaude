@@ -5,7 +5,7 @@
  * channel handler creation reusable across all channel types.
  *
  * These utilities encapsulate the common patterns for:
- * - Creating PilotCallbacks from any IChannel instance
+ * - Creating ChatAgentCallbacks from any IChannel instance
  * - Processing incoming messages through the agent pool
  *
  * New channels (WeChat, etc.) should use these utilities instead of
@@ -21,7 +21,7 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
 } from '@disclaude/core';
-import type { PilotCallbacks } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
 
@@ -67,15 +67,15 @@ export interface MessageHandlerOptions {
 // ============================================================================
 
 /**
- * Create a PilotCallbacks factory for a channel.
+ * Create a ChatAgentCallbacks factory for a channel.
  *
- * Wraps channel.sendMessage() into the PilotCallbacks interface.
+ * Wraps channel.sendMessage() into the ChatAgentCallbacks interface.
  * The returned factory captures the channel via closure.
  *
  * @param channel - The channel instance to send messages through
  * @param logger - Logger instance for warnings
  * @param options - Options for channel-specific behavior
- * @returns A factory function that takes a chatId and returns PilotCallbacks
+ * @returns A factory function that takes a chatId and returns ChatAgentCallbacks
  *
  * @example
  * ```typescript
@@ -90,8 +90,8 @@ export function createChannelCallbacksFactory(
   channel: IChannel,
   logger: Logger,
   options?: ChannelCallbacksOptions
-): (chatId: string) => PilotCallbacks {
-  return (_chatId: string): PilotCallbacks => ({
+): (chatId: string) => ChatAgentCallbacks {
+  return (_chatId: string): ChatAgentCallbacks => ({
     sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
       await channel.sendMessage({
         chatId,
@@ -227,7 +227,7 @@ export interface ChannelApiHandlersOptions {
  * This unifies the IPC handler creation with the same `channel.sendMessage()`
  * delegation pattern used by `createChannelCallbacksFactory`.
  *
- * @see createChannelCallbacksFactory — for PilotCallbacks (worker-to-channel),
+ * @see createChannelCallbacksFactory — for ChatAgentCallbacks (worker-to-channel),
  *      this function creates ChannelApiHandlers (MCP server-to-channel).
  *
  * @param channel - The channel instance to send messages through
