@@ -71,6 +71,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Insert an image at a specific position in a Feishu Docx document (Issue #2278) */
+  insertDocxImage?: (documentId: string, imagePath: string, index: number) => Promise<{ blockId: string; fileToken: string }>;
 }
 
 /**
@@ -299,6 +301,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Feishu Docx inline image insertion (Issue #2278)
+        case 'insertDocxImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.insertDocxImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'insertDocxImage not supported by this channel',
+            };
+          }
+          const { documentId, imagePath, index } =
+            request.payload as IpcRequestPayloads['insertDocxImage'];
+          try {
+            const result = await handlers.insertDocxImage(documentId, imagePath, index);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

@@ -646,8 +646,121 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'insert_docx_image',
       ],
     };
+  }
+
+  /**
+   * Insert an image at a specific position in a Feishu Docx document.
+   *
+   * Implements the 3-step API flow for inline image insertion (Issue #2278):
+   * 1. Create an empty image block (block_type: 27) at the specified index
+   * 2. Upload the image file via Drive Media Upload API (parent_type: docx_image)
+   * 3. Bind the uploaded file to the image block via replace_image
+   *
+   * @param documentId - The Feishu document ID
+   * @param imagePath - Local file path of the image to insert
+   * @param index - Zero-based position in the document's block list
+   * @returns The block ID and file token of the inserted image
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number
+  ): Promise<{ blockId: string; fileToken: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(imagePath);
+    const ext = path.extname(imagePath).toLowerCase();
+    const supportedFormats = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+    if (!supportedFormats.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${supportedFormats.join(', ')}`);
+    }
+
+    const stats = fs.statSync(imagePath);
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${imagePath}`);
+    }
+    if (stats.size > 20 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${stats.size} bytes (max 20MB for docx_image)`);
+    }
+
+    logger.info({ documentId, imagePath, index, fileName, fileSize: stats.size }, 'Starting docx image insertion (3-step)');
+
+    // Step 1: Create empty image block at the specified index
+    // block_type 27 = image block in Feishu Docx
+    // The image block accepts: align?, caption?, scale?
+    const createResp = await this.client.docx.documentBlockChildren.create({
+      path: {
+        document_id: documentId,
+        block_id: documentId, // parent block is the document root
+      },
+      data: {
+        children: [
+          {
+            block_type: 27,
+            image: {},
+          },
+        ],
+        index,
+      },
+    });
+
+    const imageBlockId = createResp?.data?.children?.[0]?.block_id;
+    if (!imageBlockId) {
+      throw new Error('Failed to create image block: no block_id returned from API');
+    }
+    logger.info({ documentId, imageBlockId, index }, 'Step 1/3: Created empty image block');
+
+    // Step 2: Upload image file via Drive Media Upload API
+    // The uploadAll method requires: file_name, parent_type, parent_node, size, file
+    // Returns { file_token } | null directly (not wrapped in .data)
+    const uploadResp = await this.client.drive.media.uploadAll({
+      data: {
+        parent_type: 'docx_image',
+        parent_node: documentId,
+        file_name: fileName,
+        size: stats.size,
+        file: fs.createReadStream(imagePath),
+      },
+    });
+
+    const fileToken = uploadResp?.file_token;
+    if (!fileToken) {
+      // Attempt cleanup: delete the empty image block
+      // batchDelete uses start_index/end_index, not block_ids
+      try {
+        await this.client.docx.documentBlockChildren.batchDelete({
+          path: { document_id: documentId, block_id: documentId },
+          data: { start_index: index, end_index: index + 1 },
+        });
+        logger.info({ documentId, imageBlockId }, 'Cleaned up empty image block after upload failure');
+      } catch (cleanupErr) {
+        logger.warn({ err: cleanupErr, imageBlockId }, 'Failed to clean up empty image block');
+      }
+      throw new Error('Failed to upload image: no file_token returned from Drive Media Upload API');
+    }
+    logger.info({ documentId, fileToken }, 'Step 2/3: Uploaded image file via Drive API');
+
+    // Step 3: Bind uploaded file to image block via replace_image
+    // replace_image accepts: token, width?, height?, align?, caption?, scale?
+    await this.client.docx.documentBlock.patch({
+      path: {
+        document_id: documentId,
+        block_id: imageBlockId,
+      },
+      data: {
+        replace_image: {
+          token: fileToken,
+        },
+      },
+    });
+    logger.info({ documentId, imageBlockId, fileToken }, 'Step 3/3: Bound image file to block');
+
+    return { blockId: imageBlockId, fileToken };
   }
 
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)

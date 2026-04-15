@@ -252,6 +252,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2278: Insert image at specific position in Feishu Docx document
+      insertDocxImage: async (documentId: string, imagePath: string, index: number) => {
+        return await feishuChannel.insertDocxImage(documentId, imagePath, index);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

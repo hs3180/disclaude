@@ -35,6 +35,10 @@ export { send_file } from './send-file.js';
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
 
+// Insert Docx Image (Issue #2278)
+export { insert_docx_image } from './insert-docx-image.js';
+export type { InsertDocxImageResult } from './insert-docx-image.js';
+
 // Interactive Message
 export {
   send_interactive_message,

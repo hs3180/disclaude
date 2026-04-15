@@ -588,6 +588,40 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Feishu Docx operations (Issue #2278)
+  // ============================================================================
+
+  /**
+   * Insert an image at a specific position in a Feishu Docx document via IPC.
+   * Issue #2278: Inline image insertion support.
+   *
+   * @param documentId - The Feishu document ID
+   * @param imagePath - Local file path of the image to insert
+   * @param index - Zero-based position in the document's block list
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number
+  ): Promise<{ success: boolean; blockId?: string; fileToken?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('insertDocxImage', { documentId, imagePath, index });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, documentId, imagePath, index }, 'insertDocxImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

@@ -14,6 +14,7 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   register_temp_chat: vi.fn(),
+  insert_docx_image: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
@@ -21,6 +22,11 @@ vi.mock('./utils/card-validator.js', () => ({
   isValidFeishuCard: vi.fn().mockReturnValue(true),
   getCardValidationError: vi.fn().mockReturnValue('invalid card structure'),
   detectMarkdownTableWarnings: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('./utils/chat-id-validator.js', () => ({
+  getChatIdValidationError: vi.fn().mockReturnValue(undefined),
+>>>>>>> 54d2095
 }));
 
 // No need to mock @anthropic-ai/claude-agent-sdk:
