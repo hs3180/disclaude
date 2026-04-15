@@ -27,7 +27,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts', 'packages/**/*.test.ts', 'skills/**/*.test.ts', 'tests/**/*.test.ts'],
     exclude: [
-      'node_modules/',
+      '**/node_modules/**',
       'dist/',
       '**/workspace/**',
     ],
@@ -53,7 +53,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       exclude: [
-        'node_modules/',
+        '**/node_modules/**',
         'dist/',
         '**/*.test.ts',
         '**/*.spec.ts',
