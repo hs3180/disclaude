@@ -397,6 +397,51 @@ format_request_error() {
     fi
 }
 
+# Validate chatId format against known patterns.
+# Mirrors packages/mcp-server/src/utils/chat-id-validator.ts CHAT_ID_PATTERNS
+# to catch invalid chatIds BEFORE making HTTP requests (Issue #2300).
+#
+# Returns: 0 if valid or empty, 1 if invalid
+validate_chat_id_format() {
+    local chat_id="$1"
+
+    # Empty chatId is OK — the server generates a default one
+    if [ -z "$chat_id" ]; then
+        return 0
+    fi
+
+    local len=${#chat_id}
+
+    # oc_* — Feishu group chat (min 35 chars)
+    if [[ "$chat_id" == oc_* ]] && [ "$len" -ge 35 ]; then
+        return 0
+    fi
+
+    # ou_* — Feishu user / p2p chat (min 35 chars)
+    if [[ "$chat_id" == ou_* ]] && [ "$len" -ge 35 ]; then
+        return 0
+    fi
+
+    # cli-* — CLI session (min 5 chars)
+    if [[ "$chat_id" == cli-* ]] && [ "$len" -ge 5 ]; then
+        return 0
+    fi
+
+    # test-* — Integration test session (min 10 chars)
+    if [[ "$chat_id" == test-* ]] && [ "$len" -ge 10 ]; then
+        return 0
+    fi
+
+    # Reject with a clear, actionable message
+    log_error "Invalid chatId format: \"$chat_id\""
+    log_error "Expected one of the following formats:"
+    log_error "  - oc_... (Feishu group chat, min 35 chars)"
+    log_error "  - ou_... (Feishu user/p2p, min 35 chars)"
+    log_error "  - cli-... (CLI session, min 5 chars)"
+    log_error "  - test-... (Integration test, min 10 chars)"
+    return 1
+}
+
 # Make synchronous chat request (waits for agent response)
 # Usage: result=$(make_sync_request "message" "chatId")
 # Returns: "status_code|response_body"
@@ -404,6 +449,11 @@ make_sync_request() {
     local message="$1"
     local chatId="${2:-}"
     local body
+
+    # Pre-flight chatId validation (Issue #2300 regression guard)
+    if ! validate_chat_id_format "$chatId"; then
+        return 1
+    fi
 
     if [ -n "$chatId" ]; then
         body=$(jq -n --arg msg "$message" --arg cid "$chatId" '{message: $msg, chatId: $cid}')
