@@ -7,7 +7,7 @@
  * @see Issue #2225 (Sub-Issue C — Persistence)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,33 @@ import type {
   ProjectManagerOptions,
   ProjectsPersistData,
 } from './types.js';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Temp dirs for filesystem operations
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+let tempFsBaseDir: string;
+let tempWorkspaceDir: string;
+let tempPackageDir: string;
+
+beforeAll(() => {
+  tempFsBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-persist-fs-'));
+  tempWorkspaceDir = path.join(tempFsBaseDir, 'workspace');
+  tempPackageDir = path.join(tempFsBaseDir, 'package');
+
+  // Create template directories with CLAUDE.md files
+  const researchDir = path.join(tempPackageDir, 'templates', 'research');
+  fs.mkdirSync(researchDir, { recursive: true });
+  fs.writeFileSync(path.join(researchDir, 'CLAUDE.md'), '# Research\n', 'utf-8');
+
+  const bookDir = path.join(tempPackageDir, 'templates', 'book-reader');
+  fs.mkdirSync(bookDir, { recursive: true });
+  fs.writeFileSync(path.join(bookDir, 'CLAUDE.md'), '# Book Reader\n', 'utf-8');
+});
+
+afterAll(() => {
+  try { fs.rmSync(tempFsBaseDir, { recursive: true, force: true }); } catch {}
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Helpers
@@ -29,8 +56,8 @@ function createTempDir(): string {
 /** Standard test options with persistence enabled */
 function createPersistOptions(persistDir: string): ProjectManagerOptions {
   return {
-    workspaceDir: '/workspace',
-    packageDir: '/app/packages/core',
+    workspaceDir: tempWorkspaceDir,
+    packageDir: tempPackageDir,
     templatesConfig: {
       research: {
         displayName: '研究模式',
@@ -159,7 +186,7 @@ describe('persist()', () => {
         'my-research': {
           name: 'my-research',
           templateName: 'research',
-          workingDir: '/workspace/projects/my-research',
+          workingDir: path.join(tempWorkspaceDir, 'projects/my-research'),
           createdAt: expect.any(String),
         },
       },
@@ -183,9 +210,15 @@ describe('persist()', () => {
 
 describe('persist() without persistDir', () => {
   it('should be a no-op when persistDir is not configured', () => {
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-no-persist-'));
+    const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-no-persist-pkg-'));
+    const tmplDir = path.join(pkgDir, 'templates', 'research');
+    fs.mkdirSync(tmplDir, { recursive: true });
+    fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), '# Research\n', 'utf-8');
+
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: pkgDir,
       templatesConfig: { research: { displayName: '研究' } },
     });
 
@@ -194,6 +227,9 @@ describe('persist() without persistDir', () => {
     // No error, no file created
     expect(pm.getPersistPath()).toBeUndefined();
     expect(pm.persist()).toBeNull();
+
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
   });
 });
 
@@ -310,7 +346,7 @@ describe('loadPersistedData()', () => {
         'my-research': {
           name: 'my-research',
           templateName: 'research',
-          workingDir: '/workspace/projects/my-research',
+          workingDir: path.join(tempWorkspaceDir, 'projects/my-research'),
           createdAt: 'not-a-date',
         },
       },
@@ -374,7 +410,7 @@ describe('loadPersistedData()', () => {
         'my-research': {
           name: 'my-research',
           templateName: 'research',
-          workingDir: '/workspace/projects/my-research',
+          workingDir: path.join(tempWorkspaceDir, 'projects/my-research'),
           createdAt: new Date().toISOString(),
         },
       },
@@ -474,9 +510,15 @@ describe('delete()', () => {
 
 describe('toPersistData()', () => {
   it('should return empty data for fresh manager', () => {
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-td-'));
+    const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-td-pkg-'));
+    const tmplDir = path.join(pkgDir, 'templates', 'research');
+    fs.mkdirSync(tmplDir, { recursive: true });
+    fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), '# Research\n', 'utf-8');
+
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: pkgDir,
       templatesConfig: { research: { displayName: '研究' } },
     });
 
@@ -485,12 +527,24 @@ describe('toPersistData()', () => {
       instances: {},
       chatProjectMap: {},
     });
+
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
   });
 
   it('should reflect current in-memory state', () => {
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-td2-'));
+    const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-td2-pkg-'));
+
+    for (const name of ['research', 'book-reader']) {
+      const tmplDir = path.join(pkgDir, 'templates', name);
+      fs.mkdirSync(tmplDir, { recursive: true });
+      fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), `# ${name}\n`, 'utf-8');
+    }
+
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: pkgDir,
       templatesConfig: {
         research: { displayName: '研究' },
         'book-reader': { displayName: '读书' },
@@ -505,13 +559,16 @@ describe('toPersistData()', () => {
     expect(data.instances['my-research']).toEqual({
       name: 'my-research',
       templateName: 'research',
-      workingDir: '/workspace/projects/my-research',
+      workingDir: path.join(wsDir, 'projects/my-research'),
       createdAt: expect.any(String),
     });
     expect(data.chatProjectMap).toEqual({
       chat1: 'my-research',
       chat2: 'my-research',
     });
+
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
   });
 });
 
@@ -521,22 +578,26 @@ describe('toPersistData()', () => {
 
 describe('getPersistPath()', () => {
   it('should return undefined when persistDir is not set', () => {
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-gpp-'));
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: '',
       templatesConfig: {},
     });
     expect(pm.getPersistPath()).toBeUndefined();
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
   });
 
   it('should return correct path when persistDir is set', () => {
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-gpp2-'));
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: '',
       templatesConfig: {},
-      persistDir: '/workspace/.disclaude',
+      persistDir: path.join(wsDir, '.disclaude'),
     });
-    expect(pm.getPersistPath()).toBe('/workspace/.disclaude/projects.json');
+    expect(pm.getPersistPath()).toBe(path.join(wsDir, '.disclaude/projects.json'));
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
   });
 });
 
@@ -551,9 +612,15 @@ describe('rollback on persist failure', () => {
     fs.mkdirSync(readOnlyDir, { recursive: true });
     fs.chmodSync(readOnlyDir, 0o444);
 
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-rollback-'));
+    const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-rollback-pkg-'));
+    const tmplDir = path.join(pkgDir, 'templates', 'research');
+    fs.mkdirSync(tmplDir, { recursive: true });
+    fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), '# Research\n', 'utf-8');
+
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: pkgDir,
       templatesConfig: { research: { displayName: '研究' } },
       persistDir: readOnlyDir,
     });
@@ -569,15 +636,23 @@ describe('rollback on persist failure', () => {
     }
 
     try { fs.chmodSync(readOnlyDir, 0o755); fs.rmSync(readOnlyDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
   });
 
   it('should rollback use() when persist fails', () => {
     const readOnlyDir = createTempDir();
     fs.mkdirSync(readOnlyDir, { recursive: true });
 
+    const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-rollback2-'));
+    const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-rollback2-pkg-'));
+    const tmplDir = path.join(pkgDir, 'templates', 'research');
+    fs.mkdirSync(tmplDir, { recursive: true });
+    fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), '# Research\n', 'utf-8');
+
     const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
+      workspaceDir: wsDir,
+      packageDir: pkgDir,
       templatesConfig: { research: { displayName: '研究' } },
       persistDir: readOnlyDir,
     });
@@ -598,6 +673,8 @@ describe('rollback on persist failure', () => {
     }
 
     try { fs.chmodSync(readOnlyDir, 0o755); fs.rmSync(readOnlyDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(wsDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
   });
 });
 

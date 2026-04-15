@@ -1,24 +1,28 @@
 /**
- * ProjectManager core logic — in-memory operations with optional persistence.
+ * ProjectManager core logic — in-memory operations with optional persistence
+ * and filesystem instantiation.
  *
  * Manages project template loading, instance creation, and chatId binding
  * in memory. When `persistDir` is provided in options, mutations are
  * atomically persisted to `{persistDir}/projects.json` using write-then-rename.
- * Sub-Issue D adds filesystem operations (directory creation, CLAUDE.md copy).
+ * Sub-Issue D adds filesystem operations (directory creation, CLAUDE.md copy)
+ * integrated into the `create()` method.
  *
  * Key design decisions:
  * - `ProjectResult<T>` unified return type — validation failures return
  *   `{ ok: false, error }` instead of throwing
  * - Stale binding self-healing — if a chatId is bound to a deleted instance,
  *   the binding is silently removed
- * - Path traversal protection on all name inputs
+ * - Path traversal protection on all name inputs AND working directory paths
  * - "default" is a reserved name (implicit built-in project)
  * - Atomic persistence via writeFileSync + renameSync (no partial writes)
  * - Schema validation on load (corrupt files produce clear errors)
+ * - Filesystem rollback: if CLAUDE.md copy fails, created directory is removed
  *
  * @see docs/proposals/unified-project-context.md §4 API Design
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — Persistence)
+ * @see Issue #2226 (Sub-Issue D — Filesystem operations)
  */
 
 import fs from 'node:fs';
@@ -182,8 +186,13 @@ export class ProjectManager {
   /**
    * Create a new project instance from a template and bind it to a chatId.
    *
-   * Pure in-memory operation — does not create directories or copy files.
-   * Sub-Issue D adds filesystem operations on top of this.
+   * Performs both in-memory registration and filesystem instantiation:
+   * 1. Validates inputs
+   * 2. Creates instance in memory
+   * 3. Instantiates on filesystem (creates directory + copies CLAUDE.md)
+   * 4. Persists state to disk (if persistDir configured)
+   *
+   * On failure at any step, previous steps are rolled back.
    *
    * @param chatId - The chat session to bind
    * @param templateName - The template to instantiate from
@@ -229,10 +238,19 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
 
+    // Filesystem instantiation (Sub-Issue D)
+    const fsResult = this.instantiateFromTemplate(name, templateName);
+    if (!fsResult.ok) {
+      // Rollback: remove in-memory state
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return { ok: false, error: fsResult.error };
+    }
+
     // Auto-persist after successful mutation
     const persistError = this.tryPersist();
     if (persistError) {
-      // Rollback: remove instance and binding
+      // Rollback: remove in-memory state (filesystem dir left for later cleanup)
       this.instances.delete(name);
       this.chatProjectMap.delete(chatId);
       return { ok: false, error: `持久化失败: ${persistError}` };
@@ -445,6 +463,93 @@ export class ProjectManager {
     return { ok: true, data: undefined };
   }
 
+  // ── Filesystem Operations (Sub-Issue D) ──
+
+  /**
+   * Instantiate a project template on the filesystem.
+   *
+   * Creates the working directory at `{workspaceDir}/projects/{name}/`
+   * and copies CLAUDE.md from the template directory.
+   *
+   * Security:
+   * - Path traversal protection: verifies resolved path is within workspaceDir
+   * - Uses resolved (absolute) paths for comparison to prevent symlink attacks
+   *
+   * Rollback:
+   * - If CLAUDE.md copy fails, the created directory is removed
+   *
+   * @param name - Instance name (used as directory name)
+   * @param templateName - Source template name (for CLAUDE.md lookup)
+   * @returns ProjectResult indicating success or failure
+   */
+  instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
+    const workingDir = path.join(this.workspaceDir, 'projects', name);
+
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const pathError = this.validateWorkingDirPath(workingDir);
+    if (pathError) {
+      return { ok: false, error: pathError };
+    }
+
+    try {
+      // Create working directory (idempotent with recursive: true)
+      fs.mkdirSync(workingDir, { recursive: true });
+
+      // Copy CLAUDE.md from template
+      const copyResult = this.copyClaudeMd(templateName, workingDir);
+      if (!copyResult.ok) {
+        // Rollback: remove created directory
+        try {
+          fs.rmSync(workingDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup failure — orphaned dir can be cleaned up later
+        }
+        return copyResult;
+      }
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `创建工作目录失败: ${message}` };
+    }
+  }
+
+  /**
+   * Copy CLAUDE.md from a template to the target instance directory.
+   *
+   * Behavior:
+   * - If packageDir is not configured (empty string), skip silently (success)
+   *   This allows instances to be created without CLAUDE.md
+   * - If template CLAUDE.md exists, copy it to `{targetDir}/CLAUDE.md`
+   * - If template CLAUDE.md doesn't exist, return error
+   *
+   * @param templateName - The template name to copy CLAUDE.md from
+   * @param targetDir - The target directory to copy CLAUDE.md to
+   * @returns ProjectResult indicating success or failure
+   */
+  copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
+    // Skip if packageDir not configured — instance created without CLAUDE.md
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const srcPath = path.join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    // Template CLAUDE.md must exist when packageDir is configured
+    if (!fs.existsSync(srcPath)) {
+      return { ok: false, error: `模板 CLAUDE.md 不存在: ${srcPath}` };
+    }
+
+    try {
+      const destPath = path.join(targetDir, 'CLAUDE.md');
+      fs.copyFileSync(srcPath, destPath);
+      return { ok: true, data: undefined };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `复制 CLAUDE.md 失败: ${message}` };
+    }
+  }
+
   // ── Persistence ──
 
   /**
@@ -633,6 +738,31 @@ export class ProjectManager {
     if (!chatId || chatId.length === 0) {
       return 'chatId 不能为空';
     }
+    return null;
+  }
+
+  /**
+   * Validate that a working directory path is within workspaceDir.
+   *
+   * Prevents path traversal attacks by verifying that the resolved
+   * working directory is a subdirectory of workspaceDir.
+   * Uses path.resolve() to normalize before comparison.
+   *
+   * @param workingDir - The working directory path to validate
+   * @returns Error message string, or null if valid
+   */
+  private validateWorkingDirPath(workingDir: string): string | null {
+    const resolved = path.resolve(workingDir);
+    const resolvedWorkspace = path.resolve(this.workspaceDir);
+
+    // workingDir must be inside workspaceDir (strictly, not equal)
+    if (
+      resolved !== resolvedWorkspace &&
+      !resolved.startsWith(resolvedWorkspace + path.sep)
+    ) {
+      return '工作目录路径超出 workspaceDir 范围';
+    }
+
     return null;
   }
 

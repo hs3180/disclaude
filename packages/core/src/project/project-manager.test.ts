@@ -1,13 +1,17 @@
 /**
- * Tests for ProjectManager core logic (pure in-memory operations).
+ * Tests for ProjectManager core logic (in-memory + filesystem operations).
  *
- * All tests run without filesystem dependency — ProjectManager operates
- * entirely in memory. No directory creation or file copying occurs.
+ * Tests use real temporary directories for workspaceDir and packageDir
+ * to validate filesystem operations (directory creation, CLAUDE.md copy).
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2226 (Sub-Issue D — Filesystem operations)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ProjectManager } from './project-manager.js';
 import type {
   ProjectManagerOptions,
@@ -18,33 +22,71 @@ import type {
 // Test Helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** Standard test options */
-const defaultOptions: ProjectManagerOptions = {
-  workspaceDir: '/workspace',
-  packageDir: '/app/packages/core',
-  templatesConfig: {
-    research: {
-      displayName: '研究模式',
-      description: '专注研究的独立空间',
-    },
-    'book-reader': {
-      displayName: '读书助手',
-    },
+/** Standard template config for testing */
+const defaultTemplatesConfig: ProjectTemplatesConfig = {
+  research: {
+    displayName: '研究模式',
+    description: '专注研究的独立空间',
+  },
+  'book-reader': {
+    displayName: '读书助手',
   },
 };
+
+/** Module-level temp dirs (shared across tests, cleaned up in afterAll) */
+let tempBaseDir: string;
+let tempWorkspaceDir: string;
+let tempPackageDir: string;
+
+/** Set up temp dirs with template CLAUDE.md files */
+beforeAll(() => {
+  tempBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-core-test-'));
+  tempWorkspaceDir = path.join(tempBaseDir, 'workspace');
+  tempPackageDir = path.join(tempBaseDir, 'package');
+
+  // Create template directories with CLAUDE.md files
+  for (const [name, meta] of Object.entries(defaultTemplatesConfig)) {
+    const templateDir = path.join(tempPackageDir, 'templates', name);
+    fs.mkdirSync(templateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(templateDir, 'CLAUDE.md'),
+      `# ${meta.displayName || name}\nTemplate instructions for ${name}.\n`,
+      'utf-8',
+    );
+  }
+});
+
+/** Clean up temp dirs */
+afterAll(() => {
+  try {
+    fs.rmSync(tempBaseDir, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup failure
+  }
+});
+
+/** Get default test options using real temp dirs */
+function getDefaultOptions(): ProjectManagerOptions {
+  return {
+    workspaceDir: tempWorkspaceDir,
+    packageDir: tempPackageDir,
+    templatesConfig: defaultTemplatesConfig,
+  };
+}
 
 /** Create a ProjectManager with default test options */
 function createManager(
   overrides?: Partial<ProjectManagerOptions>,
   templatesOverride?: ProjectTemplatesConfig | null,
 ): ProjectManager {
+  const defaults = getDefaultOptions();
   const templatesConfig: ProjectTemplatesConfig =
     templatesOverride !== undefined
       ? (templatesOverride ?? {})
-      : (overrides?.templatesConfig ?? defaultOptions.templatesConfig);
+      : (overrides?.templatesConfig ?? defaults.templatesConfig);
   const options: ProjectManagerOptions = {
-    workspaceDir: overrides?.workspaceDir ?? defaultOptions.workspaceDir,
-    packageDir: overrides?.packageDir ?? defaultOptions.packageDir,
+    workspaceDir: overrides?.workspaceDir ?? defaults.workspaceDir,
+    packageDir: overrides?.packageDir ?? defaults.packageDir,
     templatesConfig,
   };
   return new ProjectManager(options);
@@ -75,12 +117,14 @@ describe('ProjectManager constructor', () => {
   });
 
   it('should store workspaceDir and packageDir', () => {
+    const customDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-custom-'));
     const pm = createManager({
-      workspaceDir: '/custom-workspace',
-      packageDir: '/custom-package',
+      workspaceDir: path.join(customDir, 'ws'),
+      packageDir: path.join(customDir, 'pkg'),
     });
-    expect(pm.getWorkspaceDir()).toBe('/custom-workspace');
-    expect(pm.getPackageDir()).toBe('/custom-package');
+    expect(pm.getWorkspaceDir()).toBe(path.join(customDir, 'ws'));
+    expect(pm.getPackageDir()).toBe(path.join(customDir, 'pkg'));
+    try { fs.rmSync(customDir, { recursive: true, force: true }); } catch {}
   });
 });
 
@@ -142,7 +186,7 @@ describe('getActive()', () => {
     const active = pm.getActive('unknown-chat');
 
     expect(active.name).toBe('default');
-    expect(active.workingDir).toBe('/workspace');
+    expect(active.workingDir).toBe(tempWorkspaceDir);
     expect(active.templateName).toBeUndefined();
   });
 
@@ -153,7 +197,7 @@ describe('getActive()', () => {
     const active = pm.getActive('chat1');
     expect(active.name).toBe('my-research');
     expect(active.templateName).toBe('research');
-    expect(active.workingDir).toBe('/workspace/projects/my-research');
+    expect(active.workingDir).toBe(path.join(tempWorkspaceDir, 'projects/my-research'));
   });
 
   it('should self-heal stale binding (instance deleted)', () => {
@@ -166,7 +210,7 @@ describe('getActive()', () => {
     // getActive should self-heal: remove stale binding, return default
     const active = pm.getActive('chat1');
     expect(active.name).toBe('default');
-    expect(active.workingDir).toBe('/workspace');
+    expect(active.workingDir).toBe(tempWorkspaceDir);
   });
 
   it('should only self-heal once (binding removed after first call)', () => {
@@ -230,7 +274,7 @@ describe('create()', () => {
     if (result.ok) {
       expect(result.data.name).toBe('my-research');
       expect(result.data.templateName).toBe('research');
-      expect(result.data.workingDir).toBe('/workspace/projects/my-research');
+      expect(result.data.workingDir).toBe(path.join(tempWorkspaceDir, 'projects/my-research'));
     }
   });
 
@@ -528,7 +572,7 @@ describe('listInstances()', () => {
     expect(r1).toBeDefined();
     expect(r1!.templateName).toBe('research');
     expect(r1!.chatIds).toEqual(['chat1']);
-    expect(r1!.workingDir).toBe('/workspace/projects/r1');
+    expect(r1!.workingDir).toBe(path.join(tempWorkspaceDir, 'projects/r1'));
     expect(r1!.createdAt).toBeTruthy();
   });
 
@@ -594,7 +638,7 @@ describe('createCwdProvider()', () => {
     pm.create('chat1', 'research', 'my-research');
     const cwdProvider = pm.createCwdProvider();
 
-    expect(cwdProvider('chat1')).toBe('/workspace/projects/my-research');
+    expect(cwdProvider('chat1')).toBe(path.join(tempWorkspaceDir, 'projects/my-research'));
   });
 
   it('should return undefined after reset', () => {
@@ -602,7 +646,7 @@ describe('createCwdProvider()', () => {
     pm.create('chat1', 'research', 'my-research');
     const cwdProvider = pm.createCwdProvider();
 
-    expect(cwdProvider('chat1')).toBe('/workspace/projects/my-research');
+    expect(cwdProvider('chat1')).toBe(path.join(tempWorkspaceDir, 'projects/my-research'));
 
     pm.reset('chat1');
     expect(cwdProvider('chat1')).toBeUndefined();
@@ -614,11 +658,11 @@ describe('createCwdProvider()', () => {
     pm.create('chat2', 'book-reader', 'b1');
     const cwdProvider = pm.createCwdProvider();
 
-    expect(cwdProvider('chat1')).toBe('/workspace/projects/r1');
-    expect(cwdProvider('chat2')).toBe('/workspace/projects/b1');
+    expect(cwdProvider('chat1')).toBe(path.join(tempWorkspaceDir, 'projects/r1'));
+    expect(cwdProvider('chat2')).toBe(path.join(tempWorkspaceDir, 'projects/b1'));
 
     pm.use('chat1', 'b1');
-    expect(cwdProvider('chat1')).toBe('/workspace/projects/b1');
+    expect(cwdProvider('chat1')).toBe(path.join(tempWorkspaceDir, 'projects/b1'));
   });
 
   it('should return undefined for self-healed stale binding', () => {
@@ -837,7 +881,7 @@ describe('integration scenarios', () => {
 
     // Create project
     pm.create('chat1', 'research', 'my-research');
-    expect(cwdProvider('chat1')).toBe('/workspace/projects/my-research');
+    expect(cwdProvider('chat1')).toBe(path.join(tempWorkspaceDir, 'projects/my-research'));
 
     // Reset
     pm.reset('chat1');
