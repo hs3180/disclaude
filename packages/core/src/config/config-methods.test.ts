@@ -41,6 +41,10 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
     tools: { mcpServers: { test: { command: 'node' } } },
+    projectTemplates: {
+      research: { displayName: '研究模式', description: '专注研究' },
+      coding: { displayName: '编码模式' },
+    },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -274,5 +278,15 @@ describe('createDefaultRuntimeContext', () => {
   it('should provide working isAgentTeamsEnabled', () => {
     const ctx = createDefaultRuntimeContext();
     expect(ctx.isAgentTeamsEnabled()).toBe(true);
+  });
+});
+
+// Issue #2227: Project templates config integration
+describe('Config.getProjectTemplatesConfig', () => {
+  it('should return project templates from config', () => {
+    const templates = Config.getProjectTemplatesConfig();
+    expect(templates).toBeDefined();
+    expect(templates?.research).toEqual({ displayName: '研究模式', description: '专注研究' });
+    expect(templates?.coding).toEqual({ displayName: '编码模式' });
   });
 });

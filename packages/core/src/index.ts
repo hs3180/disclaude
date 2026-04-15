@@ -291,3 +291,30 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #2227: E — integration)
+export type {
+  CwdProvider,
+  InstanceInfo,
+  PersistedInstance,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+  ProjectsPersistData,
+} from './project/index.js';
+
+export {
+  createCwdProvider,
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './project/index.js';
+
+export type {
+  DiscoveryResult,
+  DiscoveryError,
+  DiscoveryOptions,
+  ActiveProjectResolver,
+} from './project/index.js';

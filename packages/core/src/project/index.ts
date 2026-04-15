@@ -28,3 +28,7 @@ export type {
   DiscoveryError,
   DiscoveryOptions,
 } from './template-discovery.js';
+
+export { createCwdProvider } from './cwd-provider.js';
+
+export type { ActiveProjectResolver } from './cwd-provider.js';

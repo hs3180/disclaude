@@ -495,6 +495,21 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get project templates configuration from disclaude.config.yaml.
+   *
+   * Used by the Project module to know which templates are available.
+   * Templates listed here can be discovered from the package directory
+   * via `discoverTemplates()` or `discoverTemplatesAsConfig()`.
+   *
+   * @see Issue #2227 (Sub-Issue E — integration)
+   * @see Issue #1916 (parent — unified project context)
+   * @returns Project templates configuration, or empty object if not configured
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
 }
 
 // ============================================================================
