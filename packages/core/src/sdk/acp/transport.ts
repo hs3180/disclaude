@@ -181,6 +181,9 @@ export class AcpStdioTransport implements IAcpTransport {
     });
     this.childProcess = childProc;
 
+    // Collect stderr for early-exit diagnostics
+    let stderrBuffer = '';
+
     childProc.stdout.on('data', (data: Buffer) => {
       this.handleStdoutData(data.toString());
     });
@@ -188,12 +191,20 @@ export class AcpStdioTransport implements IAcpTransport {
     childProc.stderr.on('data', (data: Buffer) => {
       const text = data.toString().trim();
       if (text) {
+        stderrBuffer += (stderrBuffer ? '\n' : '') + text;
         logger.debug({ stderr: text.slice(0, 300) }, 'Agent stderr');
       }
     });
 
     childProc.on('close', (code) => {
-      logger.debug({ exitCode: code }, 'Agent process exited');
+      if (code !== null && code !== 0) {
+        logger.error(
+          { command: this.config.command, exitCode: code, stderr: stderrBuffer.slice(0, 500) },
+          'Agent process exited with non-zero code',
+        );
+      } else {
+        logger.debug({ exitCode: code }, 'Agent process exited');
+      }
       this._connected = false;
       this.childProcess = null;
       for (const handler of this.closeHandlers) {
@@ -202,7 +213,7 @@ export class AcpStdioTransport implements IAcpTransport {
     });
 
     childProc.on('error', (err) => {
-      logger.error({ error: err.message }, 'Agent process error');
+      logger.error({ error: err.message, command: this.config.command }, 'Agent process error');
       this._connected = false;
       for (const handler of this.errorHandlers) {
         handler(err);

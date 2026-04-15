@@ -529,15 +529,17 @@ export function createDefaultRuntimeContext(
 ): AgentRuntimeContext {
   // Create shared ACP Client instance (lazy-connect on first use)
   // Issue #2311: ACP Client replaces SDK Provider for agent execution
+  // Issue #2349: Use 'claude-agent-acp' command (not 'claude --agent-acp')
+  const agentConfig = Config.getAgentConfig();
+  const acpCommand = fileConfigOnly.agent?.acpCommand ?? 'claude-agent-acp';
   const acpClient = new AcpClient({
     transport: new AcpStdioTransport({
-      command: 'claude',
-      args: ['--agent-acp'],
+      command: acpCommand,
       env: {
         ...process.env as Record<string, string>,
         // Pass through API key if available
-        ...(Config.getAgentConfig().apiKey ? {
-          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        ...(agentConfig.apiKey ? {
+          ANTHROPIC_API_KEY: agentConfig.apiKey,
         } : {}),
       },
     }),

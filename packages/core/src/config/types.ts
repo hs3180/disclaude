@@ -40,6 +40,13 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * ACP Agent command for spawning the subprocess.
+   * Defaults to 'claude-agent-acp'.
+   * Override this to use a custom ACP-compatible agent binary.
+   * @see https://github.com/zed-industries/claude-agent-acp
+   */
+  acpCommand?: string;
 }
 
 /**
