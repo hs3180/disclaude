@@ -10,6 +10,7 @@
 
 import type { FileRef } from '../../types/file.js';
 import type { ChannelCapabilities } from '../../types/channel.js';
+import type { TasteRule } from '../../taste/types.js';
 
 /**
  * Message data for building enhanced content.
@@ -30,6 +31,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** User taste rules for preference injection (Issue #2335) */
+  tasteRules?: TasteRule[];
 }
 
 /**

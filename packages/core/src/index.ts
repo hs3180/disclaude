@@ -291,3 +291,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Taste module — auto-summarized user preferences (Issue #2335)
+export {
+  TasteStore,
+  buildTasteGuidance,
+  getCategoryLabel,
+  type TasteSource,
+  type TasteCategory,
+  type TasteRule,
+  type TasteProfile,
+  type TasteStoreOptions,
+  type TasteResult,
+} from './taste/index.js';
