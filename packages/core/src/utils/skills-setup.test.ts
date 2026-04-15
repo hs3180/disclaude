@@ -148,6 +148,135 @@ describe('setupSkillsInWorkspace', () => {
     });
   });
 
+  describe('when target directory already exists', () => {
+    it('should overwrite existing skill content', async () => {
+      // First, create and copy initial skills
+      const skillDir = path.join(sourceDir, 'my-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'Version 1');
+      await fs.mkdir(targetDir, { recursive: true });
+
+      const result1 = await setupSkillsInWorkspace();
+      expect(result1.success).toBe(true);
+
+      // Now update source and re-run
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'Version 2');
+
+      const result2 = await setupSkillsInWorkspace();
+      expect(result2.success).toBe(true);
+
+      const content = await fs.readFile(
+        path.join(targetDir, 'my-skill', 'SKILL.md'), 'utf-8',
+      );
+      expect(content).toBe('Version 2');
+    });
+
+    it('should not remove extra files in existing target skill directory', async () => {
+      // Create source skill
+      const skillDir = path.join(sourceDir, 'my-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Skill');
+
+      // First copy
+      await setupSkillsInWorkspace();
+
+      // Add an extra file to the target (simulating a file added by the user)
+      await fs.writeFile(
+        path.join(targetDir, 'my-skill', 'user-custom.md'), 'Custom',
+      );
+
+      // Re-run
+      const result = await setupSkillsInWorkspace();
+      expect(result.success).toBe(true);
+
+      // Source file should still be there
+      const content = await fs.readFile(
+        path.join(targetDir, 'my-skill', 'SKILL.md'), 'utf-8',
+      );
+      expect(content).toBe('# Skill');
+
+      // User-added file should also still be there (copyFile overwrites, doesn't delete)
+      const customContent = await fs.readFile(
+        path.join(targetDir, 'my-skill', 'user-custom.md'), 'utf-8',
+      );
+      expect(customContent).toBe('Custom');
+    });
+  });
+
+  describe('file content integrity', () => {
+    it('should preserve binary-like content in skill files', async () => {
+      const skillDir = path.join(sourceDir, 'binary-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+
+      // Write content with special characters
+      const specialContent = '日本語テスト 🎉 \n\ttabs & "quotes"';
+      await fs.writeFile(path.join(skillDir, 'data.txt'), specialContent, 'utf-8');
+
+      const result = await setupSkillsInWorkspace();
+      expect(result.success).toBe(true);
+
+      const content = await fs.readFile(
+        path.join(targetDir, 'binary-skill', 'data.txt'), 'utf-8',
+      );
+      expect(content).toBe(specialContent);
+    });
+
+    it('should handle multiple file types within a skill', async () => {
+      const skillDir = path.join(sourceDir, 'multi-file-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Multi');
+      await fs.writeFile(path.join(skillDir, 'script.sh'), '#!/bin/bash\necho hello');
+      await fs.writeFile(path.join(skillDir, 'config.json'), '{"key": "value"}');
+      await fs.writeFile(path.join(skillDir, 'data.yaml'), 'key: value\nlist:\n  - item1');
+
+      const result = await setupSkillsInWorkspace();
+      expect(result.success).toBe(true);
+
+      // Verify all files were copied
+      for (const file of ['SKILL.md', 'script.sh', 'config.json', 'data.yaml']) {
+        const exists = await fs.access(path.join(targetDir, 'multi-file-skill', file))
+          .then(() => true).catch(() => false);
+        expect(exists).toBe(true);
+      }
+
+      const jsonContent = await fs.readFile(
+        path.join(targetDir, 'multi-file-skill', 'config.json'), 'utf-8',
+      );
+      expect(jsonContent).toBe('{"key": "value"}');
+    });
+
+    it('should handle empty files within skills', async () => {
+      const skillDir = path.join(sourceDir, 'empty-file-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Empty File Skill');
+      await fs.writeFile(path.join(skillDir, 'empty.txt'), '');
+
+      const result = await setupSkillsInWorkspace();
+      expect(result.success).toBe(true);
+
+      const content = await fs.readFile(
+        path.join(targetDir, 'empty-file-skill', 'empty.txt'), 'utf-8',
+      );
+      expect(content).toBe('');
+    });
+
+    it('should handle deeply nested directories (3+ levels)', async () => {
+      const skillDir = path.join(sourceDir, 'deep-skill');
+      const deepDir = path.join(skillDir, 'a', 'b', 'c', 'd');
+      await fs.mkdir(deepDir, { recursive: true });
+      await fs.writeFile(path.join(deepDir, 'deep.txt'), 'Deep content');
+
+      const result = await setupSkillsInWorkspace();
+      expect(result.success).toBe(true);
+
+      const content = await fs.readFile(
+        path.join(targetDir, 'deep-skill', 'a', 'b', 'c', 'd', 'deep.txt'), 'utf-8',
+      );
+      expect(content).toBe('Deep content');
+    });
+  });
+
   describe('error handling', () => {
     it('should continue copying other skills when one fails', async () => {
       // Create a readable skill
