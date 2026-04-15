@@ -8,7 +8,7 @@
  *
  * Architecture:
  * ```
- * Pilot.processIterator() error
+ * ChatAgent.processIterator() error
  *         ↓
  * RestartManager.shouldRestart()
  *         ↓

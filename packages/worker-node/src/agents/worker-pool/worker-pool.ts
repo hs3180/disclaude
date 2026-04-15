@@ -31,7 +31,7 @@ import type {
   ExecuteOptions,
   BatchResult,
 } from './types.js';
-import type { PilotCallbacks } from '../pilot/index.js';
+import type { ChatAgentCallbacks } from '../chat-agent/index.js';
 
 const logger = createLogger('WorkerPool');
 
@@ -83,12 +83,12 @@ export class WorkerPool {
   private config: Required<WorkerPoolConfig>;
   private workers: Map<string, WorkerHandle> = new Map();
   private taskQueue: TaskQueue;
-  private callbacks: PilotCallbacks;
+  private callbacks: ChatAgentCallbacks;
   private eventCallbacks: Set<WorkerPoolEventCallback> = new Set();
   private runningTasks: Map<string, { task: Task; workerId: string }> = new Map();
   private disposed = false;
 
-  constructor(config: WorkerPoolConfig, callbacks: PilotCallbacks) {
+  constructor(config: WorkerPoolConfig, callbacks: ChatAgentCallbacks) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.callbacks = callbacks;
     this.taskQueue = new TaskQueue(this.config.maxHistorySize);

@@ -1,8 +1,9 @@
 /**
- * Type definitions for Pilot agent.
+ * Type definitions for ChatAgent (formerly Pilot).
  *
- * Extracted from pilot.ts for better separation of concerns (Issue #697).
+ * Extracted for better separation of concerns (Issue #697).
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
+ * Issue #2345 Phase 1: Renamed from Pilot to ChatAgent.
  */
 
 import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
@@ -10,7 +11,7 @@ import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from
 /**
  * Callback functions for platform-specific operations.
  */
-export interface PilotCallbacks {
+export interface ChatAgentCallbacks {
   /**
    * Send a text message to the user.
    * @param chatId - Platform-specific chat identifier
@@ -61,22 +62,22 @@ export interface PilotCallbacks {
 }
 
 /**
- * Configuration options for Pilot.
+ * Configuration options for ChatAgent.
  *
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
  */
-export interface PilotConfig extends BaseAgentConfig {
+export interface ChatAgentConfig extends BaseAgentConfig {
   /**
-   * The chatId this Pilot is bound to.
-   * Each Pilot instance serves exactly one chatId.
+   * The chatId this ChatAgent is bound to.
+   * Each ChatAgent instance serves exactly one chatId.
    */
   chatId: string;
 
   /**
    * Callback functions for platform-specific operations.
    */
-  callbacks: PilotCallbacks;
+  callbacks: ChatAgentCallbacks;
 
   /**
    * Complexity threshold for starting progress tracking.
@@ -90,14 +91,14 @@ export interface PilotConfig extends BaseAgentConfig {
   /**
    * Channel-specific MessageBuilder options.
    *
-   * When provided, the Pilot will use these options for building
+   * When provided, the ChatAgent will use these options for building
    * enhanced message content (e.g., platform headers, tool sections,
    * attachment extras). When omitted, a default empty MessageBuilder
    * is used with no channel-specific extensions.
    *
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    * Callers (e.g., primary-node) should provide channel-specific
-   * options when creating Pilot instances.
+   * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
 }
