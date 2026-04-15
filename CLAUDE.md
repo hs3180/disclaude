@@ -491,14 +491,6 @@ The skill will be available to the agent automatically.
 
 Claude Code supports project-level agent definitions in `.claude/agents/`. These are Markdown files with YAML frontmatter that define specialized sub-agents.
 
-### Preset Agents
-
-Disclaude bundles preset agent definitions that are automatically copied to `.claude/agents/` on startup:
-
-| Agent | Description | Tools |
-|-------|-------------|-------|
-| `site-miner` | Website information mining via Playwright | Read, Write, Bash, Glob, Grep, mcp__playwright__* |
-
 ### Agent Definition Format
 
 Create `.claude/agents/<agent-name>.md`:

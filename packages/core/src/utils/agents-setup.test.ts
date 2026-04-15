@@ -64,7 +64,7 @@ describe('setupAgentsInWorkspace', () => {
     it('should create .claude/agents/ directory and copy .md files', async () => {
       // Create source agents
       await fs.mkdir(sourceDir, { recursive: true });
-      await fs.writeFile(path.join(sourceDir, 'site-miner.md'), '# Site Miner');
+      await fs.writeFile(path.join(sourceDir, 'test-agent.md'), '# Test Agent');
       await fs.writeFile(path.join(sourceDir, 'custom-agent.md'), '# Custom Agent');
       await fs.writeFile(path.join(sourceDir, 'README.txt'), 'Not an agent');
 
@@ -73,10 +73,10 @@ describe('setupAgentsInWorkspace', () => {
       expect(result.success).toBe(true);
 
       // Verify .md files were copied
-      const siteMinerContent = await fs.readFile(
-        path.join(targetDir, 'site-miner.md'), 'utf-8',
+      const testAgentContent = await fs.readFile(
+        path.join(targetDir, 'test-agent.md'), 'utf-8',
       );
-      expect(siteMinerContent).toBe('# Site Miner');
+      expect(testAgentContent).toBe('# Test Agent');
 
       const customAgentContent = await fs.readFile(
         path.join(targetDir, 'custom-agent.md'), 'utf-8',
@@ -92,11 +92,11 @@ describe('setupAgentsInWorkspace', () => {
     it('should not overwrite existing agent definitions', async () => {
       // Create source agents
       await fs.mkdir(sourceDir, { recursive: true });
-      await fs.writeFile(path.join(sourceDir, 'site-miner.md'), '# New Content');
+      await fs.writeFile(path.join(sourceDir, 'test-agent.md'), '# New Content');
 
       // Create existing target agent
       await fs.mkdir(targetDir, { recursive: true });
-      await fs.writeFile(path.join(targetDir, 'site-miner.md'), '# Existing Content');
+      await fs.writeFile(path.join(targetDir, 'test-agent.md'), '# Existing Content');
 
       const result = await setupAgentsInWorkspace();
 
@@ -104,7 +104,7 @@ describe('setupAgentsInWorkspace', () => {
 
       // Verify existing file was NOT overwritten
       const content = await fs.readFile(
-        path.join(targetDir, 'site-miner.md'), 'utf-8',
+        path.join(targetDir, 'test-agent.md'), 'utf-8',
       );
       expect(content).toBe('# Existing Content');
     });
