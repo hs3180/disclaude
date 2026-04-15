@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { checkMacAutoSleep } from './utils/mac-sleep-check.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -213,6 +214,11 @@ async function main(): Promise<void> {
   for (const { type, config } of channelEntries) {
     await lifecycleManager.createAndWireByType(type, config);
   }
+
+  // Check macOS auto-sleep at startup (Issue #2263)
+  // System sleep causes all long-lived connections (WebSocket, IPC) to drop silently.
+  // Only gates on process.platform — runs regardless of channel configuration.
+  checkMacAutoSleep();
 
   // Handle graceful shutdown
   let isShuttingDown = false;
