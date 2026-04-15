@@ -26,6 +26,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { TriggerWatcher } from './trigger-watcher.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -67,6 +68,7 @@ export type TaskExecutor = (chatId: string, prompt: string, userId?: string, mod
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #1953: Added workspaceDir for TriggerWatcher path resolution.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -77,6 +79,12 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Base directory for resolving relative watch paths.
+   * Required for event-driven triggers (Issue #1953).
+   * When set, tasks with `watch` field will be monitored for file changes.
+   */
+  workspaceDir?: string;
 }
 
 /**
@@ -118,12 +126,23 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /** TriggerWatcher for event-driven task execution (Issue #1953) */
+  private triggerWatcher?: TriggerWatcher;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+
+    // Issue #1953: Initialize TriggerWatcher if workspaceDir is provided
+    if (options.workspaceDir) {
+      this.triggerWatcher = new TriggerWatcher({
+        basePath: options.workspaceDir,
+        onTrigger: (taskId: string) => { void this.executeTaskById(taskId); },
+      });
+    }
+
     logger.info('Scheduler created');
   }
 
@@ -146,14 +165,25 @@ export class Scheduler {
     }
 
     logger.info({ taskCount: this.activeJobs.size }, 'Scheduler started');
+
+    // Issue #1953: Start TriggerWatcher for event-driven triggers
+    if (this.triggerWatcher) {
+      this.triggerWatcher.start();
+      logger.info('TriggerWatcher started');
+    }
   }
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and TriggerWatcher.
    */
   stop(): void {
     this.running = false;
+
+    // Issue #1953: Stop TriggerWatcher
+    if (this.triggerWatcher) {
+      this.triggerWatcher.stop();
+    }
 
     for (const [taskId, entry] of this.activeJobs) {
       void entry.job.stop();
@@ -193,6 +223,15 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Register file watch trigger if configured
+    if (task.watch && this.triggerWatcher) {
+      this.triggerWatcher.addWatch(task.id, task.watch, task.watchDebounce);
+      logger.info(
+        { taskId: task.id, watch: task.watch, debounce: task.watchDebounce },
+        'Registered file watch trigger for task'
+      );
+    }
   }
 
   /**
@@ -206,6 +245,11 @@ export class Scheduler {
       void entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
+    }
+
+    // Issue #1953: Remove file watch trigger
+    if (this.triggerWatcher) {
+      this.triggerWatcher.removeWatch(taskId);
     }
   }
 
@@ -323,6 +367,23 @@ ${task.prompt}`;
   }
 
   /**
+   * Execute a task by ID.
+   * Used by TriggerWatcher to trigger tasks by ID.
+   *
+   * Issue #1953: Event-driven task execution.
+   *
+   * @param taskId - Task ID to execute
+   */
+  private async executeTaskById(taskId: string): Promise<void> {
+    const entry = this.activeJobs.get(taskId);
+    if (entry) {
+      await this.executeTask(entry.task);
+    } else {
+      logger.warn({ taskId }, 'TriggerWatcher fired for unknown task');
+    }
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
@@ -401,5 +462,13 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  /**
+   * Get the TriggerWatcher instance (for testing/debugging).
+   * Issue #1953
+   */
+  getTriggerWatcher(): TriggerWatcher | undefined {
+    return this.triggerWatcher;
   }
 }

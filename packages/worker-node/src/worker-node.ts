@@ -364,6 +364,8 @@ export class WorkerNode {
           agent.dispose();
         }
       },
+      // Issue #1953: Pass workspaceDir for TriggerWatcher path resolution
+      workspaceDir,
     });
 
     // Initialize file watcher for hot reload

@@ -473,11 +473,13 @@ export class PrimaryNode extends EventEmitter {
     });
 
     // Initialize Scheduler
+    // Issue #1953: Pass workspaceDir for TriggerWatcher path resolution
     this.scheduler = new Scheduler({
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
       callbacks: schedulerCallbacks,
       executor,
+      workspaceDir,
     });
 
     // Initialize file watcher for hot reload

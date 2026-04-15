@@ -535,4 +535,128 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('TriggerWatcher integration (Issue #1953)', () => {
+    it('should create TriggerWatcher when workspaceDir is provided', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      expect(s.getTriggerWatcher()).toBeDefined();
+    });
+
+    it('should not create TriggerWatcher when workspaceDir is not provided', () => {
+      expect(scheduler.getTriggerWatcher()).toBeUndefined();
+    });
+
+    it('should register file watch trigger when task has watch field', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      const task = createTask({
+        id: 'watch-task-1',
+        watch: 'workspace/chats',
+        watchDebounce: 5000,
+      });
+
+      await s.start();
+      s.addTask(task);
+
+      const triggerWatcher = s.getTriggerWatcher()!;
+      expect(triggerWatcher.getTaskWatchCount()).toBe(1);
+      expect(triggerWatcher.isRunning()).toBe(true);
+
+      s.stop();
+    });
+
+    it('should not register file watch trigger when task has no watch field', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      const task = createTask({ id: 'no-watch-task' });
+
+      await s.start();
+      s.addTask(task);
+
+      const triggerWatcher = s.getTriggerWatcher()!;
+      expect(triggerWatcher.getTaskWatchCount()).toBe(0);
+
+      s.stop();
+    });
+
+    it('should remove file watch trigger when task is removed', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      const task = createTask({
+        id: 'watch-task-remove',
+        watch: 'workspace/chats',
+      });
+
+      await s.start();
+      s.addTask(task);
+
+      const triggerWatcher = s.getTriggerWatcher()!;
+      expect(triggerWatcher.getTaskWatchCount()).toBe(1);
+
+      s.removeTask('watch-task-remove');
+      expect(triggerWatcher.getTaskWatchCount()).toBe(0);
+
+      s.stop();
+    });
+
+    it('should stop TriggerWatcher when scheduler stops', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      await s.start();
+      const triggerWatcher = s.getTriggerWatcher()!;
+      expect(triggerWatcher.isRunning()).toBe(true);
+
+      s.stop();
+      expect(triggerWatcher.isRunning()).toBe(false);
+    });
+
+    it('should not register watch for disabled task', async () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/test-workspace',
+      });
+
+      const task = createTask({
+        id: 'disabled-watch-task',
+        watch: 'workspace/chats',
+        enabled: false,
+      });
+
+      await s.start();
+      s.addTask(task);
+
+      const triggerWatcher = s.getTriggerWatcher()!;
+      expect(triggerWatcher.getTaskWatchCount()).toBe(0);
+
+      s.stop();
+    });
+  });
 });
