@@ -95,14 +95,17 @@ export class WelcomeHandler {
       return;
     }
 
+    // Filter out null/undefined entries from members array (defensive)
+    const members = event.members.filter((m): m is NonNullable<typeof m> => m != null);
+
     // Check if the bot is among the added members
     // Bot's member_id_type is "app_id" and member_id is the bot's app_id
-    const botMemberAdded = event.members.some(
+    const botMemberAdded = members.some(
       (member) => member.member_id_type === 'app_id' && member.member_id === this.appId
     );
 
     // Get non-bot members (users who joined)
-    const userMembers = event.members.filter(
+    const userMembers = members.filter(
       (member) => !(member.member_id_type === 'app_id' && member.member_id === this.appId)
     );
 
