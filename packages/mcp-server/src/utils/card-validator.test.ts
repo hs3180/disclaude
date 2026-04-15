@@ -8,6 +8,9 @@ import {
   getCardValidationError,
   detectMarkdownTableWarnings,
   containsGfmTable,
+  parseGfmTable,
+  gfmTableToColumnSet,
+  convertCardTables,
 } from './card-validator.js';
 
 describe('isValidFeishuCard', () => {
@@ -451,5 +454,301 @@ describe('detectMarkdownTableWarnings', () => {
       ],
     };
     expect(detectMarkdownTableWarnings(card)).toEqual([]);
+  });
+});
+
+describe('parseGfmTable', () => {
+  it('should parse a simple 2-column table', () => {
+    const content = '| Name | Age |\n|------|-----|\n| Alice | 30 |';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(['Name', 'Age']);
+    expect(result!.rows).toEqual([['Alice', '30']]);
+    expect(result!.before).toBe('');
+    expect(result!.after).toBe('');
+  });
+
+  it('should parse a 3-column table with alignment markers', () => {
+    const content = '| H1 | H2 | H3 |\n|:---|:---:|---:|\n| a | b | c |\n| d | e | f |';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(['H1', 'H2', 'H3']);
+    expect(result!.rows).toEqual([['a', 'b', 'c'], ['d', 'e', 'f']]);
+  });
+
+  it('should parse the exact Issue #2340 example', () => {
+    const content = '| 客户类型 | W<170% | 170%-210% |\n|:---|:---:|:---:|\n| 正常类 | 50% | 70% |';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(['客户类型', 'W<170%', '170%-210%']);
+    expect(result!.rows).toEqual([['正常类', '50%', '70%']]);
+  });
+
+  it('should extract text before the table', () => {
+    const content = 'Here is a summary:\n\n| A | B |\n|---|---|\n| 1 | 2 |';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(['A', 'B']);
+    expect(result!.before).toBe('Here is a summary:\n');
+    expect(result!.after).toBe('');
+  });
+
+  it('should extract text after the table', () => {
+    const content = '| A | B |\n|---|---|\n| 1 | 2 |\n\nEnd of table.';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(['A', 'B']);
+    expect(result!.before).toBe('');
+    expect(result!.after).toBe('\nEnd of table.');
+  });
+
+  it('should extract text before and after the table', () => {
+    const content = 'Before\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.before).toBe('Before\n');
+    expect(result!.after).toBe('\nAfter');
+  });
+
+  it('should return null for content without a separator row', () => {
+    const content = '| A | B |\n| 1 | 2 |';
+    expect(parseGfmTable(content)).toBeNull();
+  });
+
+  it('should return null for content without a header row before separator', () => {
+    const content = 'Some text\n|---|---|\n| a | b |';
+    expect(parseGfmTable(content)).toBeNull();
+  });
+
+  it('should return null for separator without data rows', () => {
+    const content = '| A | B |\n|---|---|';
+    expect(parseGfmTable(content)).toBeNull();
+  });
+
+  it('should return null for empty string', () => {
+    expect(parseGfmTable('')).toBeNull();
+  });
+
+  it('should return null for single-column table', () => {
+    const content = '| A |\n|---|\n| 1 |';
+    expect(parseGfmTable(content)).toBeNull();
+  });
+
+  it('should pad rows with fewer columns than headers', () => {
+    const content = '| A | B | C |\n|---|---|---|\n| 1 | 2 |';
+    const result = parseGfmTable(content);
+    expect(result).not.toBeNull();
+    expect(result!.rows[0]).toEqual(['1', '2', '']);
+  });
+});
+
+describe('gfmTableToColumnSet', () => {
+  it('should produce a column_set element with correct structure', () => {
+    const columnSet = gfmTableToColumnSet(
+      ['Name', 'Age'],
+      [['Alice', '30']],
+    );
+
+    expect(columnSet.tag).toBe('column_set');
+    expect(columnSet.flex_mode).toBe('bisect');
+    expect(columnSet.background_style).toBe('default');
+    const columns = columnSet.columns as Array<Record<string, unknown>>;
+    expect(Array.isArray(columns)).toBe(true);
+    expect(columns).toHaveLength(2);
+  });
+
+  it('should have bold headers in each column', () => {
+    const columnSet = gfmTableToColumnSet(
+      ['H1', 'H2'],
+      [['a', 'b']],
+    );
+
+    const columns = columnSet.columns as Array<Record<string, unknown>>;
+    const [col0] = columns;
+    const elements0 = col0.elements as Array<Record<string, unknown>>;
+    expect(elements0[0]).toEqual({ tag: 'markdown', content: '**H1**' });
+    expect(elements0[1]).toEqual({ tag: 'markdown', content: 'a' });
+  });
+
+  it('should stack multiple data rows in each column', () => {
+    const columnSet = gfmTableToColumnSet(
+      ['Col'],
+      [['row1'], ['row2'], ['row3']],
+    );
+
+    const columns = columnSet.columns as Array<Record<string, unknown>>;
+    const [col] = columns;
+    const elements = col.elements as Array<Record<string, unknown>>;
+    // Header + 3 data rows = 4 elements
+    expect(elements).toHaveLength(4);
+    expect(elements[0].content).toBe('**Col**');
+    expect(elements[1].content).toBe('row1');
+    expect(elements[2].content).toBe('row2');
+    expect(elements[3].content).toBe('row3');
+  });
+
+  it('should handle the Issue #2340 example data', () => {
+    const columnSet = gfmTableToColumnSet(
+      ['客户类型', 'W<170%', '170%-210%'],
+      [['正常类', '50%', '70%']],
+    );
+
+    const columns = columnSet.columns as Array<Record<string, unknown>>;
+    expect(columns).toHaveLength(3);
+
+    // Verify first column
+    const [col0] = columns;
+    const elems0 = col0.elements as Array<Record<string, unknown>>;
+    expect(elems0[0].content).toBe('**客户类型**');
+    expect(elems0[1].content).toBe('正常类');
+
+    // Verify second column
+    const [, col1] = columns;
+    const elems1 = col1.elements as Array<Record<string, unknown>>;
+    expect(elems1[0].content).toBe('**W<170%**');
+    expect(elems1[1].content).toBe('50%');
+  });
+});
+
+describe('convertCardTables', () => {
+  const baseCard = {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: 'Test' } },
+    elements: [] as Array<Record<string, unknown>>,
+  };
+
+  it('should not modify a card without markdown tables', () => {
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'markdown', content: '**Bold** text only' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(0);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('should convert a simple markdown table to column_set', () => {
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'markdown', content: '| A | B |\n|---|---|\n| 1 | 2 |' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(1);
+    expect(result.warnings).toEqual([]);
+
+    const elements = card.elements as Array<Record<string, unknown>>;
+    expect(elements).toHaveLength(1);
+    expect(elements[0].tag).toBe('column_set');
+  });
+
+  it('should preserve non-table markdown around the table', () => {
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'markdown', content: 'Summary:\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nEnd.' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(1);
+
+    const elements = card.elements as Array<Record<string, unknown>>;
+    expect(elements).toHaveLength(3);
+    // Before text
+    expect(elements[0].tag).toBe('markdown');
+    expect((elements[0] as Record<string, unknown>).content).toBe('Summary:');
+    // Converted table
+    expect(elements[1].tag).toBe('column_set');
+    // After text
+    expect(elements[2].tag).toBe('markdown');
+    expect((elements[2] as Record<string, unknown>).content).toBe('End.');
+  });
+
+  it('should convert the exact Issue #2340 example', () => {
+    const card = {
+      config: { wide_screen_mode: true },
+      header: { title: { tag: 'plain_text', content: '贷款成数' } },
+      elements: [
+        { tag: 'markdown', content: '| 客户类型 | W<170% | 170%-210% |\n|:---|:---:|:---:|\n| 正常类 | 50% | 70% |' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(1);
+
+    const elements = card.elements as Array<Record<string, unknown>>;
+    expect(elements[0].tag).toBe('column_set');
+    const columnSet = elements[0] as Record<string, unknown>;
+    expect(columnSet.columns).toHaveLength(3);
+  });
+
+  it('should handle multiple markdown tables in separate elements', () => {
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'markdown', content: '| A | B |\n|---|---|\n| 1 | 2 |' },
+        { tag: 'div', text: { tag: 'plain_text', content: 'separator' } },
+        { tag: 'markdown', content: '| X | Y |\n|---|---|\n| 3 | 4 |' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(2);
+
+    const elements = card.elements as Array<Record<string, unknown>>;
+    expect(elements).toHaveLength(3);
+    expect(elements[0].tag).toBe('column_set');
+    expect(elements[1].tag).toBe('div');
+    expect(elements[2].tag).toBe('column_set');
+  });
+
+  it('should keep non-markdown elements unchanged', () => {
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'div', text: { tag: 'plain_text', content: 'Hello' } },
+        { tag: 'markdown', content: '| A | B |\n|---|---|\n| 1 | 2 |' },
+        { tag: 'hr' },
+      ],
+    };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(1);
+
+    const elements = card.elements as Array<Record<string, unknown>>;
+    expect(elements).toHaveLength(3);
+    expect(elements[0].tag).toBe('div');
+    expect(elements[1].tag).toBe('column_set');
+    expect(elements[2].tag).toBe('hr');
+  });
+
+  it('should return warnings for unparsable table patterns', () => {
+    // 3+ consecutive pipe rows (no separator) - detected by containsGfmTable
+    // but not parseable by parseGfmTable
+    const card = {
+      ...baseCard,
+      elements: [
+        { tag: 'markdown', content: '| r1 c1 | r1 c2 |\n| r2 c1 | r2 c2 |\n| r3 c1 | r3 c2 |' },
+      ],
+    };
+    const result = convertCardTables(card);
+    // This table has no separator row, so containsGfmTable detects it via
+    // consecutive rows but parseGfmTable can't parse it
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('could not be auto-converted');
+  });
+
+  it('should handle empty elements array', () => {
+    const card = { ...baseCard, elements: [] };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(0);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('should handle non-array elements', () => {
+    const card = { ...baseCard, elements: 'not-array' as unknown as Array<Record<string, unknown>> };
+    const result = convertCardTables(card);
+    expect(result.converted).toBe(0);
+    expect(result.warnings).toEqual([]);
   });
 });

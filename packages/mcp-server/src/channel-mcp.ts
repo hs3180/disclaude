@@ -20,7 +20,7 @@ import {
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
-import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
+import { isValidFeishuCard, getCardValidationError, convertCardTables } from './utils/card-validator.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
@@ -281,16 +281,23 @@ The \`markdown\` element supports a **restricted subset** of GFM:
       }
 
       try {
+        // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
+        const conversion = convertCardTables(card);
+        const conversionNote = conversion.converted > 0
+          ? `\n\nℹ️ Auto-converted ${conversion.converted} markdown table(s) to column_set layout.`
+          : '';
+
         const result = await send_card({ card, chatId, parentMessageId });
 
-        // Issue #2340: Detect GFM table syntax in markdown elements and append warnings
-        const tableWarnings = detectMarkdownTableWarnings(card);
-        if (result.success && tableWarnings.length > 0) {
-          const warningMsg = tableWarnings.join('\n');
-          return toolSuccess(`${result.message}\n\n⚠️ Warning: ${warningMsg}`);
-        }
+        // Report any tables that couldn't be auto-converted
+        const warningNote = conversion.warnings.length > 0
+          ? `\n\n⚠️ Warning: ${conversion.warnings.join('\n')}`
+          : '';
 
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
+        if (result.success) {
+          return toolSuccess(`${result.message}${conversionNote}${warningNote}`);
+        }
+        return toolError(result.message);
       } catch (error) {
         return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
