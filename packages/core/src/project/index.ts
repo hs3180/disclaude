@@ -17,6 +17,8 @@ export type {
   ProjectsPersistData,
 } from './types.js';
 
+export { ProjectManager } from './project-manager.js';
+
 export {
   discoverTemplates,
   discoveryResultToConfig,
