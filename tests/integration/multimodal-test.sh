@@ -74,7 +74,7 @@ create_test_images() {
 send_multimodal_request() {
     local prompt="$1"
     local image_path="${2:-}"
-    local chatId="${3:-test-multimodal-$$}"
+    local chatId="${3:-cli-test-multimodal-$$}"
 
     local body
     if [ -n "$image_path" ] && [ -f "$image_path" ]; then

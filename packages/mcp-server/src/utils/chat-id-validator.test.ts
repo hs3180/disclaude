@@ -59,27 +59,20 @@ describe('isValidChatId', () => {
     });
   });
 
-  describe('Integration test IDs (test-)', () => {
-    it('should accept a valid test- ID', () => {
-      expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
+  describe('Test-specific prefixes are NOT valid (Issue #2389)', () => {
+    it('should reject test- prefix (removed from production validator)', () => {
+      // test- prefix was removed to keep test-specific patterns out of production code.
+      // Integration tests should use cli- prefix instead.
+      expect(isValidChatId('test-mcp-send-text-12345')).toBe(false);
     });
 
-    it('should accept a minimal test- ID (10 chars)', () => {
-      expect(isValidChatId('test-abcde')).toBe(true);
+    it('should reject multimodal-test- prefix', () => {
+      expect(isValidChatId('multimodal-test-12345')).toBe(false);
     });
 
-    it('should reject a test- ID that is too short', () => {
-      expect(isValidChatId('test-abcd')).toBe(false);
-    });
-
-    it('should reject a bare test- prefix', () => {
-      expect(isValidChatId('test-')).toBe(false);
-    });
-
-    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
-      // Previously used multimodal-test-* which was rejected;
-      // renamed to test-multimodal-* to match the test- prefix pattern.
-      expect(isValidChatId('test-multimodal-12345')).toBe(true);
+    it('should accept cli-test-* IDs (alternative for integration tests)', () => {
+      // Integration tests can use cli- prefix as a valid alternative
+      expect(isValidChatId('cli-test-mcp-send-text-12345')).toBe(true);
     });
   });
 
@@ -117,8 +110,8 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('cli-session-42')).toBeNull();
   });
 
-  it('should return null for a valid test- ID', () => {
-    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
+  it('should return null for a valid cli- ID used as test session', () => {
+    expect(getChatIdValidationError('cli-test-session-12345')).toBeNull();
   });
 
   it('should return an error for an empty string', () => {
@@ -133,7 +126,8 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('oc_');
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
-    expect(error).toContain('test-');
+    // test- should NOT be listed (Issue #2389: removed from production code)
+    expect(error).not.toContain('test-');
   });
 
   it('should truncate long chatIds in error messages', () => {
