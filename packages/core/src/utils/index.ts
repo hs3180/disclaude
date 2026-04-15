@@ -48,14 +48,6 @@ export {
   buildSdkEnv,
 } from './sdk.js';
 
-// CDP Health Check (Issue #1040)
-export type { CdpHealthCheckResult } from './cdp-health-check.js';
-export {
-  parseCdpEndpoint,
-  checkCdpEndpointHealth,
-  formatCdpHealthError,
-} from './cdp-health-check.js';
-
 // Output Adapter (Issue #1040)
 export type { OutputAdapter, MessageMetadata, FeishuOutputAdapterOptions } from './output-adapter.js';
 export {
