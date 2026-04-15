@@ -28,7 +28,8 @@ export default [
       'logs/**',
       'long-tasks/**',
       // voice-pipeline is not yet integrated into the monorepo tsconfig setup
-      // TODO: remove this ignore once voice-pipeline has its own tsconfig.json
+      // The tsconfig path is pre-registered in parserOptions.project below;
+      // remove this ignore once voice-pipeline is added with its own tsconfig.json
       'packages/voice-pipeline/**',
     ],
   },
@@ -45,6 +46,7 @@ export default [
           './packages/primary-node/tsconfig.json',
           './packages/mcp-server/tsconfig.json',
           './packages/worker-node/tsconfig.json',
+          './packages/voice-pipeline/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,
       },
