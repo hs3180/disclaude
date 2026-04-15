@@ -2,7 +2,9 @@
  * Unit tests for pr-scanner/scanner.ts CLI tool.
  *
  * Tests all five actions: check-capacity, list-candidates, create-state, mark, status.
+ * Also tests GitHub label integration (create-state adds label, mark removes label).
  * Uses a temporary directory for state files to avoid interfering with production state.
+ * Label operations are disabled via PR_SCANNER_SKIP_LABELS for most tests.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -25,7 +27,13 @@ async function runScanner(
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
     const result = await execFileAsync('npx', ['tsx', SCRIPT_PATH, ...args], {
-      env: { ...process.env, PR_SCANNER_STATE_DIR: TEST_STATE_DIR, ...env },
+      env: {
+        ...process.env,
+        PR_SCANNER_STATE_DIR: TEST_STATE_DIR,
+        // Skip GitHub label operations by default (label tests override this)
+        PR_SCANNER_SKIP_LABELS: 'true',
+        ...env,
+      },
       maxBuffer: 1024 * 1024,
       cwd: PROJECT_ROOT,
     });
@@ -654,6 +662,137 @@ describe('scanner.ts', () => {
       const result = await runScanner(['--action', 'mark', '--pr', '42', '--state', 'approved']);
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('Corrupted');
+    });
+  });
+
+  // ---- Label integration (Phase B) ----
+
+  describe('label integration', () => {
+    it('should log label add attempt on create-state when skip-labels is true', async () => {
+      const result = await runScanner(['--action', 'create-state', '--pr', '42'], {
+        PR_SCANNER_SKIP_LABELS: 'true',
+      });
+      expect(result.code).toBe(0);
+      // Should log that label was skipped
+      expect(result.stderr).toContain('Skipping add-label');
+      expect(result.stderr).toContain('pr-scanner:reviewing');
+
+      // State file should still be created
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(42);
+      expect(data.state).toBe('reviewing');
+    });
+
+    it('should log label remove attempt on mark reviewing→approved when skip-labels is true', async () => {
+      await writeFile(
+        resolve(TEST_STATE_DIR, 'pr-42.json'),
+        JSON.stringify({
+          prNumber: 42,
+          chatId: null,
+          state: 'reviewing',
+          createdAt: '2026-04-15T10:00:00Z',
+          updatedAt: '2026-04-15T10:00:00Z',
+          expiresAt: '2026-04-17T10:00:00Z',
+          disbandRequested: null,
+        }),
+      );
+
+      const result = await runScanner(['--action', 'mark', '--pr', '42', '--state', 'approved'], {
+        PR_SCANNER_SKIP_LABELS: 'true',
+      });
+      expect(result.code).toBe(0);
+
+      // Should log that label removal was skipped
+      expect(result.stderr).toContain('Skipping remove-label');
+      expect(result.stderr).toContain('pr-scanner:reviewing');
+
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('approved');
+    });
+
+    it('should log label remove attempt on mark reviewing→closed when skip-labels is true', async () => {
+      await writeFile(
+        resolve(TEST_STATE_DIR, 'pr-42.json'),
+        JSON.stringify({
+          prNumber: 42,
+          chatId: null,
+          state: 'reviewing',
+          createdAt: '2026-04-15T10:00:00Z',
+          updatedAt: '2026-04-15T10:00:00Z',
+          expiresAt: '2026-04-17T10:00:00Z',
+          disbandRequested: null,
+        }),
+      );
+
+      const result = await runScanner(['--action', 'mark', '--pr', '42', '--state', 'closed'], {
+        PR_SCANNER_SKIP_LABELS: 'true',
+      });
+      expect(result.code).toBe(0);
+
+      // Should log that label removal was skipped
+      expect(result.stderr).toContain('Skipping remove-label');
+
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('closed');
+    });
+
+    it('should NOT attempt label removal when marking approved→closed', async () => {
+      await writeFile(
+        resolve(TEST_STATE_DIR, 'pr-42.json'),
+        JSON.stringify({
+          prNumber: 42,
+          chatId: null,
+          state: 'approved',
+          createdAt: '2026-04-15T10:00:00Z',
+          updatedAt: '2026-04-15T10:00:00Z',
+          expiresAt: '2026-04-17T10:00:00Z',
+          disbandRequested: null,
+        }),
+      );
+
+      const result = await runScanner(['--action', 'mark', '--pr', '42', '--state', 'closed'], {
+        PR_SCANNER_SKIP_LABELS: 'true',
+      });
+      expect(result.code).toBe(0);
+
+      // Should NOT attempt label removal (not transitioning from reviewing)
+      expect(result.stderr).not.toContain('remove-label');
+    });
+
+    it('should NOT attempt label removal on idempotent mark', async () => {
+      await writeFile(
+        resolve(TEST_STATE_DIR, 'pr-42.json'),
+        JSON.stringify({
+          prNumber: 42,
+          chatId: null,
+          state: 'reviewing',
+          createdAt: '2026-04-15T10:00:00Z',
+          updatedAt: '2026-04-15T10:00:00Z',
+          expiresAt: '2026-04-17T10:00:00Z',
+          disbandRequested: null,
+        }),
+      );
+
+      const result = await runScanner(['--action', 'mark', '--pr', '42', '--state', 'reviewing'], {
+        PR_SCANNER_SKIP_LABELS: 'true',
+      });
+      expect(result.code).toBe(0);
+
+      // Should NOT attempt label removal (idempotent, no state change)
+      expect(result.stderr).not.toContain('remove-label');
+    });
+
+    it('should gracefully handle gh CLI failure when labels are enabled', async () => {
+      // gh CLI will fail in test environment (no auth), but should not crash
+      const result = await runScanner(['--action', 'create-state', '--pr', '99'], {
+        PR_SCANNER_SKIP_LABELS: 'false',
+      });
+      expect(result.code).toBe(0);
+
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(99);
+      // Should have a warning about label failure
+      expect(result.stderr).toContain('Failed to add label');
     });
   });
 });

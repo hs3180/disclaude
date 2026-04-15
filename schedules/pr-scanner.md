@@ -1,96 +1,106 @@
 ---
-name: "PR Scanner (Serial)"
+name: "PR Scanner v2"
 cron: "0 */15 * * * *"
 enabled: true
 blocking: true
 chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 ---
 
-# PR Scanner - 串行扫描模式
+# PR Scanner v2 — 状态驱动的 PR 审查调度
 
-定期扫描仓库的 open PR，串行处理，为每个 PR 创建讨论群聊。
+定期扫描仓库的 open PR，通过 `scanner.ts` 管理审查状态，为每个 PR 发送交互式审查卡片。
 
 ## 配置
 
 - **仓库**: hs3180/disclaude
 - **扫描间隔**: 每 15 分钟
-- **讨论超时**: 60 分钟
+- **最大并行审查**: 3 个（`PR_SCANNER_MAX_CONCURRENT` 环境变量可覆盖）
+- **状态超时**: 48 小时（`PR_SCANNER_EXPIRY_HOURS` 环境变量可覆盖）
+
+## 前置依赖
+
+- `gh` CLI（GitHub 官方命令行工具）
+- `npx tsx`（用于运行 scanner.ts）
+- GitHub Label: `pr-scanner:reviewing`
+
+## 职责边界
+
+- ✅ 检查并行审查容量
+- ✅ 发现未跟踪的 open PR
+- ✅ 为新 PR 创建状态文件并添加 reviewing label
+- ✅ 发送 PR 详情和交互式操作卡片
+- ❌ 不自动合并或关闭 PR（由用户通过卡片操作决定）
+- ❌ 不管理讨论群生命周期（Phase C / Sub-Issue #2221）
+- ❌ 不执行文件锁操作（Sub-Issue D）
 
 ## 执行步骤
 
-### 1. 检查是否有正在处理的 PR
-
-**重要**: 由于 schedule 是无状态的，需要通过 GitHub Label 判断当前状态。
+### Step 1: 检查并行容量
 
 ```bash
-# 检查是否有带 pr-scanner:pending label 的 PR
-gh pr list --repo hs3180/disclaude --state open \
-  --label "pr-scanner:pending" \
-  --json number,title
+npx tsx skills/pr-scanner/scanner.ts --action check-capacity
 ```
 
-如果返回结果不为空，说明有 PR 正在等待用户反馈，**退出本次执行**。
+解析输出 JSON：`{ "reviewing": N, "maxConcurrent": 3, "available": M }`
 
-### 2. 获取 open PR 列表
+**如果 `available === 0`**，说明已达到最大并行审查数，**退出本次执行**。
+
+### Step 2: 发现未跟踪的 PR
+
+```bash
+npx tsx skills/pr-scanner/scanner.ts --action list-candidates
+```
+
+这会列出所有已跟踪的 PR 状态文件。同时获取 GitHub 上的 open PR 列表：
 
 ```bash
 gh pr list --repo hs3180/disclaude --state open \
-  --json number,title,author,labels,mergeable,statusCheckRollup,updatedAt
+  --json number,title,author,labels,updatedAt
 ```
 
-### 3. 过滤已处理的 PR
+**过滤规则** — 排除以下 PR：
+- 已有 `pr-scanner:reviewing` label 的 PR（正在审查中）
+- 已在 `list-candidates` 结果中且状态为 `closed` 的 PR（已完成）
+- 草稿 PR（`isDraft: true`）
 
-排除以下 PR：
-- 已有 `pr-scanner:processed` label 的 PR
-- 已被 review/approve 的 PR（暂不处理）
+取过滤后的**第一个** PR 作为处理对象。如果没有未跟踪的 PR，**退出本次执行**。
 
-### 4. 选择第一个未处理的 PR
-
-取过滤后的第一个 PR 作为处理对象。
-
-### 5. 获取 PR 详细信息
+### Step 3: 获取 PR 详细信息
 
 ```bash
 gh pr view {number} --repo hs3180/disclaude \
-  --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
+  --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles,labels
 ```
 
-### 6. 创建群聊讨论 PR ⚡ 核心改动
+### Step 4: 创建状态文件 + 添加 Label
 
-使用 `start_group_discussion` 工具为该 PR 创建专门的讨论群聊：
-
-```json
-{
-  "topic": "PR #{number} 讨论: {title}",
-  "members": [],
-  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})\n\n请在群聊中讨论后决定处理方式。",
-  "timeout": 60
-}
+```bash
+npx tsx skills/pr-scanner/scanner.ts --action create-state --pr {number}
 ```
 
-**注意**：
-- `members` 留空，表示只邀请当前用户
-- 群聊名称格式：`PR #{number} 讨论: {PR标题}`
-- 讨论超时：60 分钟
+此命令会：
+1. 创建 `.temp-chats/pr-{number}.json` 状态文件
+2. 通过 `gh pr edit` 添加 `pr-scanner:reviewing` label（非阻塞，失败仅记录警告）
 
-### 7. 在群聊中发送交互式卡片
+如果创建失败（状态文件已存在），说明已被其他实例处理，**跳过此 PR**。
 
-群聊创建后，使用 `send_message` 发送操作选项卡片：
+### Step 5: 发送 PR 详情 + 交互式卡片
 
-**卡片内容**（format: "card"）：
+使用 `send_interactive`（**非** `send_card`）发送 PR 详情和操作选项：
+
+**消息内容**（format: "card"）：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "🔍 PR #{number} 需要审查", "tag": "plain_text"}, "template": "blue"},
   "elements": [
+    {"tag": "markdown", "content": "**{title}**\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |"},
+    {"tag": "markdown", "content": "### 📋 描述\n{description 前500字符}\n\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})"},
+    {"tag": "hr"},
     {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
-    ]},
-    {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
+      {"tag": "button", "text": {"content": "✅ Approve", "tag": "plain_text"}, "value": "approve_{number}", "type": "primary"},
+      {"tag": "button", "text": {"content": "❌ Request Changes", "tag": "plain_text"}, "value": "request_changes_{number}"},
+      {"tag": "button", "text": {"content": "🔄 Close PR", "tag": "plain_text"}, "value": "close_{number}"}
     ]}
   ]
 }
@@ -99,17 +109,25 @@ gh pr view {number} --repo hs3180/disclaude \
 **actionPrompts**：
 ```json
 {
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+  "approve_{number}": "[用户操作] 用户批准 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr review {number} --repo hs3180/disclaude --approve`\n3. 执行 `npx tsx skills/pr-scanner/scanner.ts --action mark --pr {number} --state approved` 更新状态\n4. 报告执行结果",
+  "request_changes_{number}": "[用户操作] 用户请求修改 PR #{number}。请：\n1. 询问用户需要修改的具体内容\n2. 使用 `gh pr review {number} --repo hs3180/disclaude --request-changes -b \"{用户输入的修改意见}\"` 提交审查意见\n3. 注意：不改变 scanner 状态，PR 仍为 reviewing",
+  "close_{number}": "[用户操作] 用户关闭 PR #{number}。请执行以下步骤：\n1. 执行 `gh pr close {number} --repo hs3180/disclaude`\n2. 执行 `npx tsx skills/pr-scanner/scanner.ts --action mark --pr {number} --state closed` 更新状态\n3. 报告执行结果"
 }
 ```
 
-### 8. 添加 pending label
+> **⚠️ 重要**: 按钮的 `value` 必须包含 PR 编号（如 `approve_123`），`actionPrompts` 的 key 和 prompt 中也必须使用相同的 PR 编号。Schedule 执行时，用实际的 PR 编号替换 `{number}` 占位符。
+
+### Step 6: 验证 Label 兜底
+
+检查 label 是否已添加（`scanner.ts` 的 `create-state` 已自动处理，此步为兜底验证）：
 
 ```bash
-gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
+gh pr view {number} --repo hs3180/disclaude --json labels --jq '.labels[].name'
+```
+
+如果输出中不包含 `pr-scanner:reviewing`，手动添加：
+```bash
+gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:reviewing"
 ```
 
 ## 状态管理
@@ -118,30 +136,68 @@ gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
 
 | Label | 含义 |
 |-------|------|
-| `pr-scanner:processed` | 已通过 scanner 处理完成 |
-| `pr-scanner:pending` | 正在等待用户反馈 |
+| `pr-scanner:reviewing` | 正在被 scanner 跟踪审查中 |
+
+### 状态文件（`.temp-chats/pr-{number}.json`）
+
+```json
+{
+  "prNumber": 123,
+  "chatId": null,
+  "state": "reviewing",
+  "createdAt": "2026-04-15T10:00:00Z",
+  "updatedAt": "2026-04-15T10:00:00Z",
+  "expiresAt": "2026-04-17T10:00:00Z",
+  "disbandRequested": null
+}
+```
 
 ### 状态转换
 
 ```
-新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 执行动作 → 添加 processed label → 移除 pending label
+新 PR → create-state (reviewing + label) → 用户操作:
+  ├─ approve → mark approved (自动移除 label)
+  └─ close   → mark closed  (自动移除 label)
 ```
+
+| 操作 | scanner.ts action | Label 变化 |
+|------|-------------------|------------|
+| 发现新 PR | `create-state --pr N` | ➕ 添加 `pr-scanner:reviewing` |
+| 用户 Approve | `mark --pr N --state approved` | ➖ 移除 `pr-scanner:reviewing` |
+| 用户 Close | `mark --pr N --state closed` | ➖ 移除 `pr-scanner:reviewing` |
+| 用户 Request Changes | 无状态变更 | 🔒 保持 `pr-scanner:reviewing` |
 
 ## 错误处理
 
-- 如果 `gh` 命令失败，记录错误并发送错误通知
-- 如果创建群聊失败，回退到在固定 chatId 中发送消息
-- 如果添加 label 失败，记录错误但不影响流程
+| 场景 | 处理方式 |
+|------|----------|
+| scanner.ts 执行失败 | 记录错误，跳过此 PR，继续处理下一个 |
+| gh CLI 失败（获取 PR 列表） | 记录错误，退出本次执行 |
+| gh CLI 失败（获取 PR 详情） | 跳过此 PR |
+| Label 添加失败 | 不阻塞主流程（scanner.ts 内部已处理） |
+| Label 移除失败 | 不阻塞主流程（scanner.ts 内部已处理） |
+| send_interactive 发送失败 | 回退到在 admin chatId 发送纯文本通知 |
 
-## 注意事项
+## 验证标准
 
-1. **群聊讨论**: 为每个 PR 创建独立群聊，便于深入讨论
-2. **串行处理**: 一次只处理一个 PR，避免并发问题
-3. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
-4. **用户驱动**: 等待群聊讨论结论后才执行动作，不自动合并或关闭
+- [ ] Schedule 可被 Scheduler 正常触发
+- [ ] scanner.ts `check-capacity` 输出 JSON 可被解析
+- [ ] scanner.ts `list-candidates` 输出 JSON 可被解析
+- [ ] scanner.ts `create-state` 正确创建状态文件
+- [ ] `send_interactive` 卡片按钮可点击并触发正确 actionPrompt
+- [ ] `pr-scanner:reviewing` Label 正确添加/移除
+- [ ] 容量限制生效（max 3 reviewing）
+- [ ] 错误路径有回退方案
 
-## 依赖
+## 不包含
 
-- gh CLI
-- GitHub Labels: `pr-scanner:processed`, `pr-scanner:pending`
-- MCP Tool: `start_group_discussion` (Issue #1155)
+- 讨论群生命周期管理（Sub-Issue C / Phase 2 / #2221）
+- 文件锁（Sub-Issue D）
+- 群聊创建（lark-cli，Phase 2 实现，当前使用 admin chatId）
+
+## 关联
+
+- Parent: #2210
+- Depends on: #2219 (scanner.ts 骨架)
+- Next: #2221 (讨论群生命周期管理)
+- Design: `docs/designs/pr-scanner-design.md`

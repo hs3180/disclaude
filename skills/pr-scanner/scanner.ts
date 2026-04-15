@@ -6,7 +6,8 @@
  * State files are stored in `.temp-chats/pr-{number}.json` as single source of truth.
  *
  * This script is designed to be called by schedule prompts (not standalone scheduling).
- * It performs no GitHub API calls — all operations are local filesystem-based.
+ * Filesystem operations are local-only. GitHub label management is integrated
+ * via `gh` CLI (non-blocking — failures are logged as warnings).
  *
  * CLI Actions:
  *   check-capacity           Count reviewing PRs and report capacity
@@ -43,6 +44,7 @@ import {
   type PrStateFile,
   ValidationError,
 } from './schema.js';
+import { addLabel, removeLabel, REVIEWING_LABEL } from './label.js';
 
 // ---- Helpers ----
 
@@ -180,6 +182,10 @@ async function actionCreateState(prNumber: number): Promise<void> {
   };
 
   await atomicWrite(filePath, JSON.stringify(stateFile, null, 2) + '\n');
+
+  // Add reviewing label on GitHub (non-blocking)
+  await addLabel(prNumber, REVIEWING_LABEL);
+
   console.log(JSON.stringify(stateFile, null, 2));
 }
 
@@ -224,6 +230,11 @@ async function actionMark(prNumber: number, newState: PrState): Promise<void> {
   };
 
   await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
+
+  // Remove reviewing label when transitioning away from reviewing (non-blocking)
+  if (stateFile.state === 'reviewing') {
+    await removeLabel(prNumber, REVIEWING_LABEL);
+  }
   console.log(JSON.stringify(updated, null, 2));
 }
 
@@ -300,7 +311,9 @@ Actions:
   check-capacity           Report reviewing capacity (JSON)
   list-candidates          List PR state files (JSON)
   create-state             Create state file for a PR (--pr required)
+                           Also adds pr-scanner:reviewing label on GitHub
   mark                     Update PR state (--pr and --state required)
+                           Removes pr-scanner:reviewing label when leaving reviewing
   status                   Human-readable summary of tracked PRs
 
 Options:
@@ -312,7 +325,9 @@ Options:
 Environment:
   PR_SCANNER_MAX_CONCURRENT  Max reviewing PRs (default: 3)
   PR_SCANNER_STATE_DIR       State directory (default: .temp-chats)
-  PR_SCANNER_EXPIRY_HOURS    Expiry hours (default: 48)`);
+  PR_SCANNER_EXPIRY_HOURS    Expiry hours (default: 48)
+  PR_SCANNER_REPO            GitHub repo (default: hs3180/disclaude)
+  PR_SCANNER_SKIP_LABELS     Set to 'true' to skip GitHub label ops`);
     process.exit(0);
   }
 
