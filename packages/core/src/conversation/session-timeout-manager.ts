@@ -3,7 +3,7 @@
  *
  * Monitors sessions for inactivity and enforces maximum session limits.
  * Designed as a core utility with callback-based integration —
- * it does NOT directly reference Pilot, PrimaryAgentPool, or any specific implementation.
+ * it does NOT directly reference ChatAgent, PrimaryAgentPool, or any specific implementation.
  *
  * Key design decisions (learned from rejected PRs #1409, #1427, #1438):
  *

@@ -13,7 +13,7 @@
  *
  * Architecture:
  * ```
- * Pilot (or other Agent)
+ * ChatAgent (or other Agent)
  *       ↓
  * ConversationOrchestrator
  *       ↓

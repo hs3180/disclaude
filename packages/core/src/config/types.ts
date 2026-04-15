@@ -300,7 +300,7 @@ export interface SessionTimeoutConfig {
 /**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
- * - exec: Execution Node (Pilot/Agent handler)
+ * - exec: Execution Node (ChatAgent/Agent handler)
  */
 export type RunMode = 'comm' | 'exec';
 

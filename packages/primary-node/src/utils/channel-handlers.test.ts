@@ -105,7 +105,7 @@ describe('createChannelCallbacksFactory', () => {
     expect(typeof factory).toBe('function');
   });
 
-  it('should return PilotCallbacks when factory is called', () => {
+  it('should return ChatAgentCallbacks when factory is called', () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
     expect(callbacks.sendMessage).toBeDefined();

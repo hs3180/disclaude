@@ -6,9 +6,7 @@
  * - Task agents
  *
  * Issue #1501: Simplified - 'skill' type removed (skills now handled via
- * Pilot.executeOnce() or .md-defined subagents in .claude/agents/).
- *
- * Features:
+ * ChatAgent.executeOnce() or .md-defined subagents in .claude/agents/).
  * - Unified spawn API with consistent options
  * - Lifecycle management (start, stop, status)
  * - Optional worktree isolation
@@ -43,7 +41,7 @@
 import { randomUUID } from 'crypto';
 import { createLogger, type ChatAgent } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
-import type { PilotCallbacks } from './pilot/index.js';
+import type { ChatAgentCallbacks } from './chat-agent/index.js';
 
 const logger = createLogger('SubagentManager');
 
@@ -55,7 +53,7 @@ const logger = createLogger('SubagentManager');
  * Type of subagent to spawn.
  *
  * Issue #1501: 'skill' type removed. Skills are now handled via
- * Pilot.executeOnce() or .md-defined subagents.
+ * ChatAgent.executeOnce() or .md-defined subagents.
  */
 export type SubagentType = 'schedule' | 'task';
 
@@ -97,7 +95,7 @@ export interface SubagentOptions {
   /** Chat ID for message delivery */
   chatId: string;
   /** Callbacks for sending messages */
-  callbacks: PilotCallbacks;
+  callbacks: ChatAgentCallbacks;
   /** Optional cron expression for scheduled execution (only for type='schedule') */
   schedule?: string;
   /** Optional timeout in milliseconds */

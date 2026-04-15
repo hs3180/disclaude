@@ -185,7 +185,7 @@ function hasImageAnalyzerMcp(): boolean {
  * configured for use with the core MessageBuilder.
  *
  * Issue #1499: Moved from worker-node to primary-node. Use this function
- * when creating Pilot instances for Feishu channels.
+ * when creating ChatAgent instances for Feishu channels.
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */

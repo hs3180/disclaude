@@ -37,7 +37,7 @@ export type { BaseAgentConfig } from './types.js';
 /**
  * Extra SDK options configuration.
  *
- * Kept for backward compatibility with subclasses (Pilot, etc.).
+ * Kept for backward compatibility with subclasses (ChatAgent, etc.).
  * Internally translated to ACP session parameters.
  */
 export interface SdkOptionsExtra {
@@ -432,7 +432,7 @@ export abstract class BaseAgent implements Disposable {
    * Each message from the input generator is sent as a separate prompt
    * on the same session, preserving conversation context.
    *
-   * For conversational agents (Pilot) that use dynamic input generators.
+   * For conversational agents (ChatAgent) that use dynamic input generators.
    *
    * @param input - AsyncGenerator yielding user messages
    * @param options - AgentQueryOptions

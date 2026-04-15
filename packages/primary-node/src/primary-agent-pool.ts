@@ -2,7 +2,7 @@
  * PrimaryAgentPool - Agent pool for Primary Node.
  *
  * Manages ChatAgent instances for each chatId, using AgentFactory
- * from @disclaude/worker-node to create Pilot instances.
+ * from @disclaude/worker-node to create ChatAgent instances.
  *
  * Issue #1499: Accepts optional MessageBuilderOptions for channel-specific
  * message building (e.g., Feishu sections). This decouples Feishu-specific
@@ -12,7 +12,7 @@
  */
 
 import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type PilotCallbacks, type ChatAgent } from '@disclaude/worker-node';
+import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
 
 /**
  * Options for PrimaryAgentPool initialization.
@@ -24,7 +24,7 @@ export interface PrimaryAgentPoolOptions {
   /**
    * Channel-specific MessageBuilderOptions.
    *
-   * When provided, all Pilot instances created by this pool will use
+   * When provided, all ChatAgent instances created by this pool will use
    * these options for building enhanced message content (e.g., platform
    * headers, tool sections, attachment extras).
    *
@@ -36,11 +36,11 @@ export interface PrimaryAgentPoolOptions {
 /**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
  *
- * Each chatId gets its own Pilot instance with full MessageBuilder
+ * Each chatId gets its own ChatAgent instance with full MessageBuilder
  * support for enhanced prompts with context.
  */
 export class PrimaryAgentPool {
-  private readonly agents = new Map<string, ChatAgent>();
+  private readonly agents = new Map<string, ChatAgentInterface>();
   private readonly options: PrimaryAgentPoolOptions;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
@@ -54,10 +54,10 @@ export class PrimaryAgentPool {
    * @param callbacks - Callbacks for sending messages (required for new agents)
    * @returns ChatAgent instance
    */
-  getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
+  getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgentInterface {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+      agent = AgentFactory.createChatAgent('chat-agent', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
       this.agents.set(chatId, agent);

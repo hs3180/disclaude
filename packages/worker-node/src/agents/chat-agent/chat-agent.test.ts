@@ -1,7 +1,7 @@
 /**
- * Tests for Pilot agent (packages/worker-node/src/agents/pilot/index.ts)
+ * Tests for ChatAgent (packages/worker-node/src/agents/chat-agent/index.ts)
  *
- * Tests the public API of the Pilot class including lifecycle management,
+ * Tests the public API of the ChatAgent class including lifecycle management,
  * session handling, chatId binding, and error paths.
  */
 
@@ -59,7 +59,7 @@ vi.mock('@disclaude/mcp-server', () => ({
   createChannelMcpServer: vi.fn(() => ({ type: 'inline' })),
 }));
 
-import { Pilot } from './index.js';
+import { ChatAgent } from './index.js';
 import { MessageChannel } from '@disclaude/core';
 
 const createMockCallbacks = () => ({
@@ -71,14 +71,14 @@ const createMockCallbacks = () => ({
   getChatHistory: vi.fn().mockResolvedValue(undefined),
 });
 
-describe('Pilot', () => {
-  let pilot: InstanceType<typeof Pilot>;
+describe('ChatAgent', () => {
+  let agent: InstanceType<typeof ChatAgent>;
   let callbacks: ReturnType<typeof createMockCallbacks>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     callbacks = createMockCallbacks();
-    pilot = new Pilot({
+    agent = new ChatAgent({
       chatId: 'oc_test_chat',
       callbacks,
       apiKey: 'test-key',
@@ -89,22 +89,22 @@ describe('Pilot', () => {
   });
 
   describe('constructor', () => {
-    it('should create a Pilot with bound chatId', () => {
-      expect(pilot.getChatId()).toBe('oc_test_chat');
+    it('should create a ChatAgent with bound chatId', () => {
+      expect(agent.getChatId()).toBe('oc_test_chat');
     });
 
     it('should have type "chat"', () => {
-      expect(pilot.type).toBe('chat');
+      expect(agent.type).toBe('chat');
     });
 
-    it('should have name "Pilot"', () => {
-      expect(pilot.name).toBe('Pilot');
+    it('should have name "ChatAgent"', () => {
+      expect(agent.name).toBe('ChatAgent');
     });
   });
 
   describe('getChatId', () => {
     it('should return the bound chatId', () => {
-      const p = new Pilot({
+      const p = new ChatAgent({
         chatId: 'oc_another_chat',
         callbacks,
         apiKey: 'key',
@@ -117,59 +117,59 @@ describe('Pilot', () => {
 
   describe('start', () => {
     it('should resolve immediately (no-op)', async () => {
-      await expect(pilot.start()).resolves.toBeUndefined();
+      await expect(agent.start()).resolves.toBeUndefined();
     });
   });
 
   describe('hasActiveSession / getActiveSessionCount', () => {
     it('should return false and 0 initially', () => {
-      expect(pilot.hasActiveSession()).toBe(false);
-      expect(pilot.getActiveSessionCount()).toBe(0);
+      expect(agent.hasActiveSession()).toBe(false);
+      expect(agent.getActiveSessionCount()).toBe(0);
     });
   });
 
   describe('stop', () => {
     it('should return false when no active query', () => {
-      expect(pilot.stop()).toBe(false);
+      expect(agent.stop()).toBe(false);
     });
 
     it('should return false for wrong chatId', () => {
-      expect(pilot.stop('oc_wrong')).toBe(false);
+      expect(agent.stop('oc_wrong')).toBe(false);
     });
   });
 
   describe('reset', () => {
     it('should clear session state', () => {
-      pilot.reset();
-      expect(pilot.hasActiveSession()).toBe(false);
+      agent.reset();
+      expect(agent.hasActiveSession()).toBe(false);
     });
 
     it('should ignore reset for wrong chatId', () => {
-      pilot.reset();
-      pilot.reset('oc_wrong');
-      expect(pilot.getChatId()).toBe('oc_test_chat');
+      agent.reset();
+      agent.reset('oc_wrong');
+      expect(agent.getChatId()).toBe('oc_test_chat');
     });
 
     it('should clear history state', () => {
-      pilot.reset();
-      pilot.reset();
-      pilot.reset();
+      agent.reset();
+      agent.reset();
+      agent.reset();
     });
   });
 
   describe('processMessage', () => {
     it('should ignore messages for wrong chatId', () => {
-      void pilot.processMessage('oc_wrong', 'hello', 'msg_1');
-      expect(pilot.hasActiveSession()).toBe(false);
+      void agent.processMessage('oc_wrong', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(false);
     });
 
     it('should start a session when processing first message', () => {
-      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
-      expect(pilot.hasActiveSession()).toBe(true);
+      void agent.processMessage('oc_test_chat', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
     });
 
     it('should push message to channel after session starts', () => {
-      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void agent.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(MessageChannel).toHaveBeenCalled();
     });
   });
@@ -177,13 +177,13 @@ describe('Pilot', () => {
   describe('executeOnce', () => {
     it('should throw when chatId does not match bound chatId', async () => {
       await expect(
-        pilot.executeOnce('oc_wrong', 'hello', 'msg_1')
+        agent.executeOnce('oc_wrong', 'hello', 'msg_1')
       ).rejects.toThrow('cannot execute for oc_wrong');
     });
 
     it('should complete successfully for matching chatId', async () => {
       await expect(
-        pilot.executeOnce('oc_test_chat', 'hello', 'msg_1')
+        agent.executeOnce('oc_test_chat', 'hello', 'msg_1')
       ).resolves.toBeUndefined();
     });
   });
@@ -198,7 +198,7 @@ describe('Pilot', () => {
       };
 
       const results = [];
-      for await (const result of pilot.handleInput(gen() as AsyncGenerator<any>)) {
+      for await (const result of agent.handleInput(gen() as AsyncGenerator<any>)) {
         results.push(result);
       }
 
@@ -214,7 +214,7 @@ describe('Pilot', () => {
       };
 
       const results = [];
-      for await (const result of pilot.handleInput(gen() as AsyncGenerator<any>)) {
+      for await (const result of agent.handleInput(gen() as AsyncGenerator<any>)) {
         results.push(result);
       }
 
@@ -225,47 +225,47 @@ describe('Pilot', () => {
 
   describe('dispose', () => {
     it('should call dispose without throwing', () => {
-      expect(() => pilot.dispose()).not.toThrow();
+      expect(() => agent.dispose()).not.toThrow();
     });
   });
 
   describe('shutdown', () => {
     it('should complete shutdown without throwing', async () => {
-      await expect(pilot.shutdown()).resolves.toBeUndefined();
+      await expect(agent.shutdown()).resolves.toBeUndefined();
     });
   });
 
   describe('session lifecycle', () => {
     it('should allow reset after processMessage', () => {
-      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
-      expect(pilot.hasActiveSession()).toBe(true);
+      void agent.processMessage('oc_test_chat', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
 
-      pilot.reset();
-      expect(pilot.hasActiveSession()).toBe(false);
+      agent.reset();
+      expect(agent.hasActiveSession()).toBe(false);
     });
 
     it('should allow new session after reset', () => {
-      void pilot.processMessage('oc_test_chat', 'first', 'msg_1');
-      expect(pilot.hasActiveSession()).toBe(true);
+      void agent.processMessage('oc_test_chat', 'first', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
 
-      pilot.reset();
-      expect(pilot.hasActiveSession()).toBe(false);
+      agent.reset();
+      expect(agent.hasActiveSession()).toBe(false);
 
-      void pilot.processMessage('oc_test_chat', 'second', 'msg_2');
-      expect(pilot.hasActiveSession()).toBe(true);
+      void agent.processMessage('oc_test_chat', 'second', 'msg_2');
+      expect(agent.hasActiveSession()).toBe(true);
     });
 
     it('should handle multiple resets without error', () => {
-      pilot.reset();
-      pilot.reset();
-      pilot.reset();
-      expect(pilot.hasActiveSession()).toBe(false);
+      agent.reset();
+      agent.reset();
+      agent.reset();
+      expect(agent.hasActiveSession()).toBe(false);
     });
   });
 
   describe('history loading', () => {
     it('should call getChatHistory callback if available during session start', () => {
-      void pilot.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void agent.processMessage('oc_test_chat', 'hello', 'msg_1');
       expect(callbacks.getChatHistory).toHaveBeenCalled();
     });
 
@@ -274,7 +274,7 @@ describe('Pilot', () => {
         ...callbacks,
         getChatHistory: undefined,
       };
-      const p = new Pilot({
+      const p = new ChatAgent({
         chatId: 'oc_test',
         callbacks: noHistoryCallbacks,
         apiKey: 'key',

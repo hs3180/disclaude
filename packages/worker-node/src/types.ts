@@ -103,11 +103,11 @@ export interface AgentPoolInterface {
 // ============================================================================
 
 /**
- * PilotCallbacks - Callbacks for ChatAgent to send messages.
+ * ChatAgentCallbacks - Callbacks for ChatAgent to send messages.
  *
  * Used when creating ChatAgent instances.
  */
-export interface PilotCallbacks {
+export interface ChatAgentCallbacks {
   /** Send a text message */
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
   /** Send an interactive card */
@@ -125,7 +125,7 @@ export interface PilotCallbacks {
 /**
  * ChatAgentFactory - Factory function to create ChatAgent instances.
  */
-export type ChatAgentFactory = (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+export type ChatAgentFactory = (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
 
 // ============================================================================
 // Scheduler Types
@@ -202,7 +202,7 @@ export interface WorkerNodeDependencies {
 
   /** Factory to create ScheduleAgent instances (for Scheduler).
    *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent. */
-  createScheduleAgent: (chatId: string, callbacks: PilotCallbacks) => ChatAgent;
+  createScheduleAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
 
   /** Logger instance */
   logger: Logger;
