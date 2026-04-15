@@ -9,6 +9,7 @@
 
 import { createLogger, getIpcClient, type FeishuCard } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
+import { transformCardTables } from '../utils/table-converter.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
@@ -70,6 +71,9 @@ export async function send_card(params: {
       };
     }
 
+    // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
+    const processedCard = transformCardTables(card);
+
     const { appId, appSecret } = getFeishuCredentials();
 
     if (!appId || !appSecret) {
@@ -90,7 +94,7 @@ export async function send_card(params: {
     }
 
     logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
-    const result = await sendCardViaIpc(chatId, card, parentMessageId);
+    const result = await sendCardViaIpc(chatId, processedCard, parentMessageId);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC card message failed');
