@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'create_side_group',
       ],
     };
   }
@@ -704,6 +705,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Create a group chat for context offloading.
+   *
+   * Issue #2351: Context Offloading — auto-create side group for long-form content delivery.
+   *
+   * @param name - Group display name
+   * @param members - Initial member open IDs (e.g. ["ou_xxx"])
+   * @param description - Optional group description
+   * @returns The created group chat ID
+   */
+  async createGroup(name: string, members: string[], description?: string): Promise<string> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    logger.info({ name, memberCount: members.length }, 'Creating side group');
+
+    const response = await this.client.im.chat.create({
+      params: {
+        user_id_type: 'open_id',
+      },
+      data: {
+        name,
+        chat_mode: 'group',
+        chat_type: 'public',
+        user_id_list: members,
+        ...(description ? { description } : {}),
+      },
+    });
+
+    const chatId = response?.data?.chat_id;
+    if (!chatId) {
+      throw new Error('Failed to create group: no chat_id in response');
+    }
+
+    logger.info({ chatId, name, memberCount: members.length }, 'Side group created');
+    return chatId;
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────

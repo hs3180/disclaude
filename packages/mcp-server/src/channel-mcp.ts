@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_side_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_side_group } from './tools/create-side-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -448,6 +450,57 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context offloading — create side group for long-form content
+  {
+    name: 'create_side_group',
+    description: `Create a new group chat for delivering long-form content (code, configs, docs).
+
+This is useful for **context offloading** — keeping the main conversation clean while
+delivering detailed content to a dedicated side group. Especially valuable in **voice mode**
+where long code blocks cannot be consumed via TTS.
+
+## Workflow
+1. Call this tool to create the group → get chatId
+2. Use \`send_text\` or \`send_card\` to deliver content to the new group
+3. Reply in the main chat with a brief summary + mention of the new group
+
+## Parameters
+- **name**: Group display name (required)
+- **members**: Array of member open IDs to invite (required, e.g. ["ou_xxx"])
+- **description**: Optional group description
+
+## Example
+\`\`\`json
+{
+  "name": "LiteLLM 配置方案 - 04/15",
+  "members": ["ou_developer123"],
+  "description": "LiteLLM proxy configuration files and architecture docs"
+}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().describe('Group display name'),
+      members: z.array(z.string()).describe('Array of member open IDs to invite (e.g. ["ou_xxx"])'),
+      description: z.string().optional().describe('Optional group description'),
+    }),
+    handler: async ({ name, members, description }: {
+      name: string;
+      members: string[];
+      description?: string;
+    }) => {
+      // Validate members format
+      for (const member of members) {
+        if (!member.startsWith('ou_')) {
+          return toolError(`Invalid member ID '${member}' — expected ou_xxxxx format`);
+        }
+      }
+      try {
+        const result = await create_side_group({ name, members, description });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Side group creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

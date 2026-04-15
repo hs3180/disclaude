@@ -24,7 +24,9 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Context offloading: create side group for long-form content (Issue #2351)
+  | 'createGroup';
 
 /**
  * IPC request payload types.
@@ -83,6 +85,15 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Context offloading: create side group (Issue #2351)
+  createGroup: {
+    /** Group display name */
+    name: string;
+    /** Initial member open IDs (e.g. ["ou_xxx"]) */
+    members: string[];
+    /** Optional description for the group */
+    description?: string;
+  };
 }
 
 /**
@@ -125,6 +136,12 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Context offloading: create side group (Issue #2351)
+  createGroup: {
+    success: boolean;
+    /** The created group chat ID (e.g. "oc_xxx") */
+    chatId?: string;
   };
 }
 
