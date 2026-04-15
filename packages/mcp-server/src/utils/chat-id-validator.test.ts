@@ -59,27 +59,14 @@ describe('isValidChatId', () => {
     });
   });
 
-  describe('Integration test IDs (test-)', () => {
-    it('should accept a valid test- ID', () => {
-      expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
+  describe('Integration test IDs now use cli- prefix (Issue #2389)', () => {
+    it('should reject test- prefix (removed from production code)', () => {
+      expect(isValidChatId('test-use-case-2-files-12345')).toBe(false);
     });
 
-    it('should accept a minimal test- ID (10 chars)', () => {
-      expect(isValidChatId('test-abcde')).toBe(true);
-    });
-
-    it('should reject a test- ID that is too short', () => {
-      expect(isValidChatId('test-abcd')).toBe(false);
-    });
-
-    it('should reject a bare test- prefix', () => {
-      expect(isValidChatId('test-')).toBe(false);
-    });
-
-    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
-      // Previously used multimodal-test-* which was rejected;
-      // renamed to test-multimodal-* to match the test- prefix pattern.
-      expect(isValidChatId('test-multimodal-12345')).toBe(true);
+    it('should accept cli- prefixed IDs used by integration tests', () => {
+      expect(isValidChatId('cli-mcp-send-text-12345')).toBe(true);
+      expect(isValidChatId('cli-multimodal-12345')).toBe(true);
     });
   });
 
@@ -117,8 +104,10 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('cli-session-42')).toBeNull();
   });
 
-  it('should return null for a valid test- ID', () => {
-    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
+  it('should return an error for a test- ID (removed from production)', () => {
+    const error = getChatIdValidationError('test-mcp-send-text-12345');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Invalid chatId');
   });
 
   it('should return an error for an empty string', () => {
@@ -133,7 +122,7 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('oc_');
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
-    expect(error).toContain('test-');
+    expect(error).not.toContain('test-');
   });
 
   it('should truncate long chatIds in error messages', () => {

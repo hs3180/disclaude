@@ -34,7 +34,7 @@ register_cleanup
 test_number_context() {
     log_info "Test: Number context - Set favorite number and recall..."
 
-    local chat_id="test-number-context-$$"
+    local chat_id="cli-number-context-$$"
 
     # Turn 1: Tell agent my favorite number
     log_debug "Turn 1: Telling agent my favorite number is 42"
@@ -70,7 +70,7 @@ test_number_context() {
 test_name_context() {
     log_info "Test: Name context - Introduce and recall name..."
 
-    local chat_id="test-name-context-$$"
+    local chat_id="cli-name-context-$$"
 
     # Turn 1: Introduce name
     log_debug "Turn 1: Introducing myself as Xiaoming"
@@ -105,8 +105,8 @@ test_name_context() {
 test_context_isolation() {
     log_info "Test: Context isolation - Different chatId should not share context..."
 
-    local chat_id_1="test-isolation-1-$$"
-    local chat_id_2="test-isolation-2-$$"
+    local chat_id_1="cli-isolation-1-$$"
+    local chat_id_2="cli-isolation-2-$$"
 
     # Chat 1: Set a secret number
     log_debug "Chat 1: Setting secret number 123"

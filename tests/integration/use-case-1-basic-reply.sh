@@ -47,7 +47,7 @@ test_basic_greeting() {
 test_custom_chatid() {
     log_info "Test: Custom chatId preservation..."
 
-    local custom_chat_id="test-use-case-1-$$"
+    local custom_chat_id="cli-use-case-1-$$"
     assert_sync_chat_ok "你好" "$custom_chat_id" || return 1
 
     # Check chatId is preserved in response body

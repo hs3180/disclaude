@@ -45,7 +45,7 @@ test_calculation_task() {
 test_file_listing_task() {
     log_info "Test: File listing task..."
 
-    local chat_id="test-use-case-2-files-$$"
+    local chat_id="cli-use-case-2-files-$$"
     assert_sync_chat_ok "请列出当前目录下的所有文件" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "package\.json|src|dist|文件|目录|file|directory|ls|Running"; then
@@ -59,7 +59,7 @@ test_file_listing_task() {
 test_text_analysis_task() {
     log_info "Test: Text analysis task..."
 
-    local chat_id="test-use-case-2-text-$$"
+    local chat_id="cli-use-case-2-text-$$"
     assert_sync_chat_ok "请用一句话总结：人工智能是计算机科学的一个分支，它试图理解智能的本质，并开发出一种新的能以人类智能相似的方式做出反应的智能机器。" "$chat_id" || return 1
 
     # Validate response is a summary (non-empty)
