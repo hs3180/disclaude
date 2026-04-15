@@ -52,6 +52,17 @@ vi.mock('./loader.js', () => ({
   getPreloadedConfig: mockGetPreloadedConfig,
 }));
 
+// Mock child_process for resolveAcpCommand() (Issue #2349)
+// Simulates claude-agent-acp being available in PATH
+vi.mock('child_process', () => ({
+  execFileSync: vi.fn((cmd: string, args: string[]) => {
+    if (cmd === 'which' && args[0] === 'claude-agent-acp') {
+      return '/usr/local/bin/claude-agent-acp';
+    }
+    return '';
+  }),
+}));
+
 import { Config, createDefaultRuntimeContext } from './index.js';
 
 describe('Config', () => {
