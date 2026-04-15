@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { checkMacAutoSleep } from './utils/mac-sleep-check.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -242,6 +243,11 @@ async function main(): Promise<void> {
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
     await lifecycleManager.startAll();
+
+    // System-level macOS auto-sleep check (Issue #2263)
+    // Warns if macOS sleep is enabled — affects all long-lived connections,
+    // not just Feishu. Only runs on macOS, non-blocking.
+    checkMacAutoSleep();
 
     // Log startup info
     for (const { type, config } of channelEntries) {
