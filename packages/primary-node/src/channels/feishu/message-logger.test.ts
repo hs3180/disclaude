@@ -1,8 +1,9 @@
 /**
- * Tests for MessageLogger.getChatHistory() multi-day aggregation.
+ * Tests for MessageLogger.
  *
  * Issue #1863: Tests that getChatHistory reads from multiple days
  * and respects historyDays and maxContextLength configuration.
+ * Issue #1617: Expanded coverage for init, logging, dedup, migration, clearCache.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -165,5 +166,320 @@ describe('MessageLogger.getChatHistory', () => {
 
     // Should have date separator between days
     expect(result).toContain('2026-04-03');
+  });
+});
+
+describe('MessageLogger.init', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should create chat-logs directory on init', async () => {
+    const ml = new MessageLogger();
+    await ml.init();
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const stat = await fs.stat(chatDir);
+    expect(stat.isDirectory()).toBe(true);
+  });
+
+  it('should not throw on double init', async () => {
+    const ml = new MessageLogger();
+    await ml.init();
+    await ml.init();
+
+    // Should not create duplicate directories or throw
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const stat = await fs.stat(chatDir);
+    expect(stat.isDirectory()).toBe(true);
+  });
+
+  it('should auto-init when logging without explicit init', async () => {
+    const ml = new MessageLogger();
+    // Don't call init() — logging should trigger auto-init
+    await ml.logIncomingMessage('msg1', 'user1', 'chat1', 'hello', 'text');
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const stat = await fs.stat(chatDir);
+    expect(stat.isDirectory()).toBe(true);
+  });
+});
+
+describe('MessageLogger.logIncomingMessage', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should write incoming message to date-based log file', async () => {
+    await logger.logIncomingMessage('msg_001', 'user_abc', 'chat_xyz', 'Hello world', 'text');
+
+    // Find today's log directory
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    expect(dateDir).toBeDefined();
+
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_xyz.md'), 'utf-8');
+    expect(logContent).toContain('👤');
+    expect(logContent).toContain('msg_001');
+    expect(logContent).toContain('Hello world');
+  });
+
+  it('should mark message as processed after logging', async () => {
+    await logger.logIncomingMessage('msg_002', 'user1', 'chat1', 'Test', 'text');
+
+    expect(logger.isMessageProcessed('msg_002')).toBe(true);
+  });
+
+  it('should use provided timestamp in log entry', async () => {
+    await logger.logIncomingMessage(
+      'msg_003', 'user1', 'chat1', 'Timed message', 'text', '2026-01-15T10:30:00.000Z',
+    );
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
+    expect(logContent).toContain('2026-01-15T10:30:00.000Z');
+  });
+
+  it('should use numeric timestamp correctly', async () => {
+    const ts = 1705312200000; // 2024-01-15T10:30:00.000Z
+    await logger.logIncomingMessage('msg_004', 'user1', 'chat1', 'Numeric ts', 'text', ts);
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
+    // Numeric timestamp should be converted to ISO string
+    expect(logContent).toContain('2024-01-15');
+  });
+
+  it('should append multiple messages to same chat file', async () => {
+    await logger.logIncomingMessage('msg_a', 'user1', 'chat_multi', 'First', 'text');
+    await logger.logIncomingMessage('msg_b', 'user1', 'chat_multi', 'Second', 'text');
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_multi.md'), 'utf-8');
+
+    expect(logContent).toContain('First');
+    expect(logContent).toContain('Second');
+    expect(logContent).toContain('msg_a');
+    expect(logContent).toContain('msg_b');
+  });
+});
+
+describe('MessageLogger.logOutgoingMessage', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should write outgoing message with bot emoji', async () => {
+    await logger.logOutgoingMessage('msg_bot1', 'chat1', 'Bot reply', 'text');
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
+
+    expect(logContent).toContain('🤖');
+    expect(logContent).toContain('Bot reply');
+    expect(logContent).toContain('msg_bot1');
+  });
+
+  it('should use default message type "text" when not specified', async () => {
+    await logger.logOutgoingMessage('msg_bot2', 'chat1', 'Default type');
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
+
+    expect(logContent).toContain('Default type');
+  });
+
+  it('should not add outgoing messages to processed cache', async () => {
+    await logger.logOutgoingMessage('msg_bot3', 'chat1', 'Not tracked');
+
+    // Outgoing messages should NOT be added to dedup cache
+    expect(logger.isMessageProcessed('msg_bot3')).toBe(false);
+  });
+
+  it('should use provided timestamp for outgoing message', async () => {
+    await logger.logOutgoingMessage(
+      'msg_bot4', 'chat1', 'Timed bot', 'text', '2026-06-01T12:00:00.000Z',
+    );
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
+    expect(logContent).toContain('2026-06-01T12:00:00.000Z');
+  });
+});
+
+describe('MessageLogger.isMessageProcessed / clearCache', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should return false for unprocessed message', () => {
+    expect(logger.isMessageProcessed('never_seen')).toBe(false);
+  });
+
+  it('should return true after logging incoming message', async () => {
+    await logger.logIncomingMessage('msg_dedup', 'user1', 'chat1', 'Content', 'text');
+    expect(logger.isMessageProcessed('msg_dedup')).toBe(true);
+  });
+
+  it('should clear cache with clearCache', async () => {
+    await logger.logIncomingMessage('msg_clear', 'user1', 'chat1', 'Content', 'text');
+    expect(logger.isMessageProcessed('msg_clear')).toBe(true);
+
+    logger.clearCache();
+    expect(logger.isMessageProcessed('msg_clear')).toBe(false);
+  });
+
+  it('should track multiple messages independently', async () => {
+    await logger.logIncomingMessage('msg_a', 'user1', 'chat1', 'A', 'text');
+    await logger.logIncomingMessage('msg_b', 'user1', 'chat1', 'B', 'text');
+
+    expect(logger.isMessageProcessed('msg_a')).toBe(true);
+    expect(logger.isMessageProcessed('msg_b')).toBe(true);
+    expect(logger.isMessageProcessed('msg_c')).toBe(false);
+  });
+});
+
+describe('MessageLogger.migrateLegacyFiles', () => {
+  let tmpDir: string;
+  let chatDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    chatDir = path.join(tmpDir, 'chat-logs');
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should migrate flat .md files to date-based structure', async () => {
+    // Create a flat .md file (legacy structure)
+    await fs.mkdir(chatDir, { recursive: true });
+    await fs.writeFile(path.join(chatDir, 'oc_chat123.md'), 'Legacy chat content');
+
+    const ml = new MessageLogger();
+    await ml.init();
+
+    // Flat file should be moved to today's date directory
+    const [today] = new Date().toISOString().split('T');
+    const newPath = path.join(chatDir, today, 'oc_chat123.md');
+    const migratedContent = await fs.readFile(newPath, 'utf-8');
+    expect(migratedContent).toBe('Legacy chat content');
+
+    // Original file should no longer exist
+    await expect(fs.access(path.join(chatDir, 'oc_chat123.md'))).rejects.toThrow();
+  });
+
+  it('should migrate old {chatId}/{date}.md structure to {date}/{chatId}.md', async () => {
+    await fs.mkdir(chatDir, { recursive: true });
+    const legacyChatDir = path.join(chatDir, 'oc_chat456');
+    await fs.mkdir(legacyChatDir);
+    await fs.writeFile(path.join(legacyChatDir, '2026-03-15.md'), 'Old structure content');
+
+    const ml = new MessageLogger();
+    await ml.init();
+
+    // Should be moved to 2026-03-15/oc_chat456.md
+    const newPath = path.join(chatDir, '2026-03-15', 'oc_chat456.md');
+    const content = await fs.readFile(newPath, 'utf-8');
+    expect(content).toBe('Old structure content');
+  });
+
+  it('should clean up empty legacy directories after migration', async () => {
+    await fs.mkdir(chatDir, { recursive: true });
+    const legacyChatDir = path.join(chatDir, 'oc_chat789');
+    await fs.mkdir(legacyChatDir);
+    await fs.writeFile(path.join(legacyChatDir, '2026-03-10.md'), 'Migrate me');
+
+    const ml = new MessageLogger();
+    await ml.init();
+
+    // Legacy directory should be removed (it's now empty)
+    await expect(fs.access(legacyChatDir)).rejects.toThrow();
+  });
+
+  it('should skip non-date .md files in legacy chat directories', async () => {
+    await fs.mkdir(chatDir, { recursive: true });
+    const legacyChatDir = path.join(chatDir, 'oc_chat_note');
+    await fs.mkdir(legacyChatDir);
+    await fs.writeFile(path.join(legacyChatDir, 'notes.md'), 'Not a date');
+    await fs.writeFile(path.join(legacyChatDir, '2026-03-20.md'), 'Valid date');
+
+    const ml = new MessageLogger();
+    await ml.init();
+
+    // Only the date-formatted file should be migrated
+    const newDateDir = path.join(chatDir, '2026-03-20');
+    const content = await fs.readFile(path.join(newDateDir, 'oc_chat_note.md'), 'utf-8');
+    expect(content).toBe('Valid date');
+
+    // 'notes.md' should remain in the old directory since it's not a valid date
+  });
+
+  it('should handle init when no legacy files exist', async () => {
+    await fs.mkdir(chatDir, { recursive: true });
+
+    const ml = new MessageLogger();
+    await ml.init();
+
+    // Should not throw, just create the directory
+    const stat = await fs.stat(chatDir);
+    expect(stat.isDirectory()).toBe(true);
   });
 });
