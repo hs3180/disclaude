@@ -125,9 +125,9 @@ describe('detectFileExtension', () => {
     expect(detectFileExtension(buffer)).toBe('.flac');
   });
 
-  it('should detect M4A from ftyp box', () => {
+  it('should detect M4A from ftyp box with M4A brand', () => {
     const buffer = Buffer.from([
-      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70,
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20,
     ]);
     expect(detectFileExtension(buffer)).toBe('.m4a');
   });
@@ -149,6 +149,73 @@ describe('detectFileExtension', () => {
     // This must match AAC, not the MP3 sync word detector which comes after
     const buffer = Buffer.from([0xFF, 0xF1, 0x90, 0x00]);
     expect(detectFileExtension(buffer)).toBe('.aac');
+  });
+
+  // Issue #2411: Video format detection tests
+  it('should detect MOV from ftyp box with qt brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mov');
+  });
+
+  it('should detect MP4 from ftyp box with isom brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect MP4 from ftyp box with mp42 brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect MP4 from ftyp box with avc1 brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x63, 0x31,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect M4V from ftyp box with M4V brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x56, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4v');
+  });
+
+  it('should detect 3GP from ftyp box with 3gp5 brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x33, 0x67, 0x70, 0x35,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.3gp');
+  });
+
+  it('should detect MP4 from unknown ftyp brand as fallback', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x78, 0x78, 0x78, 0x78,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect AVI from RIFF...AVI header', () => {
+    const buffer = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.avi');
+  });
+
+  it('should detect MKV from EBML header', () => {
+    const buffer = Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x00, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.mkv');
+  });
+
+  it('should detect FLV from FLV header', () => {
+    const buffer = Buffer.from([0x46, 0x4C, 0x56, 0x01, 0x00, 0x00, 0x00]);
+    expect(detectFileExtension(buffer)).toBe('.flv');
   });
 });
 
@@ -208,6 +275,31 @@ describe('mimeToExtension', () => {
 
   it('should map audio/aac to .aac', () => {
     expect(mimeToExtension('audio/aac')).toBe('.aac');
+  });
+
+  // Issue #2411: Video MIME type mapping tests
+  it('should map video/mp4 to .mp4', () => {
+    expect(mimeToExtension('video/mp4')).toBe('.mp4');
+  });
+
+  it('should map video/quicktime to .mov', () => {
+    expect(mimeToExtension('video/quicktime')).toBe('.mov');
+  });
+
+  it('should map video/webm to .webm', () => {
+    expect(mimeToExtension('video/webm')).toBe('.webm');
+  });
+
+  it('should map video/x-msvideo to .avi', () => {
+    expect(mimeToExtension('video/x-msvideo')).toBe('.avi');
+  });
+
+  it('should map video/x-matroska to .mkv', () => {
+    expect(mimeToExtension('video/x-matroska')).toBe('.mkv');
+  });
+
+  it('should map video/x-flv to .flv', () => {
+    expect(mimeToExtension('video/x-flv')).toBe('.flv');
   });
 });
 
@@ -273,6 +365,34 @@ describe('ensureFileExtension', () => {
   it('should handle paths with dots in directory names', () => {
     const buffer = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
     expect(ensureFileExtension('/tmp/workspace.v2/downloads/image_key', buffer)).toBe('/tmp/workspace.v2/downloads/image_key.png');
+  });
+
+  // Issue #2411: Video extension tests
+  it('should not modify path if .mov extension already exists', () => {
+    const buffer = Buffer.from([0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20]);
+    expect(ensureFileExtension('/tmp/video.mov', buffer)).toBe('/tmp/video.mov');
+  });
+
+  it('should not modify path if .mp4 extension already exists', () => {
+    const buffer = Buffer.from([0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D]);
+    expect(ensureFileExtension('/tmp/video.mp4', buffer)).toBe('/tmp/video.mp4');
+  });
+
+  it('should not modify path if .avi extension already exists', () => {
+    const buffer = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20]);
+    expect(ensureFileExtension('/tmp/video.avi', buffer)).toBe('/tmp/video.avi');
+  });
+
+  it('should detect MOV from magic bytes for extensionless path', () => {
+    // qt brand at offset 8-11
+    const buffer = Buffer.from([0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20]);
+    expect(ensureFileExtension('/tmp/downloads/video_key', buffer)).toBe('/tmp/downloads/video_key.mov');
+  });
+
+  it('should detect MP4 from magic bytes for extensionless path', () => {
+    // isom brand at offset 8-11
+    const buffer = Buffer.from([0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D]);
+    expect(ensureFileExtension('/tmp/downloads/video_key', buffer)).toBe('/tmp/downloads/video_key.mp4');
   });
 });
 

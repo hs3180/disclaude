@@ -738,6 +738,17 @@ export class MessageHandler {
           });
           await response.writeFile(localPath);
 
+          // Issue #2411: Verify file was actually written to disk
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size === 0) {
+              logger.warn({ localPath, size: stat.size }, 'Downloaded file is empty');
+            }
+          } catch (statError) {
+            logger.error({ err: statError, localPath }, 'File not found after writeFile — download may have silently failed');
+            localPath = undefined;
+          }
+
           // Issue #1637, #1663: Ensure file has correct extension via file-utils API
           const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
           if (correctedPath !== localPath) {

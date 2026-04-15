@@ -38,6 +38,20 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'audio/flac': '.flac',
   'audio/aac': '.aac',
   'audio/x-ms-wma': '.wma',
+  // Issue #2411: Video MIME type mappings
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/x-quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-msvideo': '.avi',
+  'video/avi': '.avi',
+  'video/msvideo': '.avi',
+  'video/x-matroska': '.mkv',
+  'video/matroska': '.mkv',
+  'video/x-flv': '.flv',
+  'video/3gpp': '.3gp',
+  'video/x-m4v': '.m4v',
+  'video/x-ms-wmv': '.wmv',
 };
 
 /**
@@ -142,11 +156,41 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
       buf[0] === 0x66 && buf[1] === 0x4C && buf[2] === 0x61 && buf[3] === 0x43,
     ext: '.flac',
   },
-  // M4A/MP4 (ftyp): offset 4 bytes: 66 74 79 70
+  // Issue #2411: MP4/MOV/M4A (ftyp box) — parse major brand to distinguish formats
+  // Structure: [0-3] box size, [4-7] 'ftyp', [8-11] major brand
+  // QuickTime MOV: brand = 'qt  ' (0x71 0x74 0x20 0x20)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x71 && buf[9] === 0x74 && buf[10] === 0x20 && buf[11] === 0x20,
+    ext: '.mov',
+  },
+  // M4A audio: brand = 'M4A ' (0x4D 0x34 0x41 0x20)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x4D && buf[9] === 0x34 && buf[10] === 0x41 && buf[11] === 0x20,
+    ext: '.m4a',
+  },
+  // M4V video: brand = 'M4V ' (0x4D 0x34 0x56 0x20)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x4D && buf[9] === 0x34 && buf[10] === 0x56 && buf[11] === 0x20,
+    ext: '.m4v',
+  },
+  // 3GP: brand = '3gp5' (0x33 0x67 0x70 0x35)
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x33 && buf[9] === 0x67 && buf[10] === 0x70 && buf[11] === 0x35,
+    ext: '.3gp',
+  },
+  // MP4 fallback: any other ftyp brand (isom, mp41, mp42, avc1, etc.)
   {
     detect: (buf) => buf.length >= 8 &&
       buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70,
-    ext: '.m4a',
+    ext: '.mp4',
   },
   // AMR: 23 21 41 4D 52 (#!AMR)
   {
@@ -175,6 +219,26 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
       buf[0] === 0x30 && buf[1] === 0x26 && buf[2] === 0xB2 && buf[3] === 0x75 &&
       buf[4] === 0x8E && buf[5] === 0x66 && buf[6] === 0xCF && buf[7] === 0x11,
     ext: '.wma',
+  },
+  // Issue #2411: Video format signatures
+  // AVI (RIFF....AVI ): 52 49 46 46 .... 41 56 49 20
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x41 && buf[9] === 0x56 && buf[10] === 0x49 && buf[11] === 0x20,
+    ext: '.avi',
+  },
+  // MKV/WebM (EBML header): 1A 45 DF A3
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3,
+    ext: '.mkv',
+  },
+  // FLV: 46 4C 56 (FLV)
+  {
+    detect: (buf) => buf.length >= 3 &&
+      buf[0] === 0x46 && buf[1] === 0x4C && buf[2] === 0x56,
+    ext: '.flv',
   },
 ];
 
