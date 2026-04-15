@@ -305,9 +305,31 @@ export abstract class BaseAgent implements Disposable {
   } {
     const result: ReturnType<BaseAgent['toAcpSessionOptions']> = {};
 
-    // Pass MCP servers as array of configs
+    // Pass MCP servers as array of configs.
+    // Issue #2383: Filter out non-serializable MCP server objects (e.g.,
+    // in-process SDK servers created by createSdkMcpServer() that contain
+    // Zod schemas with circular references). Only include plain-object
+    // stdio configs ({ type: 'stdio', command, args, env }) that the ACP
+    // subprocess can launch as child processes.
     if (options.mcpServers) {
-      result.mcpServers = Object.values(options.mcpServers);
+      const serializableServers: unknown[] = [];
+      for (const [name, config] of Object.entries(options.mcpServers)) {
+        if (
+          config && typeof config === 'object'
+          && 'type' in config && 'command' in config
+        ) {
+          // Serializable StdioMcpServerConfig
+          serializableServers.push(config);
+        } else {
+          this.logger.warn(
+            { serverName: name, serverType: typeof config },
+            'Skipping non-serializable MCP server in ACP session (not a stdio config)',
+          );
+        }
+      }
+      if (serializableServers.length > 0) {
+        result.mcpServers = serializableServers;
+      }
     }
 
     // Pass permission mode

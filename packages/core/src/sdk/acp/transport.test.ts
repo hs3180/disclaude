@@ -487,4 +487,49 @@ describe('AcpStdioTransport', () => {
     await transport.disconnect();
     expect(transport.connected).toBe(false);
   });
+
+  // Issue #2383: Circular reference defense
+  it('throws AcpError with diagnostic info on circular reference in params', async () => {
+    const transport = new AcpStdioTransport({
+      command: 'node',
+      args: ['-e', 'process.stdin.resume()'],
+    });
+
+    await transport.connect();
+
+    // Create a circular reference object that mimics an SDK MCP server
+    const circular: Record<string, unknown> = { name: 'channel-mcp' };
+    circular.root = circular; // creates the circular reference
+
+    const req = createRequest('session/new', {
+      cwd: '/test',
+      mcpServers: [circular],
+    }, 0);
+
+    expect(() => transport.send(req)).toThrow(AcpError);
+    expect(() => transport.send(req)).toThrow('circular reference');
+    expect(() => transport.send(req)).toThrow('session/new');
+    expect(() => transport.send(req)).toThrow('mcpServers');
+
+    await transport.disconnect();
+  });
+
+  it('sends normal messages without error', async () => {
+    const transport = new AcpStdioTransport({
+      command: 'node',
+      args: ['-e', 'process.stdin.resume()'],
+    });
+
+    await transport.connect();
+
+    // Normal serializable message should work fine
+    const req = createRequest('session/new', {
+      cwd: '/test',
+      mcpServers: [{ type: 'stdio', name: 'test', command: 'node', args: ['server.js'] }],
+    }, 0);
+
+    expect(() => transport.send(req)).not.toThrow();
+
+    await transport.disconnect();
+  });
 });

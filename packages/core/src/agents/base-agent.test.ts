@@ -477,6 +477,76 @@ describe('BaseAgent', () => {
       );
     });
 
+    // Issue #2383: Filter out non-serializable MCP server objects
+    it('should filter out non-serializable MCP servers and only pass stdio configs', async () => {
+      // Simulate the real scenario: channel-mcp is an in-process SDK server
+      // (not a plain stdio config), while external servers are serializable.
+      const fakeSdkServer = { name: 'channel-mcp', version: '1.0.0', tools: [] };
+      const stdioServer = { type: 'stdio', name: 'external-mcp', command: 'node', args: ['ext.js'] };
+      const mcpServers = {
+        'channel-mcp': fakeSdkServer,
+        'external-mcp': stdioServer,
+      };
+      const optionsWithMcp = {
+        ...defaultOptions,
+        mcpServers: mcpServers as unknown as Record<string, import('../sdk/index.js').SdkMcpServerConfig>,
+      };
+
+      mockAcpClient.sendPrompt.mockImplementation(async function* () {
+        yield createMockAcpMessage();
+      });
+
+      for await (const _ of agent.testQueryOnce('test', optionsWithMcp)) {
+        // consume
+      }
+
+      // Only the stdio server should be passed to createSession
+      expect(mockAcpClient.createSession).toHaveBeenCalledWith(
+        '/workspace',
+        expect.objectContaining({
+          mcpServers: [{ type: 'stdio', name: 'external-mcp', command: 'node', args: ['ext.js'] }],
+        }),
+      );
+
+      // Verify that the non-serializable server was NOT included
+      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as { mcpServers?: unknown[] };
+      const mcpServerNames = (callArgs.mcpServers ?? []).map(
+        (s: unknown) => (s as Record<string, unknown>).name,
+      );
+      expect(mcpServerNames).not.toContain('channel-mcp');
+    });
+
+    it('should omit mcpServers when all servers are non-serializable', async () => {
+      const fakeSdkServer = { name: 'inline-server', tools: [() => {}] };
+      const mcpServers = {
+        'inline-server': fakeSdkServer,
+      };
+      const optionsWithMcp = {
+        ...defaultOptions,
+        mcpServers: mcpServers as unknown as Record<string, import('../sdk/index.js').SdkMcpServerConfig>,
+      };
+
+      mockAcpClient.sendPrompt.mockImplementation(async function* () {
+        yield createMockAcpMessage();
+      });
+
+      for await (const _ of agent.testQueryOnce('test', optionsWithMcp)) {
+        // consume
+      }
+
+      expect(mockAcpClient.createSession).toHaveBeenCalledWith(
+        '/workspace',
+        expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          settingSources: ['project'],
+        }),
+      );
+
+      // mcpServers should be omitted (or empty) since all were non-serializable
+      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as { mcpServers?: unknown[] };
+      expect(callArgs.mcpServers).toBeUndefined();
+    });
+
     it('should convert array input to JSON string', async () => {
       mockAcpClient.sendPrompt.mockImplementation(async function* () {
         yield createMockAcpMessage();
