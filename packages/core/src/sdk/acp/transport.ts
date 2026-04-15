@@ -224,7 +224,27 @@ export class AcpStdioTransport implements IAcpTransport {
       throw new AcpError('Transport is not connected');
     }
 
-    const line = `${JSON.stringify(message)}\n`;
+    let line: string;
+    try {
+      line = `${JSON.stringify(message)}\n`;
+    } catch (err) {
+      // Issue #2383: Defensive serialization — circular references in
+      // message params (e.g., MCP server objects with Zod schemas) cause
+      // JSON.stringify to throw. Provide a clear diagnostic instead.
+      if (err instanceof TypeError && err.message.includes('circular')) {
+        const method = 'method' in message ? message.method : 'unknown';
+        const paramKeys = message.params && typeof message.params === 'object'
+          ? Object.keys(message.params as Record<string, unknown>)
+          : [];
+        throw new AcpError(
+          'Failed to serialize JSON-RPC message (circular reference in params). '
+          + `method=${method}, param keys=[${paramKeys.join(',')}]. `
+          + 'Ensure mcpServers are serializable configs, not SDK objects.',
+          -1,
+        );
+      }
+      throw err;
+    }
     this.childProcess.stdin.write(line);
   }
 
