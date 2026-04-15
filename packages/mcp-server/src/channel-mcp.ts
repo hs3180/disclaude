@@ -18,7 +18,16 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  // macOS screen control (Issue #2216 Phase 1)
+  mac_screenshot,
+  mac_click,
+  mac_type_text,
+  mac_press_key,
+  mac_move_mouse,
+  mac_get_window,
+  mac_activate_app,
+  mac_calibrate,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
@@ -40,6 +49,18 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
+
+// macOS Screen Control (Issue #2216 Phase 1)
+export {
+  mac_screenshot,
+  mac_click,
+  mac_type_text,
+  mac_press_key,
+  mac_move_mouse,
+  mac_get_window,
+  mac_activate_app,
+  mac_calibrate,
+} from './tools/mac-screen-control.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -434,6 +455,244 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+
+  // ============================================================================
+  // Issue #2216 Phase 1: macOS Screen Control Tools
+  // - mac_screenshot: Take screenshots
+  // - mac_click: Click at coordinates
+  // - mac_type_text: Type text (CJK-safe via clipboard)
+  // - mac_press_key: Press key with optional modifiers
+  // - mac_move_mouse: Move mouse cursor
+  // - mac_get_window: Get window bounds
+  // - mac_activate_app: Activate (focus) an application
+  // - mac_calibrate: Detect Retina scale factor
+  //
+  // These tools only work on macOS. On other platforms, they return an error.
+  // macOS Accessibility permission is required (System Settings → Privacy & Security).
+  // ============================================================================
+
+  {
+    name: 'mac_screenshot',
+    description: `Take a screenshot on macOS using the built-in screencapture command.
+
+## Parameters
+- **region**: Optional crop region \`{x, y, width, height}\` in logical points
+- **cursor**: Whether to show cursor in screenshot (default: false)
+- **windowId**: Optional window ID to capture a specific window
+
+## Example
+\`\`\`json
+{"region": {"x": 0, "y": 0, "width": 800, "height": 600}}
+\`\`\`
+
+**Note**: Only works on macOS. Requires Accessibility permission.`,
+    parameters: z.object({
+      region: z.object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number(),
+        height: z.number(),
+      }).optional().describe('Crop region in logical points'),
+      cursor: z.boolean().optional().describe('Show cursor in screenshot (default: false)'),
+      windowId: z.number().optional().describe('Window ID to capture'),
+    }),
+    handler: async (params: {
+      region?: { x: number; y: number; width: number; height: number };
+      cursor?: boolean;
+      windowId?: number;
+    }) => {
+      const result = await mac_screenshot(params);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_click',
+    description: `Click at specified coordinates on macOS.
+
+Uses AppleScript System Events for clicks. For Retina displays, use logical points (not physical pixels).
+Use mac_calibrate to detect the correct scale factor.
+
+## Parameters
+- **x**: X coordinate in logical points (required)
+- **y**: Y coordinate in logical points (required)
+- **button**: Mouse button: "left" (default), "right", or "center" (optional)
+- **clickCount**: Number of clicks: 1 (default) or 2 for double-click (optional)
+
+## Example
+\`\`\`json
+{"x": 500, "y": 300, "button": "left", "clickCount": 1}
+\`\`\`
+
+**Note**: Only works on macOS. Requires Accessibility permission.`,
+    parameters: z.object({
+      x: z.number().describe('X coordinate in logical points'),
+      y: z.number().describe('Y coordinate in logical points'),
+      button: z.enum(['left', 'right', 'center']).optional().describe('Mouse button (default: left)'),
+      clickCount: z.number().min(1).max(3).optional().describe('Number of clicks (default: 1)'),
+    }),
+    handler: async (params: {
+      x: number;
+      y: number;
+      button?: 'left' | 'right' | 'center';
+      clickCount?: number;
+    }) => {
+      const result = await mac_click(params.x, params.y, {
+        button: params.button,
+        clickCount: params.clickCount,
+      });
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_type_text',
+    description: `Type text into the active application on macOS using the clipboard approach.
+
+This method bypasses IME issues with CJK (Chinese/Japanese/Korean) text by copying to clipboard
+and simulating Cmd+V. The original clipboard contents are preserved.
+
+## Parameters
+- **text**: The text to type (required)
+- **restoreClipboard**: Whether to restore original clipboard (default: true)
+
+## Example
+\`\`\`json
+{"text": "你好世界 Hello こんにちは"}
+\`\`\`
+
+**Note**: Only works on macOS. Requires Accessibility permission.`,
+    parameters: z.object({
+      text: z.string().describe('The text to type'),
+      restoreClipboard: z.boolean().optional().describe('Restore original clipboard contents (default: true)'),
+    }),
+    handler: async (params: { text: string; restoreClipboard?: boolean }) => {
+      const result = await mac_type_text(params.text, {
+        restoreClipboard: params.restoreClipboard,
+      });
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_press_key',
+    description: `Press a key (with optional modifier keys) on macOS.
+
+## Parameters
+- **key**: The key to press, e.g. "return", "tab", "escape", "a", "3" (required)
+- **modifiers**: Optional modifier keys: "command", "shift", "option", "control"
+
+## Special Keys
+return/enter, tab, escape, delete/backspace, space, up/down/left/right, home/end, pageup/pagedown, f1-f12
+
+## Example
+\`\`\`json
+{"key": "s", "modifiers": ["command"]}
+\`\`\`
+
+**Note**: Only works on macOS. Requires Accessibility permission.`,
+    parameters: z.object({
+      key: z.string().describe('The key to press'),
+      modifiers: z.array(z.enum(['command', 'shift', 'option', 'control'])).optional()
+        .describe('Modifier keys'),
+    }),
+    handler: async (params: { key: string; modifiers?: string[] }) => {
+      const result = await mac_press_key(params.key, params.modifiers);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_move_mouse',
+    description: `Move the mouse cursor to specified coordinates on macOS.
+
+## Parameters
+- **x**: X coordinate in logical points (required)
+- **y**: Y coordinate in logical points (required)
+
+## Example
+\`\`\`json
+{"x": 500, "y": 300}
+\`\`\`
+
+**Note**: Only works on macOS. Requires Accessibility permission.`,
+    parameters: z.object({
+      x: z.number().describe('X coordinate in logical points'),
+      y: z.number().describe('Y coordinate in logical points'),
+    }),
+    handler: async (params: { x: number; y: number }) => {
+      const result = await mac_move_mouse(params.x, params.y);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_get_window',
+    description: `Get window bounds and info for a macOS application.
+
+Returns the window position (x, y), size (width, height), and window name.
+
+## Parameters
+- **appName**: Application name, e.g. "Safari", "Feishu" (required)
+- **windowIndex**: Window index, 0-based (default: 0 = frontmost window)
+
+## Example
+\`\`\`json
+{"appName": "Safari", "windowIndex": 0}
+\`\`\`
+
+**Note**: Only works on macOS. The application must be running.`,
+    parameters: z.object({
+      appName: z.string().describe('Application name (e.g. "Safari", "Feishu")'),
+      windowIndex: z.number().min(0).optional().describe('Window index, 0-based (default: 0 = frontmost)'),
+    }),
+    handler: async (params: { appName: string; windowIndex?: number }) => {
+      const result = await mac_get_window(params.appName, params.windowIndex);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_activate_app',
+    description: `Activate (bring to front) an application on macOS.
+
+## Parameters
+- **appName**: Application name, e.g. "Safari", "Feishu" (required)
+
+## Example
+\`\`\`json
+{"appName": "Feishu"}
+\`\`\`
+
+**Note**: Only works on macOS. The application must be installed.`,
+    parameters: z.object({
+      appName: z.string().describe('Application name to activate'),
+    }),
+    handler: async (params: { appName: string }) => {
+      const result = await mac_activate_app(params.appName);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_calibrate',
+    description: `Calibrate screen coordinates for Retina displays on macOS.
+
+Detects the screen's backing scale factor and reports both logical and physical dimensions.
+Use this to convert between screenshot pixel coordinates and logical point coordinates.
+
+**Formula**: \`logical_coordinate = pixel_coordinate / scaleFactor\`
+
+## Example
+\`\`\`json
+{}
+\`\`\`
+
+Returns:
+- **scaleFactor**: Retina = 2.0, Standard = 1.0
+- **logicalWidth/logicalHeight**: Logical screen size (points)
+- **screenWidth/screenHeight**: Physical screen size (pixels)
+
+**Note**: Only works on macOS.`,
+    parameters: z.object({}),
+    handler: async () => {
+      const result = await mac_calibrate();
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
     },
   },
 ];
