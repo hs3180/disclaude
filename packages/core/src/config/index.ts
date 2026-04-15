@@ -27,6 +27,8 @@ import type {
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
+import { discoverTemplatesAsConfig } from '../project/template-discovery.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -140,6 +142,10 @@ export class Config {
           // Agents configuration - loaded from package installation directory
           static readonly AGENTS_DIR = Config.getBuiltinDir('agents');
 
+          // Project templates configuration - auto-discovered from package directory
+          // @see Issue #2286 — templates auto-discover from filesystem, no config needed
+          static readonly TEMPLATES_DIR = Config.getBuiltinDir('templates');
+
   /**
    * Get a built-in resource directory from package installation.
    * Shared resolution logic for skills, agents, and other bundled resources.
@@ -242,6 +248,50 @@ export class Config {
   static getAgentsDir(): string {
     return this.AGENTS_DIR;
   }
+
+  /**
+   * Get the project templates directory.
+   *
+   * Templates are auto-discovered from this directory at startup.
+   * Each subdirectory containing a `CLAUDE.md` file is a valid template.
+   *
+   * @see Issue #2286 — templates auto-discover from filesystem, no config needed
+   * @returns Absolute path to the templates directory
+   */
+  static getTemplatesDir(): string {
+    return this.TEMPLATES_DIR;
+  }
+
+  /**
+   * Get project templates configuration via auto-discovery.
+   *
+   * Scans the templates directory for valid template subdirectories.
+   * Returns a ProjectTemplatesConfig that can be passed to ProjectManager.
+   *
+   * If the templates directory doesn't exist, returns an empty config.
+   * This is a lazy singleton — discovery runs only once on first call.
+   *
+   * @see Issue #2286 — templates auto-discover from filesystem, no config needed
+   * @returns ProjectTemplatesConfig from auto-discovered templates
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig {
+    if (this._cachedTemplatesConfig === undefined) {
+      this._cachedTemplatesConfig = discoverTemplatesAsConfig(this.TEMPLATES_DIR);
+      const templateNames = Object.keys(this._cachedTemplatesConfig);
+      if (templateNames.length > 0) {
+        logger.info(
+          { templates: templateNames, dir: this.TEMPLATES_DIR },
+          'Auto-discovered project templates',
+        );
+      } else {
+        logger.debug({ dir: this.TEMPLATES_DIR }, 'No project templates found');
+      }
+    }
+    return this._cachedTemplatesConfig;
+  }
+
+  /** Cached result of template auto-discovery (lazy singleton) */
+  private static _cachedTemplatesConfig: ProjectTemplatesConfig | undefined;
 
   /**
    * Validate required configuration fields.
