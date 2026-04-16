@@ -116,9 +116,16 @@ export interface AcpInitializeParams {
   clientCapabilities: AcpClientCapabilities;
 }
 
-/** session/new 方法参数 */
+/**
+ * session/new 方法参数
+ *
+ * Note (Issue #2463, #2451): mcpServers is always an empty array.
+ * ACP v0.23.1+ no longer accepts stdio MCP servers via session/new.
+ * Stdio MCP servers are loaded via .mcp.json by Claude Code natively.
+ */
 export interface AcpSessionNewParams {
   cwd: string;
+  /** Always empty — MCP servers are loaded via .mcp.json, not session/new */
   mcpServers: unknown[];
   _meta?: {
     claudeCode?: {
