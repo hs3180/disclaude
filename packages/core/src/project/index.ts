@@ -28,3 +28,5 @@ export type {
   DiscoveryError,
   DiscoveryOptions,
 } from './template-discovery.js';
+
+export { ProjectManager } from './project-manager.js';
