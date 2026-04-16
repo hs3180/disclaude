@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { checkMacAutoSleep } from './utils/mac-sleep-check.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -256,6 +257,11 @@ async function main(): Promise<void> {
       { channels: channelEntries.map((e) => e.type) },
       'Primary Node started successfully'
     );
+
+    // Issue #2263: Check macOS auto-sleep settings (system-level warning)
+    // Affects all long-lived connections (WebSocket, IPC, etc.), not channel-specific
+    checkMacAutoSleep();
+
     if (restEntry) {
       const restConf = restEntry.config as { port: number; host: string };
       console.log(`Primary Node started on http://${restConf.host}:${restConf.port}`);
