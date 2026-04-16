@@ -1,5 +1,5 @@
 /**
- * Unit tests for ProjectManager core in-memory logic.
+ * Unit tests for ProjectManager — in-memory + persistence logic.
  *
  * Tests cover:
  * - Template loading and querying
@@ -8,12 +8,18 @@
  * - Stale binding self-healing
  * - Path traversal protection
  * - CwdProvider factory
+ * - Persistence (atomic write, load, restore, corruption handling)
+ * - Delete operation
  * - Edge cases (empty config, duplicate names, etc.)
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2225 (Sub-Issue C — persistence layer)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
 import type { ProjectManagerOptions, ProjectTemplatesConfig } from './types.js';
 
@@ -21,10 +27,19 @@ import type { ProjectManagerOptions, ProjectTemplatesConfig } from './types.js';
 // Test Fixtures
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+const tempDirs: string[] = [];
+
+function createTempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'pm-test-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
+  const workspaceDir = createTempDir();
   return {
-    workspaceDir: '/workspace',
-    packageDir: '/app/packages/core',
+    workspaceDir,
+    packageDir: join(workspaceDir, 'packages/core'),
     templatesConfig: {
       research: {
         displayName: '研究模式',
@@ -39,6 +54,17 @@ function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManag
 }
 
 const EMPTY_CONFIG: ProjectTemplatesConfig = {};
+
+// Cleanup all temp directories after all tests
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constructor & init()
@@ -107,15 +133,18 @@ describe('ProjectManager init()', () => {
 
 describe('ProjectManager getActive()', () => {
   let pm: ProjectManager;
+  let workspaceDir: string;
 
   beforeEach(() => {
-    pm = new ProjectManager(createOptions());
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
   });
 
   it('should return default context for unbound chatId', () => {
     const ctx = pm.getActive('chat_unknown');
     expect(ctx.name).toBe('default');
-    expect(ctx.workingDir).toBe('/workspace');
+    expect(ctx.workingDir).toBe(workspaceDir);
     expect(ctx.templateName).toBeUndefined();
   });
 
@@ -126,21 +155,25 @@ describe('ProjectManager getActive()', () => {
     const ctx = pm.getActive('chat_1');
     expect(ctx.name).toBe('my-research');
     expect(ctx.templateName).toBe('research');
-    expect(ctx.workingDir).toBe('/workspace/projects/my-research');
+    expect(ctx.workingDir).toBe(join(workspaceDir, 'projects/my-research'));
   });
 
-  it('should self-heal stale bindings (instance removed scenario)', () => {
-    // Create and bind
+  it('should self-heal stale bindings after delete', () => {
     pm.create('chat_1', 'research', 'temp-project');
+    expect(pm.getActive('chat_1').name).toBe('temp-project');
 
-    // Simulate instance being removed (directly manipulate internals for test)
-    // In real code, this would happen via persistence reload
-    // We test getActive's stale binding self-healing via a subclass or test-only approach
-    // For now, test that getActive returns correct result while instance exists
+    // Delete the instance
+    pm.delete('temp-project');
+
+    // getActive should self-heal and return default
     const ctx = pm.getActive('chat_1');
-    expect(ctx.name).toBe('temp-project');
+    expect(ctx.name).toBe('default');
+  });
 
-    // After reset, should return default
+  it('should self-heal stale bindings after reset', () => {
+    pm.create('chat_1', 'research', 'temp-project');
+    expect(pm.getActive('chat_1').name).toBe('temp-project');
+
     pm.reset('chat_1');
     const ctxAfterReset = pm.getActive('chat_1');
     expect(ctxAfterReset.name).toBe('default');
@@ -153,9 +186,12 @@ describe('ProjectManager getActive()', () => {
 
 describe('ProjectManager create()', () => {
   let pm: ProjectManager;
+  let workspaceDir: string;
 
   beforeEach(() => {
-    pm = new ProjectManager(createOptions());
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
   });
 
   it('should create instance from valid template', () => {
@@ -164,7 +200,7 @@ describe('ProjectManager create()', () => {
     if (result.ok) {
       expect(result.data.name).toBe('my-research');
       expect(result.data.templateName).toBe('research');
-      expect(result.data.workingDir).toBe('/workspace/projects/my-research');
+      expect(result.data.workingDir).toBe(join(workspaceDir, 'projects/my-research'));
     }
   });
 
@@ -377,9 +413,12 @@ describe('ProjectManager use()', () => {
 
 describe('ProjectManager reset()', () => {
   let pm: ProjectManager;
+  let workspaceDir: string;
 
   beforeEach(() => {
-    pm = new ProjectManager(createOptions());
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
   });
 
   it('should unbind chatId and return default context', () => {
@@ -390,7 +429,7 @@ describe('ProjectManager reset()', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.name).toBe('default');
-      expect(result.data.workingDir).toBe('/workspace');
+      expect(result.data.workingDir).toBe(workspaceDir);
     }
 
     expect(pm.getActive('chat_1').name).toBe('default');
@@ -446,15 +485,13 @@ describe('ProjectManager listTemplates()', () => {
   });
 
   it('should include all metadata from config', () => {
-    const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app',
+    const pm = new ProjectManager(createOptions({
       templatesConfig: {
         research: { displayName: '研究', description: '研究模式' },
         coding: { displayName: '编码' },
         minimal: {},
       },
-    });
+    }));
 
     const templates = pm.listTemplates();
     expect(templates).toHaveLength(3);
@@ -472,9 +509,12 @@ describe('ProjectManager listTemplates()', () => {
 
 describe('ProjectManager listInstances()', () => {
   let pm: ProjectManager;
+  let workspaceDir: string;
 
   beforeEach(() => {
-    pm = new ProjectManager(createOptions());
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
   });
 
   it('should return empty array when no instances exist', () => {
@@ -491,7 +531,7 @@ describe('ProjectManager listInstances()', () => {
       name: 'my-research',
       templateName: 'research',
       chatIds: expect.arrayContaining(['chat_1', 'chat_2']),
-      workingDir: '/workspace/projects/my-research',
+      workingDir: join(workspaceDir, 'projects/my-research'),
     });
     expect(instances[0].createdAt).toBeTruthy();
   });
@@ -529,10 +569,13 @@ describe('ProjectManager listInstances()', () => {
 
 describe('ProjectManager createCwdProvider()', () => {
   let pm: ProjectManager;
+  let workspaceDir: string;
   let cwdProvider: (chatId: string) => string | undefined;
 
   beforeEach(() => {
-    pm = new ProjectManager(createOptions());
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
     cwdProvider = pm.createCwdProvider();
   });
 
@@ -542,12 +585,12 @@ describe('ProjectManager createCwdProvider()', () => {
 
   it('should return workingDir for bound project', () => {
     pm.create('chat_1', 'research', 'my-research');
-    expect(cwdProvider('chat_1')).toBe('/workspace/projects/my-research');
+    expect(cwdProvider('chat_1')).toBe(join(workspaceDir, 'projects/my-research'));
   });
 
   it('should update dynamically after project switch', () => {
     pm.create('chat_1', 'research', 'research-1');
-    expect(cwdProvider('chat_1')).toBe('/workspace/projects/research-1');
+    expect(cwdProvider('chat_1')).toBe(join(workspaceDir, 'projects/research-1'));
 
     pm.reset('chat_1');
     expect(cwdProvider('chat_1')).toBeUndefined();
@@ -558,11 +601,337 @@ describe('ProjectManager createCwdProvider()', () => {
     pm.create('chat_1', 'book-reader', 'book-1');
 
     // After second create, chat_1 is bound to book-1
-    expect(cwdProvider('chat_1')).toBe('/workspace/projects/book-1');
+    expect(cwdProvider('chat_1')).toBe(join(workspaceDir, 'projects/book-1'));
 
     // Switch back via use()
     pm.use('chat_1', 'research-1');
-    expect(cwdProvider('chat_1')).toBe('/workspace/projects/research-1');
+    expect(cwdProvider('chat_1')).toBe(join(workspaceDir, 'projects/research-1'));
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Persistence (Sub-Issue C)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager persist()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should create .disclaude directory and projects.json on first persist', () => {
+    const result = pm.persist();
+    expect(result.ok).toBe(true);
+
+    const persistPath = join(workspaceDir, '.disclaude', 'projects.json');
+    expect(existsSync(persistPath)).toBe(true);
+  });
+
+  it('should persist instances and bindings as valid JSON', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(data.instances).toBeDefined();
+    expect(data.instances['my-research']).toBeDefined();
+    expect(data.instances['my-research'].templateName).toBe('research');
+    expect(data.chatProjectMap['chat_1']).toBe('my-research');
+  });
+
+  it('should persist empty state correctly', () => {
+    const result = pm.persist();
+    expect(result.ok).toBe(true);
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(data.instances).toEqual({});
+    expect(data.chatProjectMap).toEqual({});
+  });
+
+  it('should auto-persist on create()', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Verify file exists without explicit persist() call
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.instances['my-research']).toBeDefined();
+  });
+
+  it('should auto-persist on use()', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.chatProjectMap['chat_2']).toBe('my-research');
+  });
+
+  it('should auto-persist on reset()', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.reset('chat_1');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should not leave .tmp files after successful persist', () => {
+    pm.persist();
+
+    const tmpPath = join(workspaceDir, '.disclaude', 'projects.json.tmp');
+    expect(existsSync(tmpPath)).toBe(false);
+  });
+});
+
+describe('ProjectManager loadPersistedData()', () => {
+  it('should restore instances from persisted state', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    // Create PM1, add data
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+    pm1.use('chat_2', 'my-research');
+
+    // Create PM2 from same workspace — should load persisted state
+    const pm2 = new ProjectManager({
+      ...opts,
+      workspaceDir,
+    });
+
+    // Instances should be restored
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('my-research');
+    expect(instances[0].templateName).toBe('research');
+
+    // Bindings should be restored
+    expect(pm2.getActive('chat_1').name).toBe('my-research');
+    expect(pm2.getActive('chat_2').name).toBe('my-research');
+  });
+
+  it('should handle first run (no projects.json) gracefully', () => {
+    const pm = new ProjectManager(createOptions());
+    expect(pm.listInstances()).toEqual([]);
+  });
+
+  it('should handle corrupted JSON gracefully', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    // Write corrupted data
+    const dataDir = join(workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'projects.json'), '{ invalid json }', 'utf8');
+
+    // Should not crash
+    const pm = new ProjectManager(opts);
+    expect(pm.listInstances()).toEqual([]);
+  });
+
+  it('should skip invalid instance entries', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    // Write data with one valid and one invalid instance
+    const dataDir = join(workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      instances: {
+        valid: {
+          name: 'valid',
+          templateName: 'research',
+          workingDir: '/workspace/projects/valid',
+          createdAt: '2026-04-16T00:00:00.000Z',
+        },
+        invalid: {
+          name: 'invalid',
+          // Missing required fields
+          workingDir: 123, // Not a string
+          createdAt: '',
+        },
+      },
+      chatProjectMap: {
+        chat_1: 'valid',
+        chat_2: 'invalid', // Points to invalid instance
+        chat_3: 'nonexistent', // Points to missing instance
+      },
+    }), 'utf8');
+
+    const pm = new ProjectManager(opts);
+    const instances = pm.listInstances();
+
+    // Only the valid instance should be loaded
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('valid');
+
+    // Only valid bindings should be restored
+    expect(pm.getActive('chat_1').name).toBe('valid');
+    expect(pm.getActive('chat_2').name).toBe('default'); // Invalid → not loaded
+    expect(pm.getActive('chat_3').name).toBe('default'); // Nonexistent → not loaded
+  });
+
+  it('should handle invalid top-level schema', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    const dataDir = join(workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+
+    // Array instead of object
+    writeFileSync(join(dataDir, 'projects.json'), '[]', 'utf8');
+
+    const pm = new ProjectManager(opts);
+    expect(pm.listInstances()).toEqual([]);
+  });
+
+  it('should handle null top-level value', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    const dataDir = join(workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'projects.json'), 'null', 'utf8');
+
+    const pm = new ProjectManager(opts);
+    expect(pm.listInstances()).toEqual([]);
+  });
+
+  it('should handle missing instances field', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    const dataDir = join(workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
+      chatProjectMap: {},
+    }), 'utf8');
+
+    const pm = new ProjectManager(opts);
+    expect(pm.listInstances()).toEqual([]);
+  });
+});
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should delete existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should clean up all bindings when deleting instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    pm.delete('my-research');
+
+    // All bindings should be cleaned up
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should persist updated state after delete', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Read persisted file
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(data.instances).toEqual({});
+    expect(data.chatProjectMap).toEqual({});
+  });
+
+  it('should return error for non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+
+    // chat_1 binding should be cleaned up
+    expect(pm.getActive('chat_1').name).toBe('default');
+  });
+});
+
+describe('ProjectManager persistence round-trip', () => {
+  it('should survive full lifecycle: create → persist → reload → mutate → persist → reload', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    // Phase 1: Create and persist
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+    pm1.use('chat_2', 'my-research');
+
+    // Phase 2: Reload and verify
+    const pm2 = new ProjectManager({ ...opts, workspaceDir });
+    expect(pm2.listInstances()).toHaveLength(1);
+    expect(pm2.getActive('chat_1').name).toBe('my-research');
+    expect(pm2.getActive('chat_2').name).toBe('my-research');
+
+    // Phase 3: Mutate
+    pm2.create('chat_3', 'book-reader', 'book-1');
+    pm2.reset('chat_1');
+
+    // Phase 4: Reload and verify mutations
+    const pm3 = new ProjectManager({ ...opts, workspaceDir });
+    expect(pm3.listInstances()).toHaveLength(2);
+    expect(pm3.getActive('chat_1').name).toBe('default'); // Was reset
+    expect(pm3.getActive('chat_2').name).toBe('my-research');
+    expect(pm3.getActive('chat_3').name).toBe('book-1');
+  });
+
+  it('should persist delete operations across restarts', () => {
+    const opts = createOptions();
+    const {workspaceDir} = opts;
+
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+    pm1.create('chat_2', 'book-reader', 'book-1');
+
+    const pm2 = new ProjectManager({ ...opts, workspaceDir });
+    pm2.delete('my-research');
+
+    const pm3 = new ProjectManager({ ...opts, workspaceDir });
+    expect(pm3.listInstances()).toHaveLength(1);
+    expect(pm3.listInstances()[0].name).toBe('book-1');
+    expect(pm3.getActive('chat_1').name).toBe('default');
+    expect(pm3.getActive('chat_2').name).toBe('book-1');
   });
 });
 
@@ -636,13 +1005,11 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should handle template with no metadata', () => {
-    const pm = new ProjectManager({
-      workspaceDir: '/workspace',
-      packageDir: '/app',
+    const pm = new ProjectManager(createOptions({
       templatesConfig: {
         minimal: {},
       },
-    });
+    }));
 
     const templates = pm.listTemplates();
     expect(templates).toHaveLength(1);
