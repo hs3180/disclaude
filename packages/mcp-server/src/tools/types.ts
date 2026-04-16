@@ -81,3 +81,13 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for rename_chat tool.
+ * Issue #2284: Auto-rename group to match task topic.
+ */
+export interface RenameChatResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+

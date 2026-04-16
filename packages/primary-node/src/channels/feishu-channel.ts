@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'rename_chat',
       ],
     };
   }
@@ -684,6 +685,35 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   setWelcomeService(service: WelcomeService): void {
     this.welcomeHandler.setWelcomeService(service);
+  }
+
+  /**
+   * Rename a group chat via Feishu API.
+   *
+   * Issue #2284: Auto-rename group to match task topic when bot is added
+   * to a group and assigned a task.
+   *
+   * @param chatId - The chat ID to rename
+   * @param name - The new name for the group chat
+   * @returns success status
+   */
+  async renameChat(chatId: string, name: string): Promise<{ success: boolean }> {
+    if (!this.client) {
+      logger.error({ chatId }, 'Cannot rename chat: client not initialized');
+      return { success: false };
+    }
+
+    try {
+      await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name },
+      });
+      logger.info({ chatId, name }, 'Group chat renamed successfully');
+      return { success: true };
+    } catch (error) {
+      logger.error({ err: error, chatId, name }, 'Failed to rename group chat');
+      return { success: false };
+    }
   }
 
   /**

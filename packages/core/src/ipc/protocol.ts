@@ -24,7 +24,9 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Chat management operations (Issue #2284)
+  | 'renameChat';
 
 /**
  * IPC request payload types.
@@ -83,6 +85,11 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Chat management operations (Issue #2284)
+  renameChat: {
+    chatId: string;
+    name: string;
+  };
 }
 
 /**
@@ -124,6 +131,10 @@ export interface IpcResponsePayloads {
     }>;
   };
   markChatResponded: {
+    success: boolean;
+  };
+  // Chat management operations (Issue #2284)
+  renameChat: {
     success: boolean;
   };
 }
