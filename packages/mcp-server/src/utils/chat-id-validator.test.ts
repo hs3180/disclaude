@@ -4,10 +4,13 @@
  * @see https://github.com/hs3180/disclaude/issues/1641
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   isValidChatId,
   getChatIdValidationError,
+  registerChatIdPattern,
+  resetChatIdPatterns,
+  getChatIdPatterns,
 } from './chat-id-validator.js';
 
 describe('isValidChatId', () => {
@@ -59,27 +62,17 @@ describe('isValidChatId', () => {
     });
   });
 
-  describe('Integration test IDs (test-)', () => {
-    it('should accept a valid test- ID', () => {
-      expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
+  describe('test- IDs (not built-in, Issue #2389)', () => {
+    it('should reject test- IDs by default (no production test patterns)', () => {
+      expect(isValidChatId('test-use-case-2-files-12345')).toBe(false);
     });
 
-    it('should accept a minimal test- ID (10 chars)', () => {
-      expect(isValidChatId('test-abcde')).toBe(true);
-    });
-
-    it('should reject a test- ID that is too short', () => {
-      expect(isValidChatId('test-abcd')).toBe(false);
+    it('should reject test-multimodal-* IDs by default', () => {
+      expect(isValidChatId('test-multimodal-12345')).toBe(false);
     });
 
     it('should reject a bare test- prefix', () => {
       expect(isValidChatId('test-')).toBe(false);
-    });
-
-    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
-      // Previously used multimodal-test-* which was rejected;
-      // renamed to test-multimodal-* to match the test- prefix pattern.
-      expect(isValidChatId('test-multimodal-12345')).toBe(true);
     });
   });
 
@@ -117,8 +110,9 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('cli-session-42')).toBeNull();
   });
 
-  it('should return null for a valid test- ID', () => {
-    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
+  it('should return an error for a test- ID (removed from production, Issue #2389)', () => {
+    const error = getChatIdValidationError('test-mcp-send-text-12345');
+    expect(error).not.toBeNull();
   });
 
   it('should return an error for an empty string', () => {
@@ -133,7 +127,8 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('oc_');
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
-    expect(error).toContain('test-');
+    // test- should NOT appear in production error messages (Issue #2389)
+    expect(error).not.toContain('test-');
   });
 
   it('should truncate long chatIds in error messages', () => {
@@ -143,5 +138,56 @@ describe('getChatIdValidationError', () => {
     // The error should not contain the full 60-char string
     expect(error).not.toContain(longId);
     expect(error).toContain('...');
+  });
+});
+
+describe('registerChatIdPattern / resetChatIdPatterns', () => {
+  afterEach(() => {
+    resetChatIdPatterns();
+  });
+
+  it('should allow registering a custom pattern', () => {
+    registerChatIdPattern({ prefix: 'test-', label: 'Integration test session', minLength: 10 });
+    expect(isValidChatId('test-use-case-1-12345')).toBe(true);
+  });
+
+  it('should include custom pattern in error messages', () => {
+    registerChatIdPattern({ prefix: 'test-', label: 'Integration test session', minLength: 10 });
+    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
+  });
+
+  it('should reset to production defaults', () => {
+    registerChatIdPattern({ prefix: 'custom-', label: 'Custom', minLength: 8 });
+    expect(isValidChatId('custom-abc')).toBe(true);
+
+    resetChatIdPatterns();
+    expect(isValidChatId('custom-abc')).toBe(false);
+  });
+
+  it('should not affect other patterns when registering', () => {
+    registerChatIdPattern({ prefix: 'test-', label: 'Integration test session', minLength: 10 });
+
+    // Production patterns still work
+    expect(isValidChatId(`oc_${'a'.repeat(32)}`)).toBe(true);
+    expect(isValidChatId('cli-session')).toBe(true);
+
+    // Custom pattern also works
+    expect(isValidChatId('test-multimodal-12345')).toBe(true);
+  });
+
+  it('getChatIdPatterns should return current patterns', () => {
+    const before = getChatIdPatterns();
+    expect(before).toHaveLength(3); // oc_, ou_, cli-
+
+    registerChatIdPattern({ prefix: 'test-', label: 'Test', minLength: 10 });
+    const after = getChatIdPatterns();
+    expect(after).toHaveLength(4);
+    expect(after[3].prefix).toBe('test-');
+  });
+
+  it('should be safe to call resetChatIdPatterns multiple times', () => {
+    resetChatIdPatterns();
+    resetChatIdPatterns();
+    expect(getChatIdPatterns()).toHaveLength(3);
   });
 });
