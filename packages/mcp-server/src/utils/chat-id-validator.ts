@@ -4,32 +4,31 @@
  * Validates chatId format before making IPC calls to prevent
  * confusing HTTP 400 errors from the Feishu API.
  *
- * Validation is format-based (not prefix-whitelist-based) to avoid
- * coupling production code to specific chatId naming conventions.
- *
  * @module mcp-server/utils/chat-id-validator
  * @see https://github.com/hs3180/disclaude/issues/1641
- * @see https://github.com/hs3180/disclaude/issues/2389
  */
 
-/** Minimum allowed chatId length */
-const MIN_CHAT_ID_LENGTH = 3;
+/** Supported chatId prefix patterns */
+const CHAT_ID_PATTERNS = [
+  { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
+  { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
+  { prefix: 'cli-', label: 'CLI session', minLength: 5 },
+] as const;
 
 /**
- * Check whether a chatId string has a valid format.
- *
- * Uses format-based validation instead of prefix whitelisting,
- * so test-specific or future chatId formats are naturally accepted.
+ * Check whether a chatId string has a recognized format.
  *
  * @param chatId - The chatId to validate
- * @returns `true` if the chatId has a valid format
+ * @returns `true` if the chatId matches a known pattern
  */
 export function isValidChatId(chatId: string): boolean {
   // Reject strings with leading/trailing whitespace
   if (chatId !== chatId.trim()) {
     return false;
   }
-  return chatId.length >= MIN_CHAT_ID_LENGTH;
+  return CHAT_ID_PATTERNS.some(({ prefix, minLength }) =>
+    chatId.startsWith(prefix) && chatId.length >= minLength,
+  );
 }
 
 /**
@@ -47,8 +46,13 @@ export function getChatIdValidationError(chatId: string): string | null {
     return null;
   }
 
+  // Build a helpful message listing accepted formats
+  const formatList = CHAT_ID_PATTERNS
+    .map(({ prefix, label }) => `- \`${prefix}...\` (${label})`)
+    .join('\n');
+
   return (
-    `Invalid chatId format: "${chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId}" — ` +
-    `must be a non-empty string with at least ${MIN_CHAT_ID_LENGTH} characters, no leading/trailing whitespace`
+    `Invalid chatId format: "${chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId}"\n` +
+    `Expected one of the following formats:\n${formatList}`
   );
 }
