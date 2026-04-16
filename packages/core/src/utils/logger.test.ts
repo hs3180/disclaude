@@ -279,25 +279,25 @@ describe('logger', () => {
       expect(isLevelEnabled('warn')).toBe(true);
     });
 
-    it('should return false for more severe levels when current level is lower', async () => {
+    it('should return true for more severe levels than current', async () => {
       process.env.NODE_ENV = 'test';
       await initLogger({ level: 'info' });
 
-      // info levelVal (30) < warn levelVal (40), so 30 >= 40 → false
-      expect(isLevelEnabled('warn')).toBe(false);
-      expect(isLevelEnabled('error')).toBe(false);
-      expect(isLevelEnabled('fatal')).toBe(false);
+      // warn (40) >= info levelVal (30) → true; error/fatal also true
+      expect(isLevelEnabled('warn')).toBe(true);
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
     });
 
-    it('should return true for equal or less severe levels than current', async () => {
+    it('should return false for less severe levels than current', async () => {
       process.env.NODE_ENV = 'test';
       await initLogger({ level: 'warn' });
 
-      // warn levelVal (40) >= debug levelVal (20) → true
-      expect(isLevelEnabled('debug')).toBe(true);
-      expect(isLevelEnabled('trace')).toBe(true);
-      expect(isLevelEnabled('info')).toBe(true);
-      expect(isLevelEnabled('warn')).toBe(true); // exact match
+      // debug (20) < warn levelVal (40) → false; trace/info also false
+      expect(isLevelEnabled('debug')).toBe(false);
+      expect(isLevelEnabled('trace')).toBe(false);
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('warn')).toBe(true); // exact match still true
     });
 
     it('should work without explicit initialization', () => {
