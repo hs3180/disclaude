@@ -292,6 +292,66 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Delete
+  // ───────────────────────────────────────────
+
+  /**
+   * Delete a project instance and all its associated bindings.
+   *
+   * Removes the instance from memory and persisted state on disk.
+   * On persist failure, the in-memory state is rolled back.
+   *
+   * Note: This only removes metadata. Working directory cleanup is
+   * handled by Sub-Issue D (#2226).
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    const nameError = this.validateInstanceName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Capture state for rollback on persist failure
+    const removedBindings: Array<[string, string]> = [];
+    for (const [cid, instName] of this.chatProjectMap.entries()) {
+      if (instName === name) {
+        removedBindings.push([cid, instName]);
+        this.chatProjectMap.delete(cid);
+      }
+    }
+
+    // Clean up reverse index for the deleted instance
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and all bindings
+      this.instances.set(name, instance);
+      for (const [cid, instName] of removedBindings) {
+        this.chatProjectMap.set(cid, instName);
+      }
+      // Rebuild reverse index
+      for (const [cid, instName] of removedBindings) {
+        this.addToReverseIndex(instName, cid);
+      }
+      return persistResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  // ───────────────────────────────────────────
   // Query Methods
   // ───────────────────────────────────────────
 
@@ -526,9 +586,8 @@ export class ProjectManager {
    * @returns Array of bound chatIds
    */
   private getBoundChatIds(instanceName: string): string[] {
-    return this.instanceChatIds.get(instanceName)
-      ? [...this.instanceChatIds.get(instanceName)!]
-      : [];
+    const set = this.instanceChatIds.get(instanceName);
+    return set ? [...set] : [];
   }
 
   /**
