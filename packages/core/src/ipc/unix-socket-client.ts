@@ -20,6 +20,9 @@ import {
   type IpcResponse,
   type IpcResponsePayloads,
 } from './protocol.js';
+import type {
+  IIpcClientTransport,
+} from './transport.js';
 
 const logger = createLogger('IpcClient');
 
@@ -60,11 +63,14 @@ export class UnixSocketIpcClient {
   private availabilityCache: IpcAvailabilityStatus | null = null;
   private availabilityCacheTime = 0;
   private readonly availabilityCacheTtl = 5000; // 5 seconds TTL for availability cache
+  /** Issue #2352: Optional transport injection for testability */
+  private transport?: IIpcClientTransport;
 
-  constructor(config?: Partial<IpcConfig>) {
+  constructor(config?: Partial<IpcConfig>, transport?: IIpcClientTransport) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.timeout = config?.timeout ?? DEFAULT_IPC_CONFIG.timeout;
     this.maxRetries = config?.maxRetries ?? DEFAULT_IPC_CONFIG.maxRetries;
+    this.transport = transport;
   }
 
   /**
@@ -72,6 +78,64 @@ export class UnixSocketIpcClient {
    */
   async connect(): Promise<void> {
     if (this.connected) {
+      return;
+    }
+
+    // Issue #2352: Transport mode (in-memory, for testing) — no retry logic
+    if (this.transport) {
+      if (this.connecting) {
+        return new Promise((resolve, reject) => {
+          const checkConnected = () => {
+            if (this.connected) {
+              resolve();
+            } else if (!this.connecting) {
+              reject(new Error('Connection failed'));
+            } else {
+              setTimeout(checkConnected, 50);
+            }
+          };
+          checkConnected();
+        });
+      }
+
+      this.connecting = true;
+      try {
+        await this.transport.connect({
+          onConnect: () => {
+            this.connected = true;
+            this.connecting = false;
+            this.availabilityCache = { available: true };
+            this.availabilityCacheTime = Date.now();
+            logger.debug('Connected to IPC server (transport mode)');
+          },
+          onData: (data: string) => {
+            this.handleData(data);
+          },
+          onClose: () => {
+            this.connected = false;
+            this.connecting = false;
+            this.socket = null;
+            this.availabilityCache = null;
+            logger.debug('IPC connection closed (transport mode)');
+            // Reject all pending requests
+            for (const [id, pending] of this.pendingRequests) {
+              clearTimeout(pending.timeout);
+              pending.reject(new Error('IPC connection closed'));
+              this.pendingRequests.delete(id);
+            }
+          },
+          onError: (error: Error) => {
+            this.connecting = false;
+            logger.debug({ err: error }, 'IPC connection error (transport mode)');
+          },
+        });
+        // Ensure connected flag is set after transport.connect resolves
+        this.connected = true;
+        this.connecting = false;
+      } catch (error) {
+        this.connecting = false;
+        throw error;
+      }
       return;
     }
 
@@ -192,6 +256,17 @@ export class UnixSocketIpcClient {
    */
   // eslint-disable-next-line require-await
   async disconnect(): Promise<void> {
+    // Issue #2352: Transport mode
+    if (this.transport) {
+      this.transport.destroy();
+      this.connected = false;
+      this.connecting = false;
+      this.buffer = '';
+      this.pendingRequests.clear();
+      logger.debug('Disconnected from IPC server (transport mode)');
+      return;
+    }
+
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
@@ -230,6 +305,23 @@ export class UnixSocketIpcClient {
       this.availabilityCache = { available: true };
       this.availabilityCacheTime = now;
       return this.availabilityCache;
+    }
+
+    // Issue #2352: Transport mode — try connecting instead of checking filesystem
+    if (this.transport) {
+      try {
+        await this.connect();
+        this.availabilityCache = { available: true };
+        this.availabilityCacheTime = now;
+        return this.availabilityCache;
+      } catch {
+        this.availabilityCache = {
+          available: false,
+          reason: 'connection_failed',
+        };
+        this.availabilityCacheTime = now;
+        return this.availabilityCache;
+      }
     }
 
     // Check if socket file exists
@@ -284,6 +376,15 @@ export class UnixSocketIpcClient {
     // If connected, it's available
     if (this.connected) {
       return true;
+    }
+
+    // Issue #2352: Transport mode — rely on cache only (no filesystem check)
+    if (this.transport) {
+      const now = Date.now();
+      if (this.availabilityCache && (now - this.availabilityCacheTime) < this.availabilityCacheTtl) {
+        return this.availabilityCache.available;
+      }
+      return false;
     }
 
     // Check cache
@@ -352,8 +453,14 @@ export class UnixSocketIpcClient {
       });
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.socket!.write(`${JSON.stringify(request)}\n`);
+        // Issue #2352: Use transport or real socket
+        const serialized = `${JSON.stringify(request)}\n`;
+        if (this.transport) {
+          this.transport.write(serialized);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          this.socket!.write(serialized);
+        }
       } catch (error) {
         this.pendingRequests.delete(id);
         clearTimeout(timeoutId);
