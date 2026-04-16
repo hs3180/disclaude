@@ -287,3 +287,74 @@ describe('IPC server helpers', () => {
     expect(getIpcServerSocketPath()).toBeNull();
   });
 });
+
+describe('IPC server lifecycle', () => {
+  let mod: typeof import('./interactive-message.js');
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+
+    vi.mock('@disclaude/core', () => ({
+      createLogger: () => ({
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      }),
+      getIpcClient: vi.fn(),
+      UnixSocketIpcServer: vi.fn().mockImplementation(() => ({
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        getSocketPath: vi.fn(() => '/tmp/test-ipc.sock'),
+        isRunning: vi.fn(() => true),
+      })),
+      createInteractiveMessageHandler: vi.fn(() => vi.fn()),
+    }));
+
+    vi.mock('./ipc-utils.js', () => ({
+      isIpcAvailable: vi.fn().mockResolvedValue(true),
+      getIpcErrorMessage: vi.fn(() => 'error'),
+    }));
+
+    vi.mock('./callback-manager.js', () => ({
+      getMessageSentCallback: vi.fn(() => null),
+    }));
+
+    mod = await import('./interactive-message.js');
+  });
+
+  it('should start IPC server without handlers', async () => {
+    await mod.startIpcServer();
+    expect(mod.isIpcServerRunning()).toBe(true);
+    expect(mod.getIpcServerSocketPath()).toBe('/tmp/test-ipc.sock');
+  });
+
+  it('should start IPC server with Feishu handlers', async () => {
+    const handlers = { sendMessage: vi.fn() };
+    await mod.startIpcServer(handlers as any);
+    expect(mod.isIpcServerRunning()).toBe(true);
+  });
+
+  it('should handle startIpcServer when already running', async () => {
+    await mod.startIpcServer();
+
+    // Second call should be a no-op and not throw
+    const handlers = { sendMessage: vi.fn() };
+    await mod.startIpcServer(handlers as any);
+    expect(mod.isIpcServerRunning()).toBe(true);
+  });
+
+  it('should stop IPC server after starting', async () => {
+    await mod.startIpcServer();
+    expect(mod.isIpcServerRunning()).toBe(true);
+
+    await mod.stopIpcServer();
+    expect(mod.isIpcServerRunning()).toBe(false);
+  });
+
+  it('should handle stopIpcServer when not running', async () => {
+    // Should not throw
+    await mod.stopIpcServer();
+  });
+});

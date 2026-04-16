@@ -66,6 +66,21 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   get testIsRunning(): boolean {
     return (this as unknown as { isRunning: boolean }).isRunning;
   }
+
+  /** Expose emitMessage for testing */
+  testEmitMessage(message: Parameters<MessageHandler>[0]): Promise<void> {
+    return this.emitMessage(message);
+  }
+
+  /** Expose emitControl for testing */
+  testEmitControl(command: Parameters<ControlHandler>[0]): Promise<import('../types/channel.js').ControlResponse> {
+    return this.emitControl(command);
+  }
+
+  /** Expose setStatus for testing */
+  testSetStatus(status: import('../types/channel.js').ChannelStatus): void {
+    this.setStatus(status);
+  }
 }
 
 function createTestChannel(config?: Partial<TestChannelConfig>): TestChannel {
@@ -319,6 +334,118 @@ describe('BaseChannel', () => {
       const channel = createTestChannel();
       const caps = channel.getCapabilities();
       expect(caps).toBeDefined();
+    });
+  });
+
+  describe('start — starting guard', () => {
+    it('should be no-op when already in starting state', async () => {
+      const channel = createTestChannel();
+      // Make doStart hang so the channel stays in 'starting' state
+      let resolveStart: () => void;
+      (channel as unknown as { doStart: () => Promise<void> }).doStart = async () => {
+        channel.doStartCalls++;
+        await new Promise<void>((resolve) => { resolveStart = resolve; });
+      };
+
+      const startPromise = channel.start();
+      expect(channel.status).toBe('starting');
+      expect(channel.doStartCalls).toBe(1);
+
+      // Attempt to start again while already starting — should be no-op
+      await channel.start();
+      expect(channel.doStartCalls).toBe(1); // still only 1 call
+
+      // Clean up
+      resolveStart!();
+      await startPromise;
+    });
+  });
+
+  describe('stop — stopping guard', () => {
+    it('should be no-op when already in stopping state', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+
+      // Make doStop hang so the channel stays in 'stopping' state
+      let resolveStop: () => void;
+      (channel as unknown as { doStop: () => Promise<void> }).doStop = async () => {
+        channel.doStopCalls++;
+        await new Promise<void>((resolve) => { resolveStop = resolve; });
+      };
+
+      const stopPromise = channel.stop();
+      expect(channel.status).toBe('stopping');
+      expect(channel.doStopCalls).toBe(1);
+
+      // Attempt to stop again while already stopping — should be no-op
+      await channel.stop();
+      expect(channel.doStopCalls).toBe(1); // still only 1 call
+
+      // Clean up
+      resolveStop!();
+      await stopPromise;
+    });
+  });
+
+  describe('setStatus', () => {
+    it('should update status via subclass', () => {
+      const channel = createTestChannel();
+      expect(channel.status).toBe('stopped');
+      channel.testSetStatus('starting');
+      expect(channel.status).toBe('starting');
+      channel.testSetStatus('running');
+      expect(channel.status).toBe('running');
+      channel.testSetStatus('stopped');
+      expect(channel.status).toBe('stopped');
+    });
+  });
+
+  describe('emitMessage', () => {
+    it('should delegate to registered message handler', async () => {
+      const channel = createTestChannel();
+      const handler = vi.fn();
+      channel.onMessage(handler);
+
+      const message = { messageId: 'msg-1', chatId: 'chat-1', text: 'Hello', senderOpenId: 'user-1' };
+      await channel.testEmitMessage(message);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(message);
+    });
+
+    it('should warn when no message handler is registered', async () => {
+      const channel = createTestChannel();
+      // No handler registered
+
+      const message = { messageId: 'msg-1', chatId: 'chat-1', text: 'Hello', senderOpenId: 'user-1' };
+      // Should not throw
+      await expect(channel.testEmitMessage(message)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('emitControl', () => {
+    it('should delegate to registered control handler', async () => {
+      const channel = createTestChannel();
+      const handler = vi.fn().mockResolvedValue({ success: true });
+      channel.onControl(handler);
+
+      const command = { type: 'status' };
+      const result = await channel.testEmitControl(command);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(command);
+      expect(result).toEqual({ success: true });
+    });
+
+    it('should return error response when no control handler is registered', async () => {
+      const channel = createTestChannel();
+      // No handler registered
+
+      const command = { type: 'status' };
+      const result = await channel.testEmitControl(command);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No control handler');
     });
   });
 });
