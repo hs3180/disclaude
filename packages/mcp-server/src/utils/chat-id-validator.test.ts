@@ -2,6 +2,7 @@
  * Tests for chat ID validation utilities.
  *
  * @see https://github.com/hs3180/disclaude/issues/1641
+ * @see https://github.com/hs3180/disclaude/issues/2389
  */
 
 import { describe, it, expect } from 'vitest';
@@ -11,75 +12,33 @@ import {
 } from './chat-id-validator.js';
 
 describe('isValidChatId', () => {
-  describe('Feishu group chat IDs (oc_)', () => {
-    it('should accept a valid oc_ group chat ID', () => {
+  describe('valid formats', () => {
+    it('should accept Feishu group chat IDs (oc_)', () => {
       const chatId = `oc_${'a'.repeat(32)}`;
       expect(isValidChatId(chatId)).toBe(true);
     });
 
-    it('should accept an oc_ ID with mixed hex chars', () => {
-      const chatId = `oc_${'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6'}`;
-      expect(isValidChatId(chatId)).toBe(true);
-    });
-
-    it('should reject an oc_ ID that is too short', () => {
-      const chatId = 'oc_abc';
-      expect(isValidChatId(chatId)).toBe(false);
-    });
-
-    it('should reject an oc_ ID with spaces', () => {
-      const chatId = `oc_${'a'.repeat(32)} `;
-      expect(isValidChatId(chatId)).toBe(false);
-    });
-  });
-
-  describe('Feishu user IDs (ou_)', () => {
-    it('should accept a valid ou_ user chat ID', () => {
+    it('should accept Feishu user IDs (ou_)', () => {
       const chatId = `ou_${'f'.repeat(32)}`;
       expect(isValidChatId(chatId)).toBe(true);
     });
 
-    it('should reject an ou_ ID that is too short', () => {
-      const chatId = 'ou_123';
-      expect(isValidChatId(chatId)).toBe(false);
-    });
-  });
-
-  describe('CLI session IDs (cli-)', () => {
-    it('should accept a valid cli- session ID', () => {
+    it('should accept CLI session IDs (cli-)', () => {
       expect(isValidChatId('cli-abc123')).toBe(true);
     });
 
-    it('should accept a minimal cli- ID', () => {
-      expect(isValidChatId('cli-x')).toBe(true);
-    });
-
-    it('should reject a bare cli- prefix with nothing after it', () => {
-      expect(isValidChatId('cli-')).toBe(false);
-    });
-  });
-
-  describe('Integration test IDs (test-)', () => {
-    it('should accept a valid test- ID', () => {
+    it('should accept test session IDs (test-)', () => {
       expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
     });
 
-    it('should accept a minimal test- ID (10 chars)', () => {
-      expect(isValidChatId('test-abcde')).toBe(true);
+    it('should accept any non-empty string >= 3 chars', () => {
+      expect(isValidChatId('abc')).toBe(true);
+      expect(isValidChatId('some-random-id')).toBe(true);
+      expect(isValidChatId('uuid-like-1234')).toBe(true);
     });
 
-    it('should reject a test- ID that is too short', () => {
-      expect(isValidChatId('test-abcd')).toBe(false);
-    });
-
-    it('should reject a bare test- prefix', () => {
-      expect(isValidChatId('test-')).toBe(false);
-    });
-
-    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
-      // Previously used multimodal-test-* which was rejected;
-      // renamed to test-multimodal-* to match the test- prefix pattern.
-      expect(isValidChatId('test-multimodal-12345')).toBe(true);
+    it('should accept UUID format chatIds', () => {
+      expect(isValidChatId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
     });
   });
 
@@ -88,16 +47,21 @@ describe('isValidChatId', () => {
       expect(isValidChatId('')).toBe(false);
     });
 
-    it('should reject a random string', () => {
-      expect(isValidChatId('not-a-valid-id')).toBe(false);
+    it('should reject strings shorter than 3 characters', () => {
+      expect(isValidChatId('ab')).toBe(false);
+      expect(isValidChatId('x')).toBe(false);
     });
 
-    it('should reject a numeric string', () => {
-      expect(isValidChatId('1234567890')).toBe(false);
+    it('should reject a string with leading whitespace', () => {
+      expect(isValidChatId(` oc_${'a'.repeat(32)}`)).toBe(false);
     });
 
-    it('should reject a string with unknown prefix', () => {
-      expect(isValidChatId('xx_abcdef1234567890')).toBe(false);
+    it('should reject a string with trailing whitespace', () => {
+      expect(isValidChatId(`oc_${'a'.repeat(32)} `)).toBe(false);
+    });
+
+    it('should reject a bare cli- prefix with nothing after it', () => {
+      expect(isValidChatId('cl')).toBe(false);
     });
   });
 });
@@ -121,26 +85,33 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
   });
 
+  it('should return null for any string >= 3 chars', () => {
+    expect(getChatIdValidationError('abc')).toBeNull();
+  });
+
   it('should return an error for an empty string', () => {
     const error = getChatIdValidationError('');
     expect(error).not.toBeNull();
     expect(error).toContain('required');
   });
 
-  it('should return an error describing the expected formats', () => {
-    const error = getChatIdValidationError('invalid-id');
+  it('should return an error for strings shorter than 3 characters', () => {
+    const error = getChatIdValidationError('ab');
     expect(error).not.toBeNull();
-    expect(error).toContain('oc_');
-    expect(error).toContain('ou_');
-    expect(error).toContain('cli-');
-    expect(error).toContain('test-');
+    expect(error).toContain('at least 3 characters');
+  });
+
+  it('should return an error for whitespace-padded strings', () => {
+    const error = getChatIdValidationError(' abc ');
+    expect(error).not.toBeNull();
+    expect(error).toContain('whitespace');
   });
 
   it('should truncate long chatIds in error messages', () => {
-    const longId = `invalid_${'x'.repeat(50)}`;
+    const longId = ` ${'x'.repeat(50)}`; // 51 chars but has leading whitespace
     const error = getChatIdValidationError(longId);
     expect(error).not.toBeNull();
-    // The error should not contain the full 60-char string
+    // The error should not contain the full string
     expect(error).not.toContain(longId);
     expect(error).toContain('...');
   });
