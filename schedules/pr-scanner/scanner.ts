@@ -344,6 +344,61 @@ export async function fetchOpenPRs(repo: string): Promise<PRInfo[]> {
   }));
 }
 
+// ---- GitHub Label management (Issue #2220) ----
+
+/** Default label for PRs under review */
+export const REVIEWING_LABEL = 'pr-scanner:reviewing';
+
+/** Result of a label operation */
+export interface LabelResult {
+  success: boolean;
+  label: string;
+  prNumber: number;
+  error?: string;
+}
+
+/**
+ * Add a label to a PR using gh CLI.
+ * Non-throwing: returns error info on failure instead of throwing.
+ *
+ * Issue #2220: Label 操作失败不阻塞主流程
+ */
+export async function addPRLabel(
+  repo: string,
+  prNumber: number,
+  label: string = REVIEWING_LABEL,
+): Promise<LabelResult> {
+  try {
+    const cmd = `gh pr edit ${prNumber} --repo ${repo} --add-label "${label}"`;
+    execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return { success: true, label, prNumber };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, label, prNumber, error: message };
+  }
+}
+
+/**
+ * Remove a label from a PR using gh CLI.
+ * Non-throwing: returns error info on failure instead of throwing.
+ *
+ * Issue #2220: Label 操作失败不阻塞主流程
+ */
+export async function removePRLabel(
+  repo: string,
+  prNumber: number,
+  label: string = REVIEWING_LABEL,
+): Promise<LabelResult> {
+  try {
+    const cmd = `gh pr edit ${prNumber} --repo ${repo} --remove-label "${label}"`;
+    execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return { success: true, label, prNumber };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, label, prNumber, error: message };
+  }
+}
+
 // ---- CLI ----
 
 type Action =
@@ -351,7 +406,9 @@ type Action =
   | 'list-candidates'
   | 'create-state'
   | 'mark'
-  | 'status';
+  | 'status'
+  | 'add-label'
+  | 'remove-label';
 
 const VALID_ACTIONS: Action[] = [
   'check-capacity',
@@ -359,6 +416,8 @@ const VALID_ACTIONS: Action[] = [
   'create-state',
   'mark',
   'status',
+  'add-label',
+  'remove-label',
 ];
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -389,13 +448,16 @@ Actions:
   create-state      Create a new PR state file
   mark              Update a PR's state
   status            Show all tracked PRs grouped by state
+  add-label         Add a GitHub label to a PR (non-blocking)
+  remove-label      Remove a GitHub label from a PR (non-blocking)
 
 Options:
   --action <action>   Action to perform (required)
-  --pr <number>       PR number (for create-state, mark)
+  --pr <number>       PR number (for create-state, mark, add-label, remove-label)
   --chatId <id>       Chat ID (for create-state)
   --state <state>     New state: reviewing|approved|closed (for mark)
-  --repo <owner/repo> Repository (for list-candidates)
+  --repo <owner/repo> Repository (for list-candidates, add-label, remove-label)
+  --label <name>      Label name (for add-label, remove-label; default: pr-scanner:reviewing)
   --state-dir <path>  State directory (default: .temp-chats)
 `);
 }
@@ -470,6 +532,32 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     case 'status': {
       const result = await getStatus(stateDir);
       console.log(formatStatusText(result));
+      break;
+    }
+
+    case 'add-label': {
+      const prNumber = parseInt(args.pr ?? '', 10);
+      const repo = args.repo;
+      if (!prNumber || !repo) {
+        console.error('--pr and --repo are required for add-label');
+        process.exit(1);
+      }
+      const label = args.label ?? REVIEWING_LABEL;
+      const result = await addPRLabel(repo, prNumber, label);
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+
+    case 'remove-label': {
+      const prNumber = parseInt(args.pr ?? '', 10);
+      const repo = args.repo;
+      if (!prNumber || !repo) {
+        console.error('--pr and --repo are required for remove-label');
+        process.exit(1);
+      }
+      const label = args.label ?? REVIEWING_LABEL;
+      const result = await removePRLabel(repo, prNumber, label);
+      console.log(JSON.stringify(result, null, 2));
       break;
     }
   }
