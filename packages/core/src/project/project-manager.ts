@@ -6,11 +6,12 @@
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync, copyFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -158,10 +159,11 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
-   * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   * Creates the in-memory instance, persists state, then attempts
+   * filesystem instantiation (directory creation + CLAUDE.md copy).
+   * If filesystem operations fail, the in-memory instance is rolled back.
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -202,7 +204,23 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
 
     // Persist after mutation
-    this.persist();
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state on persist failure
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      return { ok: false, error: persistResult.error };
+    }
+
+    // Filesystem instantiation (Sub-Issue D)
+    const fsResult = this.instantiateFromTemplate(name, templateName);
+    if (!fsResult.ok) {
+      // Rollback: remove in-memory instance and persist cleanup
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.persist();
+      return { ok: false, error: fsResult.error };
+    }
 
     return {
       ok: true,
@@ -505,6 +523,123 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Methods (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project instance on the filesystem.
+   *
+   * Creates the working directory `{workspaceDir}/projects/{name}/`
+   * and copies CLAUDE.md from the template directory.
+   *
+   * Path traversal protection: validates that the resolved working directory
+   * is within `workspaceDir` before any filesystem operations.
+   *
+   * Rollback: if CLAUDE.md copy fails, the created directory is removed.
+   *
+   * @param instanceName - Instance name (already validated)
+   * @param templateName - Template name (already validated to exist)
+   * @returns ProjectResult indicating success or failure
+   */
+  instantiateFromTemplate(instanceName: string, templateName: string): ProjectResult<void> {
+    const workingDir = this.resolveWorkingDir(instanceName);
+
+    // Path traversal protection: resolved path must be within workspaceDir
+    // Defense-in-depth: instance names are already validated in create(),
+    // but we double-check at the filesystem level using path.relative()
+    const normalizedWorkspace = this.workspaceDir.replace(/\/+$/, '');
+    const normalizedWorking = workingDir.replace(/\/+$/, '');
+    const rel = relative(normalizedWorkspace, normalizedWorking);
+
+    if (rel.startsWith('..') || rel.startsWith('/') || rel === '') {
+      return { ok: false, error: '路径遍历防护：工作目录必须在 workspace 内' };
+    }
+
+    // Step 1: Create working directory
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Step 2: Copy CLAUDE.md from template (non-fatal if no template dir)
+    const copyResult = this.copyClaudeMd(templateName, workingDir);
+    if (!copyResult.ok) {
+      // Rollback: remove the created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+      return { ok: false, error: copyResult.error };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from a template directory to the instance working directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{workingDir}/CLAUDE.md`
+   *
+   * Gracefully handles missing source files:
+   * - `packageDir` not configured / templates dir doesn't exist → skip (success)
+   * - Template directory doesn't exist → skip (success)
+   * - CLAUDE.md doesn't exist in template → skip (success, instance has no CLAUDE.md)
+   *
+   * @param templateName - Template name to copy CLAUDE.md from
+   * @param workingDir - Target working directory (must exist)
+   * @returns ProjectResult indicating success or failure
+   */
+  copyClaudeMd(templateName: string, workingDir: string): ProjectResult<void> {
+    // If packageDir is empty or not set, skip silently
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const templatesDir = join(this.packageDir, 'templates');
+    const templateDir = join(templatesDir, templateName);
+    const sourcePath = join(templateDir, 'CLAUDE.md');
+    const targetPath = join(workingDir, 'CLAUDE.md');
+
+    // If template directory doesn't exist, skip silently
+    if (!existsSync(templateDir)) {
+      return { ok: true, data: undefined };
+    }
+
+    // If CLAUDE.md doesn't exist in template, skip silently
+    if (!existsSync(sourcePath)) {
+      return { ok: true, data: undefined };
+    }
+
+    // Copy CLAUDE.md to working directory
+    try {
+      copyFileSync(sourcePath, targetPath);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Resolve the template directory path for a given template name.
+   *
+   * @param templateName - Template name
+   * @returns Absolute path to the template directory
+   */
+  resolveTemplateDir(templateName: string): string {
+    return join(this.packageDir, 'templates', templateName);
   }
 
   // ───────────────────────────────────────────
