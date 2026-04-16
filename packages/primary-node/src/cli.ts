@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { checkMacAutoSleep } from './utils/mac-sleep-check.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -123,6 +124,11 @@ async function main(): Promise<void> {
   // Provides dependency injection for BaseAgent methods (getGlobalEnv, getWorkspaceDir, etc.)
   // Without this, getGlobalEnv() returns {} and config env vars are silently dropped from SDK subprocess
   createDefaultRuntimeContext();
+
+  // System-level macOS auto-sleep check (Issue #2263)
+  // macOS sleep breaks all long-lived connections (WebSocket, IPC, etc.),
+  // not limited to any specific channel — run unconditionally.
+  checkMacAutoSleep();
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
