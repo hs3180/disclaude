@@ -477,12 +477,48 @@ describe('BaseAgent', () => {
       );
     });
 
+    // Issue #2451: Ensure `name` is injected from Record key when not in config
+    it('should add name from Record key to MCP server configs', async () => {
+      // Simulate production scenario: configs don't include `name` (it's the Record key)
+      const mcpServers = {
+        'playwright': { type: 'stdio' as const, command: 'npx', args: ['@playwright/mcp@latest'] },
+        'my-server': { type: 'stdio' as const, command: 'node', args: ['server.js'], env: { FOO: 'bar' } },
+      };
+      const optionsWithMcp = {
+        ...defaultOptions,
+        mcpServers: mcpServers as unknown as Record<string, import('../sdk/index.js').SdkMcpServerConfig>,
+      };
+
+      mockAcpClient.sendPrompt.mockImplementation(async function* () {
+        yield createMockAcpMessage();
+      });
+
+      for await (const _ of agent.testQueryOnce('test', optionsWithMcp)) {
+        // consume
+      }
+
+      // Verify `name` was injected from the Record key
+      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as { mcpServers?: unknown[] };
+      const servers = callArgs.mcpServers as Array<Record<string, unknown>>;
+      expect(servers).toHaveLength(2);
+      const names = servers.map(s => s.name);
+      expect(names).toContain('playwright');
+      expect(names).toContain('my-server');
+      // Verify other fields preserved
+      expect(servers.find(s => s.name === 'playwright')).toEqual(
+        expect.objectContaining({ type: 'stdio', command: 'npx' }),
+      );
+      expect(servers.find(s => s.name === 'my-server')).toEqual(
+        expect.objectContaining({ type: 'stdio', command: 'node', env: { FOO: 'bar' } }),
+      );
+    });
+
     // Issue #2383: Filter out non-serializable MCP server objects
     it('should filter out non-serializable MCP servers and only pass stdio configs', async () => {
       // Simulate the real scenario: channel-mcp is an in-process SDK server
       // (not a plain stdio config), while external servers are serializable.
       const fakeSdkServer = { name: 'channel-mcp', version: '1.0.0', tools: [] };
-      const stdioServer = { type: 'stdio', name: 'external-mcp', command: 'node', args: ['ext.js'] };
+      const stdioServer = { type: 'stdio', command: 'node', args: ['ext.js'] };
       const mcpServers = {
         'channel-mcp': fakeSdkServer,
         'external-mcp': stdioServer,

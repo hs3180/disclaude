@@ -319,7 +319,9 @@ export abstract class BaseAgent implements Disposable {
           && 'type' in config && 'command' in config
         ) {
           // Serializable StdioMcpServerConfig
-          serializableServers.push(config);
+          // Issue #2451: Ensure `name` from the Record key is included,
+          // since the ACP server requires it to identify each MCP server.
+          serializableServers.push({ ...config, name });
         } else {
           this.logger.warn(
             { serverName: name, serverType: typeof config },
