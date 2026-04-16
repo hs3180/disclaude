@@ -358,7 +358,7 @@ export function setLogLevel(level: LogLevel): void {
 export function isLevelEnabled(level: LogLevel): boolean {
   const logger = getRootLogger();
   return logger.level === level ||
-    logger.levelVal >= pino.levels.values[level];
+    pino.levels.values[level] >= logger.levelVal;
 }
 
 /**

@@ -2,6 +2,7 @@
  * Tests for resolveAcpCommand() in packages/core/src/config/index.ts
  *
  * Covers:
+ * - Config override via agent.acpCommand (highest priority)
  * - Detection of claude-agent-acp command (preferred)
  * - Fallback to claude --agent-acp when dedicated binary not found
  * - Error when neither command is available
@@ -116,5 +117,42 @@ describe('resolveAcpCommand', () => {
     });
 
     expect(() => resolveAcpCommand()).toThrow('No ACP-compatible agent command found');
+  });
+
+  it('uses config override when provided, skipping auto-detection', () => {
+    // Even though claude-agent-acp would be found, config override takes priority
+    mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'which' && args[0] === 'claude-agent-acp') {
+        return '/usr/local/bin/claude-agent-acp';
+      }
+      return '';
+    });
+
+    const result = resolveAcpCommand('/custom/path/to/acp-agent');
+    expect(result).toEqual({ command: '/custom/path/to/acp-agent', args: [] });
+    // Should not have called 'which' since config override skips detection
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it('uses config override even when no other command is available', () => {
+    // All which calls fail, but config override skips detection entirely
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('not found');
+    });
+
+    const result = resolveAcpCommand('my-custom-acp-binary');
+    expect(result).toEqual({ command: 'my-custom-acp-binary', args: [] });
+  });
+
+  it('falls back to auto-detection when config override is undefined', () => {
+    mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'which' && args[0] === 'claude-agent-acp') {
+        return '/usr/local/bin/claude-agent-acp';
+      }
+      return '';
+    });
+
+    const result = resolveAcpCommand(undefined);
+    expect(result).toEqual({ command: 'claude-agent-acp', args: [] });
   });
 });
