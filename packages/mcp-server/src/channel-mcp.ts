@@ -19,6 +19,7 @@ import {
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
+import { transformCardTables } from './utils/table-converter.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
@@ -222,7 +223,8 @@ For interactive cards with button click handlers, use send_interactive instead.
 The \`markdown\` element supports a **restricted subset** of GFM:
 - ✅ Supported: bold, italic, links, lists, code blocks, headings
 - ❌ NOT supported: **tables** (\`| col | col |\`), footnotes, task lists, strikethrough
-- For tabular data, use \`column_set\` elements instead of markdown tables
+- ⚡ **Auto-conversion**: GFM tables in markdown elements are automatically converted to \`column_set\` layout
+- For complex tabular layouts, prefer using \`column_set\` directly
 
 ## Example
 \`\`\`json
@@ -267,13 +269,14 @@ The \`markdown\` element supports a **restricted subset** of GFM:
       }
 
       try {
-        const result = await send_card({ card, chatId, parentMessageId });
+        // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
+        const processedCard = transformCardTables(card);
+        const result = await send_card({ card: processedCard, chatId, parentMessageId });
 
-        // Issue #2340: Detect GFM table syntax in markdown elements and append warnings
+        // Issue #2340: Detect GFM table syntax in markdown elements and append info
         const tableWarnings = detectMarkdownTableWarnings(card);
         if (result.success && tableWarnings.length > 0) {
-          const warningMsg = tableWarnings.join('\n');
-          return toolSuccess(`${result.message}\n\n⚠️ Warning: ${warningMsg}`);
+          return toolSuccess(`${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length  } GFM tables`} to column_set layout. The table renders correctly now.`);
         }
 
         return result.success ? toolSuccess(result.message) : toolError(result.message);
