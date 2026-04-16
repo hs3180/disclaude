@@ -9,7 +9,7 @@
 
 import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { createServer, type Server, type Socket } from 'net';
+import { createServer, type Server } from 'net';
 import { createLogger } from '../utils/logger.js';
 import type { FeishuCard } from '../types/platform.js';
 import {
@@ -19,6 +19,10 @@ import {
   type IpcRequestPayloads,
   type IpcResponse,
 } from './protocol.js';
+import type {
+  IIpcServerTransport,
+  IpcConnectionLike,
+} from './transport.js';
 
 const logger = createLogger('IpcServer');
 
@@ -329,23 +333,41 @@ export class UnixSocketIpcServer {
   private server: Server | null = null;
   private socketPath: string;
   private handler: IpcRequestHandler;
-  private activeConnections: Set<Socket> = new Set();
+  private activeConnections: Set<IpcConnectionLike> = new Set();
   private isShuttingDown = false;
+  /** Issue #2352: Optional transport injection for testability (no filesystem side effects) */
+  private transport?: IIpcServerTransport;
   /** Issue #1355: Health check interval for socket file monitoring */
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   /** Issue #1355: Bound cleanup handlers for removal on stop() */
   private boundCleanupHandler: (() => void) | null = null;
 
-  constructor(handler: IpcRequestHandler, config?: Partial<IpcConfig>) {
+  constructor(
+    handler: IpcRequestHandler,
+    config?: Partial<IpcConfig>,
+    transport?: IIpcServerTransport,
+  ) {
     this.socketPath = config?.socketPath ?? DEFAULT_IPC_CONFIG.socketPath;
     this.handler = handler;
+    this.transport = transport;
   }
 
   /**
    * Start the IPC server.
    */
-  // eslint-disable-next-line require-await
+   
   async start(): Promise<void> {
+    // Issue #2352: Transport mode (in-memory, for testing) — skip all filesystem operations
+    if (this.transport) {
+      if (this.transport.isListening()) {
+        logger.warn('IPC server already running (transport mode)');
+        return;
+      }
+      await this.transport.start((conn) => this.handleConnection(conn));
+      logger.info({ path: this.socketPath }, 'IPC server started (transport mode)');
+      return;
+    }
+
     if (this.server) {
       logger.warn('IPC server already running');
       return;
@@ -404,8 +426,21 @@ export class UnixSocketIpcServer {
   /**
    * Stop the IPC server.
    */
-  // eslint-disable-next-line require-await
+   
   async stop(): Promise<void> {
+    // Issue #2352: Transport mode
+    if (this.transport && !this.server) {
+      this.isShuttingDown = true;
+      for (const conn of this.activeConnections) {
+        try { conn.destroy(); } catch { /* ignore */ }
+      }
+      this.activeConnections.clear();
+      await this.transport.stop();
+      this.isShuttingDown = false;
+      logger.info('IPC server stopped (transport mode)');
+      return;
+    }
+
     if (!this.server) {
       return;
     }
@@ -455,6 +490,10 @@ export class UnixSocketIpcServer {
    * Check if the server is running.
    */
   isRunning(): boolean {
+    // Issue #2352: Transport mode
+    if (this.transport) {
+      return this.transport.isListening();
+    }
     return this.server?.listening ?? false;
   }
 
@@ -560,19 +599,22 @@ export class UnixSocketIpcServer {
 
   /**
    * Handle a new connection.
+   *
+   * Accepts IpcConnectionLike (works with both net.Socket and in-memory connections).
+   * Issue #2352: Changed parameter type from Socket to IpcConnectionLike for transport injection.
    */
-  private handleConnection(socket: Socket): void {
+  private handleConnection(conn: IpcConnectionLike): void {
     if (this.isShuttingDown) {
-      socket.destroy();
+      conn.destroy();
       return;
     }
 
-    this.activeConnections.add(socket);
-    logger.debug({ remoteAddress: socket.remoteAddress }, 'New IPC connection');
+    this.activeConnections.add(conn);
+    logger.debug({ remoteAddress: conn.remoteAddress }, 'New IPC connection');
 
     let buffer = '';
 
-    socket.on('data', (data) => {
+    conn.on('data', (data) => {
       buffer += data.toString();
 
       // Process complete messages (newline-delimited JSON)
@@ -581,26 +623,28 @@ export class UnixSocketIpcServer {
 
       for (const line of lines) {
         if (line.trim()) {
-          void this.handleMessage(socket, line);
+          void this.handleMessage(conn, line);
         }
       }
     });
 
-    socket.on('close', () => {
-      this.activeConnections.delete(socket);
+    conn.on('close', () => {
+      this.activeConnections.delete(conn);
       logger.debug('IPC connection closed');
     });
 
-    socket.on('error', (error) => {
+    conn.on('error', (error) => {
       logger.debug({ err: error }, 'IPC connection error');
-      this.activeConnections.delete(socket);
+      this.activeConnections.delete(conn);
     });
   }
 
   /**
    * Handle an incoming message.
+   *
+   * Issue #2352: Changed parameter type from Socket to IpcConnectionLike.
    */
-  private async handleMessage(socket: Socket, data: string): Promise<void> {
+  private async handleMessage(conn: IpcConnectionLike, data: string): Promise<void> {
     let request: IpcRequest;
     try {
       request = JSON.parse(data);
@@ -611,7 +655,7 @@ export class UnixSocketIpcServer {
 
     try {
       const response = await this.handler(request);
-      socket.write(`${JSON.stringify(response)}\n`);
+      conn.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const response: IpcResponse = {
@@ -619,7 +663,7 @@ export class UnixSocketIpcServer {
         success: false,
         error: errorMessage,
       };
-      socket.write(`${JSON.stringify(response)}\n`);
+      conn.write(`${JSON.stringify(response)}\n`);
     }
   }
 }

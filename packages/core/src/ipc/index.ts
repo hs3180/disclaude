@@ -16,6 +16,14 @@ export {
   type IpcResponse,
 } from './protocol.js';
 
+// Transport interfaces (Issue #2352)
+export {
+  type IpcConnectionLike,
+  type IIpcServerTransport,
+  type IpcClientTransportHandlers,
+  type IIpcClientTransport,
+} from './transport.js';
+
 // Server implementation
 export {
   UnixSocketIpcServer,
