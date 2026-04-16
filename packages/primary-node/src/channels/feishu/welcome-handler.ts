@@ -43,6 +43,17 @@ export class WelcomeHandler {
   }
 
   /**
+   * Check if a group was recently added (bot was added within TTL) and consume the flag.
+   * Issue #2284: Used by message handler to inject auto-rename guidance.
+   *
+   * @param chatId - The chat ID to check
+   * @returns true if the group was recently added (flag is consumed), false otherwise
+   */
+  consumeIfRecentlyAddedGroup(chatId: string): boolean {
+    return this.welcomeService?.consumeIfRecentlyAdded(chatId) ?? false;
+  }
+
+  /**
    * Check if a chat ID is a group chat based on ID prefix.
    * In Feishu, group chat IDs start with 'oc_' and private chat IDs start with 'ou_'.
    *

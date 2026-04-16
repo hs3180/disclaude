@@ -6,6 +6,7 @@
  * - Welcome message when bot is added to a group
  * - Help message when users join a group that already has the bot
  * - Tracks first-time private chats in memory
+ * - Tracks recently-added groups for auto-rename (Issue #2284)
  *
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
  * Issue #676: 新用户加入群聊时发送 /help 信息
@@ -16,6 +17,9 @@
 import { createLogger } from '@disclaude/core';
 
 const logger = createLogger('WelcomeService');
+
+/** TTL for recently-added group tracking (5 minutes) */
+const RECENTLY_ADDED_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Welcome service configuration.
@@ -42,6 +46,13 @@ export class WelcomeService {
   /** Track first-time private chats (memory-only, resets on restart) */
   private firstTimePrivateChats = new Set<string>();
 
+  /**
+   * Track recently-added groups for auto-rename guidance (Issue #2284).
+   * Map of chatId → timestamp when bot was added to the group.
+   * Entries expire after RECENTLY_ADDED_TTL_MS.
+   */
+  private recentlyAddedGroups = new Map<string, number>();
+
   constructor(config: WelcomeServiceConfig) {
     this.generateWelcomeMessage = config.generateWelcomeMessage;
     this.generateHelpMessage = config.generateHelpMessage;
@@ -67,6 +78,7 @@ export class WelcomeService {
   /**
    * Handle bot being added to a group chat.
    * Sends welcome message with help.
+   * Issue #2284: Also tracks the group as recently-added for auto-rename guidance.
    */
   async handleBotAddedToGroup(chatId: string): Promise<void> {
     if (!this.isGroupChat(chatId)) {
@@ -74,6 +86,8 @@ export class WelcomeService {
       return;
     }
 
+    // Issue #2284: Track recently-added group for auto-rename guidance
+    this.recentlyAddedGroups.set(chatId, Date.now());
     logger.info({ chatId }, 'Bot added to group, sending welcome message');
 
     try {
@@ -170,6 +184,43 @@ export class WelcomeService {
    */
   clearFirstTimeChats(): void {
     this.firstTimePrivateChats.clear();
+  }
+
+  /**
+   * Check if a group was recently added (bot was added within TTL) and consume the flag.
+   * Issue #2284: Used to inject auto-rename guidance on the first user message.
+   *
+   * This method is one-shot: once called, the "recently added" flag is consumed
+   * so the guidance is only injected once per group.
+   *
+   * @param chatId - The chat ID to check
+   * @returns true if the group was recently added (flag is consumed), false otherwise
+   */
+  consumeIfRecentlyAdded(chatId: string): boolean {
+    const addedAt = this.recentlyAddedGroups.get(chatId);
+    if (addedAt === undefined) {
+      return false;
+    }
+
+    // Check if still within TTL
+    const elapsed = Date.now() - addedAt;
+    if (elapsed > RECENTLY_ADDED_TTL_MS) {
+      // Expired, clean up
+      this.recentlyAddedGroups.delete(chatId);
+      return false;
+    }
+
+    // Consume the flag (one-shot)
+    this.recentlyAddedGroups.delete(chatId);
+    logger.info({ chatId, elapsedMs: elapsed }, 'Consuming recently-added group flag for auto-rename guidance');
+    return true;
+  }
+
+  /**
+   * Get the count of recently-added groups (for testing/debugging).
+   */
+  getRecentlyAddedCount(): number {
+    return this.recentlyAddedGroups.size;
   }
 }
 

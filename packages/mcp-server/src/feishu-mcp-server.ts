@@ -21,7 +21,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message, rename_chat } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +167,24 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'rename_chat',
+                description: 'Rename a Feishu group chat. Use to change the group name to match the task topic.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    chatId: {
+                      type: 'string',
+                      description: 'Target group chat ID (must start with oc_)',
+                    },
+                    name: {
+                      type: 'string',
+                      description: 'New name for the group (max 150 characters)',
+                    },
+                  },
+                  required: ['chatId', 'name'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +259,24 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'rename_chat') {
+          const args = toolArgs as { chatId: string; name: string };
+          const result = await rename_chat(args);
 
           return {
             jsonrpc: '2.0',

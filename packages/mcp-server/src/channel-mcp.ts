@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  rename_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { rename_chat } from './tools/rename-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,41 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2284: Rename group chat
+  {
+    name: 'rename_chat',
+    description: `Rename a Feishu group chat.
+
+Use this to change the name of a group chat to better reflect its purpose or topic.
+This is especially useful when the bot is added to a new group and receives a task — rename the group to match the task topic.
+
+## Parameters
+- **chatId**: Target group chat ID (must start with \`oc_\`) (required)
+- **name**: New name for the group (max 150 characters) (required)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "name": "周报生成"}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target group chat ID (must start with oc_)'),
+      name: z.string().describe('New name for the group (max 150 characters)'),
+    }),
+    handler: async ({ chatId, name }: { chatId: string; name: string }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await rename_chat({ chatId, name });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Rename chat failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

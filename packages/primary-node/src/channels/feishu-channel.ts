@@ -184,6 +184,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Create message callbacks
     const callbacks: MessageCallbacks = {
       emitMessage: async (message: Parameters<BaseChannel['emitMessage']>[0]) => {
+        // Issue #2284: Inject auto-rename guidance when message comes from
+        // a group the bot was recently added to
+        if (message.chatId && message.chatId.startsWith('oc_') && message.content) {
+          if (this.welcomeHandler.consumeIfRecentlyAddedGroup(message.chatId)) {
+            const autoRenameGuidance = '\n\n---\n\n## 🏷️ 新群自动命名\n\n你刚刚被拉入这个新的群聊。在理解用户的任务需求后，请使用 `rename_chat` 工具将群名称修改为能反映任务主题的名称（例如："周报生成"、"需求分析"、"Bug修复"等）。\n\n**注意**: 请在理解用户需求后再重命名，确保群名称准确反映任务内容。群名称应简洁明了，不超过 20 个字。\n\n---\n\n';
+            message = { ...message, content: autoRenameGuidance + message.content };
+          }
+        }
         await this.emitMessage(message);
       },
       emitControl: async (control: Parameters<BaseChannel['emitControl']>[0]) => {
@@ -646,6 +654,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'rename_chat',
       ],
     };
   }
@@ -692,6 +701,32 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   handleMessageReceive(data: FeishuEventData): Promise<void> {
     return this.feishuMessageHandler.handleMessageReceive(data);
+  }
+
+  /**
+   * Rename a group chat via Feishu API.
+   * Issue #2284: Auto-rename group when bot is added and given a task.
+   *
+   * @param chatId - The group chat ID to rename
+   * @param name - The new name for the group
+   */
+  async renameChat(chatId: string, name: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.client) {
+      return { success: false, error: 'Client not initialized' };
+    }
+
+    try {
+      await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name },
+      });
+      logger.info({ chatId, name }, 'Group renamed successfully');
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error({ err: error, chatId, name }, 'Failed to rename group');
+      return { success: false, error: errorMessage };
+    }
   }
 
   /**

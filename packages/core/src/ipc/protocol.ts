@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Group chat rename (Issue #2284)
+  | 'renameChat'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -64,6 +66,11 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // Group chat rename (Issue #2284)
+  renameChat: {
+    chatId: string;
+    name: string;
+  };
   // Temporary chat lifecycle management (Issue #1703)
   // Issue #2291: triggerMode enum replaces passiveMode boolean
   registerTempChat: {
@@ -106,6 +113,11 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // Group chat rename (Issue #2284)
+  renameChat: {
+    success: boolean;
+    error?: string;
   };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {

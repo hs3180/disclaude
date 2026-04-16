@@ -69,6 +69,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  /** Rename a group chat (Issue #2284) */
+  renameChat?: (chatId: string, name: string) => Promise<{ success: boolean; error?: string }>;
   /** Register a temp chat for lifecycle tracking (Issue #1703) */
   registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
@@ -223,6 +225,34 @@ export function createInteractiveMessageHandler(
             }
 
             return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Group chat rename (Issue #2284)
+        case 'renameChat': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.renameChat) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'renameChat not supported by this channel',
+            };
+          }
+          const { chatId, name } =
+            request.payload as IpcRequestPayloads['renameChat'];
+          try {
+            const result = await handlers.renameChat(chatId, name);
+            return { id: request.id, success: true, payload: { success: result.success, error: result.error } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
