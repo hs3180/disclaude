@@ -738,14 +738,28 @@ export class MessageHandler {
           });
           await response.writeFile(localPath);
 
-          // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-          if (correctedPath !== localPath) {
-            localPath = correctedPath;
-            fileName = path.basename(correctedPath);
+          // Issue #2411: Verify file actually exists after download
+          try {
+            const fileStat = await fs.stat(localPath);
+            if (fileStat.size === 0) {
+              logger.warn({ fileKey, localPath }, 'Downloaded file is empty (0 bytes)');
+              localPath = undefined;
+            }
+          } catch (statError) {
+            logger.error({ err: statError, fileKey, localPath }, 'Downloaded file not found on disk');
+            localPath = undefined;
           }
 
-          logger.info({ fileKey, localPath }, 'File downloaded successfully');
+          if (localPath) {
+            // Issue #1637, #1663: Ensure file has correct extension via file-utils API
+            const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
+            if (correctedPath !== localPath) {
+              localPath = correctedPath;
+              fileName = path.basename(correctedPath);
+            }
+
+            logger.info({ fileKey, localPath }, 'File downloaded successfully');
+          }
         } catch (downloadError) {
           logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
         }

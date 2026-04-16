@@ -38,6 +38,14 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   'audio/flac': '.flac',
   'audio/aac': '.aac',
   'audio/x-ms-wma': '.wma',
+  // Issue #2411: Video MIME type mappings
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-msvideo': '.avi',
+  'video/x-matroska': '.mkv',
+  'video/matroska': '.mkv',
+  'video/x-flv': '.flv',
 };
 
 /**
@@ -142,11 +150,51 @@ const MAGIC_BYTE_SIGNATURES: Array<{ detect: (buf: Buffer) => boolean; ext: stri
       buf[0] === 0x66 && buf[1] === 0x4C && buf[2] === 0x61 && buf[3] === 0x43,
     ext: '.flac',
   },
-  // M4A/MP4 (ftyp): offset 4 bytes: 66 74 79 70
+  // Issue #2411: WebM/Matroska (EBML header): 1A 45 DF A3
+  {
+    detect: (buf) => buf.length >= 4 &&
+      buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3,
+    ext: '.webm',
+  },
+  // Issue #2411: ISO Base Media File Format (ftyp box) — brand-based detection
+  // ftyp marker at offset 4 (66 74 79 70), brand at offset 8-11.
+  // Order matters: specific brands first, generic fallback last.
+  // QuickTime (.mov): brand "qt  "
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x71 && buf[9] === 0x74 && buf[10] === 0x20 && buf[11] === 0x20,
+    ext: '.mov',
+  },
+  // M4A (.m4a): brands "M4A " (exact), "M4A0", "M4A1"
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x4D && buf[9] === 0x34 && buf[10] === 0x41 && (buf[11] === 0x20 || buf[11] === 0x30 || buf[11] === 0x31),
+    ext: '.m4a',
+  },
+  // M4V (.m4v): brand "M4V "
+  {
+    detect: (buf) => buf.length >= 12 &&
+      buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70 &&
+      buf[8] === 0x4D && buf[9] === 0x34 && buf[10] === 0x56 && buf[11] === 0x20,
+    ext: '.m4v',
+  },
+  // MP4 (.mp4): brands "isom", "mp41", "mp42", "iso2", "avc1", "MSNV", "f4v "
+  {
+    detect: (buf) => {
+      if (buf.length < 12) {return false;}
+      if (buf[4] !== 0x66 || buf[5] !== 0x74 || buf[6] !== 0x79 || buf[7] !== 0x70) {return false;}
+      const brand = buf.subarray(8, 12).toString('ascii');
+      return ['isom', 'mp41', 'mp42', 'iso2', 'iso5', 'iso6', 'avc1', 'MSNV', 'f4v '].includes(brand);
+    },
+    ext: '.mp4',
+  },
+  // Generic ftyp fallback → .mp4 (most common ISO BMFF format)
   {
     detect: (buf) => buf.length >= 8 &&
       buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70,
-    ext: '.m4a',
+    ext: '.mp4',
   },
   // AMR: 23 21 41 4D 52 (#!AMR)
   {

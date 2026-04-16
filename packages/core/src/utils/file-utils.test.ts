@@ -125,9 +125,9 @@ describe('detectFileExtension', () => {
     expect(detectFileExtension(buffer)).toBe('.flac');
   });
 
-  it('should detect M4A from ftyp box', () => {
+  it('should detect M4A from ftyp box with M4A brand', () => {
     const buffer = Buffer.from([
-      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70,
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20,
     ]);
     expect(detectFileExtension(buffer)).toBe('.m4a');
   });
@@ -149,6 +149,64 @@ describe('detectFileExtension', () => {
     // This must match AAC, not the MP3 sync word detector which comes after
     const buffer = Buffer.from([0xFF, 0xF1, 0x90, 0x00]);
     expect(detectFileExtension(buffer)).toBe('.aac');
+  });
+
+  // Issue #2411: Video format detection tests
+  it('should detect MOV from ftyp box with qt brand', () => {
+    // QuickTime files use ftyp with "qt  " brand
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mov');
+  });
+
+  it('should detect MP4 from ftyp box with isom brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect MP4 from ftyp box with mp41 brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x31,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect MP4 from ftyp box with avc1 brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x63, 0x31,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect M4V from ftyp box with M4V brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x56, 0x20,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4v');
+  });
+
+  it('should detect M4A from ftyp box with M4A0 brand variant', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x30,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.m4a');
+  });
+
+  it('should fall back to .mp4 for unknown ftyp brand', () => {
+    const buffer = Buffer.from([
+      0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x58, 0x58, 0x58, 0x58,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.mp4');
+  });
+
+  it('should detect WebM from EBML header', () => {
+    const buffer = Buffer.from([
+      0x1A, 0x45, 0xDF, 0xA3, 0x93, 0x42, 0x82, 0x88,
+    ]);
+    expect(detectFileExtension(buffer)).toBe('.webm');
   });
 });
 
@@ -208,6 +266,35 @@ describe('mimeToExtension', () => {
 
   it('should map audio/aac to .aac', () => {
     expect(mimeToExtension('audio/aac')).toBe('.aac');
+  });
+
+  // Issue #2411: Video MIME type mapping tests
+  it('should map video/mp4 to .mp4', () => {
+    expect(mimeToExtension('video/mp4')).toBe('.mp4');
+  });
+
+  it('should map video/quicktime to .mov', () => {
+    expect(mimeToExtension('video/quicktime')).toBe('.mov');
+  });
+
+  it('should map video/webm to .webm', () => {
+    expect(mimeToExtension('video/webm')).toBe('.webm');
+  });
+
+  it('should map video/x-msvideo to .avi', () => {
+    expect(mimeToExtension('video/x-msvideo')).toBe('.avi');
+  });
+
+  it('should map video/x-matroska to .mkv', () => {
+    expect(mimeToExtension('video/x-matroska')).toBe('.mkv');
+  });
+
+  it('should map video/matroska to .mkv', () => {
+    expect(mimeToExtension('video/matroska')).toBe('.mkv');
+  });
+
+  it('should map video/x-flv to .flv', () => {
+    expect(mimeToExtension('video/x-flv')).toBe('.flv');
   });
 });
 
