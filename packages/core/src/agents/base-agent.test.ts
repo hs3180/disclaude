@@ -450,7 +450,7 @@ describe('BaseAgent', () => {
       expect(results[0].parsed.sessionId).toBeUndefined();
     });
 
-    it('should pass MCP servers as named array', async () => {
+    it('should NOT pass MCP servers to session (Issue #2463)', async () => {
       const mcpServers = {
         'test-server': { type: 'stdio' as const, name: 'test-server', command: 'node', args: ['server.js'] },
       };
@@ -467,18 +467,20 @@ describe('BaseAgent', () => {
         // consume
       }
 
+      // Issue #2463: mcpServers should NOT be passed to createSession.
+      // ACP v0.23.1+ only supports http/sse via session/new;
+      // stdio servers are written to .mcp.json by ChatAgent instead.
       expect(mockAcpClient.createSession).toHaveBeenCalledWith(
         '/workspace',
         {
-          mcpServers: [{ type: 'stdio', name: 'test-server', command: 'node', args: ['server.js'] }],
           permissionMode: 'bypassPermissions',
           settingSources: ['project'],
         },
       );
     });
 
-    // Issue #2383: Filter out non-serializable MCP server objects
-    it('should filter out non-serializable MCP servers and only pass stdio configs', async () => {
+    // Issue #2463: MCP servers are no longer passed via session/new
+    it('should not pass any MCP servers to createSession (Issue #2463)', async () => {
       // Simulate the real scenario: channel-mcp is an in-process SDK server
       // (not a plain stdio config), while external servers are serializable.
       const fakeSdkServer = { name: 'channel-mcp', version: '1.0.0', tools: [] };
@@ -500,23 +502,24 @@ describe('BaseAgent', () => {
         // consume
       }
 
-      // Only the stdio server should be passed to createSession
+      // Issue #2463: No MCP servers should be passed to createSession.
+      // All MCP servers (stdio and inline) are handled outside session/new:
+      // - stdio servers: written to .mcp.json by ChatAgent
+      // - inline servers: handled via SDK's in-process mechanism
       expect(mockAcpClient.createSession).toHaveBeenCalledWith(
         '/workspace',
         expect.objectContaining({
-          mcpServers: [{ type: 'stdio', name: 'external-mcp', command: 'node', args: ['ext.js'] }],
+          permissionMode: 'bypassPermissions',
+          settingSources: ['project'],
         }),
       );
 
-      // Verify that the non-serializable server was NOT included
-      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as { mcpServers?: unknown[] };
-      const mcpServerNames = (callArgs.mcpServers ?? []).map(
-        (s: unknown) => (s as Record<string, unknown>).name,
-      );
-      expect(mcpServerNames).not.toContain('channel-mcp');
+      // Verify that mcpServers is NOT in the session options
+      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as Record<string, unknown>;
+      expect(callArgs.mcpServers).toBeUndefined();
     });
 
-    it('should omit mcpServers when all servers are non-serializable', async () => {
+    it('should not pass mcpServers even when all servers are non-serializable (Issue #2463)', async () => {
       const fakeSdkServer = { name: 'inline-server', tools: [() => {}] };
       const mcpServers = {
         'inline-server': fakeSdkServer,
@@ -542,8 +545,8 @@ describe('BaseAgent', () => {
         }),
       );
 
-      // mcpServers should be omitted (or empty) since all were non-serializable
-      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as { mcpServers?: unknown[] };
+      // Issue #2463: mcpServers should never be in session options
+      const callArgs = mockAcpClient.createSession.mock.calls[0][1] as Record<string, unknown>;
       expect(callArgs.mcpServers).toBeUndefined();
     });
 
