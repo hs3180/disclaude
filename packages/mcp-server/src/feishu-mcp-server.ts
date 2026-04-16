@@ -22,6 +22,7 @@
 
 import { createLogger } from '@disclaude/core';
 import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { create_poll, record_poll_vote, get_poll_results, close_poll } from './tools/survey.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +168,70 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              // Issue #2191: Survey/Poll tools
+              {
+                name: 'create_poll',
+                description: 'Create a poll and send it as an interactive card.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    question: { type: 'string', description: 'Poll question' },
+                    options: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          text: { type: 'string', description: 'Button display text' },
+                          value: { type: 'string', description: 'Button action value' },
+                        },
+                        required: ['text', 'value'],
+                      },
+                      description: 'Poll options (2-10)',
+                    },
+                    chatId: { type: 'string', description: 'Target chat ID' },
+                    title: { type: 'string', description: 'Optional card title' },
+                    context: { type: 'string', description: 'Optional context' },
+                    anonymous: { type: 'boolean', description: 'Anonymous mode (default: false)' },
+                    deadline: { type: 'string', description: 'Optional ISO deadline' },
+                  },
+                  required: ['question', 'options', 'chatId'],
+                },
+              },
+              {
+                name: 'record_poll_vote',
+                description: 'Record a vote for a poll.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    pollId: { type: 'string', description: 'Poll ID' },
+                    optionValue: { type: 'string', description: 'Option value to vote for' },
+                    userId: { type: 'string', description: 'Voter user ID' },
+                  },
+                  required: ['pollId', 'optionValue', 'userId'],
+                },
+              },
+              {
+                name: 'get_poll_results',
+                description: 'Get aggregated results for a poll.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    pollId: { type: 'string', description: 'Poll ID' },
+                  },
+                  required: ['pollId'],
+                },
+              },
+              {
+                name: 'close_poll',
+                description: 'Close a poll, preventing further votes.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    pollId: { type: 'string', description: 'Poll ID' },
+                  },
+                  required: ['pollId'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +306,87 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        // Issue #2191: Survey/Poll tools
+        if (name === 'create_poll') {
+          const args = toolArgs as {
+            question: string;
+            options: Array<{ text: string; value: string }>;
+            chatId: string;
+            title?: string;
+            context?: string;
+            anonymous?: boolean;
+            deadline?: string;
+          };
+          const result = await create_poll(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'record_poll_vote') {
+          const args = toolArgs as { pollId: string; optionValue: string; userId: string };
+          const result = record_poll_vote(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'get_poll_results') {
+          const args = toolArgs as { pollId: string };
+          const result = get_poll_results(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'close_poll') {
+          const args = toolArgs as { pollId: string };
+          const result = close_poll(args);
 
           return {
             jsonrpc: '2.0',

@@ -46,3 +46,20 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Survey/Poll tools (Issue #2191: Phase 1)
+export {
+  create_poll,
+  record_poll_vote,
+  get_poll_results,
+  close_poll,
+  list_polls,
+} from './survey.js';
+export type {
+  PollEntry,
+  PollOption,
+  PollSummary,
+  CreatePollResult,
+  RecordVoteResult,
+  GetPollResultsResult,
+} from './survey.js';
