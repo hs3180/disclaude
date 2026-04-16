@@ -181,6 +181,7 @@ export interface ProjectsPersistData {
  * Options for constructing a ProjectManager instance.
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2286 — Templates auto-discover from {packageDir}/templates/
  */
 export interface ProjectManagerOptions {
   /** Workspace root directory (parent of `projects/` instances dir) */
@@ -189,6 +190,14 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Optional template configuration overlay from disclaude.config.yaml.
+   *
+   * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
+   * When provided, discovered templates are merged with this config —
+   * explicit entries override auto-discovered metadata.
+   *
+   * @see Issue #2286
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -100,21 +101,33 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates via auto-discovery + optional config overlay.
+   *
+   * Template resolution order:
+   * 1. Auto-discover from `{packageDir}/templates/` (filesystem)
+   * 2. Merge explicit `templatesConfig` on top (allows metadata override via config)
+   *
+   * If no `templatesConfig` is provided, only auto-discovered templates are used.
+   * If `templatesConfig` contains entries not found on disk, they are still registered
+   * (they will fail at instance creation time when CLAUDE.md copy is attempted).
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @see Issue #2286 — Project templates should auto-discover from package directory
+   *
+   * @param templatesConfig - Optional template configuration overlay (from disclaude.config.yaml)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
-    }
+    // Step 1: Auto-discover templates from {packageDir}/templates/
+    const discoveredConfig = discoverTemplatesAsConfig(this.packageDir);
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
+    // Step 2: Merge explicit config on top of discovered (explicit overrides metadata)
+    const mergedConfig = { ...discoveredConfig, ...templatesConfig };
+
+    for (const [name, meta] of Object.entries(mergedConfig)) {
       this.templates.set(name, {
         name,
         displayName: meta.displayName,
@@ -526,9 +539,8 @@ export class ProjectManager {
    * @returns Array of bound chatIds
    */
   private getBoundChatIds(instanceName: string): string[] {
-    return this.instanceChatIds.get(instanceName)
-      ? [...this.instanceChatIds.get(instanceName)!]
-      : [];
+    const set = this.instanceChatIds.get(instanceName);
+    return set ? [...set] : [];
   }
 
   /**
