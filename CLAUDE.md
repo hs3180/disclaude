@@ -285,6 +285,44 @@ All tests run with network isolation enabled via `tests/setup.ts`:
 - Only `localhost` and `127.0.0.1` are allowed
 - Use `allowHost()` helper for specific test scenarios requiring real network access
 
+### 4. Resource Cleanup in Tests (Related: #2243)
+
+**所有涉及外部资源的测试必须使用 try/finally 确保清理**：IPC server/client、临时文件、socket 文件等资源在断言失败时也必须被正确释放。
+
+```typescript
+// ❌ Bad - if assertion fails, server and client leak
+it('should handle LRU eviction', async () => {
+  const server = new UnixSocketIpcServer(handler, { socketPath });
+  const client = new UnixSocketIpcClient({ socketPath, timeout: 5000 });
+  await server.start();
+  await client.connect();
+  // ... assertions that might fail
+  await client.disconnect(); // skipped on failure
+  await server.stop();       // skipped on failure
+});
+
+// ✅ Good - resources always cleaned up
+it('should handle LRU eviction', async () => {
+  const server = new UnixSocketIpcServer(handler, { socketPath });
+  const client = new UnixSocketIpcClient({ socketPath, timeout: 5000 });
+  try {
+    await server.start();
+    await client.connect();
+    // ... assertions
+  } finally {
+    await client.disconnect().catch(() => {});
+    await server.stop().catch(() => {});
+    cleanupSocket(socketPath);
+  }
+});
+```
+
+**Key rules**:
+- Always use `try/finally` for IPC servers, clients, and temp files
+- Use `.catch(() => {})` in finally to prevent cleanup errors from masking test failures
+- Clean up socket files (`fs.unlink`) after IPC tests
+- Never mock the mechanism you're testing (e.g., don't mock `setTimeout` when testing timeout behavior)
+
 ## Development Workflow
 
 ### PM2 Restart Policy
