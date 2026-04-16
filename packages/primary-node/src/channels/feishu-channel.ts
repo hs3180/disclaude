@@ -646,11 +646,56 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
 
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
+
+  /**
+   * Upload an image and return the image_key for card embedding.
+   * Issue #1919: Enables agents to embed images in card messages via upload_image MCP tool.
+   *
+   * Uses Feishu's im.image.create API. The returned image_key can be used
+   * in card JSON's `img` element: `{ "tag": "img", "img_key": "img_v3_xxx" }`.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object containing imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    const ext = path.extname(filePath).toLowerCase();
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const fileName = path.basename(filePath);
+    const { size: fileSize } = fs.statSync(filePath);
+
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    return { imageKey, fileName, fileSize };
+  }
+
   isTriggerEnabled(chatId: string): boolean {
     return this.triggerModeManager.isTriggerEnabled(chatId);
   }

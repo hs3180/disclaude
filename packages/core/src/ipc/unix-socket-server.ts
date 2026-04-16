@@ -75,6 +75,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Upload image and return image_key for card embedding (Issue #1919) */
+  uploadImage?: (filePath: string) => Promise<{ imageKey: string; fileName: string; fileSize: number }>;
 }
 
 /**
@@ -303,6 +305,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Image upload for card embedding (Issue #1919)
+        case 'uploadImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.uploadImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'uploadImage not supported by this channel',
+            };
+          }
+          const { filePath } =
+            request.payload as IpcRequestPayloads['uploadImage'];
+          try {
+            const result = await handlers.uploadImage(filePath);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };
