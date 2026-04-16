@@ -25,6 +25,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
@@ -494,6 +495,20 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get project templates configuration.
+   * Returns template definitions from disclaude.config.yaml's `projectTemplates` section.
+   *
+   * When not configured, returns undefined (zero-config: all chatIds use workspace root).
+   *
+   * @returns Project templates configuration or undefined
+   * @see Issue #1916 (parent — unified ProjectContext system)
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 }
 

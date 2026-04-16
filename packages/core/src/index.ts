@@ -291,3 +291,26 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module — unified per-chatId Agent context switching (Issue #1916, #2227)
+export {
+  ProjectManager,
+  type CwdProvider,
+  type InstanceInfo,
+  type PersistedInstance,
+  type ProjectContextConfig,
+  type ProjectManagerOptions,
+  type ProjectResult,
+  type ProjectTemplate,
+  type ProjectTemplatesConfig,
+  type ProjectsPersistData,
+} from './project/index.js';
+
+export {
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+  type DiscoveryResult,
+  type DiscoveryError,
+  type DiscoveryOptions,
+} from './project/index.js';
