@@ -46,3 +46,16 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Polling (Issue #2191: lightweight poll/survey functionality)
+export {
+  create_poll,
+  record_poll_vote,
+  poll_results,
+} from './create-poll.js';
+
+export type {
+  CreatePollResult,
+  RecordPollVoteResult,
+  PollResultsResult,
+} from './create-poll.js';

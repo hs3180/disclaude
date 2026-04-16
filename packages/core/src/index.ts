@@ -291,3 +291,19 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Polling module (Issue #2191: lightweight poll/survey functionality)
+export {
+  PollManager,
+} from './polling/index.js';
+
+export type {
+  Poll,
+  PollOption,
+  PollVote,
+  PollOptionResult,
+  PollResults,
+  CreatePollOptions,
+  RecordVoteOptions,
+  PollValidationError,
+} from './polling/index.js';

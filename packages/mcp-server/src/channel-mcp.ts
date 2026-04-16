@@ -18,7 +18,10 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  create_poll,
+  record_poll_vote,
+  poll_results,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
@@ -41,6 +44,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
+export { create_poll, record_poll_vote, poll_results } from './tools/create-poll.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -451,6 +455,128 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2191: Lightweight poll/survey functionality (方案 C)
+  {
+    name: 'create_poll',
+    description: `Create a lightweight poll and send it as an interactive card to a chat.
+
+Users can vote by clicking the option buttons. Votes are automatically tracked
+via action prompts — when a user votes, the agent will receive a notification
+and should call \`record_poll_vote\` to record it.
+
+Use \`poll_results\` to view aggregated results at any time.
+
+## Parameters
+- **question**: The poll question (string, required)
+- **options**: Array of poll options with text (at least 2 required)
+- **chatId**: Target chat ID (required)
+- **anonymous**: Whether votes are anonymous (default: true)
+- **expiresAt**: ISO timestamp for poll expiry (optional)
+- **description**: Optional description/context for the poll
+
+## Example
+\`\`\`json
+{
+  "question": "What's the best time for the team meeting?",
+  "options": [
+    {"text": "10:00 AM"},
+    {"text": "2:00 PM"},
+    {"text": "4:00 PM"}
+  ],
+  "chatId": "oc_xxx",
+  "anonymous": true
+}
+\`\`\``,
+    parameters: z.object({
+      question: z.string().describe('The poll question'),
+      options: z.array(z.object({
+        text: z.string().describe('Option display text'),
+      })).min(2).describe('Poll options (at least 2)'),
+      chatId: z.string().describe('Target chat ID'),
+      anonymous: z.boolean().optional().describe('Whether votes are anonymous (default: true)'),
+      expiresAt: z.string().optional().describe('ISO timestamp for poll expiry'),
+      description: z.string().optional().describe('Optional description/context for the poll'),
+    }),
+    handler: async ({ question, options, chatId, anonymous, expiresAt, description }: {
+      question: string;
+      options: Array<{ text: string }>;
+      chatId: string;
+      anonymous?: boolean;
+      expiresAt?: string;
+      description?: string;
+    }) => {
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await create_poll({ question, options, chatId, anonymous, expiresAt, description });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Poll creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'record_poll_vote',
+    description: `Record a vote for a poll. Called automatically when a user votes via the poll card.
+
+This tool should be called when the agent receives a vote notification via
+action prompts (after a user clicks a poll option button).
+
+## Parameters
+- **pollId**: The poll ID (from the vote notification)
+- **optionId**: The option ID that was voted for (from the vote notification)
+- **voterId**: The voter's identifier (open_id)
+
+## Example
+\`\`\`json
+{"pollId": "poll_abc123", "optionId": "option_0", "voterId": "ou_xxx"}
+\`\`\``,
+    parameters: z.object({
+      pollId: z.string().describe('Poll ID'),
+      optionId: z.string().describe('Option ID that was voted for'),
+      voterId: z.string().describe('Voter identifier (open_id)'),
+    }),
+    handler: async ({ pollId, optionId, voterId }: {
+      pollId: string;
+      optionId: string;
+      voterId: string;
+    }) => {
+      try {
+        const result = await record_poll_vote({ pollId, optionId, voterId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Vote recording failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'poll_results',
+    description: `Get formatted results for a poll.
+
+Returns a text summary with vote counts and percentages for each option.
+
+## Parameters
+- **pollId**: The poll ID to get results for
+
+## Example
+\`\`\`json
+{"pollId": "poll_abc123"}
+\`\`\``,
+    parameters: z.object({
+      pollId: z.string().describe('Poll ID to get results for'),
+    }),
+    handler: async ({ pollId }: { pollId: string }) => {
+      try {
+        const result = await poll_results({ pollId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Poll results failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
