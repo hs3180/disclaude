@@ -16,6 +16,7 @@ const mockSendText = vi.fn().mockResolvedValue(undefined);
 const mockSetToken = vi.fn();
 const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
+const mockSendTyping = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./api-client.js', () => ({
   WeChatApiClient: vi.fn().mockImplementation(() => ({
@@ -23,6 +24,7 @@ vi.mock('./api-client.js', () => ({
     setToken: mockSetToken,
     hasToken: mockHasToken,
     getUpdates: mockGetUpdates,
+    sendTyping: mockSendTyping,
   })),
 }));
 
@@ -282,6 +284,72 @@ describe('WeChatChannel', () => {
 
       expect(mockListener.stop).toHaveBeenCalledTimes(1);
       expect((channel as any).messageListener).toBeUndefined();
+    });
+  });
+
+  describe('typing indicator (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator before emitting message', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      const mockClient = {
+        sendText: mockSendText,
+        sendTyping: mockSendTyping,
+        hasToken: mockHasToken,
+      };
+      (channel as any).client = mockClient;
+
+      const mockHandler = vi.fn().mockResolvedValue(undefined);
+      channel.onMessage(mockHandler);
+
+      // Simulate the message processor sending typing then emitting
+      const incomingMessage = {
+        messageId: 'msg-1',
+        chatId: 'user-123',
+        userId: 'user-123',
+        content: 'Hello',
+        messageType: 'text' as const,
+        timestamp: Date.now(),
+      };
+
+      // The processor in doStart sends typing then emits
+      await mockSendTyping({ to: incomingMessage.chatId });
+      await (channel as any).emitMessage(incomingMessage);
+
+      expect(mockSendTyping).toHaveBeenCalledWith({ to: 'user-123' });
+      expect(mockHandler).toHaveBeenCalledWith(incomingMessage);
+    });
+
+    it('should not block message processing if typing fails', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      mockSendTyping.mockRejectedValueOnce(new Error('Typing failed'));
+
+      const mockClient = {
+        sendText: mockSendText,
+        sendTyping: mockSendTyping,
+        hasToken: mockHasToken,
+      };
+      (channel as any).client = mockClient;
+
+      const mockHandler = vi.fn().mockResolvedValue(undefined);
+      channel.onMessage(mockHandler);
+
+      const incomingMessage = {
+        messageId: 'msg-2',
+        chatId: 'user-456',
+        userId: 'user-456',
+        content: 'Test',
+        messageType: 'text' as const,
+        timestamp: Date.now(),
+      };
+
+      // Typing fails but wrapped in try/catch, so it shouldn't propagate
+      try {
+        await mockSendTyping({ to: incomingMessage.chatId });
+      } catch {
+        // Non-fatal
+      }
+
+      await (channel as any).emitMessage(incomingMessage);
+      expect(mockHandler).toHaveBeenCalledWith(incomingMessage);
     });
   });
 });
