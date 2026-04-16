@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  get_task_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -451,6 +452,38 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #857: Task status reading for progress reporting
+  {
+    name: 'get_task_status',
+    description: `Read the current execution status of a task.
+
+Use this to check progress on deep tasks (bug fixes, feature implementations, etc.).
+Returns the task's current status, completed steps, elapsed time, and other progress info.
+
+This is useful for:
+- Checking if a task is still running, completed, or failed
+- Getting a progress summary to report to users
+- Reading which steps have been completed and what's next
+
+## Parameters
+- **taskId**: The task ID to query (typically the messageId from the deep task)
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('The task ID to query (typically messageId from deep task)'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        const result = await get_task_status({ taskId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Task status query failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

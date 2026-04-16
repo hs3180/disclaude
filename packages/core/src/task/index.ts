@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Context (Issue #857)
+export { TaskContext, type TaskContextData, type TaskContextConfig, type TaskStatus, type TaskStep } from './task-context.js';

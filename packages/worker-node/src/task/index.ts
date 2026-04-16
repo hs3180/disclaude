@@ -18,3 +18,6 @@ export { TaskFileManager, type TaskFileManagerConfig } from '@disclaude/core';
 
 // Re-export Task Tracker from @disclaude/core
 export { TaskTracker } from '@disclaude/core';
+
+// Re-export Task Context from @disclaude/core (Issue #857)
+export { TaskContext, type TaskContextData, type TaskContextConfig, type TaskStatus, type TaskStep } from '@disclaude/core';
