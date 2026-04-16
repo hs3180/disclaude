@@ -285,43 +285,38 @@ All tests run with network isolation enabled via `tests/setup.ts`:
 - Only `localhost` and `127.0.0.1` are allowed
 - Use `allowHost()` helper for specific test scenarios requiring real network access
 
-### 4. Resource Cleanup in Tests (Related: #2243)
+### 4. Test Anti-Patterns
 
-**所有涉及外部资源的测试必须使用 try/finally 确保清理**：IPC server/client、临时文件、socket 文件等资源在断言失败时也必须被正确释放。
+**不要 mock 你正在测试的机制本身。** 如测试超时行为，必须保留真实的 setTimeout→abort 链路：
 
 ```typescript
-// ❌ Bad - if assertion fails, server and client leak
-it('should handle LRU eviction', async () => {
-  const server = new UnixSocketIpcServer(handler, { socketPath });
-  const client = new UnixSocketIpcClient({ socketPath, timeout: 5000 });
-  await server.start();
-  await client.connect();
-  // ... assertions that might fail
-  await client.disconnect(); // skipped on failure
-  await server.stop();       // skipped on failure
-});
+// ❌ 跳过真实链路，测试无效
+globalThis.setTimeout = (cb) => cb() as any;
 
-// ✅ Good - resources always cleaned up
-it('should handle LRU eviction', async () => {
-  const server = new UnixSocketIpcServer(handler, { socketPath });
-  const client = new UnixSocketIpcClient({ socketPath, timeout: 5000 });
-  try {
-    await server.start();
-    await client.connect();
-    // ... assertions
-  } finally {
-    await client.disconnect().catch(() => {});
-    await server.stop().catch(() => {});
-    cleanupSocket(socketPath);
-  }
-});
+// ✅ 用 vi.useFakeTimers 验证真实流程
+vi.useFakeTimers();
+const promise = fetchWithTimeout(url, 5000);
+await vi.advanceTimersByTimeAsync(5100);
 ```
 
-**Key rules**:
-- Always use `try/finally` for IPC servers, clients, and temp files
-- Use `.catch(() => {})` in finally to prevent cleanup errors from masking test failures
-- Clean up socket files (`fs.unlink`) after IPC tests
-- Never mock the mechanism you're testing (e.g., don't mock `setTimeout` when testing timeout behavior)
+**避免无意义的 async**：mock 函数直接返回 Promise，不加 async：
+
+```typescript
+// ❌ async 无 await
+sendInteractive: async (_chatId, _params) => { return { id: 1 }; }
+
+// ✅ 直接返回
+sendInteractive: (_chatId, _params) => Promise.resolve({ id: 1 })
+```
+
+**资源必须 try/finally 清理**：IPC server/client、临时文件等需确保断言失败时也能释放：
+
+```typescript
+const server = new IpcServer();
+try { /* assertions */ } finally { await server.stop().catch(() => {}); }
+```
+
+**集成测试放 `tests/integration/`**，不放 `src/__tests__/`（后者会混入单元测试）。
 
 ## Development Workflow
 
