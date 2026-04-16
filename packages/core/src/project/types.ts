@@ -35,8 +35,14 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from the `templates/` directory at startup.
+ * Each subdirectory containing a `CLAUDE.md` file is a valid template.
+ * No manual configuration needed — just add a directory with CLAUDE.md.
+ *
  * The "default" project is always implicitly available (no template needed).
+ *
+ * @see template-discovery.ts for discovery logic
+ * @see Issue #2286 — auto-discover from filesystem, no config needed
  */
 export interface ProjectTemplate {
   /** Template name (unique identifier, e.g. "research", "book-reader") */
@@ -50,11 +56,16 @@ export interface ProjectTemplate {
 }
 
 /**
- * Configuration format for projectTemplates in disclaude.config.yaml.
+ * Configuration format for project templates.
+ *
+ * Templates are auto-discovered from the `templates/` directory by default.
+ * This config type is used internally to represent discovered templates
+ * and can optionally be used to override or extend auto-discovery results.
  *
  * Key = template name, Value = optional display metadata.
  *
  * ```yaml
+ * # Optional: override auto-discovered template metadata
  * projectTemplates:
  *   research:
  *     displayName: "研究模式"
@@ -189,6 +200,14 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Template configuration (optional).
+   *
+   * When not provided, templates are auto-discovered from `{packageDir}/templates/`.
+   * Use `Config.getProjectTemplatesConfig()` to get auto-discovered templates,
+   * or provide a custom config to override/extend auto-discovery results.
+   *
+   * @see Issue #2286 — auto-discover from filesystem, no config needed
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

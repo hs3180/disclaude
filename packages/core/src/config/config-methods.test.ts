@@ -202,6 +202,25 @@ describe('Config', () => {
     });
   });
 
+  describe('getTemplatesDir', () => {
+    it('should return a path string', () => {
+      expect(typeof Config.getTemplatesDir()).toBe('string');
+    });
+  });
+
+  describe('getProjectTemplatesConfig', () => {
+    it('should return an object (empty or with templates)', () => {
+      const config = Config.getProjectTemplatesConfig();
+      expect(typeof config).toBe('object');
+    });
+
+    it('should cache the result (return same reference)', () => {
+      const first = Config.getProjectTemplatesConfig();
+      const second = Config.getProjectTemplatesConfig();
+      expect(first).toBe(second);
+    });
+  });
+
   describe('static properties', () => {
     it('should have GLM configuration from config file', () => {
       expect(Config.GLM_API_KEY).toBe('test-glm-key');
