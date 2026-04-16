@@ -4,14 +4,14 @@
  * WeChat (Tencent ilink) bot integration with:
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
+ * - Image and file sending via CDN upload (ilink/bot/upload + sendmessage)
  * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Typing indicator — Issue #1556 Phase 3.2 (deprioritized)
+ * - Thread send support via context_token — Issue #1556 Phase 3.4 (postponed)
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -124,8 +124,10 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
-   * Other types are logged as warnings and silently ignored.
+   * Supports:
+   * - 'text': Text message
+   * - 'card': Downgraded to JSON-serialized text (WeChat API doesn't support cards)
+   * - 'file': Upload to CDN and send as image/file message (Issue #1556 Phase 3.2)
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
@@ -151,7 +153,52 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       });
       logger.debug(
         { chatId: message.chatId, cardLength: cardText.length },
-        'Card downgraded to text for WeChat MVP'
+        'Card downgraded to text for WeChat'
+      );
+      return;
+    }
+
+    // File/image sending via CDN upload (Issue #1556 Phase 3.2)
+    if (message.type === 'file' && message.filePath) {
+      const { filePath, chatId, threadId } = message;
+
+      // Read file from local path
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const fileData = await fs.readFile(filePath);
+      const fileName = path.basename(filePath);
+
+      // Detect MIME type from extension
+      const ext = path.extname(filePath).toLowerCase();
+      const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(ext);
+      const mimeType = isImage ? `image/${ext === '.jpg' ? 'jpeg' : ext.slice(1)}` : 'application/octet-stream';
+
+      // Upload to CDN
+      const { url: cdnUrl } = await this.client.uploadMedia({
+        fileData,
+        fileName,
+        mimeType,
+      });
+
+      // Send as image or file message
+      if (isImage) {
+        await this.client.sendImage({
+          to: chatId,
+          imageUrl: cdnUrl,
+          contextToken: threadId,
+        });
+      } else {
+        await this.client.sendFile({
+          to: chatId,
+          fileUrl: cdnUrl,
+          fileName,
+          contextToken: threadId,
+        });
+      }
+
+      logger.info(
+        { chatId, filePath, fileName, isImage, cdnUrl },
+        'File sent via CDN upload',
       );
       return;
     }
@@ -159,7 +206,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
   }
 
@@ -175,17 +222,17 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text and file sending. Cards are downgraded to text.
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
