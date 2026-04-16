@@ -131,10 +131,26 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
+
+// Taste module (Issue #2335: auto-summarize user taste)
+export {
+  TasteManager,
+  TASTE_VERSION,
+  TASTE_CATEGORY_LABELS,
+  type TasteData,
+  type TasteRule,
+  type TasteCategory,
+  type TasteSource,
+  type TasteManagerOptions,
+  type AddTasteRuleOptions,
+  type RecordCorrectionOptions,
+  type ListTasteRulesOptions,
+} from './taste/index.js';
 
 // Skills module (Issue #430)
 export {

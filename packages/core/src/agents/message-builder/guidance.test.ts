@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,36 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTasteGuidance', () => {
+  it('should return empty string when no content is provided', () => {
+    expect(buildTasteGuidance()).toBe('');
+    expect(buildTasteGuidance(undefined)).toBe('');
+    expect(buildTasteGuidance('')).toBe('');
+  });
+
+  it('should return the taste content as-is', () => {
+    const tasteContent = '\n---\n\n## User Taste Preferences\n\n- 使用 const/let';
+    const result = buildTasteGuidance(tasteContent);
+    expect(result).toBe(tasteContent);
+  });
+
+  it('should preserve all formatting in taste content', () => {
+    const tasteContent = [
+      '',
+      '---',
+      '',
+      '## User Taste Preferences',
+      '',
+      '**代码风格:**',
+      '- 使用 const/let，禁止 var (纠正 3 次)',
+    ].join('\n');
+
+    const result = buildTasteGuidance(tasteContent);
+    expect(result).toBe(tasteContent);
+    expect(result).toContain('代码风格');
+    expect(result).toContain('纠正 3 次');
   });
 });
